@@ -1794,6 +1794,84 @@ mod tests {
     }
 
     #[test]
+    fn test_shellstyle_repeated_sequences() {
+        // Based on Go quamina's TestLongCase
+        // Tests shellstyle suffix patterns with overlapping sequences
+        let mut q = Quamina::new();
+        q.add_pattern("p1", r#"{"x": [{"shellstyle": "*abab"}]}"#)
+            .unwrap();
+
+        // These should all match *abab
+        let should_match = ["abab", "abaabab", "ababab", "ababaabab", "xxabab"];
+        for val in should_match {
+            let event = format!(r#"{{"x": "{}"}}"#, val);
+            let matches = q.matches_for_event(event.as_bytes()).unwrap();
+            assert_eq!(
+                matches,
+                vec!["p1"],
+                "*abab should match '{}'",
+                val
+            );
+        }
+
+        // These should not match
+        let should_not = ["abab_", "aba", "ab", "xaba"];
+        for val in should_not {
+            let event = format!(r#"{{"x": "{}"}}"#, val);
+            let matches = q.matches_for_event(event.as_bytes()).unwrap();
+            assert!(matches.is_empty(), "*abab should NOT match '{}'", val);
+        }
+    }
+
+    #[test]
+    fn test_shellstyle_complex_wildcards() {
+        // Based on Go quamina's TestMakeShellStyleFA
+        // Tests shellstyle patterns with multiple wildcards in complex positions
+        let test_cases = [
+            // Pattern with two wildcards
+            (
+                r#"{"x": [{"shellstyle": "xx*yy*zz"}]}"#,
+                vec!["xxabyycdzz", "xxyyzz", "xxyyzzzzz"],
+                vec!["xyzyxzy yy zz", "zz yy xx"],
+            ),
+            // Pattern with wildcards at both ends
+            (
+                r#"{"x": [{"shellstyle": "*xx*yy*"}]}"#,
+                vec!["xxyy", "xxyyef", "abxxyy", "abxxcdyy"],
+                vec!["ayybyyzxx", "xyzzy"],
+            ),
+        ];
+
+        for (pattern, should_match, should_not) in test_cases {
+            let mut q = Quamina::new();
+            q.add_pattern("p1", pattern).unwrap();
+
+            for val in should_match {
+                let event = format!(r#"{{"x": "{}"}}"#, val);
+                let matches = q.matches_for_event(event.as_bytes()).unwrap();
+                assert_eq!(
+                    matches,
+                    vec!["p1"],
+                    "{} should match '{}'",
+                    pattern,
+                    val
+                );
+            }
+
+            for val in should_not {
+                let event = format!(r#"{{"x": "{}"}}"#, val);
+                let matches = q.matches_for_event(event.as_bytes()).unwrap();
+                assert!(
+                    matches.is_empty(),
+                    "{} should NOT match '{}'",
+                    pattern,
+                    val
+                );
+            }
+        }
+    }
+
+    #[test]
     fn test_invalid_pattern_validation() {
         // Based on Go quamina's TestPatternFromJSON
         // Tests that various invalid patterns are properly rejected
