@@ -16,7 +16,7 @@ quamina-rs provides the same core functionality as the Go version:
 
 ## Current Status
 
-✅ **All core pattern operators implemented** (25 tests passing)
+✅ **All core pattern operators implemented** (27 tests passing)
 
 | Feature | Status |
 |---------|--------|
@@ -33,6 +33,7 @@ quamina-rs provides the same core functionality as the Go version:
 | Regex | ✅ |
 | Nested objects | ✅ |
 | Delete patterns | ✅ |
+| Clone (thread-safe snapshots) | ✅ |
 
 ## User-Facing API
 
@@ -122,11 +123,14 @@ Patterns are JSON objects where leaf values are arrays (OR semantics within arra
 
 ## Future Work
 
-### Phase 3: Optimization (not yet started)
+### ✅ Phase 3: Thread Safety
+- Clone for creating snapshots
+- Send + Sync for thread safety
+
+### Phase 4: Optimization (not yet started)
 - Automaton-based matching (like Go version)
 - Performance benchmarks
 - Memory optimization
 
-### Phase 4: Full Parity (not yet started)
-- Copy() for thread-safe parallel matching
+### Phase 5: Future Enhancements (not yet started)
 - Custom flatteners
