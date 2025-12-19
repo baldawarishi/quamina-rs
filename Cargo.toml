@@ -8,3 +8,10 @@ repository = "https://github.com/baldawarishi/quamina-rs"
 
 [dependencies]
 regex = "1"
+
+[dev-dependencies]
+criterion = "0.5"
+
+[[bench]]
+name = "matching"
+harness = false
