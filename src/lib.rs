@@ -605,4 +605,21 @@ mod tests {
         let no_match = q.matches_for_event(r#"{"count": 43}"#.as_bytes()).unwrap();
         assert!(no_match.is_empty());
     }
+
+    #[test]
+    fn test_regex_match() {
+        let mut q = Quamina::new();
+        q.add_pattern("p1", r#"{"email": [{"regex": "^[a-z]+@example\\.com$"}]}"#)
+            .unwrap();
+
+        let matches = q
+            .matches_for_event(r#"{"email": "alice@example.com"}"#.as_bytes())
+            .unwrap();
+        assert_eq!(matches, vec!["p1"]);
+
+        let no_match = q
+            .matches_for_event(r#"{"email": "alice@other.com"}"#.as_bytes())
+            .unwrap();
+        assert!(no_match.is_empty());
+    }
 }
