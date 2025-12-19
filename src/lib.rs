@@ -847,6 +847,24 @@ mod tests {
             .matches_for_event(r#"{"value": 35e1}"#.as_bytes())
             .unwrap();
         assert_eq!(m5, vec!["p1"], "Scientific 35e1 should match");
+
+        // Test negative exponents
+        let mut q2 = Quamina::new();
+        q2.add_pattern(
+            "p2",
+            r#"{"tiny": [{"numeric": [">=", 0.00001, "<=", 0.001]}]}"#,
+        )
+        .unwrap();
+
+        let m6 = q2
+            .matches_for_event(r#"{"tiny": 3.02e-5}"#.as_bytes())
+            .unwrap();
+        assert_eq!(m6, vec!["p2"], "Scientific 3.02e-5 should match");
+
+        let m7 = q2
+            .matches_for_event(r#"{"tiny": 1E-4}"#.as_bytes())
+            .unwrap();
+        assert_eq!(m7, vec!["p2"], "Scientific 1E-4 should match");
     }
 
     #[test]
