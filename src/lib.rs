@@ -183,6 +183,21 @@ impl<X: Clone + Eq + Hash> Quamina<X> {
     pub fn count_matches(&self, event: &[u8]) -> Result<usize, QuaminaError> {
         Ok(self.matches_for_event(event)?.len())
     }
+
+    /// Returns the number of unique pattern IDs stored
+    pub fn pattern_count(&self) -> usize {
+        self.patterns.len()
+    }
+
+    /// Returns true if no patterns are stored
+    pub fn is_empty(&self) -> bool {
+        self.patterns.is_empty()
+    }
+
+    /// Removes all patterns
+    pub fn clear(&mut self) {
+        self.patterns.clear();
+    }
 }
 
 impl<X: Clone + Eq + Hash> Default for Quamina<X> {
@@ -754,5 +769,21 @@ mod tests {
                 .unwrap(),
             0
         );
+    }
+
+    #[test]
+    fn test_pattern_count_and_clear() {
+        let mut q = Quamina::new();
+        assert!(q.is_empty());
+        assert_eq!(q.pattern_count(), 0);
+
+        q.add_pattern("p1", r#"{"a": ["1"]}"#).unwrap();
+        q.add_pattern("p2", r#"{"b": ["2"]}"#).unwrap();
+        assert!(!q.is_empty());
+        assert_eq!(q.pattern_count(), 2);
+
+        q.clear();
+        assert!(q.is_empty());
+        assert_eq!(q.pattern_count(), 0);
     }
 }
