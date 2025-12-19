@@ -1360,6 +1360,55 @@ mod tests {
     }
 
     #[test]
+    fn test_multiple_overlapping_shellstyle_patterns() {
+        // Based on Go quamina's TestWildCardRuler
+        // Multiple shellstyle patterns can match the same event
+        let mut q = Quamina::new();
+        q.add_pattern("suffix_bc", r#"{"a": [{"shellstyle": "*bc"}]}"#)
+            .unwrap();
+        q.add_pattern("infix_ef", r#"{"b": [{"shellstyle": "d*f"}]}"#)
+            .unwrap();
+        q.add_pattern("infix_eff", r#"{"b": [{"shellstyle": "d*ff"}]}"#)
+            .unwrap();
+        q.add_pattern("prefix_xy", r#"{"c": [{"shellstyle": "xy*"}]}"#)
+            .unwrap();
+
+        // Test suffix match
+        let m1 = q.matches_for_event(r#"{"a": "abc"}"#.as_bytes()).unwrap();
+        assert!(
+            m1.contains(&"suffix_bc"),
+            "*bc should match abc"
+        );
+
+        // Test infix match
+        let m2 = q.matches_for_event(r#"{"b": "dexef"}"#.as_bytes()).unwrap();
+        assert!(
+            m2.contains(&"infix_ef"),
+            "d*f should match dexef"
+        );
+
+        // Test both infix patterns match
+        let m3 = q.matches_for_event(r#"{"b": "dexeff"}"#.as_bytes()).unwrap();
+        assert_eq!(m3.len(), 2, "Both d*f and d*ff should match dexeff");
+        assert!(m3.contains(&"infix_ef"));
+        assert!(m3.contains(&"infix_eff"));
+
+        // Test prefix match
+        let m4 = q.matches_for_event(r#"{"c": "xyzzz"}"#.as_bytes()).unwrap();
+        assert!(
+            m4.contains(&"prefix_xy"),
+            "xy* should match xyzzz"
+        );
+
+        // Test non-matches
+        let m5 = q.matches_for_event(r#"{"a": "xyz"}"#.as_bytes()).unwrap();
+        assert!(m5.is_empty(), "*bc should not match xyz");
+
+        let m6 = q.matches_for_event(r#"{"b": "ef"}"#.as_bytes()).unwrap();
+        assert!(m6.is_empty(), "d*f should not match ef (no d prefix)");
+    }
+
+    #[test]
     fn test_anything_but_prefix_relationship() {
         // Based on Go quamina's TestFootCornerCase
         // Tests that anything-but ["foo"] matches "foot" (since "foot" != "foo")
