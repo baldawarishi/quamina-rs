@@ -541,6 +541,39 @@ mod tests {
     }
 
     #[test]
+    fn test_exists_with_empty_array() {
+        // Per Go quamina: {"a": []} with exists:true does NOT match
+        // but exists:false DOES match (no leaf values)
+        let mut q_true = Quamina::new();
+        q_true
+            .add_pattern("p1", r#"{"a": [{"exists": true}]}"#)
+            .unwrap();
+
+        let mut q_false = Quamina::new();
+        q_false
+            .add_pattern("p2", r#"{"a": [{"exists": false}]}"#)
+            .unwrap();
+
+        // Event with empty array
+        let event = r#"{"a": []}"#;
+
+        // exists:true should NOT match (no leaf values in empty array)
+        let matches_true = q_true.matches_for_event(event.as_bytes()).unwrap();
+        assert!(
+            matches_true.is_empty(),
+            "exists:true should not match empty array"
+        );
+
+        // exists:false SHOULD match (no leaf values means field effectively absent)
+        let matches_false = q_false.matches_for_event(event.as_bytes()).unwrap();
+        assert_eq!(
+            matches_false,
+            vec!["p2"],
+            "exists:false should match empty array"
+        );
+    }
+
+    #[test]
     fn test_prefix_match() {
         // Tests the prefix operator
         let mut q = Quamina::new();
