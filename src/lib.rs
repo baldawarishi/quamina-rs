@@ -28,6 +28,27 @@ impl fmt::Display for QuaminaError {
 impl std::error::Error for QuaminaError {}
 
 /// The main pattern matcher
+///
+/// Quamina is Clone, allowing you to create snapshots for concurrent use:
+/// ```
+/// # use quamina::Quamina;
+/// let mut q = Quamina::new();
+/// q.add_pattern("p1", r#"{"status": ["active"]}"#).unwrap();
+///
+/// // Clone for use in another thread
+/// let q_snapshot = q.clone();
+/// ```
+///
+/// For shared concurrent access, wrap in Arc:
+/// ```
+/// # use quamina::Quamina;
+/// use std::sync::Arc;
+///
+/// let q = Arc::new(Quamina::<String>::new());
+/// let q_clone = Arc::clone(&q);
+/// // Both can now be used for concurrent matching
+/// ```
+#[derive(Clone)]
 pub struct Quamina<X = String> {
     patterns: HashMap<X, Vec<Pattern>>,
 }
@@ -644,5 +665,36 @@ mod tests {
             no_match.is_empty(),
             "Dot should be escaped, not match any char"
         );
+    }
+
+    #[test]
+    fn test_clone_for_snapshot() {
+        let mut q = Quamina::new();
+        q.add_pattern("p1", r#"{"status": ["active"]}"#).unwrap();
+
+        // Clone creates an independent snapshot
+        let snapshot = q.clone();
+
+        // Modify original
+        q.add_pattern("p2", r#"{"status": ["pending"]}"#).unwrap();
+
+        // Snapshot doesn't have p2
+        let snap_matches = snapshot
+            .matches_for_event(r#"{"status": "pending"}"#.as_bytes())
+            .unwrap();
+        assert!(snap_matches.is_empty());
+
+        // Original has p2
+        let orig_matches = q
+            .matches_for_event(r#"{"status": "pending"}"#.as_bytes())
+            .unwrap();
+        assert!(orig_matches.contains(&"p2"));
+    }
+
+    #[test]
+    fn test_send_sync() {
+        // Verify Quamina is Send + Sync for thread safety
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<Quamina<String>>();
     }
 }
