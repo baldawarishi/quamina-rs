@@ -1023,20 +1023,14 @@ mod tests {
             .unwrap();
 
         // Should match "bc" and "abc"
-        let matches = q
-            .matches_for_event(r#"{"a": "bc"}"#.as_bytes())
-            .unwrap();
+        let matches = q.matches_for_event(r#"{"a": "bc"}"#.as_bytes()).unwrap();
         assert_eq!(matches, vec!["p1"]);
 
-        let matches = q
-            .matches_for_event(r#"{"a": "abc"}"#.as_bytes())
-            .unwrap();
+        let matches = q.matches_for_event(r#"{"a": "abc"}"#.as_bytes()).unwrap();
         assert_eq!(matches, vec!["p1"]);
 
         // Should not match
-        let no_match = q
-            .matches_for_event(r#"{"a": "xyz"}"#.as_bytes())
-            .unwrap();
+        let no_match = q.matches_for_event(r#"{"a": "xyz"}"#.as_bytes()).unwrap();
         assert!(no_match.is_empty());
     }
 
@@ -1046,14 +1040,10 @@ mod tests {
         q.add_pattern("p1", r#"{"c": [{"shellstyle": "xy*"}]}"#)
             .unwrap();
 
-        let matches = q
-            .matches_for_event(r#"{"c": "xyzzz"}"#.as_bytes())
-            .unwrap();
+        let matches = q.matches_for_event(r#"{"c": "xyzzz"}"#.as_bytes()).unwrap();
         assert_eq!(matches, vec!["p1"]);
 
-        let matches = q
-            .matches_for_event(r#"{"c": "xy"}"#.as_bytes())
-            .unwrap();
+        let matches = q.matches_for_event(r#"{"c": "xy"}"#.as_bytes()).unwrap();
         assert_eq!(matches, vec!["p1"]);
     }
 
@@ -1063,14 +1053,10 @@ mod tests {
         q.add_pattern("p1", r#"{"b": [{"shellstyle": "d*f"}]}"#)
             .unwrap();
 
-        let matches = q
-            .matches_for_event(r#"{"b": "dexef"}"#.as_bytes())
-            .unwrap();
+        let matches = q.matches_for_event(r#"{"b": "dexef"}"#.as_bytes()).unwrap();
         assert_eq!(matches, vec!["p1"]);
 
-        let matches = q
-            .matches_for_event(r#"{"b": "df"}"#.as_bytes())
-            .unwrap();
+        let matches = q.matches_for_event(r#"{"b": "df"}"#.as_bytes()).unwrap();
         assert_eq!(matches, vec!["p1"]);
     }
 
@@ -1081,20 +1067,14 @@ mod tests {
         q.add_pattern("p1", r#"{"d": [{"shellstyle": "12*4*"}]}"#)
             .unwrap();
 
-        let matches = q
-            .matches_for_event(r#"{"d": "12345"}"#.as_bytes())
-            .unwrap();
+        let matches = q.matches_for_event(r#"{"d": "12345"}"#.as_bytes()).unwrap();
         assert_eq!(matches, vec!["p1"]);
 
-        let matches = q
-            .matches_for_event(r#"{"d": "1244"}"#.as_bytes())
-            .unwrap();
+        let matches = q.matches_for_event(r#"{"d": "1244"}"#.as_bytes()).unwrap();
         assert_eq!(matches, vec!["p1"]);
 
         // Should not match - missing "4"
-        let no_match = q
-            .matches_for_event(r#"{"d": "1235"}"#.as_bytes())
-            .unwrap();
+        let no_match = q.matches_for_event(r#"{"d": "1235"}"#.as_bytes()).unwrap();
         assert!(no_match.is_empty());
     }
 
@@ -1111,9 +1091,7 @@ mod tests {
             assert_eq!(matches, vec!["p1"], "Should match {}", text);
         }
 
-        let no_match = q
-            .matches_for_event(r#"{"x": "bar"}"#.as_bytes())
-            .unwrap();
+        let no_match = q.matches_for_event(r#"{"x": "bar"}"#.as_bytes()).unwrap();
         assert!(no_match.is_empty());
     }
 
