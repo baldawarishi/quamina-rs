@@ -9,6 +9,10 @@ pub enum Matcher {
     Exact(String),
     Exists(bool),
     Prefix(String),
+    Suffix(String),
+    Wildcard(String),
+    AnythingBut(Vec<String>),
+    EqualsIgnoreCase(String),
 }
 
 /// Flatten a JSON event into path/value pairs
@@ -85,6 +89,27 @@ fn value_to_matcher(value: &Value) -> Matcher {
                     "prefix" => {
                         if let Value::String(s) = val {
                             return Matcher::Prefix(s.clone());
+                        }
+                    }
+                    "suffix" => {
+                        if let Value::String(s) = val {
+                            return Matcher::Suffix(s.clone());
+                        }
+                    }
+                    "wildcard" => {
+                        if let Value::String(s) = val {
+                            return Matcher::Wildcard(s.clone());
+                        }
+                    }
+                    "anything-but" => {
+                        if let Value::Array(arr) = val {
+                            let excluded: Vec<String> = arr.iter().map(value_to_string).collect();
+                            return Matcher::AnythingBut(excluded);
+                        }
+                    }
+                    "equals-ignore-case" => {
+                        if let Value::String(s) = val {
+                            return Matcher::EqualsIgnoreCase(s.clone());
                         }
                     }
                     _ => {}

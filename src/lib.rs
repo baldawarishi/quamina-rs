@@ -96,6 +96,18 @@ impl<X: Clone + Eq + Hash> Quamina<X> {
                 Matcher::Prefix(prefix) => {
                     event_value.map(|v| v.starts_with(prefix)).unwrap_or(false)
                 }
+                Matcher::Suffix(suffix) => {
+                    event_value.map(|v| v.ends_with(suffix)).unwrap_or(false)
+                }
+                Matcher::Wildcard(pattern) => event_value
+                    .map(|v| wildcard_match(pattern, v))
+                    .unwrap_or(false),
+                Matcher::AnythingBut(excluded) => event_value
+                    .map(|v| !excluded.iter().any(|e| e == v))
+                    .unwrap_or(false),
+                Matcher::EqualsIgnoreCase(expected) => event_value
+                    .map(|v| v.eq_ignore_ascii_case(expected))
+                    .unwrap_or(false),
             });
 
             if !field_matches {
@@ -116,6 +128,69 @@ impl<X: Clone + Eq + Hash> Default for Quamina<X> {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// Simple wildcard matching supporting * as a wildcard character
+fn wildcard_match(pattern: &str, text: &str) -> bool {
+    // Handle simple cases first
+    if pattern == "*" {
+        return true;
+    }
+    if !pattern.contains('*') {
+        return pattern == text;
+    }
+
+    let parts: Vec<&str> = pattern.split('*').collect();
+
+    // Pattern like "*.txt" (suffix match)
+    if parts.len() == 2 && parts[0].is_empty() {
+        return text.ends_with(parts[1]);
+    }
+
+    // Pattern like "prod-*" (prefix match)
+    if parts.len() == 2 && parts[1].is_empty() {
+        return text.starts_with(parts[0]);
+    }
+
+    // Pattern like "*error*" (contains)
+    if parts.len() == 3 && parts[0].is_empty() && parts[2].is_empty() {
+        return text.contains(parts[1]);
+    }
+
+    // Pattern like "pre*suf" (prefix and suffix)
+    if parts.len() == 2 {
+        return text.starts_with(parts[0])
+            && text.ends_with(parts[1])
+            && text.len() >= parts[0].len() + parts[1].len();
+    }
+
+    // General case: multiple wildcards
+    let mut pos = 0;
+    for (i, part) in parts.iter().enumerate() {
+        if part.is_empty() {
+            continue;
+        }
+        if i == 0 {
+            // First part must be at start
+            if !text.starts_with(part) {
+                return false;
+            }
+            pos = part.len();
+        } else if i == parts.len() - 1 {
+            // Last part must be at end
+            if !text[pos..].ends_with(part) {
+                return false;
+            }
+        } else {
+            // Middle parts can be anywhere
+            if let Some(found) = text[pos..].find(part) {
+                pos += found + part.len();
+            } else {
+                return false;
+            }
+        }
+    }
+    true
 }
 
 #[cfg(test)]
@@ -229,5 +304,121 @@ mod tests {
             .matches_for_event(r#"{"name": "dev-server-1"}"#.as_bytes())
             .unwrap();
         assert!(no_match.is_empty(), "Should not match different prefix");
+    }
+
+    #[test]
+    fn test_wildcard_suffix() {
+        // Tests wildcard with * at start (suffix match)
+        let mut q = Quamina::new();
+        q.add_pattern("p1", r#"{"file": [{"wildcard": "*.txt"}]}"#)
+            .unwrap();
+
+        let matches = q
+            .matches_for_event(r#"{"file": "document.txt"}"#.as_bytes())
+            .unwrap();
+        assert_eq!(matches, vec!["p1"], "Should match *.txt");
+
+        let no_match = q
+            .matches_for_event(r#"{"file": "document.pdf"}"#.as_bytes())
+            .unwrap();
+        assert!(no_match.is_empty(), "Should not match .pdf");
+    }
+
+    #[test]
+    fn test_wildcard_prefix() {
+        // Tests wildcard with * at end (prefix match)
+        let mut q = Quamina::new();
+        q.add_pattern("p1", r#"{"name": [{"wildcard": "prod-*"}]}"#)
+            .unwrap();
+
+        let matches = q
+            .matches_for_event(r#"{"name": "prod-server"}"#.as_bytes())
+            .unwrap();
+        assert_eq!(matches, vec!["p1"], "Should match prod-*");
+    }
+
+    #[test]
+    fn test_wildcard_contains() {
+        // Tests wildcard with * on both sides (contains)
+        let mut q = Quamina::new();
+        q.add_pattern("p1", r#"{"msg": [{"wildcard": "*error*"}]}"#)
+            .unwrap();
+
+        let matches = q
+            .matches_for_event(r#"{"msg": "an error occurred"}"#.as_bytes())
+            .unwrap();
+        assert_eq!(matches, vec!["p1"], "Should match *error*");
+
+        let no_match = q
+            .matches_for_event(r#"{"msg": "all good"}"#.as_bytes())
+            .unwrap();
+        assert!(no_match.is_empty());
+    }
+
+    #[test]
+    fn test_anything_but() {
+        // Tests anything-but operator
+        let mut q = Quamina::new();
+        q.add_pattern(
+            "p1",
+            r#"{"status": [{"anything-but": ["deleted", "archived"]}]}"#,
+        )
+        .unwrap();
+
+        let matches = q
+            .matches_for_event(r#"{"status": "active"}"#.as_bytes())
+            .unwrap();
+        assert_eq!(matches, vec!["p1"], "Should match non-excluded value");
+
+        let no_match = q
+            .matches_for_event(r#"{"status": "deleted"}"#.as_bytes())
+            .unwrap();
+        assert!(no_match.is_empty(), "Should not match excluded value");
+    }
+
+    #[test]
+    fn test_equals_ignore_case() {
+        // Tests case-insensitive matching
+        let mut q = Quamina::new();
+        q.add_pattern("p1", r#"{"name": [{"equals-ignore-case": "Test"}]}"#)
+            .unwrap();
+
+        let m1 = q
+            .matches_for_event(r#"{"name": "test"}"#.as_bytes())
+            .unwrap();
+        assert_eq!(m1, vec!["p1"], "Should match lowercase");
+
+        let m2 = q
+            .matches_for_event(r#"{"name": "TEST"}"#.as_bytes())
+            .unwrap();
+        assert_eq!(m2, vec!["p1"], "Should match uppercase");
+
+        let m3 = q
+            .matches_for_event(r#"{"name": "TeSt"}"#.as_bytes())
+            .unwrap();
+        assert_eq!(m3, vec!["p1"], "Should match mixed case");
+
+        let no_match = q
+            .matches_for_event(r#"{"name": "other"}"#.as_bytes())
+            .unwrap();
+        assert!(no_match.is_empty());
+    }
+
+    #[test]
+    fn test_suffix() {
+        // Tests suffix operator
+        let mut q = Quamina::new();
+        q.add_pattern("p1", r#"{"file": [{"suffix": ".jpg"}]}"#)
+            .unwrap();
+
+        let matches = q
+            .matches_for_event(r#"{"file": "photo.jpg"}"#.as_bytes())
+            .unwrap();
+        assert_eq!(matches, vec!["p1"]);
+
+        let no_match = q
+            .matches_for_event(r#"{"file": "photo.png"}"#.as_bytes())
+            .unwrap();
+        assert!(no_match.is_empty());
     }
 }
