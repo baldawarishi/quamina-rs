@@ -716,6 +716,41 @@ mod tests {
     }
 
     #[test]
+    fn test_equals_ignore_case_multiple_patterns() {
+        // Based on Go quamina's TestEqualsIgnoreCaseMatching
+        // Multiple patterns with different case variations should both match
+        let mut q = Quamina::new();
+        q.add_pattern("r1", r#"{"a": [{"equals-ignore-case": "aBc"}]}"#)
+            .unwrap();
+        q.add_pattern("r2", r#"{"b": [{"equals-ignore-case": "XyZ"}]}"#)
+            .unwrap();
+        q.add_pattern("r3", r#"{"b": [{"equals-ignore-case": "xyZ"}]}"#)
+            .unwrap();
+
+        // r1 matches any case of "abc"
+        let m1 = q.matches_for_event(r#"{"a": "abc"}"#.as_bytes()).unwrap();
+        assert_eq!(m1, vec!["r1"]);
+
+        let m2 = q.matches_for_event(r#"{"a": "AbC"}"#.as_bytes()).unwrap();
+        assert_eq!(m2, vec!["r1"]);
+
+        // r2 and r3 both match "XYZ" (they're both case variations of the same value)
+        let m3 = q.matches_for_event(r#"{"b": "XYZ"}"#.as_bytes()).unwrap();
+        assert_eq!(m3.len(), 2, "Both r2 and r3 should match XYZ");
+        assert!(m3.contains(&"r2"));
+        assert!(m3.contains(&"r3"));
+
+        // Non-matches
+        let m4 = q.matches_for_event(r#"{"b": "xyzz"}"#.as_bytes()).unwrap();
+        assert!(m4.is_empty(), "xyzz should not match xyz patterns");
+
+        let m5 = q
+            .matches_for_event(r#"{"b": "ABCXYZ"}"#.as_bytes())
+            .unwrap();
+        assert!(m5.is_empty(), "ABCXYZ should not match xyz patterns");
+    }
+
+    #[test]
     fn test_suffix() {
         // Tests suffix operator
         let mut q = Quamina::new();
