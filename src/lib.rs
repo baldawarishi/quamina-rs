@@ -796,7 +796,11 @@ mod tests {
         // Event with unicode escapes
         let event = r#"{"greeting": "\u0048\u0065\u006c\u006c\u006f"}"#;
         let matches = q.matches_for_event(event.as_bytes()).unwrap();
-        assert_eq!(matches, vec!["p1"], "Unicode escape should decode to 'Hello'");
+        assert_eq!(
+            matches,
+            vec!["p1"],
+            "Unicode escape should decode to 'Hello'"
+        );
     }
 
     #[test]
@@ -807,6 +811,10 @@ mod tests {
 
         let event = r#"{"emoji": "\ud83d\udc8b"}"#;
         let matches = q.matches_for_event(event.as_bytes()).unwrap();
-        assert_eq!(matches, vec!["p1"], "UTF-16 surrogate pair should decode to emoji");
+        assert_eq!(
+            matches,
+            vec!["p1"],
+            "UTF-16 surrogate pair should decode to emoji"
+        );
     }
 }

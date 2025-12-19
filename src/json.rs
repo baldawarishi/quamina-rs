@@ -310,17 +310,70 @@ impl<'a> Parser<'a> {
             if c == '\\' {
                 self.advance();
                 if let Some(escaped) = self.peek() {
-                    let unescaped = match escaped {
-                        'n' => '\n',
-                        'r' => '\r',
-                        't' => '\t',
-                        '\\' => '\\',
-                        '"' => '"',
-                        '/' => '/',
-                        _ => escaped, // For other escapes, just use the char
-                    };
-                    result.push(unescaped);
-                    self.advance();
+                    match escaped {
+                        'n' => {
+                            result.push('\n');
+                            self.advance();
+                        }
+                        'r' => {
+                            result.push('\r');
+                            self.advance();
+                        }
+                        't' => {
+                            result.push('\t');
+                            self.advance();
+                        }
+                        'b' => {
+                            result.push('\x08');
+                            self.advance();
+                        }
+                        'f' => {
+                            result.push('\x0c');
+                            self.advance();
+                        }
+                        '\\' => {
+                            result.push('\\');
+                            self.advance();
+                        }
+                        '"' => {
+                            result.push('"');
+                            self.advance();
+                        }
+                        '/' => {
+                            result.push('/');
+                            self.advance();
+                        }
+                        'u' => {
+                            self.advance(); // skip 'u'
+                            let code_point = self.parse_unicode_escape()?;
+                            // Check for UTF-16 surrogate pair
+                            if (0xD800..=0xDBFF).contains(&code_point) {
+                                // High surrogate - expect low surrogate
+                                if self.peek() == Some('\\') {
+                                    self.advance();
+                                    if self.peek() == Some('u') {
+                                        self.advance();
+                                        let low = self.parse_unicode_escape()?;
+                                        if (0xDC00..=0xDFFF).contains(&low) {
+                                            // Decode surrogate pair
+                                            let full = 0x10000
+                                                + ((code_point - 0xD800) << 10)
+                                                + (low - 0xDC00);
+                                            if let Some(ch) = char::from_u32(full) {
+                                                result.push(ch);
+                                            }
+                                        }
+                                    }
+                                }
+                            } else if let Some(ch) = char::from_u32(code_point) {
+                                result.push(ch);
+                            }
+                        }
+                        _ => {
+                            result.push(escaped);
+                            self.advance();
+                        }
+                    }
                 }
             } else {
                 result.push(c);
@@ -329,6 +382,19 @@ impl<'a> Parser<'a> {
         }
         self.expect('"')?;
         Ok(result)
+    }
+
+    fn parse_unicode_escape(&mut self) -> Result<u32, QuaminaError> {
+        let mut value = 0u32;
+        for _ in 0..4 {
+            let digit = self
+                .peek()
+                .and_then(|c| c.to_digit(16))
+                .ok_or_else(|| QuaminaError::InvalidJson("invalid unicode escape".into()))?;
+            value = value * 16 + digit;
+            self.advance();
+        }
+        Ok(value)
     }
 
     fn parse_number(&mut self) -> Result<Value, QuaminaError> {
