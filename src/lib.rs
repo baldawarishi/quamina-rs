@@ -78,10 +78,11 @@ impl<X: Clone + Eq + Hash> Quamina<X> {
     /// Find all patterns that match the given event
     pub fn matches_for_event(&self, event: &[u8]) -> Result<Vec<X>, QuaminaError> {
         let event_fields = json::flatten_event(event)?;
-        let event_map: HashMap<&str, &str> = event_fields
-            .iter()
-            .map(|(k, v)| (k.as_str(), v.as_str()))
-            .collect();
+        // Build multimap: field -> Vec<values> to support array element matching
+        let mut event_map: HashMap<&str, Vec<&str>> = HashMap::new();
+        for (k, v) in &event_fields {
+            event_map.entry(k.as_str()).or_default().push(v.as_str());
+        }
 
         let mut matches = Vec::new();
         for (id, patterns) in &self.patterns {
@@ -98,54 +99,62 @@ impl<X: Clone + Eq + Hash> Quamina<X> {
     fn pattern_matches(
         &self,
         pattern_fields: &HashMap<String, Vec<Matcher>>,
-        event_map: &HashMap<&str, &str>,
+        event_map: &HashMap<&str, Vec<&str>>,
     ) -> bool {
         // All pattern fields must match (AND across fields)
         for (field, matchers) in pattern_fields {
-            let event_value = event_map.get(field.as_str());
+            let event_values = event_map.get(field.as_str());
 
             // Any matcher can match (OR within field)
+            // For array fields, any event value matching any matcher counts
             let field_matches = matchers.iter().any(|matcher| match matcher {
-                Matcher::Exact(expected) => event_value == Some(&expected.as_str()),
+                Matcher::Exact(expected) => event_values
+                    .map(|vals| vals.iter().any(|v| *v == expected.as_str()))
+                    .unwrap_or(false),
                 Matcher::Exists(should_exist) => {
                     if *should_exist {
-                        event_value.is_some()
+                        event_values.map(|v| !v.is_empty()).unwrap_or(false)
                     } else {
-                        event_value.is_none()
+                        event_values.map(|v| v.is_empty()).unwrap_or(true)
                     }
                 }
-                Matcher::Prefix(prefix) => {
-                    event_value.map(|v| v.starts_with(prefix)).unwrap_or(false)
-                }
-                Matcher::Suffix(suffix) => {
-                    event_value.map(|v| v.ends_with(suffix)).unwrap_or(false)
-                }
-                Matcher::Wildcard(pattern) => event_value
-                    .map(|v| wildcard_match(pattern, v))
+                Matcher::Prefix(prefix) => event_values
+                    .map(|vals| vals.iter().any(|v| v.starts_with(prefix)))
                     .unwrap_or(false),
-                Matcher::AnythingBut(excluded) => event_value
-                    .map(|v| !excluded.iter().any(|e| e == v))
+                Matcher::Suffix(suffix) => event_values
+                    .map(|vals| vals.iter().any(|v| v.ends_with(suffix)))
                     .unwrap_or(false),
-                Matcher::EqualsIgnoreCase(expected) => event_value
-                    .map(|v| v.eq_ignore_ascii_case(expected))
+                Matcher::Wildcard(pattern) => event_values
+                    .map(|vals| vals.iter().any(|v| wildcard_match(pattern, v)))
                     .unwrap_or(false),
-                Matcher::Numeric(cmp) => event_value
-                    .and_then(|v| v.parse::<f64>().ok())
-                    .map(|num| {
-                        let lower_ok = match cmp.lower {
-                            Some((true, bound)) => num >= bound,
-                            Some((false, bound)) => num > bound,
-                            None => true,
-                        };
-                        let upper_ok = match cmp.upper {
-                            Some((true, bound)) => num <= bound,
-                            Some((false, bound)) => num < bound,
-                            None => true,
-                        };
-                        lower_ok && upper_ok
+                Matcher::AnythingBut(excluded) => event_values
+                    .map(|vals| vals.iter().any(|v| !excluded.iter().any(|e| e == *v)))
+                    .unwrap_or(false),
+                Matcher::EqualsIgnoreCase(expected) => event_values
+                    .map(|vals| vals.iter().any(|v| v.eq_ignore_ascii_case(expected)))
+                    .unwrap_or(false),
+                Matcher::Numeric(cmp) => event_values
+                    .map(|vals| {
+                        vals.iter().any(|v| {
+                            v.parse::<f64>().ok().is_some_and(|num| {
+                                let lower_ok = match cmp.lower {
+                                    Some((true, bound)) => num >= bound,
+                                    Some((false, bound)) => num > bound,
+                                    None => true,
+                                };
+                                let upper_ok = match cmp.upper {
+                                    Some((true, bound)) => num <= bound,
+                                    Some((false, bound)) => num < bound,
+                                    None => true,
+                                };
+                                lower_ok && upper_ok
+                            })
+                        })
                     })
                     .unwrap_or(false),
-                Matcher::Regex(re) => event_value.map(|v| re.is_match(v)).unwrap_or(false),
+                Matcher::Regex(re) => event_values
+                    .map(|vals| vals.iter().any(|v| re.is_match(v)))
+                    .unwrap_or(false),
             });
 
             if !field_matches {
@@ -164,10 +173,10 @@ impl<X: Clone + Eq + Hash> Quamina<X> {
     /// Check if any pattern matches the event (returns early on first match)
     pub fn has_matches(&self, event: &[u8]) -> Result<bool, QuaminaError> {
         let event_fields = json::flatten_event(event)?;
-        let event_map: HashMap<&str, &str> = event_fields
-            .iter()
-            .map(|(k, v)| (k.as_str(), v.as_str()))
-            .collect();
+        let mut event_map: HashMap<&str, Vec<&str>> = HashMap::new();
+        for (k, v) in &event_fields {
+            event_map.entry(k.as_str()).or_default().push(v.as_str());
+        }
 
         for patterns in self.patterns.values() {
             for pattern in patterns {

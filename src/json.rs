@@ -193,8 +193,10 @@ fn flatten_value(value: &Value, path: String, result: &mut Vec<(String, String)>
             }
         }
         Value::Array(arr) => {
-            for (i, val) in arr.iter().enumerate() {
-                flatten_value(val, format!("{}[{}]", path, i), result);
+            // For array elements, use the same path (no index)
+            // This allows pattern {"ids": [943]} to match event {"ids": [116, 943, 234]}
+            for val in arr {
+                flatten_value(val, path.clone(), result);
             }
         }
         _ => result.push((path, value_to_string(value))),
