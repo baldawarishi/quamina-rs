@@ -15,6 +15,7 @@ fn main() {
     test_equals_ignore_case();
     test_nested_objects();
     test_numeric();
+    test_regex();
     test_delete_patterns();
 
     println!("\n✅ All smoke tests passed!");
@@ -190,6 +191,23 @@ fn test_numeric() {
         .unwrap();
     assert!(m3.is_empty());
     println!("✓ Numeric comparison operator");
+}
+
+fn test_regex() {
+    let mut q = Quamina::new();
+    q.add_pattern("p1", r#"{"code": [{"regex": "^[A-Z]{3}-[0-9]+$"}]}"#)
+        .unwrap();
+
+    let m1 = q
+        .matches_for_event(r#"{"code": "ABC-123"}"#.as_bytes())
+        .unwrap();
+    assert!(m1.contains(&"p1"));
+
+    let m2 = q
+        .matches_for_event(r#"{"code": "invalid"}"#.as_bytes())
+        .unwrap();
+    assert!(m2.is_empty());
+    println!("✓ Regex operator");
 }
 
 fn test_delete_patterns() {

@@ -10,13 +10,13 @@ quamina-rs provides the same core functionality as the Go version:
 - Return identifiers of all matching patterns
 
 **Design principles:**
-- Zero dependencies beyond `std` (like the Go version)
+- Minimal dependencies (only `regex` crate for regex support)
 - Idiomatic Rust with strong typing and ownership semantics
 - Similar API surface adapted to Rust conventions
 
 ## Current Status
 
-✅ **All core pattern operators implemented** (23 tests passing)
+✅ **All core pattern operators implemented** (25 tests passing)
 
 | Feature | Status |
 |---------|--------|
@@ -30,6 +30,7 @@ quamina-rs provides the same core functionality as the Go version:
 | Anything-but | ✅ |
 | Equals-ignore-case | ✅ |
 | Numeric comparisons | ✅ |
+| Regex | ✅ |
 | Nested objects | ✅ |
 | Delete patterns | ✅ |
 
@@ -92,6 +93,7 @@ Patterns are JSON objects where leaf values are arrays (OR semantics within arra
 | Anything-but | `[{"anything-but": [...]}]` | `{"status": [{"anything-but": ["deleted"]}]}` |
 | Equals-ignore-case | `[{"equals-ignore-case": "str"}]` | `{"name": [{"equals-ignore-case": "test"}]}` |
 | Numeric | `[{"numeric": ["op", val, ...]}]` | `{"price": [{"numeric": [">=", 10, "<", 100]}]}` |
+| Regex | `[{"regex": "pattern"}]` | `{"code": [{"regex": "^[A-Z]{3}-[0-9]+$"}]}` |
 | Nested fields | nested objects | `{"user": {"role": ["admin"]}}` |
 
 ## Completed Milestones
@@ -115,6 +117,7 @@ Patterns are JSON objects where leaf values are arrays (OR semantics within arra
 - anything-but
 - equals-ignore-case
 - numeric (>, >=, <, <=, =)
+- regex (via regex crate)
 - Nested object patterns
 
 ## Future Work
@@ -125,6 +128,5 @@ Patterns are JSON objects where leaf values are arrays (OR semantics within arra
 - Memory optimization
 
 ### Phase 4: Full Parity (not yet started)
-- Regular expression support
 - Copy() for thread-safe parallel matching
 - Custom flatteners
