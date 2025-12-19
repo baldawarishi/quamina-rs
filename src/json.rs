@@ -76,8 +76,9 @@ fn extract_pattern_fields(
         };
         match value {
             Value::Array(arr) => {
-                let matchers: Vec<Matcher> = arr.iter().map(value_to_matcher).collect();
-                fields.insert(path, matchers);
+                let matchers: Result<Vec<Matcher>, QuaminaError> =
+                    arr.iter().map(value_to_matcher).collect();
+                fields.insert(path, matchers?);
             }
             Value::Object(nested) => {
                 extract_pattern_fields(nested, path, fields)?;
@@ -93,7 +94,7 @@ fn extract_pattern_fields(
     Ok(())
 }
 
-fn value_to_matcher(value: &Value) -> Matcher {
+fn value_to_matcher(value: &Value) -> Result<Matcher, QuaminaError> {
     match value {
         Value::Object(obj) => {
             // Check for operators like {"exists": true} or {"prefix": "str"}
@@ -101,40 +102,67 @@ fn value_to_matcher(value: &Value) -> Matcher {
                 match key.as_str() {
                     "exists" => {
                         if let Value::Bool(b) = val {
-                            return Matcher::Exists(*b);
+                            return Ok(Matcher::Exists(*b));
                         }
+                        return Err(QuaminaError::InvalidPattern(
+                            "exists value must be a boolean".into(),
+                        ));
                     }
                     "prefix" => {
                         if let Value::String(s) = val {
-                            return Matcher::Prefix(s.clone());
+                            return Ok(Matcher::Prefix(s.clone()));
                         }
+                        return Err(QuaminaError::InvalidPattern(
+                            "prefix value must be a string".into(),
+                        ));
                     }
                     "suffix" => {
                         if let Value::String(s) = val {
-                            return Matcher::Suffix(s.clone());
+                            return Ok(Matcher::Suffix(s.clone()));
                         }
+                        return Err(QuaminaError::InvalidPattern(
+                            "suffix value must be a string".into(),
+                        ));
                     }
                     "wildcard" => {
                         if let Value::String(s) = val {
-                            if validate_wildcard(s) {
-                                return Matcher::Wildcard(s.clone());
+                            if s.contains("**") {
+                                return Err(QuaminaError::InvalidPattern(
+                                    "wildcard pattern cannot contain '**'".into(),
+                                ));
                             }
+                            if !validate_wildcard(s) {
+                                return Err(QuaminaError::InvalidPattern(
+                                    "wildcard pattern has invalid escape sequence".into(),
+                                ));
+                            }
+                            return Ok(Matcher::Wildcard(s.clone()));
                         }
+                        return Err(QuaminaError::InvalidPattern(
+                            "wildcard value must be a string".into(),
+                        ));
                     }
                     "shellstyle" => {
                         if let Value::String(s) = val {
                             // shellstyle doesn't allow adjacent ** characters
-                            if !s.contains("**") {
-                                return Matcher::Shellstyle(s.clone());
+                            if s.contains("**") {
+                                return Err(QuaminaError::InvalidPattern(
+                                    "shellstyle pattern cannot contain '**'".into(),
+                                ));
                             }
+                            return Ok(Matcher::Shellstyle(s.clone()));
                         }
+                        return Err(QuaminaError::InvalidPattern(
+                            "shellstyle value must be a string".into(),
+                        ));
                     }
                     "anything-but" => {
                         if let Value::Array(arr) = val {
                             // Reject empty array (matches Go behavior)
                             if arr.is_empty() {
-                                // Return a matcher that never matches
-                                return Matcher::Exact(String::new());
+                                return Err(QuaminaError::InvalidPattern(
+                                    "anything-but array cannot be empty".into(),
+                                ));
                             }
                             // Only accept strings in anything-but array
                             let excluded: Vec<String> = arr
@@ -146,45 +174,75 @@ fn value_to_matcher(value: &Value) -> Matcher {
                                 .collect();
                             // If no valid strings, treat as invalid
                             if excluded.is_empty() {
-                                return Matcher::Exact(String::new());
+                                return Err(QuaminaError::InvalidPattern(
+                                    "anything-but array must contain strings".into(),
+                                ));
                             }
-                            return Matcher::AnythingBut(excluded);
+                            return Ok(Matcher::AnythingBut(excluded));
                         }
+                        return Err(QuaminaError::InvalidPattern(
+                            "anything-but value must be an array".into(),
+                        ));
                     }
                     "equals-ignore-case" => {
                         if let Value::String(s) = val {
-                            return Matcher::EqualsIgnoreCase(s.clone());
+                            return Ok(Matcher::EqualsIgnoreCase(s.clone()));
                         }
+                        return Err(QuaminaError::InvalidPattern(
+                            "equals-ignore-case value must be a string".into(),
+                        ));
                     }
                     "numeric" => {
                         if let Value::Array(arr) = val {
                             if let Some(cmp) = parse_numeric_comparison(arr) {
-                                return Matcher::Numeric(cmp);
+                                return Ok(Matcher::Numeric(cmp));
                             }
+                            return Err(QuaminaError::InvalidPattern(
+                                "invalid numeric comparison format".into(),
+                            ));
                         }
+                        return Err(QuaminaError::InvalidPattern(
+                            "numeric value must be an array".into(),
+                        ));
                     }
                     "regex" => {
                         if let Value::String(s) = val {
-                            if let Ok(re) = regex::Regex::new(s) {
-                                return Matcher::Regex(re);
+                            match regex::Regex::new(s) {
+                                Ok(re) => return Ok(Matcher::Regex(re)),
+                                Err(e) => {
+                                    return Err(QuaminaError::InvalidPattern(format!(
+                                        "invalid regex: {}",
+                                        e
+                                    )))
+                                }
                             }
                         }
+                        return Err(QuaminaError::InvalidPattern(
+                            "regex value must be a string".into(),
+                        ));
                     }
-                    _ => {}
+                    _ => {
+                        return Err(QuaminaError::InvalidPattern(format!(
+                            "unknown operator '{}'",
+                            key
+                        )));
+                    }
                 }
             }
-            Matcher::Exact(String::new()) // fallback
+            Err(QuaminaError::InvalidPattern(
+                "matcher object cannot be empty".into(),
+            ))
         }
         Value::Number(n) => {
             // For numeric values, store as float for proper comparison
             // This ensures 35, 35.0, and 3.5e1 all match each other
             if let Ok(f) = n.parse::<f64>() {
-                Matcher::NumericExact(f)
+                Ok(Matcher::NumericExact(f))
             } else {
-                Matcher::Exact(value_to_string(value))
+                Ok(Matcher::Exact(value_to_string(value)))
             }
         }
-        _ => Matcher::Exact(value_to_string(value)),
+        _ => Ok(Matcher::Exact(value_to_string(value))),
     }
 }
 

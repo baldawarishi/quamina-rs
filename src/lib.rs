@@ -663,27 +663,20 @@ mod tests {
 
     #[test]
     fn test_anything_but_validation() {
-        // Empty anything-but array should be invalid (never matches)
+        // Empty anything-but array should return error
         let mut q = Quamina::new();
-        q.add_pattern("p1", r#"{"status": [{"anything-but": []}]}"#)
-            .unwrap();
-
-        // Empty array is invalid, pattern should never match
-        let no_match = q
-            .matches_for_event(r#"{"status": "anything"}"#.as_bytes())
-            .unwrap();
-        assert!(no_match.is_empty(), "Empty anything-but should never match");
-
-        // Non-string values in anything-but should be ignored
-        let mut q2 = Quamina::new();
-        q2.add_pattern("p2", r#"{"x": [{"anything-but": [1, true, null]}]}"#)
-            .unwrap();
-
-        // Pattern has no valid strings, so it's invalid
-        let no_match2 = q2.matches_for_event(r#"{"x": "foo"}"#.as_bytes()).unwrap();
+        let result = q.add_pattern("p1", r#"{"status": [{"anything-but": []}]}"#);
         assert!(
-            no_match2.is_empty(),
-            "Non-string anything-but should be invalid"
+            result.is_err(),
+            "Empty anything-but array should be rejected"
+        );
+
+        // Non-string values in anything-but should return error
+        let mut q2 = Quamina::new();
+        let result2 = q2.add_pattern("p2", r#"{"x": [{"anything-but": [1, true, null]}]}"#);
+        assert!(
+            result2.is_err(),
+            "anything-but with only non-strings should be rejected"
         );
     }
 
@@ -1303,39 +1296,22 @@ mod tests {
 
     #[test]
     fn test_wildcard_invalid_patterns() {
-        // Invalid wildcard patterns should not match anything (silently rejected)
-        let mut q = Quamina::new();
+        // Invalid wildcard patterns should return errors
 
         // Adjacent ** is invalid
-        q.add_pattern("p1", r#"{"x": [{"wildcard": "foo**bar"}]}"#)
-            .unwrap();
-        // Should not match since pattern is invalid
-        let matches = q
-            .matches_for_event(r#"{"x": "foobar"}"#.as_bytes())
-            .unwrap();
-        assert!(matches.is_empty(), "Adjacent ** should invalidate pattern");
+        let mut q = Quamina::new();
+        let result = q.add_pattern("p1", r#"{"x": [{"wildcard": "foo**bar"}]}"#);
+        assert!(result.is_err(), "Adjacent ** should be rejected");
 
         // Invalid escape \l (only \* and \\ are valid)
         let mut q2 = Quamina::new();
-        q2.add_pattern("p2", r#"{"x": [{"wildcard": "he\\llo"}]}"#)
-            .unwrap();
-        let matches2 = q2
-            .matches_for_event(r#"{"x": "hello"}"#.as_bytes())
-            .unwrap();
-        assert!(
-            matches2.is_empty(),
-            "Invalid escape \\l should invalidate pattern"
-        );
+        let result2 = q2.add_pattern("p2", r#"{"x": [{"wildcard": "he\\llo"}]}"#);
+        assert!(result2.is_err(), "Invalid escape \\l should be rejected");
 
         // Trailing backslash is invalid
         let mut q3 = Quamina::new();
-        q3.add_pattern("p3", r#"{"x": [{"wildcard": "x\\"}]}"#)
-            .unwrap();
-        let matches3 = q3.matches_for_event(r#"{"x": "x"}"#.as_bytes()).unwrap();
-        assert!(
-            matches3.is_empty(),
-            "Trailing backslash should invalidate pattern"
-        );
+        let result3 = q3.add_pattern("p3", r#"{"x": [{"wildcard": "x\\"}]}"#);
+        assert!(result3.is_err(), "Trailing backslash should be rejected");
     }
 
     #[test]
@@ -1751,5 +1727,48 @@ mod tests {
             vec!["a"],
             "empty regex should match any string"
         );
+    }
+
+    #[test]
+    fn test_invalid_pattern_validation() {
+        // Based on Go quamina's TestPatternFromJSON
+        // Tests that various invalid patterns are properly rejected
+        let invalid_patterns = [
+            // Value not in array (must be array or object)
+            (r#"{"foo": 11}"#, "number not in array"),
+            (r#"{"foo": "x"}"#, "string not in array"),
+            (r#"{"foo": true}"#, "boolean not in array"),
+            (r#"{"foo": null}"#, "null not in array"),
+            // Invalid exists operator
+            (r#"{"x": [{"exists": 23}]}"#, "exists with number"),
+            (r#"{"x": [{"exists": "yes"}]}"#, "exists with string"),
+            // Invalid shellstyle
+            (r#"{"x": [{"shellstyle": 15}]}"#, "shellstyle with number"),
+            (r#"{"x": [{"shellstyle": "a**b"}]}"#, "shellstyle with **"),
+            // Invalid prefix
+            (r#"{"x": [{"prefix": 23}]}"#, "prefix with number"),
+            // Invalid suffix
+            (r#"{"x": [{"suffix": 23}]}"#, "suffix with number"),
+            // Invalid equals-ignore-case
+            (
+                r#"{"x": [{"equals-ignore-case": 5}]}"#,
+                "equals-ignore-case with number",
+            ),
+            // Invalid numeric
+            (r#"{"x": [{"numeric": ">=5"}]}"#, "numeric with string"),
+            // Invalid regex
+            (
+                r#"{"x": [{"regex": "[invalid"}]}"#,
+                "regex with invalid pattern",
+            ),
+            // Unknown operator
+            (r#"{"x": [{"unknown-op": "val"}]}"#, "unknown operator"),
+        ];
+
+        for (pattern, desc) in &invalid_patterns {
+            let mut q = Quamina::new();
+            let result = q.add_pattern("test", pattern);
+            assert!(result.is_err(), "{} should be rejected: {}", desc, pattern);
+        }
     }
 }
