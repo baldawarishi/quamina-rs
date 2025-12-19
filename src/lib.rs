@@ -1106,6 +1106,43 @@ mod tests {
     }
 
     #[test]
+    fn test_regex_various_patterns() {
+        // Based on Go quamina's TestRegexpEnd2End
+        // Test various regex patterns for correctness
+
+        // Alternation
+        let mut q1 = Quamina::new();
+        q1.add_pattern("p1", r#"{"a": [{"regex": "a|b"}]}"#).unwrap();
+        assert!(q1.matches_for_event(r#"{"a": "a"}"#.as_bytes()).unwrap().contains(&"p1"));
+        assert!(q1.matches_for_event(r#"{"a": "b"}"#.as_bytes()).unwrap().contains(&"p1"));
+        assert!(q1.matches_for_event(r#"{"a": "c"}"#.as_bytes()).unwrap().is_empty());
+
+        // Character class
+        let mut q2 = Quamina::new();
+        q2.add_pattern("p2", r#"{"a": [{"regex": "[hij]"}]}"#).unwrap();
+        assert!(q2.matches_for_event(r#"{"a": "h"}"#.as_bytes()).unwrap().contains(&"p2"));
+        assert!(q2.matches_for_event(r#"{"a": "i"}"#.as_bytes()).unwrap().contains(&"p2"));
+        assert!(q2.matches_for_event(r#"{"a": "j"}"#.as_bytes()).unwrap().contains(&"p2"));
+        assert!(q2.matches_for_event(r#"{"a": "x"}"#.as_bytes()).unwrap().is_empty());
+
+        // Character range
+        let mut q3 = Quamina::new();
+        q3.add_pattern("p3", r#"{"a": [{"regex": "a[e-g]x"}]}"#).unwrap();
+        assert!(q3.matches_for_event(r#"{"a": "aex"}"#.as_bytes()).unwrap().contains(&"p3"));
+        assert!(q3.matches_for_event(r#"{"a": "afx"}"#.as_bytes()).unwrap().contains(&"p3"));
+        assert!(q3.matches_for_event(r#"{"a": "agx"}"#.as_bytes()).unwrap().contains(&"p3"));
+        assert!(q3.matches_for_event(r#"{"a": "ax"}"#.as_bytes()).unwrap().is_empty());
+
+        // Ordinal suffix pattern (like 11th, 23rd)
+        let mut q4 = Quamina::new();
+        q4.add_pattern("p4", r#"{"a": [{"regex": "[0-9][0-9][rtn][dh]"}]}"#).unwrap();
+        assert!(q4.matches_for_event(r#"{"a": "11th"}"#.as_bytes()).unwrap().contains(&"p4"));
+        assert!(q4.matches_for_event(r#"{"a": "23rd"}"#.as_bytes()).unwrap().contains(&"p4"));
+        assert!(q4.matches_for_event(r#"{"a": "22nd"}"#.as_bytes()).unwrap().contains(&"p4"));
+        assert!(q4.matches_for_event(r#"{"a": "first"}"#.as_bytes()).unwrap().is_empty());
+    }
+
+    #[test]
     fn test_clone_for_snapshot() {
         let mut q = Quamina::new();
         q.add_pattern("p1", r#"{"status": ["active"]}"#).unwrap();
