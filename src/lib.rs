@@ -111,6 +111,12 @@ impl<X: Clone + Eq + Hash> Quamina<X> {
                 Matcher::Exact(expected) => event_values
                     .map(|vals| vals.contains(&expected.as_str()))
                     .unwrap_or(false),
+                Matcher::NumericExact(expected) => event_values
+                    .map(|vals| {
+                        vals.iter()
+                            .any(|v| v.parse::<f64>().ok().is_some_and(|num| num == *expected))
+                    })
+                    .unwrap_or(false),
                 Matcher::Exists(should_exist) => {
                     if *should_exist {
                         event_values.map(|v| !v.is_empty()).unwrap_or(false)
@@ -454,6 +460,25 @@ mod tests {
 
         let matches = q.matches_for_event(r#"{"count": 42}"#.as_bytes()).unwrap();
         assert_eq!(matches, vec!["p1"], "Should match numeric value 42");
+    }
+
+    #[test]
+    fn test_numeric_variant_matching() {
+        // All these numeric representations of 35 should match pattern [35]
+        let mut q = Quamina::new();
+        q.add_pattern("p1", r#"{"x": [35]}"#).unwrap();
+
+        // Integer form
+        let m1 = q.matches_for_event(r#"{"x": 35}"#.as_bytes()).unwrap();
+        assert_eq!(m1, vec!["p1"], "35 should match");
+
+        // Decimal with trailing zero
+        let m2 = q.matches_for_event(r#"{"x": 35.0}"#.as_bytes()).unwrap();
+        assert_eq!(m2, vec!["p1"], "35.0 should match [35]");
+
+        // Scientific notation
+        let m3 = q.matches_for_event(r#"{"x": 3.5e1}"#.as_bytes()).unwrap();
+        assert_eq!(m3, vec!["p1"], "3.5e1 should match [35]");
     }
 
     #[test]

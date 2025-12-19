@@ -7,6 +7,7 @@ use std::collections::HashMap;
 #[derive(Debug, Clone)]
 pub enum Matcher {
     Exact(String),
+    NumericExact(f64), // For numeric values: 35, 35.0, 3.5e1 should all match
     Exists(bool),
     Prefix(String),
     Suffix(String),
@@ -150,6 +151,15 @@ fn value_to_matcher(value: &Value) -> Matcher {
                 }
             }
             Matcher::Exact(String::new()) // fallback
+        }
+        Value::Number(n) => {
+            // For numeric values, store as float for proper comparison
+            // This ensures 35, 35.0, and 3.5e1 all match each other
+            if let Ok(f) = n.parse::<f64>() {
+                Matcher::NumericExact(f)
+            } else {
+                Matcher::Exact(value_to_string(value))
+            }
         }
         _ => Matcher::Exact(value_to_string(value)),
     }
