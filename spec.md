@@ -16,7 +16,7 @@ quamina-rs provides the same core functionality as the Go version:
 
 ## Current Status
 
-✅ **All core pattern operators implemented** (69 tests passing)
+✅ **All core pattern operators implemented** (72 tests passing)
 
 | Feature | Status |
 |---------|--------|
@@ -138,7 +138,7 @@ Patterns are JSON objects where leaf values are arrays (OR semantics within arra
 
 The Rust implementation takes a simpler, more direct approach while the Go version has a sophisticated automaton-based architecture.
 
-### Key Architectural Differences
+### Key Architectural Gaps
 
 | Aspect | Go | Rust |
 |--------|----|----- |
