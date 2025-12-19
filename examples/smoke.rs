@@ -31,15 +31,21 @@ fn main() {
     q2.add_pattern("multi", r#"{"status": ["pending", "shipped"]}"#)
         .expect("Failed to add pattern");
 
-    let m1 = q2.matches_for_event(r#"{"status": "pending"}"#.as_bytes()).unwrap();
+    let m1 = q2
+        .matches_for_event(r#"{"status": "pending"}"#.as_bytes())
+        .unwrap();
     assert_eq!(m1, vec!["multi"]);
     println!("✓ status=pending matches [pending, shipped]");
 
-    let m2 = q2.matches_for_event(r#"{"status": "shipped"}"#.as_bytes()).unwrap();
+    let m2 = q2
+        .matches_for_event(r#"{"status": "shipped"}"#.as_bytes())
+        .unwrap();
     assert_eq!(m2, vec!["multi"]);
     println!("✓ status=shipped matches [pending, shipped]");
 
-    let m3 = q2.matches_for_event(r#"{"status": "delivered"}"#.as_bytes()).unwrap();
+    let m3 = q2
+        .matches_for_event(r#"{"status": "delivered"}"#.as_bytes())
+        .unwrap();
     assert!(m3.is_empty());
     println!("✓ status=delivered does not match [pending, shipped]");
 
@@ -48,11 +54,15 @@ fn main() {
     q3.add_pattern("urgent", r#"{"priority": ["high"], "status": ["pending"]}"#)
         .expect("Failed to add pattern");
 
-    let m4 = q3.matches_for_event(r#"{"priority": "high", "status": "pending"}"#.as_bytes()).unwrap();
+    let m4 = q3
+        .matches_for_event(r#"{"priority": "high", "status": "pending"}"#.as_bytes())
+        .unwrap();
     assert_eq!(m4, vec!["urgent"]);
     println!("✓ priority=high AND status=pending matches");
 
-    let m5 = q3.matches_for_event(r#"{"priority": "high", "status": "shipped"}"#.as_bytes()).unwrap();
+    let m5 = q3
+        .matches_for_event(r#"{"priority": "high", "status": "shipped"}"#.as_bytes())
+        .unwrap();
     assert!(m5.is_empty());
     println!("✓ priority=high AND status=shipped does not match");
 

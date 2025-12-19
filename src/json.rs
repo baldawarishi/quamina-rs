@@ -22,7 +22,9 @@ pub fn parse_pattern(json: &str) -> Result<HashMap<String, Vec<String>>, Quamina
     let value = parser.parse_value()?;
 
     let Value::Object(obj) = value else {
-        return Err(QuaminaError::InvalidPattern("pattern must be an object".into()));
+        return Err(QuaminaError::InvalidPattern(
+            "pattern must be an object".into(),
+        ));
     };
 
     let mut fields = HashMap::new();
@@ -36,7 +38,11 @@ fn extract_pattern_fields(
     fields: &mut HashMap<String, Vec<String>>,
 ) -> Result<(), QuaminaError> {
     for (key, value) in obj {
-        let path = if prefix.is_empty() { key.clone() } else { format!("{}.{}", prefix, key) };
+        let path = if prefix.is_empty() {
+            key.clone()
+        } else {
+            format!("{}.{}", prefix, key)
+        };
         match value {
             Value::Array(arr) => {
                 let values: Vec<String> = arr.iter().map(value_to_string).collect();
@@ -45,9 +51,12 @@ fn extract_pattern_fields(
             Value::Object(nested) => {
                 extract_pattern_fields(nested, path, fields)?;
             }
-            _ => return Err(QuaminaError::InvalidPattern(
-                format!("pattern field '{}' must be array or object", path)
-            )),
+            _ => {
+                return Err(QuaminaError::InvalidPattern(format!(
+                    "pattern field '{}' must be array or object",
+                    path
+                )))
+            }
         }
     }
     Ok(())
@@ -57,7 +66,11 @@ fn flatten_value(value: &Value, path: String, result: &mut Vec<(String, String)>
     match value {
         Value::Object(obj) => {
             for (key, val) in obj {
-                let new_path = if path.is_empty() { key.clone() } else { format!("{}.{}", path, key) };
+                let new_path = if path.is_empty() {
+                    key.clone()
+                } else {
+                    format!("{}.{}", path, key)
+                };
                 flatten_value(val, new_path, result);
             }
         }
@@ -118,7 +131,10 @@ impl<'a> Parser<'a> {
         self.expect('{')?;
         let mut pairs = Vec::new();
         self.skip_whitespace();
-        if self.peek() == Some('}') { self.advance(); return Ok(Value::Object(pairs)); }
+        if self.peek() == Some('}') {
+            self.advance();
+            return Ok(Value::Object(pairs));
+        }
         loop {
             self.skip_whitespace();
             let key = self.parse_string()?;
@@ -128,8 +144,13 @@ impl<'a> Parser<'a> {
             pairs.push((key, value));
             self.skip_whitespace();
             match self.peek() {
-                Some(',') => { self.advance(); }
-                Some('}') => { self.advance(); break; }
+                Some(',') => {
+                    self.advance();
+                }
+                Some('}') => {
+                    self.advance();
+                    break;
+                }
                 _ => return Err(QuaminaError::InvalidJson("expected , or }".into())),
             }
         }
@@ -140,13 +161,21 @@ impl<'a> Parser<'a> {
         self.expect('[')?;
         let mut items = Vec::new();
         self.skip_whitespace();
-        if self.peek() == Some(']') { self.advance(); return Ok(Value::Array(items)); }
+        if self.peek() == Some(']') {
+            self.advance();
+            return Ok(Value::Array(items));
+        }
         loop {
             items.push(self.parse_value()?);
             self.skip_whitespace();
             match self.peek() {
-                Some(',') => { self.advance(); }
-                Some(']') => { self.advance(); break; }
+                Some(',') => {
+                    self.advance();
+                }
+                Some(']') => {
+                    self.advance();
+                    break;
+                }
                 _ => return Err(QuaminaError::InvalidJson("expected , or ]".into())),
             }
         }
@@ -157,8 +186,12 @@ impl<'a> Parser<'a> {
         self.expect('"')?;
         let start = self.pos;
         while let Some(c) = self.peek() {
-            if c == '"' { break; }
-            if c == '\\' { self.advance(); } // skip escaped char
+            if c == '"' {
+                break;
+            }
+            if c == '\\' {
+                self.advance();
+            } // skip escaped char
             self.advance();
         }
         let s = self.input[start..self.pos].to_string();
@@ -168,20 +201,28 @@ impl<'a> Parser<'a> {
 
     fn parse_number(&mut self) -> Result<Value, QuaminaError> {
         let start = self.pos;
-        if self.peek() == Some('-') { self.advance(); }
-        while self.peek().map(|c| c.is_ascii_digit()).unwrap_or(false) { self.advance(); }
+        if self.peek() == Some('-') {
+            self.advance();
+        }
+        while self.peek().map(|c| c.is_ascii_digit()).unwrap_or(false) {
+            self.advance();
+        }
         if self.peek() == Some('.') {
             self.advance();
-            while self.peek().map(|c| c.is_ascii_digit()).unwrap_or(false) { self.advance(); }
+            while self.peek().map(|c| c.is_ascii_digit()).unwrap_or(false) {
+                self.advance();
+            }
         }
         Ok(Value::Number(self.input[start..self.pos].to_string()))
     }
 
     fn parse_bool(&mut self) -> Result<Value, QuaminaError> {
         if self.input[self.pos..].starts_with("true") {
-            self.pos += 4; Ok(Value::Bool(true))
+            self.pos += 4;
+            Ok(Value::Bool(true))
         } else if self.input[self.pos..].starts_with("false") {
-            self.pos += 5; Ok(Value::Bool(false))
+            self.pos += 5;
+            Ok(Value::Bool(false))
         } else {
             Err(QuaminaError::InvalidJson("expected bool".into()))
         }
@@ -189,17 +230,32 @@ impl<'a> Parser<'a> {
 
     fn parse_null(&mut self) -> Result<Value, QuaminaError> {
         if self.input[self.pos..].starts_with("null") {
-            self.pos += 4; Ok(Value::Null)
+            self.pos += 4;
+            Ok(Value::Null)
         } else {
             Err(QuaminaError::InvalidJson("expected null".into()))
         }
     }
 
-    fn peek(&self) -> Option<char> { self.input[self.pos..].chars().next() }
-    fn advance(&mut self) { if let Some(c) = self.peek() { self.pos += c.len_utf8(); } }
-    fn skip_whitespace(&mut self) { while self.peek().map(|c| c.is_whitespace()).unwrap_or(false) { self.advance(); } }
+    fn peek(&self) -> Option<char> {
+        self.input[self.pos..].chars().next()
+    }
+    fn advance(&mut self) {
+        if let Some(c) = self.peek() {
+            self.pos += c.len_utf8();
+        }
+    }
+    fn skip_whitespace(&mut self) {
+        while self.peek().map(|c| c.is_whitespace()).unwrap_or(false) {
+            self.advance();
+        }
+    }
     fn expect(&mut self, c: char) -> Result<(), QuaminaError> {
-        if self.peek() == Some(c) { self.advance(); Ok(()) }
-        else { Err(QuaminaError::InvalidJson(format!("expected '{}'", c))) }
+        if self.peek() == Some(c) {
+            self.advance();
+            Ok(())
+        } else {
+            Err(QuaminaError::InvalidJson(format!("expected '{}'", c)))
+        }
     }
 }
