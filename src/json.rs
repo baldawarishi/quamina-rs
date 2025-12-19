@@ -108,7 +108,9 @@ fn value_to_matcher(value: &Value) -> Matcher {
                     }
                     "wildcard" => {
                         if let Value::String(s) = val {
-                            return Matcher::Wildcard(s.clone());
+                            if validate_wildcard(s) {
+                                return Matcher::Wildcard(s.clone());
+                            }
                         }
                     }
                     "shellstyle" => {
@@ -220,6 +222,35 @@ fn value_to_string(value: &Value) -> String {
         Value::Null => "null".to_string(),
         Value::Object(_) | Value::Array(_) => String::new(),
     }
+}
+
+/// Validate wildcard pattern syntax:
+/// - No adjacent ** (unescaped)
+/// - Backslash can only be followed by * or \
+/// - No trailing backslash
+fn validate_wildcard(pattern: &str) -> bool {
+    let mut chars = pattern.chars().peekable();
+    let mut prev_was_star = false;
+
+    while let Some(c) = chars.next() {
+        match c {
+            '\\' => {
+                // Must have next char and it must be * or \
+                match chars.next() {
+                    Some('*') | Some('\\') => prev_was_star = false,
+                    Some(_) | None => return false, // Invalid escape or trailing backslash
+                }
+            }
+            '*' => {
+                if prev_was_star {
+                    return false; // Adjacent wildcards
+                }
+                prev_was_star = true;
+            }
+            _ => prev_was_star = false,
+        }
+    }
+    true
 }
 
 #[derive(Debug, Clone)]

@@ -1048,6 +1048,43 @@ mod tests {
     }
 
     #[test]
+    fn test_wildcard_invalid_patterns() {
+        // Invalid wildcard patterns should not match anything (silently rejected)
+        let mut q = Quamina::new();
+
+        // Adjacent ** is invalid
+        q.add_pattern("p1", r#"{"x": [{"wildcard": "foo**bar"}]}"#)
+            .unwrap();
+        // Should not match since pattern is invalid
+        let matches = q
+            .matches_for_event(r#"{"x": "foobar"}"#.as_bytes())
+            .unwrap();
+        assert!(matches.is_empty(), "Adjacent ** should invalidate pattern");
+
+        // Invalid escape \l (only \* and \\ are valid)
+        let mut q2 = Quamina::new();
+        q2.add_pattern("p2", r#"{"x": [{"wildcard": "he\\llo"}]}"#)
+            .unwrap();
+        let matches2 = q2
+            .matches_for_event(r#"{"x": "hello"}"#.as_bytes())
+            .unwrap();
+        assert!(
+            matches2.is_empty(),
+            "Invalid escape \\l should invalidate pattern"
+        );
+
+        // Trailing backslash is invalid
+        let mut q3 = Quamina::new();
+        q3.add_pattern("p3", r#"{"x": [{"wildcard": "x\\"}]}"#)
+            .unwrap();
+        let matches3 = q3.matches_for_event(r#"{"x": "x"}"#.as_bytes()).unwrap();
+        assert!(
+            matches3.is_empty(),
+            "Trailing backslash should invalidate pattern"
+        );
+    }
+
+    #[test]
     fn test_shellstyle_suffix() {
         // shellstyle is simpler wildcard without escape support
         let mut q = Quamina::new();
