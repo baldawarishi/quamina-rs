@@ -16,7 +16,7 @@ quamina-rs provides the same core functionality as the Go version:
 
 ## Current Status
 
-✅ **All core pattern operators implemented** (30 tests passing)
+✅ **All core pattern operators implemented** (41 tests passing)
 
 | Feature | Status |
 |---------|--------|
@@ -26,14 +26,17 @@ quamina-rs provides the same core functionality as the Go version:
 | Exists | ✅ |
 | Prefix | ✅ |
 | Suffix | ✅ |
-| Wildcard | ✅ |
+| Wildcard (with escaping) | ✅ |
+| Shellstyle (simple wildcard) | ✅ |
 | Anything-but | ✅ |
 | Equals-ignore-case | ✅ |
 | Numeric comparisons | ✅ |
 | Regex | ✅ |
 | Nested objects | ✅ |
+| Array element matching | ✅ |
 | Delete patterns | ✅ |
 | Clone (thread-safe snapshots) | ✅ |
+| Unicode escapes (`\uXXXX`) | ✅ |
 
 ## User-Facing API
 
@@ -96,6 +99,7 @@ Patterns are JSON objects where leaf values are arrays (OR semantics within arra
 | Prefix | `[{"prefix": "str"}]` | `{"name": [{"prefix": "prod-"}]}` |
 | Suffix | `[{"suffix": "str"}]` | `{"file": [{"suffix": ".txt"}]}` |
 | Wildcard | `[{"wildcard": "pat"}]` | `{"id": [{"wildcard": "*-123"}]}` |
+| Shellstyle | `[{"shellstyle": "pat"}]` | `{"id": [{"shellstyle": "foo*bar"}]}` |
 | Anything-but | `[{"anything-but": [...]}]` | `{"status": [{"anything-but": ["deleted"]}]}` |
 | Equals-ignore-case | `[{"equals-ignore-case": "str"}]` | `{"name": [{"equals-ignore-case": "test"}]}` |
 | Numeric | `[{"numeric": ["op", val, ...]}]` | `{"price": [{"numeric": [">=", 10, "<", 100]}]}` |
@@ -119,12 +123,15 @@ Patterns are JSON objects where leaf values are arrays (OR semantics within arra
 - exists (true/false)
 - prefix
 - suffix
-- wildcard (*, prefix*, *suffix, *contains*)
+- wildcard (with `\*` and `\\` escaping)
+- shellstyle (simple wildcard without escaping)
 - anything-but
 - equals-ignore-case
 - numeric (>, >=, <, <=, =)
 - regex (via regex crate)
 - Nested object patterns
+- Array element matching (pattern matches any array element)
+- Unicode escape sequences (`\uXXXX`) in JSON
 
 ## Future Work
 
