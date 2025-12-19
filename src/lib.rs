@@ -421,4 +421,124 @@ mod tests {
             .unwrap();
         assert!(no_match.is_empty());
     }
+
+    #[test]
+    fn test_nested_object_pattern() {
+        // Tests matching nested object fields
+        let mut q = Quamina::new();
+        q.add_pattern("p1", r#"{"user": {"role": ["admin"]}}"#)
+            .unwrap();
+
+        let matches = q
+            .matches_for_event(r#"{"user": {"role": "admin", "name": "alice"}}"#.as_bytes())
+            .unwrap();
+        assert_eq!(matches, vec!["p1"], "Should match nested field");
+
+        let no_match = q
+            .matches_for_event(r#"{"user": {"role": "guest"}}"#.as_bytes())
+            .unwrap();
+        assert!(no_match.is_empty());
+    }
+
+    #[test]
+    fn test_deeply_nested() {
+        // Tests deeply nested patterns
+        let mut q = Quamina::new();
+        q.add_pattern("p1", r#"{"a": {"b": {"c": ["value"]}}}"#)
+            .unwrap();
+
+        let matches = q
+            .matches_for_event(r#"{"a": {"b": {"c": "value"}}}"#.as_bytes())
+            .unwrap();
+        assert_eq!(matches, vec!["p1"]);
+    }
+
+    #[test]
+    fn test_multiple_patterns_same_id() {
+        // Multiple patterns with same ID - any match counts
+        let mut q = Quamina::new();
+        q.add_pattern("p1", r#"{"status": ["active"]}"#).unwrap();
+        q.add_pattern("p1", r#"{"status": ["pending"]}"#).unwrap();
+
+        let m1 = q
+            .matches_for_event(r#"{"status": "active"}"#.as_bytes())
+            .unwrap();
+        assert_eq!(m1, vec!["p1"]);
+
+        let m2 = q
+            .matches_for_event(r#"{"status": "pending"}"#.as_bytes())
+            .unwrap();
+        assert_eq!(m2, vec!["p1"]);
+    }
+
+    #[test]
+    fn test_delete_patterns() {
+        let mut q = Quamina::new();
+        q.add_pattern("p1", r#"{"status": ["active"]}"#).unwrap();
+        q.add_pattern("p2", r#"{"status": ["pending"]}"#).unwrap();
+
+        // Both match initially
+        let m1 = q
+            .matches_for_event(r#"{"status": "active"}"#.as_bytes())
+            .unwrap();
+        assert!(m1.contains(&"p1"));
+
+        // Delete p1
+        q.delete_patterns(&"p1").unwrap();
+
+        // p1 no longer matches
+        let m2 = q
+            .matches_for_event(r#"{"status": "active"}"#.as_bytes())
+            .unwrap();
+        assert!(m2.is_empty());
+
+        // p2 still works
+        let m3 = q
+            .matches_for_event(r#"{"status": "pending"}"#.as_bytes())
+            .unwrap();
+        assert!(m3.contains(&"p2"));
+    }
+
+    #[test]
+    fn test_or_within_field() {
+        // Multiple values in array = OR
+        let mut q = Quamina::new();
+        q.add_pattern("p1", r#"{"status": ["active", "pending", "review"]}"#)
+            .unwrap();
+
+        for status in &["active", "pending", "review"] {
+            let event = format!(r#"{{"status": "{}"}}"#, status);
+            let matches = q.matches_for_event(event.as_bytes()).unwrap();
+            assert_eq!(matches, vec!["p1"], "Should match {}", status);
+        }
+
+        let no_match = q
+            .matches_for_event(r#"{"status": "deleted"}"#.as_bytes())
+            .unwrap();
+        assert!(no_match.is_empty());
+    }
+
+    #[test]
+    fn test_and_across_fields() {
+        // Multiple fields = AND
+        let mut q = Quamina::new();
+        q.add_pattern(
+            "p1",
+            r#"{"type": ["order"], "status": ["pending"], "priority": ["high"]}"#,
+        )
+        .unwrap();
+
+        let matches = q
+            .matches_for_event(
+                r#"{"type": "order", "status": "pending", "priority": "high"}"#.as_bytes(),
+            )
+            .unwrap();
+        assert_eq!(matches, vec!["p1"]);
+
+        // Missing one field
+        let no_match = q
+            .matches_for_event(r#"{"type": "order", "status": "pending"}"#.as_bytes())
+            .unwrap();
+        assert!(no_match.is_empty());
+    }
 }
