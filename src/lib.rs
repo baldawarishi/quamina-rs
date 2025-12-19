@@ -1341,6 +1341,54 @@ mod tests {
     }
 
     #[test]
+    fn test_wildcard_matches_empty_string() {
+        // Based on Go quamina's wildcard tests
+        // Pattern "*" should match empty string ""
+        let mut q = Quamina::new();
+        q.add_pattern("p1", r#"{"x": [{"wildcard": "*"}]}"#).unwrap();
+
+        // Should match empty string
+        let m1 = q.matches_for_event(r#"{"x": ""}"#.as_bytes()).unwrap();
+        assert_eq!(m1, vec!["p1"], "* should match empty string");
+
+        // Should match any string
+        let m2 = q.matches_for_event(r#"{"x": "hello"}"#.as_bytes()).unwrap();
+        assert_eq!(m2, vec!["p1"], "* should match any string");
+
+        let m3 = q.matches_for_event(r#"{"x": "*"}"#.as_bytes()).unwrap();
+        assert_eq!(m3, vec!["p1"], "* should match literal *");
+    }
+
+    #[test]
+    fn test_anything_but_prefix_relationship() {
+        // Based on Go quamina's TestFootCornerCase
+        // Tests that anything-but ["foo"] matches "foot" (since "foot" != "foo")
+        let mut q = Quamina::new();
+        q.add_pattern("not_foo", r#"{"z": [{"anything-but": ["foo"]}]}"#)
+            .unwrap();
+
+        // "foot" is not "foo", so should match
+        let m1 = q.matches_for_event(r#"{"z": "foot"}"#.as_bytes()).unwrap();
+        assert_eq!(
+            m1,
+            vec!["not_foo"],
+            "anything-but ['foo'] should match 'foot'"
+        );
+
+        // "foo" should NOT match
+        let m2 = q.matches_for_event(r#"{"z": "foo"}"#.as_bytes()).unwrap();
+        assert!(m2.is_empty(), "anything-but ['foo'] should not match 'foo'");
+
+        // "fo" is not "foo", so should match
+        let m3 = q.matches_for_event(r#"{"z": "fo"}"#.as_bytes()).unwrap();
+        assert_eq!(
+            m3,
+            vec!["not_foo"],
+            "anything-but ['foo'] should match 'fo'"
+        );
+    }
+
+    #[test]
     fn test_exists_false_ordering() {
         // Based on Go quamina's TestExistsFalseOrder
         // exists:false should properly disqualify a match regardless of where
