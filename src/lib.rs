@@ -215,67 +215,152 @@ impl<X: Clone + Eq + Hash> Default for Quamina<X> {
     }
 }
 
-/// Simple wildcard matching supporting * as a wildcard character
+/// Wildcard matching supporting * as wildcard, with \* and \\ escaping
 fn wildcard_match(pattern: &str, text: &str) -> bool {
-    // Handle simple cases first
-    if pattern == "*" {
-        return true;
-    }
-    if !pattern.contains('*') {
-        return pattern == text;
-    }
+    // Parse pattern into segments: either literal strings or wildcards
+    let segments = parse_wildcard_pattern(pattern);
 
-    let parts: Vec<&str> = pattern.split('*').collect();
+    // Match segments against text
+    match_segments(&segments, text)
+}
 
-    // Pattern like "*.txt" (suffix match)
-    if parts.len() == 2 && parts[0].is_empty() {
-        return text.ends_with(parts[1]);
-    }
+#[derive(Debug, PartialEq)]
+enum WildcardSegment {
+    Literal(String),
+    Star,
+}
 
-    // Pattern like "prod-*" (prefix match)
-    if parts.len() == 2 && parts[1].is_empty() {
-        return text.starts_with(parts[0]);
-    }
+/// Parse wildcard pattern handling \* and \\ escapes
+fn parse_wildcard_pattern(pattern: &str) -> Vec<WildcardSegment> {
+    let mut segments = Vec::new();
+    let mut current_literal = String::new();
+    let mut chars = pattern.chars().peekable();
 
-    // Pattern like "*error*" (contains)
-    if parts.len() == 3 && parts[0].is_empty() && parts[2].is_empty() {
-        return text.contains(parts[1]);
-    }
-
-    // Pattern like "pre*suf" (prefix and suffix)
-    if parts.len() == 2 {
-        return text.starts_with(parts[0])
-            && text.ends_with(parts[1])
-            && text.len() >= parts[0].len() + parts[1].len();
-    }
-
-    // General case: multiple wildcards
-    let mut pos = 0;
-    for (i, part) in parts.iter().enumerate() {
-        if part.is_empty() {
-            continue;
-        }
-        if i == 0 {
-            // First part must be at start
-            if !text.starts_with(part) {
-                return false;
+    while let Some(c) = chars.next() {
+        match c {
+            '\\' => {
+                // Escape: next char is literal
+                if let Some(&next) = chars.peek() {
+                    if next == '*' || next == '\\' {
+                        current_literal.push(chars.next().unwrap());
+                    } else {
+                        // Invalid escape - just keep the backslash
+                        current_literal.push('\\');
+                    }
+                } else {
+                    current_literal.push('\\');
+                }
             }
-            pos = part.len();
-        } else if i == parts.len() - 1 {
-            // Last part must be at end
-            if !text[pos..].ends_with(part) {
-                return false;
+            '*' => {
+                // Unescaped star is a wildcard
+                if !current_literal.is_empty() {
+                    segments.push(WildcardSegment::Literal(std::mem::take(
+                        &mut current_literal,
+                    )));
+                }
+                segments.push(WildcardSegment::Star);
             }
-        } else {
-            // Middle parts can be anywhere
-            if let Some(found) = text[pos..].find(part) {
-                pos += found + part.len();
-            } else {
-                return false;
+            _ => {
+                current_literal.push(c);
             }
         }
     }
-    true
+
+    if !current_literal.is_empty() {
+        segments.push(WildcardSegment::Literal(current_literal));
+    }
+
+    segments
+}
+
+/// Match parsed wildcard segments against text
+fn match_segments(segments: &[WildcardSegment], text: &str) -> bool {
+    if segments.is_empty() {
+        return text.is_empty();
+    }
+
+    // Simple case: no wildcards
+    if segments
+        .iter()
+        .all(|s| matches!(s, WildcardSegment::Literal(_)))
+    {
+        let full: String = segments
+            .iter()
+            .filter_map(|s| {
+                if let WildcardSegment::Literal(lit) = s {
+                    Some(lit.as_str())
+                } else {
+                    None
+                }
+            })
+            .collect();
+        return full == text;
+    }
+
+    // Use dynamic programming approach for general wildcard matching
+    wildcard_dp(segments, text)
+}
+
+/// DP-based wildcard matching
+fn wildcard_dp(segments: &[WildcardSegment], text: &str) -> bool {
+    // Convert segments to a simpler form for DP
+    let text_chars: Vec<char> = text.chars().collect();
+    let n = text_chars.len();
+
+    // Build pattern parts
+    let mut parts: Vec<Option<String>> = Vec::new(); // None = *, Some = literal
+    for seg in segments {
+        match seg {
+            WildcardSegment::Star => parts.push(None),
+            WildcardSegment::Literal(s) => parts.push(Some(s.clone())),
+        }
+    }
+
+    // dp[i] = can we match up to position i in text?
+    // Start: only position 0 is reachable
+    let mut reachable = vec![false; n + 1];
+    reachable[0] = true;
+
+    for part in &parts {
+        match part {
+            None => {
+                // Star: can reach any position from current reachable positions onwards
+                let mut new_reachable = vec![false; n + 1];
+                let mut can_reach = false;
+                for i in 0..=n {
+                    if reachable[i] {
+                        can_reach = true;
+                    }
+                    if can_reach {
+                        new_reachable[i] = true;
+                    }
+                }
+                reachable = new_reachable;
+            }
+            Some(literal) => {
+                // Literal: must match exactly at reachable positions
+                let mut new_reachable = vec![false; n + 1];
+                let lit_chars: Vec<char> = literal.chars().collect();
+                let lit_len = lit_chars.len();
+
+                for i in 0..=n {
+                    if reachable[i] && i + lit_len <= n {
+                        // Check if literal matches at position i
+                        if text_chars[i..i + lit_len]
+                            .iter()
+                            .zip(lit_chars.iter())
+                            .all(|(a, b)| a == b)
+                        {
+                            new_reachable[i + lit_len] = true;
+                        }
+                    }
+                }
+                reachable = new_reachable;
+            }
+        }
+    }
+
+    reachable[n]
 }
 
 #[cfg(test)]
