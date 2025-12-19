@@ -77,6 +77,24 @@ fn bench_no_match(c: &mut Criterion) {
     });
 }
 
+fn bench_has_matches(c: &mut Criterion) {
+    let mut q = Quamina::new();
+    for i in 0..100 {
+        q.add_pattern(
+            format!("p{}", i),
+            &format!(r#"{{"status": ["status_{}"]}}"#, i),
+        )
+        .unwrap();
+    }
+
+    // First pattern matches - early exit
+    let event = r#"{"status": "status_0"}"#.as_bytes();
+
+    c.bench_function("has_matches_early_exit", |b| {
+        b.iter(|| q.has_matches(black_box(event)).unwrap())
+    });
+}
+
 criterion_group!(
     benches,
     bench_exact_match,
@@ -84,5 +102,6 @@ criterion_group!(
     bench_complex_event,
     bench_regex_match,
     bench_no_match,
+    bench_has_matches,
 );
 criterion_main!(benches);
