@@ -104,25 +104,61 @@ impl<X: Clone + Eq + Hash> Quamina<X> {
         pattern_fields: &HashMap<String, Vec<Matcher>>,
         event_map: &HashMap<&str, Vec<&Field>>,
     ) -> bool {
-        // Collect pattern fields into a vector for ordered processing
-        let pattern_field_list: Vec<_> = pattern_fields.iter().collect();
-
-        if pattern_field_list.is_empty() {
+        // Empty pattern matches everything
+        if pattern_fields.is_empty() {
             return true;
         }
 
-        // Use backtracking to find a consistent assignment of event field values
-        // that satisfies all pattern fields with compatible array trails
-        self.backtrack_match(&pattern_field_list, 0, &[], event_map)
+        // Fast path: single-field patterns don't need backtracking for array trail consistency
+        if pattern_fields.len() == 1 {
+            let (field_path, matchers) = pattern_fields.iter().next().unwrap();
+            return self.single_field_matches(field_path, matchers, event_map);
+        }
+
+        // Multi-field patterns: use backtracking for array trail consistency
+        let pattern_field_list: Vec<_> = pattern_fields.iter().collect();
+        let mut trails = Vec::with_capacity(pattern_field_list.len());
+        self.backtrack_match(&pattern_field_list, 0, &mut trails, event_map)
     }
 
-    /// Backtracking match that ensures array trail compatibility across all matched fields
-    fn backtrack_match(
+    /// Fast path for single-field pattern matching (no backtracking needed)
+    fn single_field_matches(
+        &self,
+        field_path: &str,
+        matchers: &[Matcher],
+        event_map: &HashMap<&str, Vec<&Field>>,
+    ) -> bool {
+        let event_fields = event_map.get(field_path);
+
+        // Try each matcher (OR semantics)
+        for matcher in matchers {
+            if let Matcher::Exists(should_exist) = matcher {
+                let exists = event_fields.map(|v| !v.is_empty()).unwrap_or(false);
+                if exists == *should_exist {
+                    return true;
+                }
+                continue;
+            }
+
+            // For other matchers, check if any event value matches
+            if let Some(fields) = event_fields {
+                if fields.iter().any(|f| self.value_matches(matcher, &f.value)) {
+                    return true;
+                }
+            }
+        }
+
+        false
+    }
+
+    /// Backtracking match that ensures array trail compatibility across all matched fields.
+    /// Uses push/pop on trails Vec to avoid allocations during recursion.
+    fn backtrack_match<'a>(
         &self,
         pattern_fields: &[(&String, &Vec<Matcher>)],
         field_idx: usize,
-        current_trails: &[&[ArrayPos]],
-        event_map: &HashMap<&str, Vec<&Field>>,
+        current_trails: &mut Vec<&'a [ArrayPos]>,
+        event_map: &HashMap<&str, Vec<&'a Field>>,
     ) -> bool {
         if field_idx >= pattern_fields.len() {
             return true; // All fields matched successfully
@@ -160,16 +196,17 @@ impl<X: Clone + Eq + Hash> Quamina<X> {
                         });
 
                         if compatible {
-                            // Add this field's trail and recurse
-                            let mut new_trails = current_trails.to_vec();
-                            new_trails.push(&event_field.array_trail);
-
-                            if self.backtrack_match(
+                            // Add this field's trail, recurse, then pop (avoids allocation)
+                            current_trails.push(&event_field.array_trail);
+                            let matched = self.backtrack_match(
                                 pattern_fields,
                                 field_idx + 1,
-                                &new_trails,
+                                current_trails,
                                 event_map,
-                            ) {
+                            );
+                            current_trails.pop();
+
+                            if matched {
                                 return true;
                             }
                         }
