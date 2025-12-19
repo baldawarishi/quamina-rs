@@ -134,15 +134,44 @@ Patterns are JSON objects where leaf values are arrays (OR semantics within arra
 - Array element matching (pattern matches any array element)
 - Unicode escape sequences (`\uXXXX`) in JSON
 
+## Architectural Comparison: Rust vs Go
+
+The Rust implementation takes a simpler, more direct approach while the Go version has a sophisticated automaton-based architecture.
+
+### Key Architectural Differences
+
+| Aspect | Go | Rust |
+|--------|----|----- |
+| Matching engine | NFA/DFA automaton-based | Simple HashMap lookups |
+| Pattern storage | Decorated automatons | HashMap<X, Vec<Pattern>> |
+| Dependencies | Multiple internal packages | Minimal (just regex crate) |
+
+### Go Features Not in Rust
+
+1. **Custom Flattener** - Go allows processing non-JSON formats; Rust is JSON-only
+2. **Copy API for Concurrency** - Go has sophisticated thread-safe snapshots with pruner-based pattern management
+
+### Rust-Only Feature
+
+**Suffix matching** (`{"suffix": "str"}`) - Rust supports this but Go doesn't.
+
+### Pattern Type Parity
+
+Both support: exact, numeric, prefix, wildcard, shellstyle, anything-but, equals-ignore-case, numeric comparisons (>, <, etc.), regex, exists, and nested objects.
+
+### Bottom Line
+
+Rust is a minimal viable implementation focused on core matching. Go is a production-ready library with correctness guarantees, pattern management, and performance optimizations. The array cross-element bug (below) is the most critical gap for correctness.
+
 ## Known Limitations
 
-**Array cross-element matching**: Our simple flattening approach doesn't preserve array element grouping. When matching patterns with multiple fields within arrays, the current implementation may match across different array elements (false positives). Go quamina correctly handles this by using automaton-based matching that tracks array indices.
+**Array cross-element matching** (correctness bug): Our simple flattening approach doesn't preserve array element grouping. When matching patterns with multiple fields within arrays, the current implementation may match across different array elements (false positives). Go quamina correctly handles this by using automaton-based matching that tracks array indices.
 
 Example:
 - Pattern: `{"members": {"given": ["Mick"], "surname": ["Strummer"]}}`
 - Event: `{"members": [{"given": "Joe", "surname": "Strummer"}, {"given": "Mick", "surname": "Jones"}]}`
 - Go quamina: No match (no single element has both)
-- Current Rust: Matches (limitation)
+- **Rust: Incorrectly matches** (limitation)
 
 ## Future Work
 
