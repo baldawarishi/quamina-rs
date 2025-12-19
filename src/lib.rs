@@ -716,6 +716,38 @@ mod tests {
     }
 
     #[test]
+    fn test_json_escape_sequences() {
+        // Test that JSON escape sequences in events are properly decoded
+        let mut q = Quamina::new();
+        q.add_pattern("p1", r#"{"msg": ["line1\nline2"]}"#).unwrap();
+
+        // Event with \n escape (literal newline)
+        let event = r#"{"msg": "line1\nline2"}"#;
+        let matches = q.matches_for_event(event.as_bytes()).unwrap();
+        assert_eq!(matches, vec!["p1"], "Should match \\n escape sequence");
+
+        // Test tab escape
+        let mut q2 = Quamina::new();
+        q2.add_pattern("p2", r#"{"x": ["a\tb"]}"#).unwrap();
+        let m2 = q2.matches_for_event(r#"{"x": "a\tb"}"#.as_bytes()).unwrap();
+        assert_eq!(m2, vec!["p2"], "Should match \\t escape sequence");
+
+        // Test backslash escape
+        let mut q3 = Quamina::new();
+        q3.add_pattern("p3", r#"{"x": ["a\\b"]}"#).unwrap();
+        let m3 = q3.matches_for_event(r#"{"x": "a\\b"}"#.as_bytes()).unwrap();
+        assert_eq!(m3, vec!["p3"], "Should match \\\\ escape sequence");
+
+        // Test quote escape
+        let mut q4 = Quamina::new();
+        q4.add_pattern("p4", r#"{"x": ["say \"hello\""]}"#).unwrap();
+        let m4 = q4
+            .matches_for_event(r#"{"x": "say \"hello\""}"#.as_bytes())
+            .unwrap();
+        assert_eq!(m4, vec!["p4"], "Should match \\\" escape sequence");
+    }
+
+    #[test]
     fn test_equals_ignore_case_multiple_patterns() {
         // Based on Go quamina's TestEqualsIgnoreCaseMatching
         // Multiple patterns with different case variations should both match
