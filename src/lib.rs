@@ -629,6 +629,32 @@ mod tests {
     }
 
     #[test]
+    fn test_anything_but_validation() {
+        // Empty anything-but array should be invalid (never matches)
+        let mut q = Quamina::new();
+        q.add_pattern("p1", r#"{"status": [{"anything-but": []}]}"#)
+            .unwrap();
+
+        // Empty array is invalid, pattern should never match
+        let no_match = q
+            .matches_for_event(r#"{"status": "anything"}"#.as_bytes())
+            .unwrap();
+        assert!(no_match.is_empty(), "Empty anything-but should never match");
+
+        // Non-string values in anything-but should be ignored
+        let mut q2 = Quamina::new();
+        q2.add_pattern("p2", r#"{"x": [{"anything-but": [1, true, null]}]}"#)
+            .unwrap();
+
+        // Pattern has no valid strings, so it's invalid
+        let no_match2 = q2.matches_for_event(r#"{"x": "foo"}"#.as_bytes()).unwrap();
+        assert!(
+            no_match2.is_empty(),
+            "Non-string anything-but should be invalid"
+        );
+    }
+
+    #[test]
     fn test_equals_ignore_case() {
         // Tests case-insensitive matching
         let mut q = Quamina::new();

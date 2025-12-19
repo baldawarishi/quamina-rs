@@ -124,7 +124,23 @@ fn value_to_matcher(value: &Value) -> Matcher {
                     }
                     "anything-but" => {
                         if let Value::Array(arr) = val {
-                            let excluded: Vec<String> = arr.iter().map(value_to_string).collect();
+                            // Reject empty array (matches Go behavior)
+                            if arr.is_empty() {
+                                // Return a matcher that never matches
+                                return Matcher::Exact(String::new());
+                            }
+                            // Only accept strings in anything-but array
+                            let excluded: Vec<String> = arr
+                                .iter()
+                                .filter_map(|v| match v {
+                                    Value::String(s) => Some(s.clone()),
+                                    _ => None,
+                                })
+                                .collect();
+                            // If no valid strings, treat as invalid
+                            if excluded.is_empty() {
+                                return Matcher::Exact(String::new());
+                            }
                             return Matcher::AnythingBut(excluded);
                         }
                     }
