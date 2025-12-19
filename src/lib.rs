@@ -124,6 +124,7 @@ impl<X: Clone + Eq + Hash> Quamina<X> {
                         lower_ok && upper_ok
                     })
                     .unwrap_or(false),
+                Matcher::Regex(re) => event_value.map(|v| re.is_match(v)).unwrap_or(false),
             });
 
             if !field_matches {
@@ -609,6 +610,25 @@ mod tests {
     #[test]
     fn test_regex_match() {
         let mut q = Quamina::new();
+        // Pattern code like ABC-123
+        q.add_pattern("p1", r#"{"code": [{"regex": "^[A-Z]{3}-[0-9]{3}$"}]}"#)
+            .unwrap();
+
+        let matches = q
+            .matches_for_event(r#"{"code": "ABC-123"}"#.as_bytes())
+            .unwrap();
+        assert_eq!(matches, vec!["p1"]);
+
+        let no_match = q
+            .matches_for_event(r#"{"code": "invalid"}"#.as_bytes())
+            .unwrap();
+        assert!(no_match.is_empty());
+    }
+
+    #[test]
+    fn test_regex_with_escape() {
+        let mut q = Quamina::new();
+        // Email pattern with escaped dot
         q.add_pattern("p1", r#"{"email": [{"regex": "^[a-z]+@example\\.com$"}]}"#)
             .unwrap();
 
@@ -618,8 +638,11 @@ mod tests {
         assert_eq!(matches, vec!["p1"]);
 
         let no_match = q
-            .matches_for_event(r#"{"email": "alice@other.com"}"#.as_bytes())
+            .matches_for_event(r#"{"email": "alice@exampleXcom"}"#.as_bytes())
             .unwrap();
-        assert!(no_match.is_empty());
+        assert!(
+            no_match.is_empty(),
+            "Dot should be escaped, not match any char"
+        );
     }
 }

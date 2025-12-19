@@ -4,7 +4,7 @@ use crate::QuaminaError;
 use std::collections::HashMap;
 
 /// A matcher for a pattern field value
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub enum Matcher {
     Exact(String),
     Exists(bool),
@@ -14,6 +14,7 @@ pub enum Matcher {
     AnythingBut(Vec<String>),
     EqualsIgnoreCase(String),
     Numeric(NumericComparison),
+    Regex(regex::Regex),
 }
 
 /// Numeric comparison operators
@@ -124,6 +125,13 @@ fn value_to_matcher(value: &Value) -> Matcher {
                         if let Value::Array(arr) = val {
                             if let Some(cmp) = parse_numeric_comparison(arr) {
                                 return Matcher::Numeric(cmp);
+                            }
+                        }
+                    }
+                    "regex" => {
+                        if let Value::String(s) = val {
+                            if let Ok(re) = regex::Regex::new(s) {
+                                return Matcher::Regex(re);
                             }
                         }
                     }
@@ -294,19 +302,33 @@ impl<'a> Parser<'a> {
 
     fn parse_string(&mut self) -> Result<String, QuaminaError> {
         self.expect('"')?;
-        let start = self.pos;
+        let mut result = String::new();
         while let Some(c) = self.peek() {
             if c == '"' {
                 break;
             }
             if c == '\\' {
                 self.advance();
-            } // skip escaped char
-            self.advance();
+                if let Some(escaped) = self.peek() {
+                    let unescaped = match escaped {
+                        'n' => '\n',
+                        'r' => '\r',
+                        't' => '\t',
+                        '\\' => '\\',
+                        '"' => '"',
+                        '/' => '/',
+                        _ => escaped, // For other escapes, just use the char
+                    };
+                    result.push(unescaped);
+                    self.advance();
+                }
+            } else {
+                result.push(c);
+                self.advance();
+            }
         }
-        let s = self.input[start..self.pos].to_string();
         self.expect('"')?;
-        Ok(s)
+        Ok(result)
     }
 
     fn parse_number(&mut self) -> Result<Value, QuaminaError> {
