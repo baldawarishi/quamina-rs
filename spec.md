@@ -16,11 +16,12 @@ quamina-rs provides the same core functionality as the Go version:
 
 ## Current Status
 
-✅ **All core pattern operators implemented** (43 tests passing)
+✅ **All core pattern operators implemented** (46 tests passing)
 
 | Feature | Status |
 |---------|--------|
 | Exact match | ✅ |
+| Numeric exact match (35 = 35.0 = 3.5e1) | ✅ |
 | Multiple values (OR) | ✅ |
 | Multiple fields (AND) | ✅ |
 | Exists | ✅ |
@@ -28,7 +29,7 @@ quamina-rs provides the same core functionality as the Go version:
 | Suffix | ✅ |
 | Wildcard (with escaping) | ✅ |
 | Shellstyle (simple wildcard) | ✅ |
-| Anything-but | ✅ |
+| Anything-but (with validation) | ✅ |
 | Equals-ignore-case | ✅ |
 | Numeric comparisons | ✅ |
 | Regex | ✅ |
