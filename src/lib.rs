@@ -828,16 +828,24 @@ mod tests {
         let m1 = q.matches_for_event(r#"{"value": 350}"#.as_bytes()).unwrap();
         assert_eq!(m1, vec!["p1"], "Integer 350 should match");
 
-        let m2 = q.matches_for_event(r#"{"value": 350.0}"#.as_bytes()).unwrap();
+        let m2 = q
+            .matches_for_event(r#"{"value": 350.0}"#.as_bytes())
+            .unwrap();
         assert_eq!(m2, vec!["p1"], "Float 350.0 should match");
 
-        let m3 = q.matches_for_event(r#"{"value": 3.5e2}"#.as_bytes()).unwrap();
+        let m3 = q
+            .matches_for_event(r#"{"value": 3.5e2}"#.as_bytes())
+            .unwrap();
         assert_eq!(m3, vec!["p1"], "Scientific 3.5e2 should match");
 
-        let m4 = q.matches_for_event(r#"{"value": 3.5E2}"#.as_bytes()).unwrap();
+        let m4 = q
+            .matches_for_event(r#"{"value": 3.5E2}"#.as_bytes())
+            .unwrap();
         assert_eq!(m4, vec!["p1"], "Scientific 3.5E2 should match");
 
-        let m5 = q.matches_for_event(r#"{"value": 35e1}"#.as_bytes()).unwrap();
+        let m5 = q
+            .matches_for_event(r#"{"value": 35e1}"#.as_bytes())
+            .unwrap();
         assert_eq!(m5, vec!["p1"], "Scientific 35e1 should match");
     }
 
