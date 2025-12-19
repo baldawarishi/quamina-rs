@@ -126,14 +126,14 @@ fn value_to_matcher(value: &Value) -> Result<Matcher, QuaminaError> {
                     }
                     "wildcard" => {
                         if let Value::String(s) = val {
-                            if s.contains("**") {
-                                return Err(QuaminaError::InvalidPattern(
-                                    "wildcard pattern cannot contain '**'".into(),
-                                ));
-                            }
+                            // validate_wildcard checks for:
+                            // - adjacent ** (unescaped wildcards)
+                            // - invalid escape sequences (only \* and \\ are valid)
+                            // - trailing backslash
                             if !validate_wildcard(s) {
                                 return Err(QuaminaError::InvalidPattern(
-                                    "wildcard pattern has invalid escape sequence".into(),
+                                    "wildcard pattern has invalid escape sequence or adjacent '**'"
+                                        .into(),
                                 ));
                             }
                             return Ok(Matcher::Wildcard(s.clone()));

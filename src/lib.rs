@@ -2327,4 +2327,206 @@ mod tests {
             "All should_match patterns should match when combined"
         );
     }
+
+    #[test]
+    fn test_wildcard_comprehensive() {
+        // Based on Go quamina's exercisePattern tests from wildcard_test.go
+        // Tests wildcard patterns (which support escaping, unlike shellstyle)
+
+        // Helper to run wildcard pattern tests
+        fn exercise_wildcard(pattern: &str, should_match: &[&str], should_not_match: &[&str]) {
+            let mut q = Quamina::new();
+            let full_pattern = format!(r#"{{"x": [{{"wildcard": "{}"}}]}}"#, pattern);
+            q.add_pattern(pattern, &full_pattern)
+                .expect(&format!("Pattern should be valid: {}", pattern));
+
+            for text in should_match {
+                let event = format!(r#"{{"x": "{}"}}"#, text);
+                let matches = q.matches_for_event(event.as_bytes()).unwrap();
+                assert!(
+                    matches.contains(&pattern),
+                    "Pattern '{}' should match '{}', got {:?}",
+                    pattern,
+                    text,
+                    matches
+                );
+            }
+
+            for text in should_not_match {
+                let event = format!(r#"{{"x": "{}"}}"#, text);
+                let matches = q.matches_for_event(event.as_bytes()).unwrap();
+                assert!(
+                    !matches.contains(&pattern),
+                    "Pattern '{}' should NOT match '{}'",
+                    pattern,
+                    text
+                );
+            }
+        }
+
+        // Test * (matches everything)
+        exercise_wildcard("*", &["", "*", "h", "hello"], &[]);
+
+        // Test *hello (suffix matching)
+        exercise_wildcard(
+            "*hello",
+            &["hello", "hhello", "xxxhello", "*hello"],
+            &["", "ello", "hellx", "xhellx"],
+        );
+
+        // Test h*llo (infix matching)
+        exercise_wildcard(
+            "h*llo",
+            &["hllo", "hello", "hxxxllo"],
+            &["", "hlo", "hll", "hellol"],
+        );
+
+        // Test hel*o
+        exercise_wildcard(
+            "hel*o",
+            &["helo", "hello", "helxxxo"],
+            &["", "hell", "helox", "hellox"],
+        );
+
+        // Test hello* (prefix matching)
+        exercise_wildcard(
+            "hello*",
+            &["hello", "hellox", "hellooo", "hello*"],
+            &["", "hell", "hellx", "hellxo"],
+        );
+
+        // Test h*l*o (multiple wildcards)
+        exercise_wildcard(
+            "h*l*o",
+            &["hlo", "helo", "hllo", "hloo", "hello", "hxxxlxxxo", "h*l*o"],
+            &["", "ho", "heeo", "helx", "llo"],
+        );
+
+        // Test he*l*
+        exercise_wildcard(
+            "he*l*",
+            &["hel", "hexl", "helx", "helxx", "helxl", "helxlx", "helxxl"],
+            &["", "he", "hex", "hexxx"],
+        );
+
+        // Test *l* (contains l)
+        exercise_wildcard(
+            "*l*",
+            &["l", "xl", "lx", "xlx", "xxl", "lxx", "xxlxx", "xlxlxlxlxl"],
+            &["", "x", "xx", "xtx"],
+        );
+    }
+
+    #[test]
+    fn test_wildcard_escape_sequences_comprehensive() {
+        // Based on Go quamina's exercisePattern tests for escaping
+
+        fn exercise_wildcard(pattern: &str, should_match: &[&str], should_not_match: &[&str]) {
+            let mut q = Quamina::new();
+            let full_pattern = format!(r#"{{"x": [{{"wildcard": "{}"}}]}}"#, pattern);
+            q.add_pattern(pattern, &full_pattern)
+                .expect(&format!("Pattern should be valid: {}", pattern));
+
+            for text in should_match {
+                let event = format!(r#"{{"x": "{}"}}"#, text);
+                let matches = q.matches_for_event(event.as_bytes()).unwrap();
+                assert!(
+                    matches.contains(&pattern),
+                    "Pattern '{}' should match '{}', got {:?}",
+                    pattern,
+                    text,
+                    matches
+                );
+            }
+
+            for text in should_not_match {
+                let event = format!(r#"{{"x": "{}"}}"#, text);
+                let matches = q.matches_for_event(event.as_bytes()).unwrap();
+                assert!(
+                    !matches.contains(&pattern),
+                    "Pattern '{}' should NOT match '{}'",
+                    pattern,
+                    text
+                );
+            }
+        }
+
+        // Test hel\*o (escaped star = literal *)
+        // Pattern: "hel\\\\*o" -> JSON "hel\\*o" -> parsed: hel\*o
+        // In wildcard: hel + \* (escaped star = literal *) + o = matches "hel*o" exactly
+        // Note: event "hel*o" doesn't need escaping as * is not a JSON escape char
+        exercise_wildcard("hel\\\\*o", &["hel*o"], &["helo", "hello"]);
+
+        // Test he\**o - \* is literal *, then * is wildcard
+        // Pattern: "he\\\\**o" -> JSON "he\\**o" -> parsed: he\**o
+        // In wildcard: he + \* (literal *) + * (wildcard) + o
+        // Matches: he*o, he*llo, he*hello (the * between he and o is literal, then wildcard *o)
+        exercise_wildcard(
+            "he\\\\**o",
+            &["he*o", "he*llo", "he*hello"],
+            &["heo", "helo"],
+        );
+
+        // Test he\\llo - matches "he\llo" (escaped backslash in pattern = literal \)
+        // Pattern: "he\\\\\\\\llo" -> JSON "he\\\\llo" -> parsed: he\\llo
+        // In wildcard: he + \\ (escaped backslash = literal \) + llo = matches "he\llo"
+        // Event also needs JSON escaping: "he\\\\llo" -> JSON "he\\llo" -> parsed: "he\llo"
+        exercise_wildcard("he\\\\\\\\llo", &["he\\\\llo"], &["hello"]);
+    }
+
+    #[test]
+    fn test_wildcard_invalid_escape_sequences() {
+        // Based on Go quamina's TestWildcardInvalidEscape
+        let mut q = Quamina::new();
+
+        // Valid pattern from Go: he*\\**
+        // Go raw string `he*\\**` -> JSON string "he*\\**" -> after JSON parsing: he*\**
+        // In wildcard pattern: he, *, \*, * = he + wildcard + escaped_star + wildcard
+        // This is valid because \* is an escaped star (literal *), not adjacent **
+        // In Rust raw string, we write the exact JSON content:
+        let valid_result = q.add_pattern("valid", r#"{"x": [{"wildcard": "he*\\**"}]}"#);
+        assert!(
+            valid_result.is_ok(),
+            "he*\\** should be valid: {:?}",
+            valid_result
+        );
+
+        // Invalid patterns
+        let invalid_patterns = [
+            (r#"{"x": [{"wildcard": "he\\llo"}]}"#, "invalid escape \\l"),
+            (r#"{"x": [{"wildcard": "foo**bar"}]}"#, "adjacent **"),
+            (r#"{"x": [{"wildcard": "**f"}]}"#, "leading **"),
+            (r#"{"x": [{"wildcard": "x**"}]}"#, "trailing **"),
+            (r#"{"x": [{"wildcard": "x\\"}]}"#, "trailing backslash"),
+        ];
+
+        for (pattern, desc) in invalid_patterns {
+            let mut q2 = Quamina::new();
+            let result = q2.add_pattern("p", pattern);
+            assert!(result.is_err(), "{} should be rejected: {}", desc, pattern);
+        }
+    }
+
+    #[test]
+    fn test_wildcard_syntax_errors() {
+        // Based on Go quamina's TestWildcardSyntax
+        let invalid_patterns = [
+            r#"{"x": [{"wildcard": . }]}"#,    // dot instead of string
+            r#"{"x": [{"wildcard": 3}]}"#,     // number instead of string
+            r#"{"x": [{"wildcard": "x" ]}"#,   // missing closing brace
+            r#"{"x": [{"wildcard": true}]}"#,  // boolean instead of string
+            r#"{"x": [{"wildcard": null}]}"#,  // null instead of string
+            r#"{"x": [{"wildcard": ["a"]}]}"#, // array instead of string
+        ];
+
+        for pattern in invalid_patterns {
+            let mut q = Quamina::new();
+            let result = q.add_pattern("p", pattern);
+            assert!(
+                result.is_err(),
+                "Should reject invalid pattern: {}",
+                pattern
+            );
+        }
+    }
 }
