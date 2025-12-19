@@ -169,7 +169,7 @@ impl<X: Clone + Eq + Hash> Quamina<X> {
             .map(|(k, v)| (k.as_str(), v.as_str()))
             .collect();
 
-        for (_id, patterns) in &self.patterns {
+        for patterns in self.patterns.values() {
             for pattern in patterns {
                 if self.pattern_matches(&pattern.fields, &event_map) {
                     return Ok(true);
