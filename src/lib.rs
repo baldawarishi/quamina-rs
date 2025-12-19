@@ -109,7 +109,7 @@ impl<X: Clone + Eq + Hash> Quamina<X> {
             // For array fields, any event value matching any matcher counts
             let field_matches = matchers.iter().any(|matcher| match matcher {
                 Matcher::Exact(expected) => event_values
-                    .map(|vals| vals.iter().any(|v| *v == expected.as_str()))
+                    .map(|vals| vals.contains(&expected.as_str()))
                     .unwrap_or(false),
                 Matcher::Exists(should_exist) => {
                     if *should_exist {
