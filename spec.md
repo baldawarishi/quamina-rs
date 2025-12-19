@@ -16,7 +16,7 @@ quamina-rs provides the same core functionality as the Go version:
 
 ## Current Status
 
-✅ **All core pattern operators implemented** (46 tests passing)
+✅ **All core pattern operators implemented** (47 tests passing)
 
 | Feature | Status |
 |---------|--------|
@@ -134,6 +134,16 @@ Patterns are JSON objects where leaf values are arrays (OR semantics within arra
 - Array element matching (pattern matches any array element)
 - Unicode escape sequences (`\uXXXX`) in JSON
 
+## Known Limitations
+
+**Array cross-element matching**: Our simple flattening approach doesn't preserve array element grouping. When matching patterns with multiple fields within arrays, the current implementation may match across different array elements (false positives). Go quamina correctly handles this by using automaton-based matching that tracks array indices.
+
+Example:
+- Pattern: `{"members": {"given": ["Mick"], "surname": ["Strummer"]}}`
+- Event: `{"members": [{"given": "Joe", "surname": "Strummer"}, {"given": "Mick", "surname": "Jones"}]}`
+- Go quamina: No match (no single element has both)
+- Current Rust: Matches (limitation)
+
 ## Future Work
 
 ### ✅ Phase 3: Thread Safety
@@ -142,7 +152,7 @@ Patterns are JSON objects where leaf values are arrays (OR semantics within arra
 
 ### Phase 4: Optimization (in progress)
 - ✅ Performance benchmarks (criterion)
-- Automaton-based matching (like Go version)
+- Automaton-based matching (like Go version) - would also fix array cross-element limitation
 - Memory optimization
 
 ### Phase 5: Future Enhancements (not yet started)
