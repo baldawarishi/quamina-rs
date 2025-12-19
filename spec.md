@@ -174,7 +174,10 @@ Rust is now a correct implementation with full pattern operator parity to Go. Th
 ### Phase 4: Optimization (in progress)
 - ✅ Performance benchmarks (criterion)
 - ✅ Array cross-element correctness (via ArrayTrail, independent of automaton)
+- ✅ Single-field pattern fast path (skip backtracking for common case)
+- ✅ Push/pop optimization for trail tracking (avoid allocations)
 - Automaton-based matching (like Go version) - for performance with many patterns
+- Field-path indexing - for filtering candidate patterns
 - Memory optimization
 
 ### Phase 5: Future Enhancements (not yet started)
