@@ -33,6 +33,13 @@ pub fn flatten_event(json: &[u8]) -> Result<Vec<(String, String)>, QuaminaError>
     let mut parser = Parser::new(s);
     let value = parser.parse_value()?;
 
+    // Event must be a JSON object at top level
+    if !matches!(value, Value::Object(_)) {
+        return Err(QuaminaError::InvalidJson(
+            "event must be a JSON object".into(),
+        ));
+    }
+
     let mut result = Vec::new();
     flatten_value(&value, String::new(), &mut result);
     Ok(result)

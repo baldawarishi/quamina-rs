@@ -716,6 +716,54 @@ mod tests {
     }
 
     #[test]
+    fn test_invalid_json_events() {
+        // Based on Go quamina's TestFJErrorCases
+        // Test that various malformed JSON events return errors
+        let mut q = Quamina::new();
+        q.add_pattern("p1", r#"{"a": [1]}"#).unwrap();
+
+        // Truncated JSON
+        assert!(
+            q.matches_for_event(r#"{"a"#.as_bytes()).is_err(),
+            "Truncated JSON should error"
+        );
+        assert!(
+            q.matches_for_event(r#"{"a": "#.as_bytes()).is_err(),
+            "Truncated value should error"
+        );
+        assert!(
+            q.matches_for_event(r#"{"a": ["#.as_bytes()).is_err(),
+            "Truncated array should error"
+        );
+
+        // Empty input
+        assert!(
+            q.matches_for_event(r#""#.as_bytes()).is_err(),
+            "Empty input should error"
+        );
+
+        // Non-object at top level
+        assert!(
+            q.matches_for_event(r#""string""#.as_bytes()).is_err(),
+            "String at top level should error"
+        );
+        assert!(
+            q.matches_for_event(r#"[1, 2]"#.as_bytes()).is_err(),
+            "Array at top level should error"
+        );
+        assert!(
+            q.matches_for_event(r#"123"#.as_bytes()).is_err(),
+            "Number at top level should error"
+        );
+
+        // Malformed JSON
+        assert!(
+            q.matches_for_event(r#"{ "a" : }"#.as_bytes()).is_err(),
+            "Missing value should error"
+        );
+    }
+
+    #[test]
     fn test_json_escape_sequences() {
         // Test that JSON escape sequences in events are properly decoded
         let mut q = Quamina::new();
