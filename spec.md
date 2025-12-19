@@ -16,7 +16,7 @@ quamina-rs provides the same core functionality as the Go version:
 
 ## Current Status
 
-✅ **All core pattern operators implemented** (72 tests passing)
+✅ **All core pattern operators implemented** (76 tests passing)
 
 | Feature | Status |
 |---------|--------|
