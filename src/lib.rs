@@ -786,4 +786,27 @@ mod tests {
         assert!(q.is_empty());
         assert_eq!(q.pattern_count(), 0);
     }
+
+    #[test]
+    fn test_unicode_escape_in_event() {
+        // \u0048\u0065\u006c\u006c\u006f = "Hello"
+        let mut q = Quamina::new();
+        q.add_pattern("p1", r#"{"greeting": ["Hello"]}"#).unwrap();
+
+        // Event with unicode escapes
+        let event = r#"{"greeting": "\u0048\u0065\u006c\u006c\u006f"}"#;
+        let matches = q.matches_for_event(event.as_bytes()).unwrap();
+        assert_eq!(matches, vec!["p1"], "Unicode escape should decode to 'Hello'");
+    }
+
+    #[test]
+    fn test_unicode_escape_emoji() {
+        // Test UTF-16 surrogate pair for emoji 💋 (U+1F48B = D83D DC8B)
+        let mut q = Quamina::new();
+        q.add_pattern("p1", r#"{"emoji": ["💋"]}"#).unwrap();
+
+        let event = r#"{"emoji": "\ud83d\udc8b"}"#;
+        let matches = q.matches_for_event(event.as_bytes()).unwrap();
+        assert_eq!(matches, vec!["p1"], "UTF-16 surrogate pair should decode to emoji");
+    }
 }
