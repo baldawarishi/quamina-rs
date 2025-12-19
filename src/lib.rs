@@ -817,4 +817,20 @@ mod tests {
             "UTF-16 surrogate pair should decode to emoji"
         );
     }
+
+    #[test]
+    fn test_array_element_matching() {
+        // Pattern should match if value is ANY element of the array
+        let mut q = Quamina::new();
+        q.add_pattern("p1", r#"{"ids": [943]}"#).unwrap();
+
+        // Event has array - should match if 943 is in the array
+        let event = r#"{"ids": [116, 943, 234]}"#;
+        let matches = q.matches_for_event(event.as_bytes()).unwrap();
+        assert_eq!(
+            matches,
+            vec!["p1"],
+            "Should match when pattern value is in event array"
+        );
+    }
 }
