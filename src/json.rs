@@ -3,6 +3,23 @@
 use crate::QuaminaError;
 use std::collections::HashMap;
 
+/// Represents a field's position within an array in the event.
+/// Array is a unique identifier for each array in the event.
+/// Pos is the field's index within that array.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ArrayPos {
+    pub array: u32,
+    pub pos: u32,
+}
+
+/// A flattened field from a JSON event, including array position tracking.
+#[derive(Clone, Debug)]
+pub struct Field {
+    pub path: String,
+    pub value: String,
+    pub array_trail: Vec<ArrayPos>,
+}
+
 /// A matcher for a pattern field value
 #[derive(Debug, Clone)]
 pub enum Matcher {
@@ -26,9 +43,48 @@ pub struct NumericComparison {
     pub upper: Option<(bool, f64)>, // (inclusive, value)
 }
 
-/// Flatten a JSON event into path/value pairs
-/// e.g., {"a": {"b": 1}} -> [("a.b", "1")]
-pub fn flatten_event(json: &[u8]) -> Result<Vec<(String, String)>, QuaminaError> {
+/// Context for tracking array positions during flattening
+struct FlattenContext {
+    array_count: u32,
+    array_trail: Vec<ArrayPos>,
+}
+
+impl FlattenContext {
+    fn new() -> Self {
+        Self {
+            array_count: 0,
+            array_trail: Vec::new(),
+        }
+    }
+
+    fn push_array(&mut self) -> u32 {
+        let array_id = self.array_count;
+        self.array_count += 1;
+        self.array_trail.push(ArrayPos {
+            array: array_id,
+            pos: 0,
+        });
+        array_id
+    }
+
+    fn pop_array(&mut self) {
+        self.array_trail.pop();
+    }
+
+    fn step_array(&mut self) {
+        if let Some(last) = self.array_trail.last_mut() {
+            last.pos += 1;
+        }
+    }
+
+    fn current_trail(&self) -> Vec<ArrayPos> {
+        self.array_trail.clone()
+    }
+}
+
+/// Flatten a JSON event into fields with array position tracking.
+/// e.g., {"a": {"b": 1}} -> [Field { path: "a.b", value: "1", array_trail: [] }]
+pub fn flatten_event(json: &[u8]) -> Result<Vec<Field>, QuaminaError> {
     let s = std::str::from_utf8(json).map_err(|_| QuaminaError::InvalidUtf8)?;
     let mut parser = Parser::new(s);
     let value = parser.parse_value()?;
@@ -41,7 +97,8 @@ pub fn flatten_event(json: &[u8]) -> Result<Vec<(String, String)>, QuaminaError>
     }
 
     let mut result = Vec::new();
-    flatten_value(&value, String::new(), &mut result);
+    let mut ctx = FlattenContext::new();
+    flatten_value_with_trail(&value, String::new(), &mut result, &mut ctx);
     Ok(result)
 }
 
@@ -282,7 +339,55 @@ fn parse_numeric_comparison(arr: &[Value]) -> Option<NumericComparison> {
     Some(NumericComparison { lower, upper })
 }
 
-fn flatten_value(value: &Value, path: String, result: &mut Vec<(String, String)>) {
+fn flatten_value_with_trail(
+    value: &Value,
+    path: String,
+    result: &mut Vec<Field>,
+    ctx: &mut FlattenContext,
+) {
+    match value {
+        Value::Object(obj) => {
+            // Snapshot the trail for this object's fields
+            let trail_snapshot = ctx.current_trail();
+            for (key, val) in obj {
+                let new_path = if path.is_empty() {
+                    key.clone()
+                } else {
+                    format!("{}.{}", path, key)
+                };
+                // For non-array children, pass context through
+                // The snapshot is used when we add leaf fields
+                flatten_value_with_trail_inner(val, new_path, result, ctx, &trail_snapshot);
+            }
+        }
+        Value::Array(arr) => {
+            // Enter the array: push new array position
+            ctx.push_array();
+            for (i, val) in arr.iter().enumerate() {
+                if i > 0 {
+                    ctx.step_array();
+                }
+                flatten_value_with_trail(val, path.clone(), result, ctx);
+            }
+            ctx.pop_array();
+        }
+        _ => {
+            result.push(Field {
+                path,
+                value: value_to_string(value),
+                array_trail: ctx.current_trail(),
+            });
+        }
+    }
+}
+
+fn flatten_value_with_trail_inner(
+    value: &Value,
+    path: String,
+    result: &mut Vec<Field>,
+    ctx: &mut FlattenContext,
+    object_trail: &[ArrayPos],
+) {
     match value {
         Value::Object(obj) => {
             for (key, val) in obj {
@@ -291,17 +396,28 @@ fn flatten_value(value: &Value, path: String, result: &mut Vec<(String, String)>
                 } else {
                     format!("{}.{}", path, key)
                 };
-                flatten_value(val, new_path, result);
+                flatten_value_with_trail_inner(val, new_path, result, ctx, object_trail);
             }
         }
         Value::Array(arr) => {
-            // For array elements, use the same path (no index)
-            // This allows pattern {"ids": [943]} to match event {"ids": [116, 943, 234]}
-            for val in arr {
-                flatten_value(val, path.clone(), result);
+            // Enter the array: push new array position
+            ctx.push_array();
+            for (i, val) in arr.iter().enumerate() {
+                if i > 0 {
+                    ctx.step_array();
+                }
+                flatten_value_with_trail(val, path.clone(), result, ctx);
             }
+            ctx.pop_array();
         }
-        _ => result.push((path, value_to_string(value))),
+        _ => {
+            // For fields directly in objects, use the object's trail snapshot
+            result.push(Field {
+                path,
+                value: value_to_string(value),
+                array_trail: object_trail.to_vec(),
+            });
+        }
     }
 }
 

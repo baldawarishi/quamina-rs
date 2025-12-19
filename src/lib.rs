@@ -2,7 +2,7 @@
 
 mod json;
 
-use json::Matcher;
+use json::{ArrayPos, Field, Matcher};
 use std::collections::HashMap;
 use std::fmt;
 use std::hash::Hash;
@@ -78,10 +78,13 @@ impl<X: Clone + Eq + Hash> Quamina<X> {
     /// Find all patterns that match the given event
     pub fn matches_for_event(&self, event: &[u8]) -> Result<Vec<X>, QuaminaError> {
         let event_fields = json::flatten_event(event)?;
-        // Build multimap: field -> Vec<values> to support array element matching
-        let mut event_map: HashMap<&str, Vec<&str>> = HashMap::new();
-        for (k, v) in &event_fields {
-            event_map.entry(k.as_str()).or_default().push(v.as_str());
+        // Build multimap: field path -> Vec<Field> to support array element matching with trails
+        let mut event_map: HashMap<&str, Vec<&Field>> = HashMap::new();
+        for field in &event_fields {
+            event_map
+                .entry(field.path.as_str())
+                .or_default()
+                .push(field);
         }
 
         let mut matches = Vec::new();
@@ -99,81 +102,117 @@ impl<X: Clone + Eq + Hash> Quamina<X> {
     fn pattern_matches(
         &self,
         pattern_fields: &HashMap<String, Vec<Matcher>>,
-        event_map: &HashMap<&str, Vec<&str>>,
+        event_map: &HashMap<&str, Vec<&Field>>,
     ) -> bool {
-        // All pattern fields must match (AND across fields)
-        for (field, matchers) in pattern_fields {
-            let event_values = event_map.get(field.as_str());
+        // Collect pattern fields into a vector for ordered processing
+        let pattern_field_list: Vec<_> = pattern_fields.iter().collect();
 
-            // Any matcher can match (OR within field)
-            // For array fields, any event value matching any matcher counts
-            let field_matches = matchers.iter().any(|matcher| match matcher {
-                Matcher::Exact(expected) => event_values
-                    .map(|vals| vals.contains(&expected.as_str()))
-                    .unwrap_or(false),
-                Matcher::NumericExact(expected) => event_values
-                    .map(|vals| {
-                        vals.iter()
-                            .any(|v| v.parse::<f64>().ok().is_some_and(|num| num == *expected))
-                    })
-                    .unwrap_or(false),
-                Matcher::Exists(should_exist) => {
-                    if *should_exist {
-                        event_values.map(|v| !v.is_empty()).unwrap_or(false)
-                    } else {
-                        event_values.map(|v| v.is_empty()).unwrap_or(true)
+        if pattern_field_list.is_empty() {
+            return true;
+        }
+
+        // Use backtracking to find a consistent assignment of event field values
+        // that satisfies all pattern fields with compatible array trails
+        self.backtrack_match(&pattern_field_list, 0, &[], event_map)
+    }
+
+    /// Backtracking match that ensures array trail compatibility across all matched fields
+    fn backtrack_match(
+        &self,
+        pattern_fields: &[(&String, &Vec<Matcher>)],
+        field_idx: usize,
+        current_trails: &[&[ArrayPos]],
+        event_map: &HashMap<&str, Vec<&Field>>,
+    ) -> bool {
+        if field_idx >= pattern_fields.len() {
+            return true; // All fields matched successfully
+        }
+
+        let (field_path, matchers) = pattern_fields[field_idx];
+        let event_fields = event_map.get(field_path.as_str());
+
+        // Try each matcher (OR semantics within a field)
+        for matcher in matchers.iter() {
+            // Handle exists patterns specially - they don't require specific field values
+            if let Matcher::Exists(should_exist) = matcher {
+                let exists = event_fields.map(|v| !v.is_empty()).unwrap_or(false);
+                if exists == *should_exist {
+                    // exists:true/false doesn't constrain array trails, just recurse
+                    if self.backtrack_match(
+                        pattern_fields,
+                        field_idx + 1,
+                        current_trails,
+                        event_map,
+                    ) {
+                        return true;
                     }
                 }
-                Matcher::Prefix(prefix) => event_values
-                    .map(|vals| vals.iter().any(|v| v.starts_with(prefix)))
-                    .unwrap_or(false),
-                Matcher::Suffix(suffix) => event_values
-                    .map(|vals| vals.iter().any(|v| v.ends_with(suffix)))
-                    .unwrap_or(false),
-                Matcher::Wildcard(pattern) => event_values
-                    .map(|vals| vals.iter().any(|v| wildcard_match(pattern, v)))
-                    .unwrap_or(false),
-                Matcher::Shellstyle(pattern) => event_values
-                    .map(|vals| vals.iter().any(|v| shellstyle_match(pattern, v)))
-                    .unwrap_or(false),
-                Matcher::AnythingBut(excluded) => event_values
-                    .map(|vals| vals.iter().any(|v| !excluded.iter().any(|e| e == *v)))
-                    .unwrap_or(false),
-                Matcher::EqualsIgnoreCase(expected) => event_values
-                    .map(|vals| {
-                        vals.iter()
-                            .any(|v| v.to_lowercase() == expected.to_lowercase())
-                    })
-                    .unwrap_or(false),
-                Matcher::Numeric(cmp) => event_values
-                    .map(|vals| {
-                        vals.iter().any(|v| {
-                            v.parse::<f64>().ok().is_some_and(|num| {
-                                let lower_ok = match cmp.lower {
-                                    Some((true, bound)) => num >= bound,
-                                    Some((false, bound)) => num > bound,
-                                    None => true,
-                                };
-                                let upper_ok = match cmp.upper {
-                                    Some((true, bound)) => num <= bound,
-                                    Some((false, bound)) => num < bound,
-                                    None => true,
-                                };
-                                lower_ok && upper_ok
-                            })
-                        })
-                    })
-                    .unwrap_or(false),
-                Matcher::Regex(re) => event_values
-                    .map(|vals| vals.iter().any(|v| re.is_match(v)))
-                    .unwrap_or(false),
-            });
+                continue;
+            }
 
-            if !field_matches {
-                return false;
+            // For other matchers, find all matching event values
+            if let Some(fields) = event_fields {
+                for event_field in fields.iter() {
+                    if self.value_matches(matcher, &event_field.value) {
+                        // Check array trail compatibility with already-matched fields
+                        let compatible = current_trails.iter().all(|prev_trail| {
+                            no_array_trail_conflict(prev_trail, &event_field.array_trail)
+                        });
+
+                        if compatible {
+                            // Add this field's trail and recurse
+                            let mut new_trails = current_trails.to_vec();
+                            new_trails.push(&event_field.array_trail);
+
+                            if self.backtrack_match(
+                                pattern_fields,
+                                field_idx + 1,
+                                &new_trails,
+                                event_map,
+                            ) {
+                                return true;
+                            }
+                        }
+                    }
+                }
             }
         }
-        true
+
+        false
+    }
+
+    /// Check if a single value matches a matcher
+    fn value_matches(&self, matcher: &Matcher, value: &str) -> bool {
+        match matcher {
+            Matcher::Exact(expected) => value == expected,
+            Matcher::NumericExact(expected) => value
+                .parse::<f64>()
+                .ok()
+                .is_some_and(|num| num == *expected),
+            Matcher::Exists(_) => true, // Handled separately in backtrack_match
+            Matcher::Prefix(prefix) => value.starts_with(prefix),
+            Matcher::Suffix(suffix) => value.ends_with(suffix),
+            Matcher::Wildcard(pattern) => wildcard_match(pattern, value),
+            Matcher::Shellstyle(pattern) => shellstyle_match(pattern, value),
+            Matcher::AnythingBut(excluded) => !excluded.iter().any(|e| e == value),
+            Matcher::EqualsIgnoreCase(expected) => {
+                value.to_lowercase() == expected.to_lowercase()
+            }
+            Matcher::Numeric(cmp) => value.parse::<f64>().ok().is_some_and(|num| {
+                let lower_ok = match cmp.lower {
+                    Some((true, bound)) => num >= bound,
+                    Some((false, bound)) => num > bound,
+                    None => true,
+                };
+                let upper_ok = match cmp.upper {
+                    Some((true, bound)) => num <= bound,
+                    Some((false, bound)) => num < bound,
+                    None => true,
+                };
+                lower_ok && upper_ok
+            }),
+            Matcher::Regex(re) => re.is_match(value),
+        }
     }
 
     /// Delete all patterns with the given identifier
@@ -185,9 +224,12 @@ impl<X: Clone + Eq + Hash> Quamina<X> {
     /// Check if any pattern matches the event (returns early on first match)
     pub fn has_matches(&self, event: &[u8]) -> Result<bool, QuaminaError> {
         let event_fields = json::flatten_event(event)?;
-        let mut event_map: HashMap<&str, Vec<&str>> = HashMap::new();
-        for (k, v) in &event_fields {
-            event_map.entry(k.as_str()).or_default().push(v.as_str());
+        let mut event_map: HashMap<&str, Vec<&Field>> = HashMap::new();
+        for field in &event_fields {
+            event_map
+                .entry(field.path.as_str())
+                .or_default()
+                .push(field);
         }
 
         for patterns in self.patterns.values() {
@@ -225,6 +267,20 @@ impl<X: Clone + Eq + Hash> Default for Quamina<X> {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// Check if two array trails are compatible (no conflict).
+/// Two trails conflict if they reference different positions in the same array.
+/// This prevents matching across different elements of the same array.
+fn no_array_trail_conflict(from: &[ArrayPos], to: &[ArrayPos]) -> bool {
+    for from_pos in from {
+        for to_pos in to {
+            if from_pos.array == to_pos.array && from_pos.pos != to_pos.pos {
+                return false;
+            }
+        }
+    }
+    true
 }
 
 /// Shellstyle matching: simple wildcard where * matches any sequence (no escaping)
@@ -1607,15 +1663,13 @@ mod tests {
 
     #[test]
     fn test_array_cross_element_matching() {
-        // IMPORTANT: This tests cross-element array matching behavior
+        // Test cross-element array matching behavior (matches Go quamina behavior)
         // Pattern {"members": {"given": ["Mick"], "surname": ["Strummer"]}}
         // Event: members=[{given: "Joe", surname: "Strummer"}, {given: "Mick", surname: "Jones"}]
         //
-        // Go quamina: would NOT match (no single element has both given=Mick AND surname=Strummer)
-        // Our current impl: DOES match (flattening loses element grouping)
-        //
-        // This is a known limitation of our simple flattening approach.
-        // Fixing this would require tracking array indices during flattening.
+        // Should NOT match because no single array element has both given=Mick AND surname=Strummer
+        // - Element 0 has given="Joe", surname="Strummer"
+        // - Element 1 has given="Mick", surname="Jones"
 
         let mut q = Quamina::new();
         q.add_pattern(
@@ -1630,21 +1684,22 @@ mod tests {
         ]}"#;
 
         let matches = q.matches_for_event(event.as_bytes()).unwrap();
-        // Current behavior: matches (incorrectly compared to Go)
-        // This documents the limitation
+        // Should NOT match - cross-element matching is correctly prevented
         assert!(
-            !matches.is_empty(),
-            "Current impl matches cross-element (limitation)"
+            matches.is_empty(),
+            "Should not match across different array elements"
         );
     }
 
     #[test]
     fn test_array_cross_element_comprehensive() {
-        // More comprehensive test from Go's arrays_test.go TestArrayCorrectness
+        // Comprehensive test from Go's arrays_test.go TestArrayCorrectness
         // Tests the "bands" scenario with multiple patterns where only one should match
         //
-        // In Go quamina: only "Wata guitar" pattern matches
-        // In Rust (limitation): all three patterns incorrectly match
+        // Only "Wata guitar" pattern should match because:
+        // - "mick_strummer": Mick has surname Jones, not Strummer (cross-element would be false positive)
+        // - "wata_drums": Wata has role guitar/vocals, Atsuo has drums (cross-element would be false positive)
+        // - "wata_guitar": Wata has role guitar - this is in the same array element, so it matches
 
         let bands = r#"{
             "bands": [
@@ -1690,23 +1745,26 @@ mod tests {
 
         let matches = q.matches_for_event(bands.as_bytes()).unwrap();
 
-        // Document the limitation: we get false positives
-        // Go would return only ["wata_guitar"]
-        // Rust returns all three due to cross-element matching bug
+        // Should return exactly ["wata_guitar"]
+        assert_eq!(
+            matches.len(),
+            1,
+            "Expected exactly one match, got: {:?}",
+            matches
+        );
         assert!(
             matches.contains(&"wata_guitar"),
-            "wata_guitar should always match"
+            "wata_guitar should match (same array element)"
         );
 
-        // Document the false positives (this is the limitation)
-        // In a correct implementation, these would NOT be in the matches
+        // These should NOT match (would be cross-element false positives)
         assert!(
-            matches.contains(&"mick_strummer"),
-            "Limitation: mick_strummer incorrectly matches (false positive)"
+            !matches.contains(&"mick_strummer"),
+            "mick_strummer should NOT match (cross-element)"
         );
         assert!(
-            matches.contains(&"wata_drums"),
-            "Limitation: wata_drums incorrectly matches (false positive)"
+            !matches.contains(&"wata_drums"),
+            "wata_drums should NOT match (cross-element)"
         );
     }
 

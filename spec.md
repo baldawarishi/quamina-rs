@@ -35,6 +35,7 @@ quamina-rs provides the same core functionality as the Go version:
 | Regex | ✅ |
 | Nested objects | ✅ |
 | Array element matching | ✅ |
+| Array cross-element correctness | ✅ |
 | Delete patterns | ✅ |
 | Clone (thread-safe snapshots) | ✅ |
 | Unicode escapes (`\uXXXX`) | ✅ |
@@ -133,6 +134,7 @@ Patterns are JSON objects where leaf values are arrays (OR semantics within arra
 - Nested object patterns
 - Array element matching (pattern matches any array element)
 - Unicode escape sequences (`\uXXXX`) in JSON
+- Array cross-element correctness (via ArrayTrail tracking)
 
 ## Architectural Comparison: Rust vs Go
 
@@ -161,17 +163,7 @@ Both support: exact, numeric, prefix, wildcard, shellstyle, anything-but, equals
 
 ### Bottom Line
 
-Rust is a minimal viable implementation focused on core matching. Go is a production-ready library with correctness guarantees, pattern management, and performance optimizations. The array cross-element bug (below) is the most critical gap for correctness.
-
-## Known Limitations
-
-**Array cross-element matching** (correctness bug): Our simple flattening approach doesn't preserve array element grouping. When matching patterns with multiple fields within arrays, the current implementation may match across different array elements (false positives). Go quamina correctly handles this by using automaton-based matching that tracks array indices.
-
-Example:
-- Pattern: `{"members": {"given": ["Mick"], "surname": ["Strummer"]}}`
-- Event: `{"members": [{"given": "Joe", "surname": "Strummer"}, {"given": "Mick", "surname": "Jones"}]}`
-- Go quamina: No match (no single element has both)
-- **Rust: Incorrectly matches** (limitation)
+Rust is now a correct implementation with full pattern operator parity to Go. The main architectural difference is that Rust uses a simpler HashMap-based approach with backtracking, while Go uses an automaton-based approach for better performance with many patterns.
 
 ## Future Work
 
@@ -181,7 +173,8 @@ Example:
 
 ### Phase 4: Optimization (in progress)
 - ✅ Performance benchmarks (criterion)
-- Automaton-based matching (like Go version) - would also fix array cross-element limitation
+- ✅ Array cross-element correctness (via ArrayTrail, independent of automaton)
+- Automaton-based matching (like Go version) - for performance with many patterns
 - Memory optimization
 
 ### Phase 5: Future Enhancements (not yet started)
