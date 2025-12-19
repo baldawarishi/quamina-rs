@@ -13,6 +13,14 @@ pub enum Matcher {
     Wildcard(String),
     AnythingBut(Vec<String>),
     EqualsIgnoreCase(String),
+    Numeric(NumericComparison),
+}
+
+/// Numeric comparison operators
+#[derive(Debug, Clone, PartialEq)]
+pub struct NumericComparison {
+    pub lower: Option<(bool, f64)>, // (inclusive, value)
+    pub upper: Option<(bool, f64)>, // (inclusive, value)
 }
 
 /// Flatten a JSON event into path/value pairs
@@ -112,6 +120,13 @@ fn value_to_matcher(value: &Value) -> Matcher {
                             return Matcher::EqualsIgnoreCase(s.clone());
                         }
                     }
+                    "numeric" => {
+                        if let Value::Array(arr) = val {
+                            if let Some(cmp) = parse_numeric_comparison(arr) {
+                                return Matcher::Numeric(cmp);
+                            }
+                        }
+                    }
                     _ => {}
                 }
             }
@@ -119,6 +134,42 @@ fn value_to_matcher(value: &Value) -> Matcher {
         }
         _ => Matcher::Exact(value_to_string(value)),
     }
+}
+
+/// Parse numeric comparison like [">", 0, "<=", 100] or [">=", 5]
+fn parse_numeric_comparison(arr: &[Value]) -> Option<NumericComparison> {
+    let mut lower = None;
+    let mut upper = None;
+
+    let mut i = 0;
+    while i < arr.len() {
+        if let Value::String(op) = &arr[i] {
+            if i + 1 >= arr.len() {
+                return None;
+            }
+            let num = match &arr[i + 1] {
+                Value::Number(n) => n.parse::<f64>().ok()?,
+                _ => return None,
+            };
+
+            match op.as_str() {
+                ">" => lower = Some((false, num)),
+                ">=" => lower = Some((true, num)),
+                "<" => upper = Some((false, num)),
+                "<=" => upper = Some((true, num)),
+                "=" => {
+                    lower = Some((true, num));
+                    upper = Some((true, num));
+                }
+                _ => return None,
+            }
+            i += 2;
+        } else {
+            return None;
+        }
+    }
+
+    Some(NumericComparison { lower, upper })
 }
 
 fn flatten_value(value: &Value, path: String, result: &mut Vec<(String, String)>) {

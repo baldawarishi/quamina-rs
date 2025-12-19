@@ -108,6 +108,22 @@ impl<X: Clone + Eq + Hash> Quamina<X> {
                 Matcher::EqualsIgnoreCase(expected) => event_value
                     .map(|v| v.eq_ignore_ascii_case(expected))
                     .unwrap_or(false),
+                Matcher::Numeric(cmp) => event_value
+                    .and_then(|v| v.parse::<f64>().ok())
+                    .map(|num| {
+                        let lower_ok = match cmp.lower {
+                            Some((true, bound)) => num >= bound,
+                            Some((false, bound)) => num > bound,
+                            None => true,
+                        };
+                        let upper_ok = match cmp.upper {
+                            Some((true, bound)) => num <= bound,
+                            Some((false, bound)) => num < bound,
+                            None => true,
+                        };
+                        lower_ok && upper_ok
+                    })
+                    .unwrap_or(false),
             });
 
             if !field_matches {
@@ -539,6 +555,54 @@ mod tests {
         let no_match = q
             .matches_for_event(r#"{"type": "order", "status": "pending"}"#.as_bytes())
             .unwrap();
+        assert!(no_match.is_empty());
+    }
+
+    #[test]
+    fn test_numeric_greater_than() {
+        let mut q = Quamina::new();
+        q.add_pattern("p1", r#"{"age": [{"numeric": [">", 18]}]}"#)
+            .unwrap();
+
+        let matches = q.matches_for_event(r#"{"age": 25}"#.as_bytes()).unwrap();
+        assert_eq!(matches, vec!["p1"]);
+
+        let no_match = q.matches_for_event(r#"{"age": 18}"#.as_bytes()).unwrap();
+        assert!(no_match.is_empty());
+
+        let no_match2 = q.matches_for_event(r#"{"age": 15}"#.as_bytes()).unwrap();
+        assert!(no_match2.is_empty());
+    }
+
+    #[test]
+    fn test_numeric_range() {
+        let mut q = Quamina::new();
+        q.add_pattern("p1", r#"{"score": [{"numeric": [">=", 0, "<=", 100]}]}"#)
+            .unwrap();
+
+        let matches = q.matches_for_event(r#"{"score": 50}"#.as_bytes()).unwrap();
+        assert_eq!(matches, vec!["p1"]);
+
+        let edge1 = q.matches_for_event(r#"{"score": 0}"#.as_bytes()).unwrap();
+        assert_eq!(edge1, vec!["p1"]);
+
+        let edge2 = q.matches_for_event(r#"{"score": 100}"#.as_bytes()).unwrap();
+        assert_eq!(edge2, vec!["p1"]);
+
+        let no_match = q.matches_for_event(r#"{"score": 101}"#.as_bytes()).unwrap();
+        assert!(no_match.is_empty());
+    }
+
+    #[test]
+    fn test_numeric_equals() {
+        let mut q = Quamina::new();
+        q.add_pattern("p1", r#"{"count": [{"numeric": ["=", 42]}]}"#)
+            .unwrap();
+
+        let matches = q.matches_for_event(r#"{"count": 42}"#.as_bytes()).unwrap();
+        assert_eq!(matches, vec!["p1"]);
+
+        let no_match = q.matches_for_event(r#"{"count": 43}"#.as_bytes()).unwrap();
         assert!(no_match.is_empty());
     }
 }
