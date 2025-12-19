@@ -14,6 +14,7 @@ fn main() {
     test_anything_but();
     test_equals_ignore_case();
     test_nested_objects();
+    test_numeric();
     test_delete_patterns();
 
     println!("\n✅ All smoke tests passed!");
@@ -169,6 +170,26 @@ fn test_nested_objects() {
         .unwrap();
     assert!(matches.contains(&"admin"));
     println!("✓ Nested object patterns");
+}
+
+fn test_numeric() {
+    let mut q = Quamina::new();
+    q.add_pattern("cheap", r#"{"price": [{"numeric": ["<", 100]}]}"#)
+        .unwrap();
+    q.add_pattern("mid", r#"{"price": [{"numeric": [">=", 100, "<", 500]}]}"#)
+        .unwrap();
+
+    let m1 = q.matches_for_event(r#"{"price": 50}"#.as_bytes()).unwrap();
+    assert!(m1.contains(&"cheap"));
+
+    let m2 = q.matches_for_event(r#"{"price": 250}"#.as_bytes()).unwrap();
+    assert!(m2.contains(&"mid"));
+
+    let m3 = q
+        .matches_for_event(r#"{"price": 1000}"#.as_bytes())
+        .unwrap();
+    assert!(m3.is_empty());
+    println!("✓ Numeric comparison operator");
 }
 
 fn test_delete_patterns() {

@@ -16,7 +16,7 @@ quamina-rs provides the same core functionality as the Go version:
 
 ## Current Status
 
-✅ **All core pattern operators implemented** (20 tests passing)
+✅ **All core pattern operators implemented** (23 tests passing)
 
 | Feature | Status |
 |---------|--------|
@@ -29,6 +29,7 @@ quamina-rs provides the same core functionality as the Go version:
 | Wildcard | ✅ |
 | Anything-but | ✅ |
 | Equals-ignore-case | ✅ |
+| Numeric comparisons | ✅ |
 | Nested objects | ✅ |
 | Delete patterns | ✅ |
 
@@ -90,6 +91,7 @@ Patterns are JSON objects where leaf values are arrays (OR semantics within arra
 | Wildcard | `[{"wildcard": "pat"}]` | `{"id": [{"wildcard": "*-123"}]}` |
 | Anything-but | `[{"anything-but": [...]}]` | `{"status": [{"anything-but": ["deleted"]}]}` |
 | Equals-ignore-case | `[{"equals-ignore-case": "str"}]` | `{"name": [{"equals-ignore-case": "test"}]}` |
+| Numeric | `[{"numeric": ["op", val, ...]}]` | `{"price": [{"numeric": [">=", 10, "<", 100]}]}` |
 | Nested fields | nested objects | `{"user": {"role": ["admin"]}}` |
 
 ## Completed Milestones
@@ -112,6 +114,7 @@ Patterns are JSON objects where leaf values are arrays (OR semantics within arra
 - wildcard (*, prefix*, *suffix, *contains*)
 - anything-but
 - equals-ignore-case
+- numeric (>, >=, <, <=, =)
 - Nested object patterns
 
 ## Future Work
@@ -123,6 +126,5 @@ Patterns are JSON objects where leaf values are arrays (OR semantics within arra
 
 ### Phase 4: Full Parity (not yet started)
 - Regular expression support
-- Numeric comparisons
 - Copy() for thread-safe parallel matching
 - Custom flatteners
