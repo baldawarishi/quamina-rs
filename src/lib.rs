@@ -140,7 +140,10 @@ impl<X: Clone + Eq + Hash> Quamina<X> {
                     .map(|vals| vals.iter().any(|v| !excluded.iter().any(|e| e == *v)))
                     .unwrap_or(false),
                 Matcher::EqualsIgnoreCase(expected) => event_values
-                    .map(|vals| vals.iter().any(|v| v.eq_ignore_ascii_case(expected)))
+                    .map(|vals| {
+                        vals.iter()
+                            .any(|v| v.to_lowercase() == expected.to_lowercase())
+                    })
                     .unwrap_or(false),
                 Matcher::Numeric(cmp) => event_values
                     .map(|vals| {
@@ -821,6 +824,55 @@ mod tests {
             .matches_for_event(r#"{"b": "ABCXYZ"}"#.as_bytes())
             .unwrap();
         assert!(m5.is_empty(), "ABCXYZ should not match xyz patterns");
+    }
+
+    #[test]
+    fn test_equals_ignore_case_unicode() {
+        // Based on Go quamina's TestHungarianMono from monocase_test.go
+        // Test that equals-ignore-case works with full Unicode, not just ASCII
+
+        // Test German sharp s (ß) which lowercases to "ss"
+        let mut q = Quamina::new();
+        q.add_pattern("p1", r#"{"name": [{"equals-ignore-case": "straße"}]}"#)
+            .unwrap();
+
+        let m1 = q
+            .matches_for_event(r#"{"name": "STRASSE"}"#.as_bytes())
+            .unwrap();
+        // Note: In Unicode, ß.to_lowercase() = "ß" and "SS".to_lowercase() = "ss"
+        // So "straße" != "strasse" in lowercase form. This is expected behavior.
+        // German orthography has both forms valid.
+        assert!(
+            m1.is_empty(),
+            "straße and STRASSE are different in Unicode lowercase"
+        );
+
+        // Test Greek sigma: Σ, σ, ς all lowercase to σ
+        let mut q2 = Quamina::new();
+        q2.add_pattern("p2", r#"{"word": [{"equals-ignore-case": "Σοφία"}]}"#)
+            .unwrap();
+
+        let m2 = q2
+            .matches_for_event(r#"{"word": "σοφία"}"#.as_bytes())
+            .unwrap();
+        assert_eq!(m2, vec!["p2"], "Greek sigma case folding should work");
+
+        let m3 = q2
+            .matches_for_event(r#"{"word": "ΣΟΦΊΑ"}"#.as_bytes())
+            .unwrap();
+        assert_eq!(m3, vec!["p2"], "Greek uppercase should match");
+
+        // Test Turkish dotless i (ı) - note: this is a special case
+        // In Turkish locale, I lowercases to ı and İ lowercases to i
+        // But Rust's to_lowercase() uses Unicode default case folding
+        let mut q3 = Quamina::new();
+        q3.add_pattern("p3", r#"{"city": [{"equals-ignore-case": "istanbul"}]}"#)
+            .unwrap();
+
+        let m4 = q3
+            .matches_for_event(r#"{"city": "Istanbul"}"#.as_bytes())
+            .unwrap();
+        assert_eq!(m4, vec!["p3"], "Standard I/i case folding should work");
     }
 
     #[test]
