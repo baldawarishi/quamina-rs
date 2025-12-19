@@ -16,7 +16,7 @@ quamina-rs provides the same core functionality as the Go version:
 
 ## Current Status
 
-✅ **All core pattern operators implemented** (29 tests passing)
+✅ **All core pattern operators implemented** (30 tests passing)
 
 | Feature | Status |
 |---------|--------|
@@ -71,6 +71,9 @@ impl<X: Clone + Eq + Hash> Quamina<X> {
     pub fn has_matches(&self, event: &[u8]) -> Result<bool, QuaminaError>;
     pub fn count_matches(&self, event: &[u8]) -> Result<usize, QuaminaError>;
     pub fn delete_patterns(&mut self, x: &X) -> Result<(), QuaminaError>;
+    pub fn pattern_count(&self) -> usize;
+    pub fn is_empty(&self) -> bool;
+    pub fn clear(&mut self);
 }
 
 #[derive(Debug)]
