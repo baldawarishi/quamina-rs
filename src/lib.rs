@@ -842,4 +842,34 @@ mod tests {
             "Should match when pattern value is in event array"
         );
     }
+
+    #[test]
+    fn test_wildcard_escape_star() {
+        // \* in wildcard should match literal * character
+        let mut q = Quamina::new();
+        // Pattern: a\\*b matches literal "a*b" (double backslash in JSON = single backslash)
+        q.add_pattern("p1", r#"{"val": [{"wildcard": "a\\*b"}]}"#)
+            .unwrap();
+
+        let matches = q.matches_for_event(r#"{"val": "a*b"}"#.as_bytes()).unwrap();
+        assert_eq!(matches, vec!["p1"], "\\* should match literal *");
+
+        // Should NOT match "aXb" - the * is escaped, not a wildcard
+        let no_match = q.matches_for_event(r#"{"val": "aXb"}"#.as_bytes()).unwrap();
+        assert!(no_match.is_empty(), "Escaped * should not be wildcard");
+    }
+
+    #[test]
+    fn test_wildcard_escape_backslash() {
+        // \\ in wildcard should match literal \ character
+        let mut q = Quamina::new();
+        // Pattern: a\\\\b matches literal "a\b" (four backslash in JSON = two = one in wildcard)
+        q.add_pattern("p1", r#"{"path": [{"wildcard": "a\\\\b"}]}"#)
+            .unwrap();
+
+        let matches = q
+            .matches_for_event(r#"{"path": "a\\b"}"#.as_bytes())
+            .unwrap();
+        assert_eq!(matches, vec!["p1"], "\\\\ should match literal \\");
+    }
 }
