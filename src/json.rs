@@ -11,6 +11,7 @@ pub enum Matcher {
     Prefix(String),
     Suffix(String),
     Wildcard(String),
+    Shellstyle(String), // Simpler wildcard without escape support
     AnythingBut(Vec<String>),
     EqualsIgnoreCase(String),
     Numeric(NumericComparison),
@@ -108,6 +109,14 @@ fn value_to_matcher(value: &Value) -> Matcher {
                     "wildcard" => {
                         if let Value::String(s) = val {
                             return Matcher::Wildcard(s.clone());
+                        }
+                    }
+                    "shellstyle" => {
+                        if let Value::String(s) = val {
+                            // shellstyle doesn't allow adjacent ** characters
+                            if !s.contains("**") {
+                                return Matcher::Shellstyle(s.clone());
+                            }
                         }
                     }
                     "anything-but" => {
