@@ -1730,6 +1730,70 @@ mod tests {
     }
 
     #[test]
+    fn test_anything_but_with_exact_match() {
+        // Based on Go quamina's TestAnythingButMerging
+        // Tests that exact and anything-but patterns can coexist
+        let mut q = Quamina::new();
+
+        // Add exact match for "foo"
+        q.add_pattern("pFoo", r#"{"z": ["foo"]}"#).unwrap();
+        // Add anything-but for "foot"
+        q.add_pattern("pAbFoot", r#"{"z": [{"anything-but": ["foot"]}]}"#)
+            .unwrap();
+
+        // "foo" should match BOTH patterns:
+        // - pFoo: exact match
+        // - pAbFoot: "foo" is not "foot"
+        let matches = q
+            .matches_for_event(r#"{"z": "foo"}"#.as_bytes())
+            .unwrap();
+        assert_eq!(matches.len(), 2, "foo should match both patterns");
+
+        // "foot" should match neither:
+        // - pFoo: not "foot"
+        // - pAbFoot: excluded
+        let matches2 = q
+            .matches_for_event(r#"{"z": "foot"}"#.as_bytes())
+            .unwrap();
+        assert!(matches2.is_empty(), "foot should match nothing");
+
+        // "bar" should match only pAbFoot (not foo, not foot)
+        let matches3 = q
+            .matches_for_event(r#"{"z": "bar"}"#.as_bytes())
+            .unwrap();
+        assert_eq!(matches3.len(), 1, "bar should only match pAbFoot");
+        assert!(matches3.contains(&"pAbFoot"));
+    }
+
+    #[test]
+    fn test_anything_but_with_overlapping_exclusions() {
+        // Based on Go quamina's TestAnythingButAlgo
+        // Tests anything-but with overlapping prefix exclusions
+        let mut q = Quamina::new();
+        q.add_pattern(
+            "notTTT",
+            r#"{"x": [{"anything-but": ["tim", "time", "timed"]}]}"#,
+        )
+        .unwrap();
+
+        // All excluded values should not match
+        let excluded = ["tim", "time", "timed"];
+        for val in excluded {
+            let event = format!(r#"{{"x": "{}"}}"#, val);
+            let matches = q.matches_for_event(event.as_bytes()).unwrap();
+            assert!(matches.is_empty(), "{} should be excluded", val);
+        }
+
+        // Similar but non-excluded values should match
+        let included = ["t", "ti", "timer", "timely", "timekeeper"];
+        for val in included {
+            let event = format!(r#"{{"x": "{}"}}"#, val);
+            let matches = q.matches_for_event(event.as_bytes()).unwrap();
+            assert_eq!(matches.len(), 1, "{} should match notTTT", val);
+        }
+    }
+
+    #[test]
     fn test_invalid_pattern_validation() {
         // Based on Go quamina's TestPatternFromJSON
         // Tests that various invalid patterns are properly rejected
