@@ -1,0 +1,9 @@
+[package]
+name = "quamina"
+version = "0.1.0"
+edition = "2021"
+description = "Fast pattern-matching library for filtering JSON events"
+license = "Apache-2.0"
+repository = "https://github.com/baldawarishi/quamina-rs"
+
+[dependencies]
