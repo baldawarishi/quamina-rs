@@ -1643,4 +1643,113 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn test_overlapping_exact_match_patterns() {
+        // Based on Go quamina's TestOverlappingValues
+        // Tests patterns with overlapping prefixes (foo, football, footballer)
+        // to ensure exact matching with no false positives
+        let mut q = Quamina::new();
+        q.add_pattern("p1", r#"{"a": ["foo"]}"#).unwrap();
+        q.add_pattern("p2", r#"{"a": ["football"]}"#).unwrap();
+        q.add_pattern("p3", r#"{"a": ["footballer"]}"#).unwrap();
+
+        // Each event should only match its corresponding pattern
+        let matches1 = q
+            .matches_for_event(r#"{"x": 3, "a": "foo"}"#.as_bytes())
+            .unwrap();
+        assert_eq!(
+            matches1,
+            vec!["p1"],
+            "foo should only match p1, not football or footballer"
+        );
+
+        let matches2 = q
+            .matches_for_event(r#"{"x": 3, "a": "football"}"#.as_bytes())
+            .unwrap();
+        assert_eq!(
+            matches2,
+            vec!["p2"],
+            "football should only match p2, not foo or footballer"
+        );
+
+        let matches3 = q
+            .matches_for_event(r#"{"x": 3, "a": "footballer"}"#.as_bytes())
+            .unwrap();
+        assert_eq!(
+            matches3,
+            vec!["p3"],
+            "footballer should only match p3, not foo or football"
+        );
+
+        // Ensure no matches for unrelated values
+        let no_match = q
+            .matches_for_event(r#"{"a": "foot"}"#.as_bytes())
+            .unwrap();
+        assert!(no_match.is_empty(), "foot should not match any pattern");
+    }
+
+    #[test]
+    fn test_same_pattern_id_multiple_value_types() {
+        // Based on Go quamina's TestExerciseSingletonReplacement and TestMergeNfaAndNumeric
+        // Same pattern ID can match via different value types (string OR number)
+        let mut q = Quamina::new();
+        // Add two patterns with same ID but different value types
+        q.add_pattern("x", r#"{"x": ["a"]}"#).unwrap();
+        q.add_pattern("x", r#"{"x": [1]}"#).unwrap();
+
+        // Both string and number should match pattern "x"
+        let matches1 = q
+            .matches_for_event(r#"{"x": 1}"#.as_bytes())
+            .unwrap();
+        assert_eq!(matches1, vec!["x"], "number 1 should match");
+
+        let matches2 = q
+            .matches_for_event(r#"{"x": "a"}"#.as_bytes())
+            .unwrap();
+        assert_eq!(matches2, vec!["x"], "string 'a' should match");
+
+        // Test wildcard OR number for same pattern ID
+        let mut q2 = Quamina::new();
+        q2.add_pattern("x", r#"{"x": [{"wildcard": "x*y"}]}"#)
+            .unwrap();
+        q2.add_pattern("x", r#"{"x": [3]}"#).unwrap();
+
+        let m1 = q2
+            .matches_for_event(r#"{"x": 3}"#.as_bytes())
+            .unwrap();
+        assert_eq!(m1, vec!["x"], "number 3 should match");
+
+        let m2 = q2
+            .matches_for_event(r#"{"x": "xasdfy"}"#.as_bytes())
+            .unwrap();
+        assert_eq!(m2, vec!["x"], "wildcard pattern should match");
+    }
+
+    #[test]
+    fn test_empty_regex_matches_empty_string() {
+        // Based on Go quamina's TestEmptyRegexp
+        // Empty regex pattern should match empty string value
+        let mut q = Quamina::new();
+        q.add_pattern("a", r#"{"a": [{"regex": ""}]}"#).unwrap();
+
+        let matches = q
+            .matches_for_event(r#"{"a": ""}"#.as_bytes())
+            .unwrap();
+        assert_eq!(
+            matches,
+            vec!["a"],
+            "empty regex should match empty string"
+        );
+
+        // Empty regex should also match non-empty strings (since empty pattern matches anywhere)
+        let matches2 = q
+            .matches_for_event(r#"{"a": "hello"}"#.as_bytes())
+            .unwrap();
+        assert_eq!(
+            matches2,
+            vec!["a"],
+            "empty regex should match any string"
+        );
+    }
 }
