@@ -46,13 +46,51 @@ impl<X: Clone + Eq + Hash> Quamina<X> {
     }
 
     /// Add a pattern with the given identifier
-    pub fn add_pattern(&mut self, _x: X, _pattern: &str) -> Result<(), QuaminaError> {
-        todo!("Step 2: implement pattern parsing")
+    pub fn add_pattern(&mut self, x: X, pattern_json: &str) -> Result<(), QuaminaError> {
+        let fields = json::parse_pattern(pattern_json)?;
+        let pattern = Pattern { fields };
+        self.patterns.entry(x).or_default().push(pattern);
+        Ok(())
     }
 
     /// Find all patterns that match the given event
-    pub fn matches_for_event(&self, _event: &[u8]) -> Result<Vec<X>, QuaminaError> {
-        todo!("Step 3: implement matching")
+    pub fn matches_for_event(&self, event: &[u8]) -> Result<Vec<X>, QuaminaError> {
+        let event_fields = json::flatten_event(event)?;
+        let event_map: HashMap<&str, &str> = event_fields
+            .iter()
+            .map(|(k, v)| (k.as_str(), v.as_str()))
+            .collect();
+
+        let mut matches = Vec::new();
+        for (id, patterns) in &self.patterns {
+            for pattern in patterns {
+                if self.pattern_matches(&pattern.fields, &event_map) {
+                    matches.push(id.clone());
+                    break; // Only add each ID once
+                }
+            }
+        }
+        Ok(matches)
+    }
+
+    fn pattern_matches(
+        &self,
+        pattern_fields: &HashMap<String, Vec<String>>,
+        event_map: &HashMap<&str, &str>,
+    ) -> bool {
+        // All pattern fields must match (AND across fields)
+        for (field, allowed_values) in pattern_fields {
+            match event_map.get(field.as_str()) {
+                Some(event_value) => {
+                    // Any allowed value can match (OR within field)
+                    if !allowed_values.iter().any(|v| v == event_value) {
+                        return false;
+                    }
+                }
+                None => return false, // Field must exist
+            }
+        }
+        true
     }
 
     /// Delete all patterns with the given identifier
