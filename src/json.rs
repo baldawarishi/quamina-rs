@@ -422,6 +422,16 @@ impl<'a> Parser<'a> {
                 self.advance();
             }
         }
+        // Handle scientific notation (e.g., 3.5e2, 1E-10)
+        if self.peek() == Some('e') || self.peek() == Some('E') {
+            self.advance();
+            if self.peek() == Some('+') || self.peek() == Some('-') {
+                self.advance();
+            }
+            while self.peek().map(|c| c.is_ascii_digit()).unwrap_or(false) {
+                self.advance();
+            }
+        }
         Ok(Value::Number(self.input[start..self.pos].to_string()))
     }
 
