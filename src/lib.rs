@@ -160,6 +160,29 @@ impl<X: Clone + Eq + Hash> Quamina<X> {
         self.patterns.remove(x);
         Ok(())
     }
+
+    /// Check if any pattern matches the event (returns early on first match)
+    pub fn has_matches(&self, event: &[u8]) -> Result<bool, QuaminaError> {
+        let event_fields = json::flatten_event(event)?;
+        let event_map: HashMap<&str, &str> = event_fields
+            .iter()
+            .map(|(k, v)| (k.as_str(), v.as_str()))
+            .collect();
+
+        for (_id, patterns) in &self.patterns {
+            for pattern in patterns {
+                if self.pattern_matches(&pattern.fields, &event_map) {
+                    return Ok(true);
+                }
+            }
+        }
+        Ok(false)
+    }
+
+    /// Count how many unique pattern IDs match the event
+    pub fn count_matches(&self, event: &[u8]) -> Result<usize, QuaminaError> {
+        Ok(self.matches_for_event(event)?.len())
+    }
 }
 
 impl<X: Clone + Eq + Hash> Default for Quamina<X> {
@@ -696,5 +719,40 @@ mod tests {
         // Verify Quamina is Send + Sync for thread safety
         fn assert_send_sync<T: Send + Sync>() {}
         assert_send_sync::<Quamina<String>>();
+    }
+
+    #[test]
+    fn test_has_matches() {
+        let mut q = Quamina::new();
+        q.add_pattern("p1", r#"{"status": ["active"]}"#).unwrap();
+
+        assert!(q.has_matches(r#"{"status": "active"}"#.as_bytes()).unwrap());
+        assert!(!q
+            .has_matches(r#"{"status": "inactive"}"#.as_bytes())
+            .unwrap());
+    }
+
+    #[test]
+    fn test_count_matches() {
+        let mut q = Quamina::new();
+        q.add_pattern("p1", r#"{"status": ["active"]}"#).unwrap();
+        q.add_pattern("p2", r#"{"status": ["active"]}"#).unwrap();
+        q.add_pattern("p3", r#"{"status": ["pending"]}"#).unwrap();
+
+        assert_eq!(
+            q.count_matches(r#"{"status": "active"}"#.as_bytes())
+                .unwrap(),
+            2
+        );
+        assert_eq!(
+            q.count_matches(r#"{"status": "pending"}"#.as_bytes())
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            q.count_matches(r#"{"status": "deleted"}"#.as_bytes())
+                .unwrap(),
+            0
+        );
     }
 }
