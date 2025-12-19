@@ -1281,6 +1281,33 @@ mod tests {
     }
 
     #[test]
+    fn test_invalid_pattern_handling() {
+        // Test that invalid patterns don't cause panics and are handled gracefully
+        let mut q = Quamina::new();
+
+        // Empty pattern
+        assert!(q.add_pattern("p1", "").is_err());
+
+        // Non-object at top level
+        assert!(q.add_pattern("p2", "33").is_err());
+        assert!(q.add_pattern("p3", "[1,2]").is_err());
+
+        // Malformed JSON
+        assert!(q.add_pattern("p4", "{").is_err());
+        assert!(q.add_pattern("p5", r#"{"foo": }"#).is_err());
+
+        // Pattern field must be array or nested object
+        assert!(q.add_pattern("p6", r#"{"foo": "string"}"#).is_err());
+        assert!(q.add_pattern("p7", r#"{"foo": 123}"#).is_err());
+        assert!(q.add_pattern("p8", r#"{"foo": true}"#).is_err());
+
+        // Valid patterns should work
+        assert!(q.add_pattern("valid1", r#"{"x": [1]}"#).is_ok());
+        assert!(q.add_pattern("valid2", r#"{"x": ["string"]}"#).is_ok());
+        assert!(q.add_pattern("valid3", r#"{"x": {"y": [1]}}"#).is_ok());
+    }
+
+    #[test]
     fn test_array_cross_element_matching() {
         // IMPORTANT: This tests cross-element array matching behavior
         // Pattern {"members": {"given": ["Mick"], "surname": ["Strummer"]}}
