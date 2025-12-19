@@ -127,9 +127,9 @@ Patterns are JSON objects where leaf values are arrays (OR semantics within arra
 - Clone for creating snapshots
 - Send + Sync for thread safety
 
-### Phase 4: Optimization (not yet started)
+### Phase 4: Optimization (in progress)
+- ✅ Performance benchmarks (criterion)
 - Automaton-based matching (like Go version)
-- Performance benchmarks
 - Memory optimization
 
 ### Phase 5: Future Enhancements (not yet started)
