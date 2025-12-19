@@ -1,0 +1,1 @@
+/Users/rishibaldawa/Development/quamina_go_rs/quamina-rs/target/debug/examples/smoke: /Users/rishibaldawa/Development/quamina_go_rs/quamina-rs/examples/smoke.rs /Users/rishibaldawa/Development/quamina_go_rs/quamina-rs/src/json.rs /Users/rishibaldawa/Development/quamina_go_rs/quamina-rs/src/lib.rs

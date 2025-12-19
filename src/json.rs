@@ -3,6 +3,14 @@
 use crate::QuaminaError;
 use std::collections::HashMap;
 
+/// A matcher for a pattern field value
+#[derive(Debug, Clone, PartialEq)]
+pub enum Matcher {
+    Exact(String),
+    Exists(bool),
+    Prefix(String),
+}
+
 /// Flatten a JSON event into path/value pairs
 /// e.g., {"a": {"b": 1}} -> [("a.b", "1")]
 pub fn flatten_event(json: &[u8]) -> Result<Vec<(String, String)>, QuaminaError> {
@@ -15,9 +23,10 @@ pub fn flatten_event(json: &[u8]) -> Result<Vec<(String, String)>, QuaminaError>
     Ok(result)
 }
 
-/// Parse a pattern JSON into field -> allowed values map
-/// e.g., {"status": ["active", "pending"]} -> {"status": ["active", "pending"]}
-pub fn parse_pattern(json: &str) -> Result<HashMap<String, Vec<String>>, QuaminaError> {
+/// Parse a pattern JSON into field -> matchers map
+/// e.g., {"status": ["active"]} -> {"status": [Exact("active")]}
+/// e.g., {"name": [{"exists": true}]} -> {"name": [Exists(true)]}
+pub fn parse_pattern(json: &str) -> Result<HashMap<String, Vec<Matcher>>, QuaminaError> {
     let mut parser = Parser::new(json);
     let value = parser.parse_value()?;
 
@@ -35,7 +44,7 @@ pub fn parse_pattern(json: &str) -> Result<HashMap<String, Vec<String>>, Quamina
 fn extract_pattern_fields(
     obj: &[(String, Value)],
     prefix: String,
-    fields: &mut HashMap<String, Vec<String>>,
+    fields: &mut HashMap<String, Vec<Matcher>>,
 ) -> Result<(), QuaminaError> {
     for (key, value) in obj {
         let path = if prefix.is_empty() {
@@ -45,8 +54,8 @@ fn extract_pattern_fields(
         };
         match value {
             Value::Array(arr) => {
-                let values: Vec<String> = arr.iter().map(value_to_string).collect();
-                fields.insert(path, values);
+                let matchers: Vec<Matcher> = arr.iter().map(value_to_matcher).collect();
+                fields.insert(path, matchers);
             }
             Value::Object(nested) => {
                 extract_pattern_fields(nested, path, fields)?;
@@ -60,6 +69,31 @@ fn extract_pattern_fields(
         }
     }
     Ok(())
+}
+
+fn value_to_matcher(value: &Value) -> Matcher {
+    match value {
+        Value::Object(obj) => {
+            // Check for operators like {"exists": true} or {"prefix": "str"}
+            if let Some((key, val)) = obj.first() {
+                match key.as_str() {
+                    "exists" => {
+                        if let Value::Bool(b) = val {
+                            return Matcher::Exists(*b);
+                        }
+                    }
+                    "prefix" => {
+                        if let Value::String(s) = val {
+                            return Matcher::Prefix(s.clone());
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            Matcher::Exact(String::new()) // fallback
+        }
+        _ => Matcher::Exact(value_to_string(value)),
+    }
 }
 
 fn flatten_value(value: &Value, path: String, result: &mut Vec<(String, String)>) {
