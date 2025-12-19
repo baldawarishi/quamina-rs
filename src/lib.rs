@@ -1339,4 +1339,59 @@ mod tests {
             "Current impl matches cross-element (limitation)"
         );
     }
+
+    #[test]
+    fn test_exists_false_ordering() {
+        // Based on Go quamina's TestExistsFalseOrder
+        // exists:false should properly disqualify a match regardless of where
+        // it occurs lexicographically in the pattern
+        let event = r#"{"aField": "a", "bField": "b", "cField": "c"}"#;
+
+        // All these patterns should NOT match because each requires a field to be absent
+        // that is actually present in the event
+        let should_not_patterns = [
+            // exists:false on middle field (bField)
+            r#"{"aField": ["a"], "bField": [{"exists": false}], "cField": ["c"]}"#,
+            // exists:false on first field (aField)
+            r#"{"aField": [{"exists": false}], "bField": ["b"], "cField": ["c"]}"#,
+            // exists:false on last field (cField)
+            r#"{"aField": ["a"], "bField": ["b"], "cField": [{"exists": false}]}"#,
+        ];
+
+        for (i, pattern) in should_not_patterns.iter().enumerate() {
+            let mut q = Quamina::new();
+            q.add_pattern(format!("p{}", i), pattern).unwrap();
+            let matches = q.matches_for_event(event.as_bytes()).unwrap();
+            assert!(
+                matches.is_empty(),
+                "Pattern {} should NOT match: {}",
+                i,
+                pattern
+            );
+        }
+
+        // Also test with events that DO match these patterns (missing the required absent field)
+        let events_that_match = [
+            r#"{"aField": "a", "cField": "c"}"#,           // missing bField
+            r#"{"bField": "b", "cField": "c"}"#,           // missing aField
+            r#"{"aField": "a", "bField": "b"}"#,           // missing cField
+        ];
+
+        for (i, (pattern, event)) in should_not_patterns
+            .iter()
+            .zip(events_that_match.iter())
+            .enumerate()
+        {
+            let mut q = Quamina::new();
+            q.add_pattern(format!("p{}", i), pattern).unwrap();
+            let matches = q.matches_for_event(event.as_bytes()).unwrap();
+            assert!(
+                !matches.is_empty(),
+                "Pattern {} should match event {}: {}",
+                i,
+                i,
+                pattern
+            );
+        }
+    }
 }
