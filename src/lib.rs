@@ -1279,4 +1279,37 @@ mod tests {
             assert_eq!(matches, vec!["p1"], "Should match {}", text);
         }
     }
+
+    #[test]
+    fn test_array_cross_element_matching() {
+        // IMPORTANT: This tests cross-element array matching behavior
+        // Pattern {"members": {"given": ["Mick"], "surname": ["Strummer"]}}
+        // Event: members=[{given: "Joe", surname: "Strummer"}, {given: "Mick", surname: "Jones"}]
+        //
+        // Go quamina: would NOT match (no single element has both given=Mick AND surname=Strummer)
+        // Our current impl: DOES match (flattening loses element grouping)
+        //
+        // This is a known limitation of our simple flattening approach.
+        // Fixing this would require tracking array indices during flattening.
+
+        let mut q = Quamina::new();
+        q.add_pattern(
+            "cross",
+            r#"{"members": {"given": ["Mick"], "surname": ["Strummer"]}}"#,
+        )
+        .unwrap();
+
+        let event = r#"{"members": [
+            {"given": "Joe", "surname": "Strummer"},
+            {"given": "Mick", "surname": "Jones"}
+        ]}"#;
+
+        let matches = q.matches_for_event(event.as_bytes()).unwrap();
+        // Current behavior: matches (incorrectly compared to Go)
+        // This documents the limitation
+        assert!(
+            !matches.is_empty(),
+            "Current impl matches cross-element (limitation)"
+        );
+    }
 }
