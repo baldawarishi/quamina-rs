@@ -1,5 +1,7 @@
 //! quamina-rs: Fast pattern-matching library for filtering JSON events
 
+mod json;
+
 use std::collections::HashMap;
 use std::fmt;
 use std::hash::Hash;
