@@ -181,8 +181,7 @@ impl SmallTable {
 
     /// Unpack the compact representation into a full array.
     pub fn unpack(&self) -> [Option<Arc<FaState>>; BYTE_CEILING] {
-        let mut result: [Option<Arc<FaState>>; BYTE_CEILING] =
-            std::array::from_fn(|_| None);
+        let mut result: [Option<Arc<FaState>>; BYTE_CEILING] = std::array::from_fn(|_| None);
         let mut unpacked_index = 0;
         for (packed_index, &ceiling) in self.ceilings.iter().enumerate() {
             let ceiling = ceiling as usize;
@@ -649,8 +648,11 @@ fn make_wildcard_fa_step(
                 field_transitions: vec![],
             });
 
-            let spinout_table =
-                SmallTable::with_mappings(Some(spinout.clone()), &[VALUE_TERMINATOR], &[match_state]);
+            let spinout_table = SmallTable::with_mappings(
+                Some(spinout.clone()),
+                &[VALUE_TERMINATOR],
+                &[match_state],
+            );
 
             let spinout_final = Arc::new(FaState {
                 table: spinout_table,
@@ -706,75 +708,398 @@ fn make_wildcard_fa_step(
     SmallTable::with_mappings(None, &[ch], &[next_state])
 }
 
-/// Core matcher that uses automaton-based matching
-///
-/// This is the main entry point for automaton-based pattern matching.
-/// Patterns are added with `add_pattern`, and matching is done with `matches_for_event`.
-#[derive(Clone)]
-pub struct CoreMatcher<X> {
-    /// Root field matcher
-    root: Arc<FieldMatcher>,
-    /// Pattern counter for generating unique IDs
-    _pattern_count: usize,
-    /// Phantom data for the pattern identifier type
-    _phantom: std::marker::PhantomData<X>,
+// ============================================================================
+// Multi-field Pattern Matching (CoreMatcher)
+// ============================================================================
+//
+// The Go architecture for multi-field matching:
+//   - FieldMatcher: Has transitions (map from field path to ValueMatcher), matches (X values),
+//     and existsTrue/existsFalse maps for exists patterns
+//   - ValueMatcher: Has an automaton (SmallTable) that returns FieldMatcher transitions
+//   - Pattern addition: Walk through sorted fields, building ValueMatchers and chaining FieldMatchers
+//   - Matching: Sort event fields, try to match from start state, recurse on subsequent fields
+//
+// The Rust implementation uses interior mutability (RefCell) for building the automaton,
+// then the structure is immutable during matching.
+
+use std::cell::RefCell;
+use std::rc::Rc;
+
+/// A mutable field matcher used during pattern building.
+/// This is similar to Go's fieldMatcher with its updateable atomic pointer.
+#[derive(Default)]
+pub struct MutableFieldMatcher<X: Clone + Eq + std::hash::Hash> {
+    /// Map from field paths to value matchers
+    pub transitions: RefCell<HashMap<String, Rc<MutableValueMatcher<X>>>>,
+    /// Pattern identifiers that match when arriving at this state
+    pub matches: RefCell<Vec<X>>,
+    /// exists:true patterns - map from field path to next field matcher
+    pub exists_true: RefCell<HashMap<String, Rc<MutableFieldMatcher<X>>>>,
+    /// exists:false patterns - map from field path to next field matcher
+    pub exists_false: RefCell<HashMap<String, Rc<MutableFieldMatcher<X>>>>,
 }
 
-impl<X: Clone + std::cmp::Eq + std::hash::Hash> CoreMatcher<X> {
-    /// Create a new CoreMatcher
+impl<X: Clone + Eq + std::hash::Hash> MutableFieldMatcher<X> {
     pub fn new() -> Self {
         Self {
-            root: Arc::new(FieldMatcher::new()),
-            _pattern_count: 0,
-            _phantom: std::marker::PhantomData,
+            transitions: RefCell::new(HashMap::new()),
+            matches: RefCell::new(Vec::new()),
+            exists_true: RefCell::new(HashMap::new()),
+            exists_false: RefCell::new(HashMap::new()),
         }
     }
 
-    /// Add a pattern with the given identifier
+    /// Add a match identifier to this state
+    pub fn add_match(&self, x: X) {
+        self.matches.borrow_mut().push(x);
+    }
+
+    /// Add an exists transition (true or false)
+    pub fn add_exists(&self, exists: bool, path: &str) -> Rc<MutableFieldMatcher<X>> {
+        let map = if exists {
+            &self.exists_true
+        } else {
+            &self.exists_false
+        };
+
+        let mut map_borrow = map.borrow_mut();
+        if let Some(existing) = map_borrow.get(path) {
+            existing.clone()
+        } else {
+            let new_fm = Rc::new(MutableFieldMatcher::new());
+            map_borrow.insert(path.to_string(), new_fm.clone());
+            new_fm
+        }
+    }
+
+    /// Add a value transition, returns the next field matchers
+    pub fn add_transition(
+        &self,
+        path: &str,
+        matchers: &[crate::json::Matcher],
+    ) -> Vec<Rc<MutableFieldMatcher<X>>> {
+        let mut transitions = self.transitions.borrow_mut();
+        let vm = transitions
+            .entry(path.to_string())
+            .or_insert_with(|| Rc::new(MutableValueMatcher::new()));
+
+        let mut next_states = Vec::new();
+        for matcher in matchers {
+            let next_fm = vm.add_transition(matcher);
+            next_states.push(next_fm);
+        }
+        next_states
+    }
+
+    /// Transition on a field value during matching
+    pub fn transition_on(
+        &self,
+        path: &str,
+        value: &[u8],
+        bufs: &mut NfaBuffers,
+    ) -> Vec<Rc<MutableFieldMatcher<X>>> {
+        let transitions = self.transitions.borrow();
+        if let Some(vm) = transitions.get(path) {
+            vm.transition_on(value, bufs)
+        } else {
+            vec![]
+        }
+    }
+}
+
+/// A mutable value matcher used during pattern building.
+/// Similar to Go's valueMatcher with singleton optimization and automaton.
+#[derive(Default)]
+pub struct MutableValueMatcher<X: Clone + Eq + std::hash::Hash> {
+    /// The automaton start table (once we have multiple values or complex patterns)
+    start_table: RefCell<Option<SmallTable>>,
+    /// Optimization: for single exact match, store it directly
+    singleton_match: RefCell<Option<Vec<u8>>>,
+    /// Transition for singleton match
+    singleton_transition: RefCell<Option<Rc<MutableFieldMatcher<X>>>>,
+    /// Whether this matcher requires NFA traversal
+    is_nondeterministic: RefCell<bool>,
+    /// Mapping from Arc<FieldMatcher> to Rc<MutableFieldMatcher<X>>
+    /// This bridges the automaton's field transitions to our mutable field matchers
+    transition_map: RefCell<HashMap<*const FieldMatcher, Rc<MutableFieldMatcher<X>>>>,
+}
+
+impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
+    pub fn new() -> Self {
+        Self {
+            start_table: RefCell::new(None),
+            singleton_match: RefCell::new(None),
+            singleton_transition: RefCell::new(None),
+            is_nondeterministic: RefCell::new(false),
+            transition_map: RefCell::new(HashMap::new()),
+        }
+    }
+
+    /// Add a transition for a matcher, returns the next field matcher
+    pub fn add_transition(&self, matcher: &crate::json::Matcher) -> Rc<MutableFieldMatcher<X>> {
+        use crate::json::Matcher;
+
+        match matcher {
+            Matcher::Exact(s) => self.add_string_transition(s.as_bytes()),
+            Matcher::NumericExact(n) => self.add_string_transition(n.to_string().as_bytes()),
+            Matcher::Prefix(s) => self.add_prefix_transition(s.as_bytes()),
+            Matcher::Shellstyle(s) => {
+                *self.is_nondeterministic.borrow_mut() = true;
+                self.add_shellstyle_transition(s.as_bytes())
+            }
+            Matcher::Wildcard(s) => {
+                *self.is_nondeterministic.borrow_mut() = true;
+                self.add_wildcard_transition(s.as_bytes())
+            }
+            // For complex matchers, we create a simple next state
+            // These would need proper FA implementations in a complete port
+            _ => {
+                let next_fm = Rc::new(MutableFieldMatcher::new());
+                // Store as a special case - will need runtime checking
+                next_fm
+            }
+        }
+    }
+
+    fn add_string_transition(&self, val: &[u8]) -> Rc<MutableFieldMatcher<X>> {
+        // Check singleton optimization
+        let singleton = self.singleton_match.borrow();
+        let singleton_trans = self.singleton_transition.borrow();
+
+        if singleton.is_none() && self.start_table.borrow().is_none() {
+            // Virgin state - use singleton optimization
+            drop(singleton);
+            drop(singleton_trans);
+
+            let next_fm = Rc::new(MutableFieldMatcher::new());
+            *self.singleton_match.borrow_mut() = Some(val.to_vec());
+            *self.singleton_transition.borrow_mut() = Some(next_fm.clone());
+            return next_fm;
+        }
+
+        // Check if singleton matches
+        if let Some(ref existing) = *singleton {
+            if existing == val {
+                return singleton_trans.as_ref().unwrap().clone();
+            }
+        }
+        drop(singleton);
+        drop(singleton_trans);
+
+        // Need to build automaton
+        let next_fm = Rc::new(MutableFieldMatcher::new());
+        let next_arc = Arc::new(FieldMatcher::new());
+        // Register the mapping from Arc<FieldMatcher> to Rc<MutableFieldMatcher>
+        self.transition_map
+            .borrow_mut()
+            .insert(Arc::as_ptr(&next_arc), next_fm.clone());
+        let new_fa = make_string_fa(val, next_arc);
+
+        let mut start_table = self.start_table.borrow_mut();
+        if let Some(ref existing) = *start_table {
+            // Merge with existing
+            *start_table = Some(merge_fas(existing, &new_fa));
+        } else if self.singleton_match.borrow().is_some() {
+            // Convert singleton to automaton - need to create a new mapping for the singleton
+            let singleton_val = self.singleton_match.borrow().clone().unwrap();
+            let singleton_trans = self.singleton_transition.borrow().clone().unwrap();
+            let singleton_arc = Arc::new(FieldMatcher::new());
+            self.transition_map
+                .borrow_mut()
+                .insert(Arc::as_ptr(&singleton_arc), singleton_trans);
+            let singleton_fa = make_string_fa(&singleton_val, singleton_arc);
+            *start_table = Some(merge_fas(&singleton_fa, &new_fa));
+            *self.singleton_match.borrow_mut() = None;
+            *self.singleton_transition.borrow_mut() = None;
+        } else {
+            *start_table = Some(new_fa);
+        }
+
+        next_fm
+    }
+
+    fn add_prefix_transition(&self, prefix: &[u8]) -> Rc<MutableFieldMatcher<X>> {
+        let next_fm = Rc::new(MutableFieldMatcher::new());
+        let next_arc = Arc::new(FieldMatcher::new());
+        self.transition_map
+            .borrow_mut()
+            .insert(Arc::as_ptr(&next_arc), next_fm.clone());
+        let new_fa = make_prefix_fa(prefix, next_arc);
+
+        let mut start_table = self.start_table.borrow_mut();
+        if let Some(ref existing) = *start_table {
+            *start_table = Some(merge_fas(existing, &new_fa));
+        } else if self.singleton_match.borrow().is_some() {
+            let singleton_val = self.singleton_match.borrow().clone().unwrap();
+            let singleton_trans = self.singleton_transition.borrow().clone().unwrap();
+            let singleton_arc = Arc::new(FieldMatcher::new());
+            self.transition_map
+                .borrow_mut()
+                .insert(Arc::as_ptr(&singleton_arc), singleton_trans);
+            let singleton_fa = make_string_fa(&singleton_val, singleton_arc);
+            *start_table = Some(merge_fas(&singleton_fa, &new_fa));
+            *self.singleton_match.borrow_mut() = None;
+            *self.singleton_transition.borrow_mut() = None;
+        } else {
+            *start_table = Some(new_fa);
+        }
+
+        next_fm
+    }
+
+    fn add_shellstyle_transition(&self, pattern: &[u8]) -> Rc<MutableFieldMatcher<X>> {
+        let next_fm = Rc::new(MutableFieldMatcher::new());
+        let next_arc = Arc::new(FieldMatcher::new());
+        self.transition_map
+            .borrow_mut()
+            .insert(Arc::as_ptr(&next_arc), next_fm.clone());
+        let new_fa = make_shellstyle_fa(pattern, next_arc);
+
+        let mut start_table = self.start_table.borrow_mut();
+        if let Some(ref existing) = *start_table {
+            *start_table = Some(merge_fas(existing, &new_fa));
+        } else if self.singleton_match.borrow().is_some() {
+            let singleton_val = self.singleton_match.borrow().clone().unwrap();
+            let singleton_trans = self.singleton_transition.borrow().clone().unwrap();
+            let singleton_arc = Arc::new(FieldMatcher::new());
+            self.transition_map
+                .borrow_mut()
+                .insert(Arc::as_ptr(&singleton_arc), singleton_trans);
+            let singleton_fa = make_string_fa(&singleton_val, singleton_arc);
+            *start_table = Some(merge_fas(&singleton_fa, &new_fa));
+            *self.singleton_match.borrow_mut() = None;
+            *self.singleton_transition.borrow_mut() = None;
+        } else {
+            *start_table = Some(new_fa);
+        }
+
+        next_fm
+    }
+
+    fn add_wildcard_transition(&self, pattern: &[u8]) -> Rc<MutableFieldMatcher<X>> {
+        let next_fm = Rc::new(MutableFieldMatcher::new());
+        let next_arc = Arc::new(FieldMatcher::new());
+        self.transition_map
+            .borrow_mut()
+            .insert(Arc::as_ptr(&next_arc), next_fm.clone());
+        let new_fa = make_wildcard_fa(pattern, next_arc);
+
+        let mut start_table = self.start_table.borrow_mut();
+        if let Some(ref existing) = *start_table {
+            *start_table = Some(merge_fas(existing, &new_fa));
+        } else if self.singleton_match.borrow().is_some() {
+            let singleton_val = self.singleton_match.borrow().clone().unwrap();
+            let singleton_trans = self.singleton_transition.borrow().clone().unwrap();
+            let singleton_arc = Arc::new(FieldMatcher::new());
+            self.transition_map
+                .borrow_mut()
+                .insert(Arc::as_ptr(&singleton_arc), singleton_trans);
+            let singleton_fa = make_string_fa(&singleton_val, singleton_arc);
+            *start_table = Some(merge_fas(&singleton_fa, &new_fa));
+            *self.singleton_match.borrow_mut() = None;
+            *self.singleton_transition.borrow_mut() = None;
+        } else {
+            *start_table = Some(new_fa);
+        }
+
+        next_fm
+    }
+
+    /// Transition on a value during matching
+    pub fn transition_on(
+        &self,
+        value: &[u8],
+        bufs: &mut NfaBuffers,
+    ) -> Vec<Rc<MutableFieldMatcher<X>>> {
+        // Check singleton first
+        if let Some(ref singleton_val) = *self.singleton_match.borrow() {
+            if singleton_val == value {
+                if let Some(ref trans) = *self.singleton_transition.borrow() {
+                    return vec![trans.clone()];
+                }
+            }
+            return vec![];
+        }
+
+        // Use automaton
+        if let Some(ref table) = *self.start_table.borrow() {
+            let arc_transitions = if *self.is_nondeterministic.borrow() {
+                traverse_nfa(table, value, bufs)
+            } else {
+                traverse_dfa(table, value)
+            };
+
+            // Map Arc<FieldMatcher> transitions to Rc<MutableFieldMatcher<X>>
+            let transition_map = self.transition_map.borrow();
+            let mut result = Vec::new();
+            for arc_fm in arc_transitions {
+                let ptr = Arc::as_ptr(&arc_fm);
+                if let Some(mutable_fm) = transition_map.get(&ptr) {
+                    result.push(mutable_fm.clone());
+                }
+            }
+            result
+        } else {
+            vec![]
+        }
+    }
+}
+
+/// Core matcher that uses automaton-based matching for multiple fields.
+///
+/// This implements the Go quamina matching algorithm:
+/// 1. Patterns are added by building a graph of FieldMatcher -> ValueMatcher -> FieldMatcher
+/// 2. Event fields are sorted and matched against the automaton
+/// 3. Matching recursively tries subsequent fields to find complete pattern matches
+#[derive(Default)]
+pub struct CoreMatcher<X: Clone + Eq + std::hash::Hash> {
+    /// Root field matcher - the start state of the automaton
+    root: Rc<MutableFieldMatcher<X>>,
+}
+
+impl<X: Clone + Eq + std::hash::Hash> CoreMatcher<X> {
+    /// Create a new CoreMatcher
+    pub fn new() -> Self {
+        Self {
+            root: Rc::new(MutableFieldMatcher::new()),
+        }
+    }
+
+    /// Add a pattern with the given identifier.
     ///
-    /// The pattern is parsed and added to the automaton.
-    /// Returns an error if the pattern is invalid.
-    pub fn add_pattern(&mut self, x: X, pattern_fields: &[(String, Vec<crate::json::Matcher>)]) {
+    /// The pattern_fields should be a list of (path, matchers) tuples.
+    /// Fields are automatically sorted by path for matching.
+    pub fn add_pattern(&self, x: X, pattern_fields: &[(String, Vec<crate::json::Matcher>)]) {
         // Sort fields lexically by path (like Go)
         let mut sorted_fields: Vec<_> = pattern_fields.to_vec();
         sorted_fields.sort_by(|a, b| a.0.cmp(&b.0));
 
-        // Build the automaton for this pattern
-        let mut states = vec![self.root.clone()];
+        // Start with the root state
+        let mut states: Vec<Rc<MutableFieldMatcher<X>>> = vec![self.root.clone()];
 
-        for (path, matchers) in sorted_fields {
+        for (path, matchers) in &sorted_fields {
+            if matchers.is_empty() {
+                continue;
+            }
+
             let mut next_states = Vec::new();
 
             for state in &states {
-                // For each matcher, add a transition
-                for matcher in &matchers {
-                    match matcher {
-                        crate::json::Matcher::Exists(true) => {
-                            // exists:true - just check if field exists
-                            if let Some(next) = state.exists_true.get(&path) {
-                                next_states.push(next.clone());
-                            } else {
-                                // Create new field matcher for exists:true
-                                let next = Arc::new(FieldMatcher::new());
-                                next_states.push(next);
-                            }
-                        }
-                        crate::json::Matcher::Exists(false) => {
-                            // exists:false
-                            if let Some(next) = state.exists_false.get(&path) {
-                                next_states.push(next.clone());
-                            } else {
-                                let next = Arc::new(FieldMatcher::new());
-                                next_states.push(next);
-                            }
-                        }
-                        _ => {
-                            // Value matcher - need to add transition on field value
-                            // This is where we'd build the FA for the value
-                            // For now, create a simple next state
-                            let next = Arc::new(FieldMatcher::new());
-                            next_states.push(next);
-                        }
+                // Check for exists patterns
+                let first_matcher = &matchers[0];
+                match first_matcher {
+                    crate::json::Matcher::Exists(true) => {
+                        let next = state.add_exists(true, path);
+                        next_states.push(next);
+                    }
+                    crate::json::Matcher::Exists(false) => {
+                        let next = state.add_exists(false, path);
+                        next_states.push(next);
+                    }
+                    _ => {
+                        // Value matcher transition
+                        let nexts = state.add_transition(path, matchers);
+                        next_states.extend(nexts);
                     }
                 }
             }
@@ -783,15 +1108,168 @@ impl<X: Clone + std::cmp::Eq + std::hash::Hash> CoreMatcher<X> {
         }
 
         // Mark terminal states with the pattern identifier
-        // Note: Since we can't mutate through Arc, we'd need a different structure
-        // For now, this is a placeholder showing the structure
-        self._pattern_count += 1;
+        for state in states {
+            state.add_match(x.clone());
+        }
+    }
+
+    /// Match fields against patterns and return matching pattern identifiers.
+    ///
+    /// Fields should already be sorted by path.
+    pub fn matches_for_fields(&self, fields: &[EventField]) -> Vec<X> {
+        if fields.is_empty() {
+            // Still need to check exists:false patterns
+            return self.collect_exists_false_matches(&self.root);
+        }
+
+        let mut matches = MatchSet::new();
+        let mut bufs = NfaBuffers::new();
+
+        // For each field, try to match from the start state
+        for i in 0..fields.len() {
+            self.try_to_match(fields, i, &self.root, &mut matches, &mut bufs);
+        }
+
+        matches.into_vec()
+    }
+
+    /// Recursively try to match fields starting from the given index and state
+    fn try_to_match(
+        &self,
+        fields: &[EventField],
+        index: usize,
+        state: &Rc<MutableFieldMatcher<X>>,
+        matches: &mut MatchSet<X>,
+        bufs: &mut NfaBuffers,
+    ) {
+        let field = &fields[index];
+
+        // Check exists:true transition
+        if let Some(exists_trans) = state.exists_true.borrow().get(&field.path) {
+            // Add matches from this state
+            for m in exists_trans.matches.borrow().iter() {
+                matches.add(m.clone());
+            }
+            // Try subsequent fields
+            for next_idx in (index + 1)..fields.len() {
+                if no_array_trail_conflict(&field.array_trail, &fields[next_idx].array_trail) {
+                    self.try_to_match(fields, next_idx, exists_trans, matches, bufs);
+                }
+            }
+            // Check exists:false at end
+            self.check_exists_false(state, fields, index, matches, bufs);
+        }
+
+        // Check exists:false (field doesn't exist)
+        self.check_exists_false(state, fields, index, matches, bufs);
+
+        // Try value transitions
+        let next_states = state.transition_on(&field.path, field.value.as_bytes(), bufs);
+
+        for next_state in next_states {
+            // Add matches from next state
+            for m in next_state.matches.borrow().iter() {
+                matches.add(m.clone());
+            }
+
+            // Try subsequent fields
+            for next_idx in (index + 1)..fields.len() {
+                if no_array_trail_conflict(&field.array_trail, &fields[next_idx].array_trail) {
+                    self.try_to_match(fields, next_idx, &next_state, matches, bufs);
+                }
+            }
+
+            // Check exists:false at end
+            self.check_exists_false(&next_state, fields, index, matches, bufs);
+        }
+    }
+
+    /// Check exists:false patterns - field must NOT exist
+    fn check_exists_false(
+        &self,
+        state: &Rc<MutableFieldMatcher<X>>,
+        fields: &[EventField],
+        index: usize,
+        matches: &mut MatchSet<X>,
+        bufs: &mut NfaBuffers,
+    ) {
+        for (path, exists_trans) in state.exists_false.borrow().iter() {
+            // Check if this path exists in the fields
+            let field_exists = fields.iter().any(|f| &f.path == path);
+
+            if !field_exists {
+                // Field doesn't exist - exists:false matches
+                for m in exists_trans.matches.borrow().iter() {
+                    matches.add(m.clone());
+                }
+                // Continue matching from this state
+                self.try_to_match(fields, index, exists_trans, matches, bufs);
+            }
+        }
+    }
+
+    /// Collect matches from exists:false patterns when there are no fields
+    fn collect_exists_false_matches(&self, state: &Rc<MutableFieldMatcher<X>>) -> Vec<X> {
+        let mut result = Vec::new();
+        for exists_trans in state.exists_false.borrow().values() {
+            result.extend(exists_trans.matches.borrow().iter().cloned());
+        }
+        result
     }
 }
 
-impl<X: Clone + std::cmp::Eq + std::hash::Hash> Default for CoreMatcher<X> {
-    fn default() -> Self {
-        Self::new()
+/// An event field for matching (simplified version of json::Field)
+#[derive(Clone, Debug)]
+pub struct EventField {
+    pub path: String,
+    pub value: String,
+    pub array_trail: Vec<crate::json::ArrayPos>,
+}
+
+impl From<&crate::json::Field> for EventField {
+    fn from(f: &crate::json::Field) -> Self {
+        EventField {
+            path: f.path.clone(),
+            value: f.value.clone(),
+            array_trail: f.array_trail.clone(),
+        }
+    }
+}
+
+/// Check if two array trails have no conflicts
+fn no_array_trail_conflict(from: &[crate::json::ArrayPos], to: &[crate::json::ArrayPos]) -> bool {
+    for from_pos in from {
+        for to_pos in to {
+            if from_pos.array == to_pos.array && from_pos.pos != to_pos.pos {
+                return false;
+            }
+        }
+    }
+    true
+}
+
+/// A set of matches (deduplicated)
+struct MatchSet<X: Clone + Eq + std::hash::Hash> {
+    seen: std::collections::HashSet<X>,
+    matches: Vec<X>,
+}
+
+impl<X: Clone + Eq + std::hash::Hash> MatchSet<X> {
+    fn new() -> Self {
+        Self {
+            seen: std::collections::HashSet::new(),
+            matches: Vec::new(),
+        }
+    }
+
+    fn add(&mut self, x: X) {
+        if self.seen.insert(x.clone()) {
+            self.matches.push(x);
+        }
+    }
+
+    fn into_vec(self) -> Vec<X> {
+        self.matches
     }
 }
 
@@ -970,7 +1448,11 @@ mod tests {
             field_transitions: vec![next_field],
         });
 
-        let table = SmallTable::with_mappings(None, &[b'a', b'b'], &[next_state.clone(), next_state.clone()]);
+        let table = SmallTable::with_mappings(
+            None,
+            &[b'a', b'b'],
+            &[next_state.clone(), next_state.clone()],
+        );
 
         let (step_a, _) = table.step(b'a');
         assert!(step_a.is_some());
@@ -1142,10 +1624,16 @@ mod tests {
         matcher.add_shellstyle_match(b"*.txt", "p1".to_string());
 
         let matches = matcher.match_value(b"file.txt");
-        assert!(matches.contains(&"p1".to_string()), "file.txt should match *.txt");
+        assert!(
+            matches.contains(&"p1".to_string()),
+            "file.txt should match *.txt"
+        );
 
         let matches = matcher.match_value(b".txt");
-        assert!(matches.contains(&"p1".to_string()), ".txt should match *.txt");
+        assert!(
+            matches.contains(&"p1".to_string()),
+            ".txt should match *.txt"
+        );
 
         let matches = matcher.match_value(b"foo");
         assert!(matches.is_empty(), "foo should not match *.txt");
@@ -1201,5 +1689,279 @@ mod tests {
         // Should not match unrelated
         let transitions3 = traverse_dfa(&merged, b"xyz");
         assert!(transitions3.is_empty(), "xyz should not match merged FA");
+    }
+
+    // ========================================================================
+    // CoreMatcher Tests
+    // ========================================================================
+
+    #[test]
+    fn test_core_matcher_single_field_exact() {
+        use crate::json::Matcher;
+
+        let matcher: CoreMatcher<String> = CoreMatcher::new();
+
+        // Add pattern: {"status": ["active"]}
+        matcher.add_pattern(
+            "p1".to_string(),
+            &[(
+                "status".to_string(),
+                vec![Matcher::Exact("active".to_string())],
+            )],
+        );
+
+        // Create event fields (sorted by path)
+        let fields = vec![EventField {
+            path: "status".to_string(),
+            value: "active".to_string(),
+            array_trail: vec![],
+        }];
+
+        let matches = matcher.matches_for_fields(&fields);
+        assert_eq!(matches.len(), 1);
+        assert!(matches.contains(&"p1".to_string()));
+    }
+
+    #[test]
+    fn test_core_matcher_single_field_no_match() {
+        use crate::json::Matcher;
+
+        let matcher: CoreMatcher<String> = CoreMatcher::new();
+
+        matcher.add_pattern(
+            "p1".to_string(),
+            &[(
+                "status".to_string(),
+                vec![Matcher::Exact("active".to_string())],
+            )],
+        );
+
+        let fields = vec![EventField {
+            path: "status".to_string(),
+            value: "inactive".to_string(),
+            array_trail: vec![],
+        }];
+
+        let matches = matcher.matches_for_fields(&fields);
+        assert!(matches.is_empty());
+    }
+
+    #[test]
+    fn test_core_matcher_exists_true() {
+        use crate::json::Matcher;
+
+        let matcher: CoreMatcher<String> = CoreMatcher::new();
+
+        // Pattern: {"name": [{"exists": true}]}
+        matcher.add_pattern(
+            "p1".to_string(),
+            &[("name".to_string(), vec![Matcher::Exists(true)])],
+        );
+
+        // Event with name field present
+        let fields = vec![EventField {
+            path: "name".to_string(),
+            value: "anything".to_string(),
+            array_trail: vec![],
+        }];
+
+        let matches = matcher.matches_for_fields(&fields);
+        assert_eq!(
+            matches.len(),
+            1,
+            "exists:true should match when field exists"
+        );
+    }
+
+    #[test]
+    fn test_core_matcher_exists_false() {
+        use crate::json::Matcher;
+
+        let matcher: CoreMatcher<String> = CoreMatcher::new();
+
+        // Pattern: {"name": [{"exists": false}]}
+        matcher.add_pattern(
+            "p1".to_string(),
+            &[("name".to_string(), vec![Matcher::Exists(false)])],
+        );
+
+        // Event without name field
+        let fields = vec![EventField {
+            path: "other".to_string(),
+            value: "value".to_string(),
+            array_trail: vec![],
+        }];
+
+        let matches = matcher.matches_for_fields(&fields);
+        assert_eq!(
+            matches.len(),
+            1,
+            "exists:false should match when field is absent"
+        );
+    }
+
+    #[test]
+    fn test_core_matcher_multi_field_and() {
+        use crate::json::Matcher;
+
+        let matcher: CoreMatcher<String> = CoreMatcher::new();
+
+        // Pattern: {"status": ["active"], "type": ["user"]}
+        // Both fields must match (AND semantics)
+        matcher.add_pattern(
+            "p1".to_string(),
+            &[
+                (
+                    "status".to_string(),
+                    vec![Matcher::Exact("active".to_string())],
+                ),
+                ("type".to_string(), vec![Matcher::Exact("user".to_string())]),
+            ],
+        );
+
+        // Event with both fields matching
+        let fields = vec![
+            EventField {
+                path: "status".to_string(),
+                value: "active".to_string(),
+                array_trail: vec![],
+            },
+            EventField {
+                path: "type".to_string(),
+                value: "user".to_string(),
+                array_trail: vec![],
+            },
+        ];
+
+        let matches = matcher.matches_for_fields(&fields);
+        assert_eq!(
+            matches.len(),
+            1,
+            "multi-field AND should match when all fields match"
+        );
+    }
+
+    #[test]
+    fn test_core_matcher_multi_field_partial_no_match() {
+        use crate::json::Matcher;
+
+        let matcher: CoreMatcher<String> = CoreMatcher::new();
+
+        // Pattern: {"status": ["active"], "type": ["user"]}
+        matcher.add_pattern(
+            "p1".to_string(),
+            &[
+                (
+                    "status".to_string(),
+                    vec![Matcher::Exact("active".to_string())],
+                ),
+                ("type".to_string(), vec![Matcher::Exact("user".to_string())]),
+            ],
+        );
+
+        // Event with only status matching
+        let fields = vec![
+            EventField {
+                path: "status".to_string(),
+                value: "active".to_string(),
+                array_trail: vec![],
+            },
+            EventField {
+                path: "type".to_string(),
+                value: "admin".to_string(),
+                array_trail: vec![],
+            },
+        ];
+
+        let matches = matcher.matches_for_fields(&fields);
+        assert!(
+            matches.is_empty(),
+            "multi-field AND should not match with partial field match"
+        );
+    }
+
+    #[test]
+    fn test_core_matcher_or_within_field() {
+        use crate::json::Matcher;
+
+        let matcher: CoreMatcher<String> = CoreMatcher::new();
+
+        // Pattern: {"status": ["active", "pending"]} - OR within field
+        matcher.add_pattern(
+            "p1".to_string(),
+            &[(
+                "status".to_string(),
+                vec![
+                    Matcher::Exact("active".to_string()),
+                    Matcher::Exact("pending".to_string()),
+                ],
+            )],
+        );
+
+        // Should match "active"
+        let fields1 = vec![EventField {
+            path: "status".to_string(),
+            value: "active".to_string(),
+            array_trail: vec![],
+        }];
+        let matches1 = matcher.matches_for_fields(&fields1);
+        assert_eq!(matches1.len(), 1, "OR within field should match 'active'");
+
+        // Should match "pending"
+        let fields2 = vec![EventField {
+            path: "status".to_string(),
+            value: "pending".to_string(),
+            array_trail: vec![],
+        }];
+        let matches2 = matcher.matches_for_fields(&fields2);
+        assert_eq!(matches2.len(), 1, "OR within field should match 'pending'");
+
+        // Should not match "completed"
+        let fields3 = vec![EventField {
+            path: "status".to_string(),
+            value: "completed".to_string(),
+            array_trail: vec![],
+        }];
+        let matches3 = matcher.matches_for_fields(&fields3);
+        assert!(
+            matches3.is_empty(),
+            "OR within field should not match 'completed'"
+        );
+    }
+
+    #[test]
+    fn test_core_matcher_multiple_patterns() {
+        use crate::json::Matcher;
+
+        let matcher: CoreMatcher<String> = CoreMatcher::new();
+
+        // Pattern 1: {"status": ["active"]}
+        matcher.add_pattern(
+            "p1".to_string(),
+            &[(
+                "status".to_string(),
+                vec![Matcher::Exact("active".to_string())],
+            )],
+        );
+
+        // Pattern 2: {"status": ["pending"]}
+        matcher.add_pattern(
+            "p2".to_string(),
+            &[(
+                "status".to_string(),
+                vec![Matcher::Exact("pending".to_string())],
+            )],
+        );
+
+        // Should match p1 only
+        let fields = vec![EventField {
+            path: "status".to_string(),
+            value: "active".to_string(),
+            array_trail: vec![],
+        }];
+
+        let matches = matcher.matches_for_fields(&fields);
+        assert_eq!(matches.len(), 1);
+        assert!(matches.contains(&"p1".to_string()));
     }
 }

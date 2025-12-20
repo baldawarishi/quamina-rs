@@ -16,7 +16,7 @@ quamina-rs provides the same core functionality as the Go version:
 
 ## Current Status
 
-✅ **All core pattern operators implemented** (90 tests passing)
+✅ **All core pattern operators implemented** (98 tests passing)
 
 | Feature | Status |
 |---------|--------|
@@ -177,15 +177,20 @@ Rust is now a correct implementation with full pattern operator parity to Go. Th
 - ✅ Single-field pattern fast path (skip backtracking for common case)
 - ✅ Push/pop optimization for trail tracking (avoid allocations)
 - ✅ Field-path indexing with adaptive heuristic (70-82% improvement for diverse patterns)
-- 🔄 Automaton-based matching (like Go version) - foundation implemented, integration pending
+- 🔄 Automaton-based matching (like Go version) - foundation complete, integration pending
   - ✅ SmallTable (byte-indexed transition table with ceilings/steps)
   - ✅ FaState (automaton state with table and field transitions)
-  - ✅ FA builders: make_string_fa, make_prefix_fa, make_shellstyle_fa
+  - ✅ FA builders: make_string_fa, make_prefix_fa, make_shellstyle_fa, make_wildcard_fa
   - ✅ DFA/NFA traversal with epsilon closure and spinout handling
   - ✅ merge_fas for combining multiple automata
   - ✅ AutomatonValueMatcher for single-field value matching
-  - ⏳ Multi-field pattern matching (AND across fields)
-  - ⏳ Integration with main Quamina struct
+  - ✅ Multi-field CoreMatcher with add_pattern and matches_for_fields
+    - MutableFieldMatcher with transitions, matches, exists_true/false maps
+    - MutableValueMatcher with singleton optimization and automaton
+    - Pattern addition builds graph of FieldMatcher -> ValueMatcher -> FieldMatcher
+    - Matching traverses graph recursively with array trail conflict checking
+    - Tests passing: single-field, multi-field AND, OR within field, exists patterns
+  - ⏳ Integration with main Quamina struct (replace HashMap-based matching)
 - Memory optimization
 
 ### Phase 5: Future Enhancements (not yet started)
