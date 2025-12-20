@@ -177,10 +177,16 @@ Rust is now a correct implementation with full pattern operator parity to Go. Th
 - ✅ Single-field pattern fast path (skip backtracking for common case)
 - ✅ Push/pop optimization for trail tracking (avoid allocations)
 - ✅ Field-path indexing with adaptive heuristic (70-82% improvement for diverse patterns)
-- 🔄 Automaton-based matching (like Go version) - foundation complete, integration pending
+- ✅ Automaton-based matching (like Go version)
   - ✅ SmallTable (byte-indexed transition table with ceilings/steps)
   - ✅ FaState (automaton state with table and field transitions)
-  - ✅ FA builders: make_string_fa, make_prefix_fa, make_shellstyle_fa, make_wildcard_fa
+  - ✅ FA builders for all supported pattern types:
+    - ✅ make_string_fa - exact string matching
+    - ✅ make_prefix_fa - prefix matching
+    - ✅ make_shellstyle_fa - shellstyle wildcard patterns (*)
+    - ✅ make_wildcard_fa - wildcard with escaping (\*, \\)
+    - ✅ make_anything_but_fa - anything-but patterns (multi-value AND semantics)
+    - ✅ make_monocase_fa - equals-ignore-case matching (ASCII case folding)
   - ✅ DFA/NFA traversal with epsilon closure and spinout handling
   - ✅ merge_fas for combining multiple automata
   - ✅ AutomatonValueMatcher for single-field value matching
@@ -190,8 +196,30 @@ Rust is now a correct implementation with full pattern operator parity to Go. Th
     - Pattern addition builds graph of FieldMatcher -> ValueMatcher -> FieldMatcher
     - Matching traverses graph recursively with array trail conflict checking
     - Tests passing: single-field, multi-field AND, OR within field, exists patterns
-  - ⏳ Integration with main Quamina struct (replace HashMap-based matching)
+  - ✅ ThreadSafeCoreMatcher (Send + Sync) using build-then-freeze pattern with ArcSwap
+    - FrozenFieldMatcher and FrozenValueMatcher - immutable, Arc-wrapped
+    - Pattern addition serialized via Mutex, matching is lock-free
+    - Uses pointer-based transition mapping between automaton and frozen structures
 - Memory optimization
+
+### Integration Notes
+
+The automaton module (`pub mod automaton`) provides a complete automaton-based matching engine.
+
+**Thread Safety (Resolved):**
+- `ThreadSafeCoreMatcher<X>` is `Send + Sync` for concurrent access
+- Uses build-then-freeze pattern: mutable `Rc<RefCell<>>` during building, immutable `Arc` for matching
+- `ArcSwap` enables atomic updates - pattern addition serialized via Mutex, matching is lock-free
+- 6 new tests verify Send + Sync bounds and matching correctness
+
+**Pattern Support in Automaton:**
+- ✅ Supported: Exact, NumericExact, Prefix, Shellstyle, Wildcard, AnythingBut, EqualsIgnoreCase, Exists
+- ❌ Not in automaton: Suffix (Rust-only), Numeric comparisons (Rust-only), Regex
+
+**Next Steps for Full Integration:**
+- Integrate `ThreadSafeCoreMatcher` with main `Quamina` struct (hybrid approach)
+- Fall back to HashMap-based matching for unsupported matchers (Suffix, Numeric, Regex)
+- Benchmark to verify performance improvement
 
 ### Phase 5: Future Enhancements (not yet started)
 - Custom flatteners

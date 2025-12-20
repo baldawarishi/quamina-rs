@@ -9,6 +9,7 @@
 //! - `ValueMatcher`: Matches field values using the automaton
 
 use std::collections::HashMap;
+use std::hash::Hash;
 use std::sync::Arc;
 
 /// Maximum byte value we handle. UTF-8 bytes 0xF5-0xFF can't appear in valid strings.
@@ -708,6 +709,144 @@ fn make_wildcard_fa_step(
     SmallTable::with_mappings(None, &[ch], &[next_state])
 }
 
+/// Build an anything-but FA that matches any value NOT in the excluded list.
+///
+/// The automaton works by having a default "success" transition for all bytes,
+/// except for bytes that start one of the excluded values. Those bytes lead to
+/// states that track whether we're matching an excluded value. When we reach
+/// the end of an excluded value (via VALUE_TERMINATOR), we transition to a
+/// "failure" state with no field transitions.
+///
+/// # Arguments
+/// * `excluded` - The list of excluded values (byte sequences)
+/// * `next_field` - The field matcher to transition to on success
+pub fn make_anything_but_fa(excluded: &[Vec<u8>], next_field: Arc<FieldMatcher>) -> SmallTable {
+    // Success state - we match if we get here
+    let success = Arc::new(FaState {
+        table: SmallTable::new(),
+        field_transitions: vec![next_field],
+    });
+
+    make_anything_but_step(excluded, 0, &success)
+}
+
+/// Build one step of the anything-but automaton.
+///
+/// At each position, we group excluded values by their byte at that position.
+/// The default transition is to success. For bytes that continue an excluded
+/// value, we recurse. For bytes that end an excluded value, we go to failure.
+fn make_anything_but_step(vals: &[Vec<u8>], index: usize, success: &Arc<FaState>) -> SmallTable {
+    // Start with default transition to success for all bytes
+    let mut unpacked: [Option<Arc<FaState>>; BYTE_CEILING] =
+        std::array::from_fn(|_| Some(success.clone()));
+
+    // Group values by the byte at current index
+    let mut vals_with_bytes_remaining: HashMap<u8, Vec<&Vec<u8>>> = HashMap::new();
+    let mut vals_ending_here: std::collections::HashSet<u8> = std::collections::HashSet::new();
+
+    for val in vals {
+        let last_index = val.len().saturating_sub(1);
+        if index < last_index {
+            // This value has more bytes after index
+            let utf8_byte = val[index];
+            vals_with_bytes_remaining
+                .entry(utf8_byte)
+                .or_default()
+                .push(val);
+        } else if index == last_index && !val.is_empty() {
+            // This value ends at index
+            vals_ending_here.insert(val[index]);
+        }
+        // if index > last_index, this value is already exhausted, no-op
+    }
+
+    // For each byte that continues some excluded values, recurse
+    for (utf8_byte, continuing_vals) in vals_with_bytes_remaining {
+        let owned_vals: Vec<Vec<u8>> = continuing_vals.into_iter().cloned().collect();
+        let next_table = make_anything_but_step(&owned_vals, index + 1, success);
+        let next_step = Arc::new(FaState::with_table(next_table));
+        unpacked[utf8_byte as usize] = Some(next_step);
+    }
+
+    // For each byte that ends an excluded value, put a failure transition on VALUE_TERMINATOR
+    for utf8_byte in vals_ending_here {
+        // Failure state - no field transitions means no match
+        let fail_state = Arc::new(FaState::new());
+        // On VALUE_TERMINATOR, go to failure. On anything else, go to success.
+        let last_table = SmallTable::with_mappings(
+            Some(success.clone()),
+            &[VALUE_TERMINATOR],
+            &[fail_state],
+        );
+        unpacked[utf8_byte as usize] = Some(Arc::new(FaState::with_table(last_table)));
+    }
+
+    let mut table = SmallTable::new();
+    table.pack(&unpacked);
+    table
+}
+
+/// Build an equals-ignore-case (monocase) FA.
+///
+/// This creates an automaton that matches a string in a case-insensitive manner.
+/// For each character, if it has both upper and lower case forms, both paths
+/// lead to the same next state.
+///
+/// # Arguments
+/// * `val` - The pattern value to match case-insensitively
+/// * `next_field` - The field matcher to transition to on match
+pub fn make_monocase_fa(val: &[u8], next_field: Arc<FieldMatcher>) -> SmallTable {
+    if val.is_empty() {
+        // Empty string - match on value terminator
+        let match_state = Arc::new(FaState {
+            table: SmallTable::new(),
+            field_transitions: vec![next_field],
+        });
+        return SmallTable::with_mappings(None, &[VALUE_TERMINATOR], &[match_state]);
+    }
+
+    // Build from end to start for easier construction
+    // First, create the final state that transitions on VALUE_TERMINATOR
+    let final_state = Arc::new(FaState {
+        table: SmallTable::new(),
+        field_transitions: vec![next_field],
+    });
+    let mut current_next = Arc::new(FaState {
+        table: SmallTable::with_mappings(None, &[VALUE_TERMINATOR], &[final_state]),
+        field_transitions: vec![],
+    });
+
+    // Process bytes from end to start
+    for i in (0..val.len()).rev() {
+        let byte = val[i];
+
+        // Check if this byte is an ASCII letter with a case counterpart
+        let alt_byte = if byte.is_ascii_lowercase() {
+            Some(byte.to_ascii_uppercase())
+        } else if byte.is_ascii_uppercase() {
+            Some(byte.to_ascii_lowercase())
+        } else {
+            None
+        };
+
+        let table = if let Some(alt) = alt_byte {
+            // Both original and alternate lead to the same next state
+            if byte < alt {
+                SmallTable::with_mappings(None, &[byte, alt], &[current_next.clone(), current_next.clone()])
+            } else {
+                SmallTable::with_mappings(None, &[alt, byte], &[current_next.clone(), current_next.clone()])
+            }
+        } else {
+            // No case variant
+            SmallTable::with_mappings(None, &[byte], &[current_next.clone()])
+        };
+
+        current_next = Arc::new(FaState::with_table(table));
+    }
+
+    current_next.table.clone()
+}
+
 // ============================================================================
 // Multi-field Pattern Matching (CoreMatcher)
 // ============================================================================
@@ -851,8 +990,14 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
                 *self.is_nondeterministic.borrow_mut() = true;
                 self.add_wildcard_transition(s.as_bytes())
             }
-            // For complex matchers, we create a simple next state
-            // These would need proper FA implementations in a complete port
+            Matcher::AnythingBut(excluded) => {
+                let excluded_bytes: Vec<Vec<u8>> =
+                    excluded.iter().map(|s| s.as_bytes().to_vec()).collect();
+                self.add_anything_but_transition(&excluded_bytes)
+            }
+            Matcher::EqualsIgnoreCase(s) => self.add_monocase_transition(s.as_bytes()),
+            // For complex matchers (Suffix, Numeric, Regex), we create a simple next state
+            // These would need runtime checking or specialized handling
             _ => {
                 let next_fm = Rc::new(MutableFieldMatcher::new());
                 // Store as a special case - will need runtime checking
@@ -983,6 +1128,64 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
             .borrow_mut()
             .insert(Arc::as_ptr(&next_arc), next_fm.clone());
         let new_fa = make_wildcard_fa(pattern, next_arc);
+
+        let mut start_table = self.start_table.borrow_mut();
+        if let Some(ref existing) = *start_table {
+            *start_table = Some(merge_fas(existing, &new_fa));
+        } else if self.singleton_match.borrow().is_some() {
+            let singleton_val = self.singleton_match.borrow().clone().unwrap();
+            let singleton_trans = self.singleton_transition.borrow().clone().unwrap();
+            let singleton_arc = Arc::new(FieldMatcher::new());
+            self.transition_map
+                .borrow_mut()
+                .insert(Arc::as_ptr(&singleton_arc), singleton_trans);
+            let singleton_fa = make_string_fa(&singleton_val, singleton_arc);
+            *start_table = Some(merge_fas(&singleton_fa, &new_fa));
+            *self.singleton_match.borrow_mut() = None;
+            *self.singleton_transition.borrow_mut() = None;
+        } else {
+            *start_table = Some(new_fa);
+        }
+
+        next_fm
+    }
+
+    fn add_anything_but_transition(&self, excluded: &[Vec<u8>]) -> Rc<MutableFieldMatcher<X>> {
+        let next_fm = Rc::new(MutableFieldMatcher::new());
+        let next_arc = Arc::new(FieldMatcher::new());
+        self.transition_map
+            .borrow_mut()
+            .insert(Arc::as_ptr(&next_arc), next_fm.clone());
+        let new_fa = make_anything_but_fa(excluded, next_arc);
+
+        let mut start_table = self.start_table.borrow_mut();
+        if let Some(ref existing) = *start_table {
+            *start_table = Some(merge_fas(existing, &new_fa));
+        } else if self.singleton_match.borrow().is_some() {
+            let singleton_val = self.singleton_match.borrow().clone().unwrap();
+            let singleton_trans = self.singleton_transition.borrow().clone().unwrap();
+            let singleton_arc = Arc::new(FieldMatcher::new());
+            self.transition_map
+                .borrow_mut()
+                .insert(Arc::as_ptr(&singleton_arc), singleton_trans);
+            let singleton_fa = make_string_fa(&singleton_val, singleton_arc);
+            *start_table = Some(merge_fas(&singleton_fa, &new_fa));
+            *self.singleton_match.borrow_mut() = None;
+            *self.singleton_transition.borrow_mut() = None;
+        } else {
+            *start_table = Some(new_fa);
+        }
+
+        next_fm
+    }
+
+    fn add_monocase_transition(&self, val: &[u8]) -> Rc<MutableFieldMatcher<X>> {
+        let next_fm = Rc::new(MutableFieldMatcher::new());
+        let next_arc = Arc::new(FieldMatcher::new());
+        self.transition_map
+            .borrow_mut()
+            .insert(Arc::as_ptr(&next_arc), next_fm.clone());
+        let new_fa = make_monocase_fa(val, next_arc);
 
         let mut start_table = self.start_table.borrow_mut();
         if let Some(ref existing) = *start_table {
@@ -1426,6 +1629,471 @@ pub fn merge_fas(table1: &SmallTable, table2: &SmallTable) -> SmallTable {
     result.epsilons.extend(table2.epsilons.iter().cloned());
 
     result
+}
+
+// ============================================================================
+// Thread-Safe CoreMatcher (Send + Sync)
+// ============================================================================
+//
+// The thread-safe version uses a "build-then-freeze" pattern:
+// 1. Building happens with a mutex held, using mutable structures
+// 2. After building, structures are "frozen" into immutable Arc-based types
+// 3. The frozen root is stored in ArcSwap for lock-free reads during matching
+//
+// This mirrors Go's approach where atomic.Pointer is used for visibility,
+// with a mutex protecting writes.
+
+use arc_swap::ArcSwap;
+use std::sync::Mutex;
+
+/// Frozen (immutable) field matcher - Send + Sync
+///
+/// This is the immutable counterpart to MutableFieldMatcher.
+/// Once created, it cannot be modified, making it safe for concurrent access.
+#[derive(Clone, Default)]
+pub struct FrozenFieldMatcher<X: Clone + Eq + Hash> {
+    /// Map from field paths to value matchers
+    pub transitions: HashMap<String, Arc<FrozenValueMatcher<X>>>,
+    /// Pattern identifiers that match when arriving at this state
+    pub matches: Vec<X>,
+    /// exists:true patterns - map from field path to next field matcher
+    pub exists_true: HashMap<String, Arc<FrozenFieldMatcher<X>>>,
+    /// exists:false patterns - map from field path to next field matcher
+    pub exists_false: HashMap<String, Arc<FrozenFieldMatcher<X>>>,
+}
+
+// Safety: FrozenFieldMatcher only contains Arc, HashMap, and Vec - all Send+Sync when X is
+unsafe impl<X: Clone + Eq + Hash + Send + Sync> Send for FrozenFieldMatcher<X> {}
+unsafe impl<X: Clone + Eq + Hash + Send + Sync> Sync for FrozenFieldMatcher<X> {}
+
+impl<X: Clone + Eq + Hash> FrozenFieldMatcher<X> {
+    pub fn new() -> Self {
+        Self {
+            transitions: HashMap::new(),
+            matches: Vec::new(),
+            exists_true: HashMap::new(),
+            exists_false: HashMap::new(),
+        }
+    }
+
+    /// Transition on a field value during matching
+    pub fn transition_on(
+        &self,
+        path: &str,
+        value: &[u8],
+        bufs: &mut NfaBuffers,
+    ) -> Vec<Arc<FrozenFieldMatcher<X>>> {
+        if let Some(vm) = self.transitions.get(path) {
+            vm.transition_on(value, bufs)
+        } else {
+            vec![]
+        }
+    }
+}
+
+/// Frozen (immutable) value matcher - Send + Sync
+///
+/// This is the immutable counterpart to MutableValueMatcher.
+#[derive(Clone, Default)]
+pub struct FrozenValueMatcher<X: Clone + Eq + Hash> {
+    /// The automaton start table
+    start_table: Option<SmallTable>,
+    /// Optimization: for single exact match, store it directly
+    singleton_match: Option<Vec<u8>>,
+    /// Transition for singleton match
+    singleton_transition: Option<Arc<FrozenFieldMatcher<X>>>,
+    /// Whether this matcher requires NFA traversal
+    is_nondeterministic: bool,
+    /// Mapping from FieldMatcher pointer (as usize) to FrozenFieldMatcher
+    /// Uses the pointer address to bridge automaton transitions to our frozen matchers
+    transition_map: HashMap<usize, Arc<FrozenFieldMatcher<X>>>,
+}
+
+// Safety: FrozenValueMatcher only contains Arc, HashMap, Option, and primitives
+unsafe impl<X: Clone + Eq + Hash + Send + Sync> Send for FrozenValueMatcher<X> {}
+unsafe impl<X: Clone + Eq + Hash + Send + Sync> Sync for FrozenValueMatcher<X> {}
+
+impl<X: Clone + Eq + Hash> FrozenValueMatcher<X> {
+    pub fn new() -> Self {
+        Self {
+            start_table: None,
+            singleton_match: None,
+            singleton_transition: None,
+            is_nondeterministic: false,
+            transition_map: HashMap::new(),
+        }
+    }
+
+    /// Transition on a value during matching
+    pub fn transition_on(
+        &self,
+        value: &[u8],
+        bufs: &mut NfaBuffers,
+    ) -> Vec<Arc<FrozenFieldMatcher<X>>> {
+        // Check singleton first
+        if let Some(ref singleton_val) = self.singleton_match {
+            if singleton_val == value {
+                if let Some(ref trans) = self.singleton_transition {
+                    return vec![trans.clone()];
+                }
+            }
+            return vec![];
+        }
+
+        // Use automaton
+        if let Some(ref table) = self.start_table {
+            let arc_transitions = if self.is_nondeterministic {
+                traverse_nfa(table, value, bufs)
+            } else {
+                traverse_dfa(table, value)
+            };
+
+            // Map FieldMatcher transitions to FrozenFieldMatcher using pointer address
+            let mut result = Vec::new();
+            for arc_fm in arc_transitions {
+                let ptr = Arc::as_ptr(&arc_fm) as usize;
+                if let Some(frozen_fm) = self.transition_map.get(&ptr) {
+                    result.push(frozen_fm.clone());
+                }
+            }
+            result
+        } else {
+            vec![]
+        }
+    }
+}
+
+/// Internal state for building patterns (protected by mutex)
+struct BuildState<X: Clone + Eq + Hash> {
+    /// The mutable root for building
+    root: Rc<MutableFieldMatcher<X>>,
+}
+
+// Safety: BuildState is only ever accessed through a Mutex lock in ThreadSafeCoreMatcher.
+// The Rc<MutableFieldMatcher> is never shared between threads - it's always accessed
+// while holding the mutex lock. This makes it safe to implement Send.
+unsafe impl<X: Clone + Eq + Hash + Send> Send for BuildState<X> {}
+
+impl<X: Clone + Eq + Hash> BuildState<X> {
+    fn new() -> Self {
+        Self {
+            root: Rc::new(MutableFieldMatcher::new()),
+        }
+    }
+}
+
+/// Thread-safe core matcher using automaton-based matching.
+///
+/// This matcher is `Send + Sync`, allowing concurrent access from multiple threads.
+/// Pattern addition is serialized via a mutex, while matching is lock-free.
+///
+/// # Example
+/// ```ignore
+/// use quamina::automaton::ThreadSafeCoreMatcher;
+/// use quamina::automaton::EventField;
+/// use quamina::json::Matcher;  // Internal module
+///
+/// let matcher: ThreadSafeCoreMatcher<String> = ThreadSafeCoreMatcher::new();
+///
+/// // Add patterns (thread-safe, serialized)
+/// matcher.add_pattern("p1".to_string(), &[
+///     ("status".to_string(), vec![Matcher::Exact("active".to_string())])
+/// ]);
+///
+/// // Match events (thread-safe, concurrent)
+/// let fields = vec![EventField {
+///     path: "status".to_string(),
+///     value: "active".to_string(),
+///     array_trail: vec![],
+/// }];
+/// let matches = matcher.matches_for_fields(&fields);
+/// ```
+pub struct ThreadSafeCoreMatcher<X: Clone + Eq + Hash + Send + Sync> {
+    /// The frozen root - atomically swappable, lock-free reads
+    root: ArcSwap<FrozenFieldMatcher<X>>,
+    /// Mutex protecting pattern building
+    build_lock: Mutex<BuildState<X>>,
+}
+
+// ThreadSafeCoreMatcher is Send + Sync because:
+// - ArcSwap<T> is Send + Sync when T is Send + Sync
+// - Mutex<T> is Send + Sync when T is Send
+// - FrozenFieldMatcher is Send + Sync when X is
+// - BuildState contains Rc which is !Send, but it's behind a Mutex which makes
+//   the ThreadSafeCoreMatcher itself Send + Sync
+
+impl<X: Clone + Eq + Hash + Send + Sync> ThreadSafeCoreMatcher<X> {
+    /// Create a new ThreadSafeCoreMatcher
+    pub fn new() -> Self {
+        Self {
+            root: ArcSwap::from_pointee(FrozenFieldMatcher::new()),
+            build_lock: Mutex::new(BuildState::new()),
+        }
+    }
+
+    /// Add a pattern with the given identifier.
+    ///
+    /// This method is thread-safe but serialized - only one pattern can be added at a time.
+    /// The pattern_fields should be a list of (path, matchers) tuples.
+    pub fn add_pattern(&self, x: X, pattern_fields: &[(String, Vec<crate::json::Matcher>)]) {
+        // Acquire build lock
+        let build_state = self.build_lock.lock().unwrap();
+
+        // Sort fields lexically by path (like Go)
+        let mut sorted_fields: Vec<_> = pattern_fields.to_vec();
+        sorted_fields.sort_by(|a, b| a.0.cmp(&b.0));
+
+        // Build using mutable structures
+        let mut states: Vec<Rc<MutableFieldMatcher<X>>> = vec![build_state.root.clone()];
+
+        for (path, matchers) in &sorted_fields {
+            if matchers.is_empty() {
+                continue;
+            }
+
+            let mut next_states = Vec::new();
+
+            for state in &states {
+                let first_matcher = &matchers[0];
+                match first_matcher {
+                    crate::json::Matcher::Exists(true) => {
+                        let next = state.add_exists(true, path);
+                        next_states.push(next);
+                    }
+                    crate::json::Matcher::Exists(false) => {
+                        let next = state.add_exists(false, path);
+                        next_states.push(next);
+                    }
+                    _ => {
+                        let nexts = state.add_transition(path, matchers);
+                        next_states.extend(nexts);
+                    }
+                }
+            }
+
+            states = next_states;
+        }
+
+        // Mark terminal states with the pattern identifier
+        for state in states {
+            state.add_match(x.clone());
+        }
+
+        // Freeze the mutable structures and store atomically
+        let frozen = self.freeze_field_matcher(&build_state.root);
+        self.root.store(Arc::new(frozen));
+    }
+
+    /// Freeze a MutableFieldMatcher into a FrozenFieldMatcher
+    fn freeze_field_matcher(
+        &self,
+        mutable: &Rc<MutableFieldMatcher<X>>,
+    ) -> FrozenFieldMatcher<X> {
+        // Use a cache to handle cycles and sharing
+        let mut cache: HashMap<*const MutableFieldMatcher<X>, Arc<FrozenFieldMatcher<X>>> =
+            HashMap::new();
+        self.freeze_field_matcher_impl(mutable, &mut cache)
+    }
+
+    fn freeze_field_matcher_impl(
+        &self,
+        mutable: &Rc<MutableFieldMatcher<X>>,
+        cache: &mut HashMap<*const MutableFieldMatcher<X>, Arc<FrozenFieldMatcher<X>>>,
+    ) -> FrozenFieldMatcher<X> {
+        let ptr = Rc::as_ptr(mutable);
+
+        // Check cache first
+        if let Some(cached) = cache.get(&ptr) {
+            // Return a clone of the cached frozen matcher's contents
+            return (*cached.as_ref()).clone();
+        }
+
+        // Create a placeholder to handle cycles
+        let placeholder = Arc::new(FrozenFieldMatcher::new());
+        cache.insert(ptr, placeholder.clone());
+
+        // Freeze transitions
+        let mut frozen_transitions = HashMap::new();
+        for (path, vm) in mutable.transitions.borrow().iter() {
+            let frozen_vm = self.freeze_value_matcher(vm, cache);
+            frozen_transitions.insert(path.clone(), Arc::new(frozen_vm));
+        }
+
+        // Freeze exists_true
+        let mut frozen_exists_true = HashMap::new();
+        for (path, fm) in mutable.exists_true.borrow().iter() {
+            let frozen_fm = self.freeze_field_matcher_impl(fm, cache);
+            frozen_exists_true.insert(path.clone(), Arc::new(frozen_fm));
+        }
+
+        // Freeze exists_false
+        let mut frozen_exists_false = HashMap::new();
+        for (path, fm) in mutable.exists_false.borrow().iter() {
+            let frozen_fm = self.freeze_field_matcher_impl(fm, cache);
+            frozen_exists_false.insert(path.clone(), Arc::new(frozen_fm));
+        }
+
+        FrozenFieldMatcher {
+            transitions: frozen_transitions,
+            matches: mutable.matches.borrow().clone(),
+            exists_true: frozen_exists_true,
+            exists_false: frozen_exists_false,
+        }
+    }
+
+    fn freeze_value_matcher(
+        &self,
+        mutable: &Rc<MutableValueMatcher<X>>,
+        cache: &mut HashMap<*const MutableFieldMatcher<X>, Arc<FrozenFieldMatcher<X>>>,
+    ) -> FrozenValueMatcher<X> {
+        // Handle singleton optimization
+        let singleton_match = mutable.singleton_match.borrow().clone();
+        let singleton_transition = mutable.singleton_transition.borrow().as_ref().map(|fm| {
+            let frozen = self.freeze_field_matcher_impl(fm, cache);
+            Arc::new(frozen)
+        });
+
+        // Build transition map for automaton-based matching
+        // Use the pointer address as the key - this matches what traverse_dfa/nfa returns
+        let mut transition_map = HashMap::new();
+        for (ptr, mutable_fm) in mutable.transition_map.borrow().iter() {
+            let frozen_fm = self.freeze_field_matcher_impl(mutable_fm, cache);
+            // Use the raw pointer value as the key (cast to usize for hash stability)
+            transition_map.insert(*ptr as usize, Arc::new(frozen_fm));
+        }
+
+        FrozenValueMatcher {
+            start_table: mutable.start_table.borrow().clone(),
+            singleton_match,
+            singleton_transition,
+            is_nondeterministic: *mutable.is_nondeterministic.borrow(),
+            transition_map,
+        }
+    }
+
+    /// Match fields against patterns and return matching pattern identifiers.
+    ///
+    /// This method is lock-free and can be called concurrently from multiple threads.
+    pub fn matches_for_fields(&self, fields: &[EventField]) -> Vec<X> {
+        let root = self.root.load();
+
+        if fields.is_empty() {
+            return self.collect_exists_false_matches(&root);
+        }
+
+        let mut matches = FrozenMatchSet::new();
+        let mut bufs = NfaBuffers::new();
+
+        // For each field, try to match from the start state
+        for i in 0..fields.len() {
+            self.try_to_match(fields, i, &root, &mut matches, &mut bufs);
+        }
+
+        matches.into_vec()
+    }
+
+    fn try_to_match(
+        &self,
+        fields: &[EventField],
+        index: usize,
+        state: &Arc<FrozenFieldMatcher<X>>,
+        matches: &mut FrozenMatchSet<X>,
+        bufs: &mut NfaBuffers,
+    ) {
+        let field = &fields[index];
+
+        // Check exists:true transition
+        if let Some(exists_trans) = state.exists_true.get(&field.path) {
+            for m in &exists_trans.matches {
+                matches.add(m.clone());
+            }
+            for next_idx in (index + 1)..fields.len() {
+                if no_array_trail_conflict(&field.array_trail, &fields[next_idx].array_trail) {
+                    self.try_to_match(fields, next_idx, exists_trans, matches, bufs);
+                }
+            }
+            self.check_exists_false(state, fields, index, matches, bufs);
+        }
+
+        // Check exists:false
+        self.check_exists_false(state, fields, index, matches, bufs);
+
+        // Try value transitions
+        let next_states = state.transition_on(&field.path, field.value.as_bytes(), bufs);
+
+        for next_state in next_states {
+            for m in &next_state.matches {
+                matches.add(m.clone());
+            }
+
+            for next_idx in (index + 1)..fields.len() {
+                if no_array_trail_conflict(&field.array_trail, &fields[next_idx].array_trail) {
+                    self.try_to_match(fields, next_idx, &next_state, matches, bufs);
+                }
+            }
+
+            self.check_exists_false(&next_state, fields, index, matches, bufs);
+        }
+    }
+
+    fn check_exists_false(
+        &self,
+        state: &Arc<FrozenFieldMatcher<X>>,
+        fields: &[EventField],
+        index: usize,
+        matches: &mut FrozenMatchSet<X>,
+        bufs: &mut NfaBuffers,
+    ) {
+        for (path, exists_trans) in &state.exists_false {
+            let field_exists = fields.iter().any(|f| &f.path == path);
+
+            if !field_exists {
+                for m in &exists_trans.matches {
+                    matches.add(m.clone());
+                }
+                self.try_to_match(fields, index, exists_trans, matches, bufs);
+            }
+        }
+    }
+
+    fn collect_exists_false_matches(&self, state: &Arc<FrozenFieldMatcher<X>>) -> Vec<X> {
+        let mut result = Vec::new();
+        for exists_trans in state.exists_false.values() {
+            result.extend(exists_trans.matches.iter().cloned());
+        }
+        result
+    }
+}
+
+impl<X: Clone + Eq + Hash + Send + Sync> Default for ThreadSafeCoreMatcher<X> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// A set of matches (deduplicated) for frozen matcher
+struct FrozenMatchSet<X: Clone + Eq + Hash> {
+    seen: std::collections::HashSet<X>,
+    matches: Vec<X>,
+}
+
+impl<X: Clone + Eq + Hash> FrozenMatchSet<X> {
+    fn new() -> Self {
+        Self {
+            seen: std::collections::HashSet::new(),
+            matches: Vec::new(),
+        }
+    }
+
+    fn add(&mut self, x: X) {
+        if self.seen.insert(x.clone()) {
+            self.matches.push(x);
+        }
+    }
+
+    fn into_vec(self) -> Vec<X> {
+        self.matches
+    }
 }
 
 #[cfg(test)]
@@ -1934,6 +2602,365 @@ mod tests {
         use crate::json::Matcher;
 
         let matcher: CoreMatcher<String> = CoreMatcher::new();
+
+        // Pattern 1: {"status": ["active"]}
+        matcher.add_pattern(
+            "p1".to_string(),
+            &[(
+                "status".to_string(),
+                vec![Matcher::Exact("active".to_string())],
+            )],
+        );
+
+        // Pattern 2: {"status": ["pending"]}
+        matcher.add_pattern(
+            "p2".to_string(),
+            &[(
+                "status".to_string(),
+                vec![Matcher::Exact("pending".to_string())],
+            )],
+        );
+
+        // Should match p1 only
+        let fields = vec![EventField {
+            path: "status".to_string(),
+            value: "active".to_string(),
+            array_trail: vec![],
+        }];
+
+        let matches = matcher.matches_for_fields(&fields);
+        assert_eq!(matches.len(), 1);
+        assert!(matches.contains(&"p1".to_string()));
+    }
+
+    // ========================================================================
+    // AnythingBut FA Tests
+    // ========================================================================
+
+    #[test]
+    fn test_anything_but_single_value() {
+        // anything-but ["deleted"] should match any value except "deleted"
+        let next_field = Arc::new(FieldMatcher::new());
+        let excluded = vec![b"deleted".to_vec()];
+        let table = make_anything_but_fa(&excluded, next_field);
+
+        // Should match non-excluded values
+        let transitions = traverse_dfa(&table, b"active");
+        assert_eq!(
+            transitions.len(),
+            1,
+            "active should match anything-but [deleted]"
+        );
+
+        let transitions = traverse_dfa(&table, b"pending");
+        assert_eq!(
+            transitions.len(),
+            1,
+            "pending should match anything-but [deleted]"
+        );
+
+        let transitions = traverse_dfa(&table, b"");
+        assert_eq!(
+            transitions.len(),
+            1,
+            "empty string should match anything-but [deleted]"
+        );
+
+        // Should NOT match excluded value
+        let transitions = traverse_dfa(&table, b"deleted");
+        assert!(
+            transitions.is_empty(),
+            "deleted should NOT match anything-but [deleted]"
+        );
+    }
+
+    #[test]
+    fn test_anything_but_multiple_values() {
+        // anything-but ["a", "b"] should match anything except "a" or "b"
+        let next_field = Arc::new(FieldMatcher::new());
+        let excluded = vec![b"a".to_vec(), b"b".to_vec()];
+        let table = make_anything_but_fa(&excluded, next_field);
+
+        // Should match non-excluded values
+        let transitions = traverse_dfa(&table, b"c");
+        assert_eq!(transitions.len(), 1, "c should match anything-but [a, b]");
+
+        let transitions = traverse_dfa(&table, b"ab");
+        assert_eq!(transitions.len(), 1, "ab should match anything-but [a, b]");
+
+        let transitions = traverse_dfa(&table, b"ba");
+        assert_eq!(transitions.len(), 1, "ba should match anything-but [a, b]");
+
+        // Should NOT match excluded values
+        let transitions = traverse_dfa(&table, b"a");
+        assert!(
+            transitions.is_empty(),
+            "a should NOT match anything-but [a, b]"
+        );
+
+        let transitions = traverse_dfa(&table, b"b");
+        assert!(
+            transitions.is_empty(),
+            "b should NOT match anything-but [a, b]"
+        );
+    }
+
+    #[test]
+    fn test_anything_but_with_common_prefix() {
+        // anything-but ["abc", "abd"] - values with common prefix
+        let next_field = Arc::new(FieldMatcher::new());
+        let excluded = vec![b"abc".to_vec(), b"abd".to_vec()];
+        let table = make_anything_but_fa(&excluded, next_field);
+
+        // Should match non-excluded values
+        let transitions = traverse_dfa(&table, b"ab");
+        assert_eq!(
+            transitions.len(),
+            1,
+            "ab should match anything-but [abc, abd]"
+        );
+
+        let transitions = traverse_dfa(&table, b"abe");
+        assert_eq!(
+            transitions.len(),
+            1,
+            "abe should match anything-but [abc, abd]"
+        );
+
+        let transitions = traverse_dfa(&table, b"xyz");
+        assert_eq!(
+            transitions.len(),
+            1,
+            "xyz should match anything-but [abc, abd]"
+        );
+
+        // Should NOT match excluded values
+        let transitions = traverse_dfa(&table, b"abc");
+        assert!(
+            transitions.is_empty(),
+            "abc should NOT match anything-but [abc, abd]"
+        );
+
+        let transitions = traverse_dfa(&table, b"abd");
+        assert!(
+            transitions.is_empty(),
+            "abd should NOT match anything-but [abc, abd]"
+        );
+    }
+
+    // ========================================================================
+    // Monocase (EqualsIgnoreCase) FA Tests
+    // ========================================================================
+
+    #[test]
+    fn test_monocase_simple() {
+        // equals-ignore-case "cat" should match "cat", "CAT", "Cat", etc.
+        let next_field = Arc::new(FieldMatcher::new());
+        let table = make_monocase_fa(b"cat", next_field);
+
+        // All case variants should match
+        let transitions = traverse_dfa(&table, b"cat");
+        assert_eq!(transitions.len(), 1, "cat should match equals-ignore-case cat");
+
+        let transitions = traverse_dfa(&table, b"CAT");
+        assert_eq!(transitions.len(), 1, "CAT should match equals-ignore-case cat");
+
+        let transitions = traverse_dfa(&table, b"Cat");
+        assert_eq!(transitions.len(), 1, "Cat should match equals-ignore-case cat");
+
+        let transitions = traverse_dfa(&table, b"cAt");
+        assert_eq!(transitions.len(), 1, "cAt should match equals-ignore-case cat");
+
+        // Should NOT match different strings
+        let transitions = traverse_dfa(&table, b"dog");
+        assert!(
+            transitions.is_empty(),
+            "dog should NOT match equals-ignore-case cat"
+        );
+
+        let transitions = traverse_dfa(&table, b"cats");
+        assert!(
+            transitions.is_empty(),
+            "cats should NOT match equals-ignore-case cat"
+        );
+    }
+
+    #[test]
+    fn test_monocase_with_numbers() {
+        // equals-ignore-case "abc123" - numbers don't have case variants
+        let next_field = Arc::new(FieldMatcher::new());
+        let table = make_monocase_fa(b"abc123", next_field);
+
+        let transitions = traverse_dfa(&table, b"abc123");
+        assert_eq!(
+            transitions.len(),
+            1,
+            "abc123 should match equals-ignore-case abc123"
+        );
+
+        let transitions = traverse_dfa(&table, b"ABC123");
+        assert_eq!(
+            transitions.len(),
+            1,
+            "ABC123 should match equals-ignore-case abc123"
+        );
+
+        let transitions = traverse_dfa(&table, b"Abc123");
+        assert_eq!(
+            transitions.len(),
+            1,
+            "Abc123 should match equals-ignore-case abc123"
+        );
+
+        // Should NOT match with different numbers
+        let transitions = traverse_dfa(&table, b"abc124");
+        assert!(
+            transitions.is_empty(),
+            "abc124 should NOT match equals-ignore-case abc123"
+        );
+    }
+
+    #[test]
+    fn test_monocase_empty() {
+        // equals-ignore-case "" should only match empty string
+        let next_field = Arc::new(FieldMatcher::new());
+        let table = make_monocase_fa(b"", next_field);
+
+        let transitions = traverse_dfa(&table, b"");
+        assert_eq!(
+            transitions.len(),
+            1,
+            "empty should match equals-ignore-case empty"
+        );
+
+        let transitions = traverse_dfa(&table, b"a");
+        assert!(
+            transitions.is_empty(),
+            "a should NOT match equals-ignore-case empty"
+        );
+    }
+
+    // ========================================================================
+    // ThreadSafeCoreMatcher Tests
+    // ========================================================================
+
+    #[test]
+    fn test_thread_safe_core_matcher_send_sync() {
+        // Compile-time check that ThreadSafeCoreMatcher is Send + Sync
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<ThreadSafeCoreMatcher<String>>();
+    }
+
+    #[test]
+    fn test_thread_safe_core_matcher_single_field() {
+        use crate::json::Matcher;
+
+        let matcher: ThreadSafeCoreMatcher<String> = ThreadSafeCoreMatcher::new();
+
+        // Add pattern: {"status": ["active"]}
+        matcher.add_pattern(
+            "p1".to_string(),
+            &[(
+                "status".to_string(),
+                vec![Matcher::Exact("active".to_string())],
+            )],
+        );
+
+        // Create event fields
+        let fields = vec![EventField {
+            path: "status".to_string(),
+            value: "active".to_string(),
+            array_trail: vec![],
+        }];
+
+        let matches = matcher.matches_for_fields(&fields);
+        assert_eq!(matches.len(), 1);
+        assert!(matches.contains(&"p1".to_string()));
+    }
+
+    #[test]
+    fn test_thread_safe_core_matcher_no_match() {
+        use crate::json::Matcher;
+
+        let matcher: ThreadSafeCoreMatcher<String> = ThreadSafeCoreMatcher::new();
+
+        matcher.add_pattern(
+            "p1".to_string(),
+            &[(
+                "status".to_string(),
+                vec![Matcher::Exact("active".to_string())],
+            )],
+        );
+
+        let fields = vec![EventField {
+            path: "status".to_string(),
+            value: "inactive".to_string(),
+            array_trail: vec![],
+        }];
+
+        let matches = matcher.matches_for_fields(&fields);
+        assert!(matches.is_empty());
+    }
+
+    #[test]
+    fn test_thread_safe_core_matcher_exists_true() {
+        use crate::json::Matcher;
+
+        let matcher: ThreadSafeCoreMatcher<String> = ThreadSafeCoreMatcher::new();
+
+        // Pattern: {"name": [{"exists": true}]}
+        matcher.add_pattern(
+            "p1".to_string(),
+            &[("name".to_string(), vec![Matcher::Exists(true)])],
+        );
+
+        // Event with name field present
+        let fields = vec![EventField {
+            path: "name".to_string(),
+            value: "anything".to_string(),
+            array_trail: vec![],
+        }];
+
+        let matches = matcher.matches_for_fields(&fields);
+        assert_eq!(
+            matches.len(),
+            1,
+            "exists:true should match when field exists"
+        );
+    }
+
+    #[test]
+    fn test_thread_safe_core_matcher_exists_false() {
+        use crate::json::Matcher;
+
+        let matcher: ThreadSafeCoreMatcher<String> = ThreadSafeCoreMatcher::new();
+
+        // Pattern: {"name": [{"exists": false}]}
+        matcher.add_pattern(
+            "p1".to_string(),
+            &[("name".to_string(), vec![Matcher::Exists(false)])],
+        );
+
+        // Event without name field
+        let fields = vec![EventField {
+            path: "other".to_string(),
+            value: "value".to_string(),
+            array_trail: vec![],
+        }];
+
+        let matches = matcher.matches_for_fields(&fields);
+        assert_eq!(
+            matches.len(),
+            1,
+            "exists:false should match when field is absent"
+        );
+    }
+
+    #[test]
+    fn test_thread_safe_core_matcher_multiple_patterns() {
+        use crate::json::Matcher;
+
+        let matcher: ThreadSafeCoreMatcher<String> = ThreadSafeCoreMatcher::new();
 
         // Pattern 1: {"status": ["active"]}
         matcher.add_pattern(

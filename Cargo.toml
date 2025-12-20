@@ -8,6 +8,7 @@ repository = "https://github.com/baldawarishi/quamina-rs"
 
 [dependencies]
 regex = "1"
+arc-swap = "1.7"
 
 [dev-dependencies]
 criterion = "0.5"
