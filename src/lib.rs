@@ -3,6 +3,7 @@
 pub mod automaton;
 mod json;
 
+use automaton::{EventField, ThreadSafeCoreMatcher};
 use json::{ArrayPos, Field, Matcher};
 use std::collections::{HashMap, HashSet};
 use std::fmt;
@@ -30,6 +31,10 @@ impl std::error::Error for QuaminaError {}
 
 /// The main pattern matcher
 ///
+/// Quamina uses a hybrid matching approach:
+/// - Automaton-based matching for patterns using supported operators (exact, prefix, wildcard, etc.)
+/// - HashMap-based fallback for patterns using unsupported operators (suffix, regex, numeric comparisons)
+///
 /// Quamina is Clone, allowing you to create snapshots for concurrent use:
 /// ```
 /// # use quamina::Quamina;
@@ -49,15 +54,19 @@ impl std::error::Error for QuaminaError {}
 /// let q_clone = Arc::clone(&q);
 /// // Both can now be used for concurrent matching
 /// ```
-#[derive(Clone)]
-pub struct Quamina<X = String> {
-    patterns: HashMap<X, Vec<Pattern>>,
-    /// Index mapping field paths to pattern IDs that use that field
-    /// Used to filter candidate patterns during matching
-    field_index: HashMap<String, HashSet<X>>,
-    /// Pattern IDs that have exists:false matchers (must always be checked
-    /// because the field they reference won't appear in matching events)
-    exists_false_patterns: HashSet<X>,
+pub struct Quamina<X: Clone + Eq + Hash + Send + Sync = String> {
+    /// Automaton-based matcher for patterns with supported operators
+    automaton: ThreadSafeCoreMatcher<X>,
+    /// All pattern definitions (source of truth for cloning)
+    pattern_defs: HashMap<X, Vec<(HashMap<String, Vec<Matcher>>, bool)>>, // (fields, is_automaton_compatible)
+    /// Fallback patterns that use unsupported operators (suffix, regex, numeric comparisons)
+    fallback_patterns: HashMap<X, Vec<Pattern>>,
+    /// Index mapping field paths to fallback pattern IDs
+    fallback_field_index: HashMap<String, HashSet<X>>,
+    /// Fallback pattern IDs that have exists:false matchers
+    fallback_exists_false: HashSet<X>,
+    /// Deleted patterns (filtered from automaton results since automaton doesn't support deletion)
+    deleted_patterns: HashSet<X>,
 }
 
 /// Internal representation of a compiled pattern
@@ -66,80 +75,153 @@ struct Pattern {
     fields: HashMap<String, Vec<Matcher>>,
 }
 
-impl<X: Clone + Eq + Hash> Quamina<X> {
+impl<X: Clone + Eq + Hash + Send + Sync> Clone for Quamina<X> {
+    fn clone(&self) -> Self {
+        // Create a new automaton and rebuild from pattern_defs
+        let automaton = ThreadSafeCoreMatcher::new();
+
+        for (id, patterns) in &self.pattern_defs {
+            if self.deleted_patterns.contains(id) {
+                continue;
+            }
+            for (fields, is_automaton_compatible) in patterns {
+                if *is_automaton_compatible {
+                    let pattern_fields: Vec<(String, Vec<Matcher>)> =
+                        fields.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+                    automaton.add_pattern(id.clone(), &pattern_fields);
+                }
+            }
+        }
+
+        Quamina {
+            automaton,
+            pattern_defs: self.pattern_defs.clone(),
+            fallback_patterns: self.fallback_patterns.clone(),
+            fallback_field_index: self.fallback_field_index.clone(),
+            fallback_exists_false: self.fallback_exists_false.clone(),
+            deleted_patterns: self.deleted_patterns.clone(),
+        }
+    }
+}
+
+impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
     /// Create a new Quamina instance
     pub fn new() -> Self {
         Quamina {
-            patterns: HashMap::new(),
-            field_index: HashMap::new(),
-            exists_false_patterns: HashSet::new(),
+            automaton: ThreadSafeCoreMatcher::new(),
+            pattern_defs: HashMap::new(),
+            fallback_patterns: HashMap::new(),
+            fallback_field_index: HashMap::new(),
+            fallback_exists_false: HashSet::new(),
+            deleted_patterns: HashSet::new(),
         }
     }
 
     /// Add a pattern with the given identifier
     pub fn add_pattern(&mut self, x: X, pattern_json: &str) -> Result<(), QuaminaError> {
         let fields = json::parse_pattern(pattern_json)?;
-        // Update field index and track exists:false patterns
-        let mut has_exists_false = false;
-        for (field_path, matchers) in &fields {
-            self.field_index
-                .entry(field_path.clone())
-                .or_default()
-                .insert(x.clone());
-            // Check if any matcher is exists:false
-            if matchers.iter().any(|m| matches!(m, Matcher::Exists(false))) {
-                has_exists_false = true;
+
+        // Check if all matchers are automaton-compatible
+        let is_automaton_compatible = fields
+            .values()
+            .flat_map(|matchers| matchers.iter())
+            .all(|m| m.is_automaton_compatible());
+
+        // Store pattern definition for cloning
+        self.pattern_defs
+            .entry(x.clone())
+            .or_default()
+            .push((fields.clone(), is_automaton_compatible));
+
+        if is_automaton_compatible {
+            // Route to automaton
+            let pattern_fields: Vec<(String, Vec<Matcher>)> = fields.into_iter().collect();
+            self.automaton.add_pattern(x, &pattern_fields);
+        } else {
+            // Route to fallback
+            let mut has_exists_false = false;
+            for (field_path, matchers) in &fields {
+                self.fallback_field_index
+                    .entry(field_path.clone())
+                    .or_default()
+                    .insert(x.clone());
+                if matchers.iter().any(|m| matches!(m, Matcher::Exists(false))) {
+                    has_exists_false = true;
+                }
             }
+            if has_exists_false {
+                self.fallback_exists_false.insert(x.clone());
+            }
+            let pattern = Pattern { fields };
+            self.fallback_patterns.entry(x).or_default().push(pattern);
         }
-        if has_exists_false {
-            self.exists_false_patterns.insert(x.clone());
-        }
-        let pattern = Pattern { fields };
-        self.patterns.entry(x).or_default().push(pattern);
         Ok(())
     }
 
     /// Find all patterns that match the given event
     pub fn matches_for_event(&self, event: &[u8]) -> Result<Vec<X>, QuaminaError> {
         let event_fields = json::flatten_event(event)?;
-        // Build multimap: field path -> Vec<Field> to support array element matching with trails
-        let mut event_map: HashMap<&str, Vec<&Field>> = HashMap::new();
-        for field in &event_fields {
-            event_map
-                .entry(field.path.as_str())
-                .or_default()
-                .push(field);
+
+        // Convert to automaton's EventField format and sort by path
+        // (automaton matching assumes fields are in sorted order, same as pattern building)
+        let mut automaton_fields: Vec<EventField> = event_fields.iter().map(|f| f.into()).collect();
+        automaton_fields.sort_by(|a, b| a.path.cmp(&b.path));
+
+        // Get matches from automaton (filter out deleted patterns)
+        let mut matches: Vec<X> = self
+            .automaton
+            .matches_for_fields(&automaton_fields)
+            .into_iter()
+            .filter(|x| !self.deleted_patterns.contains(x))
+            .collect();
+
+        // Get matches from fallback (if any fallback patterns exist)
+        if !self.fallback_patterns.is_empty() {
+            // Build multimap for fallback matching
+            let mut event_map: HashMap<&str, Vec<&Field>> = HashMap::new();
+            for field in &event_fields {
+                event_map
+                    .entry(field.path.as_str())
+                    .or_default()
+                    .push(field);
+            }
+
+            let fallback_matches = self.fallback_matches(&event_map);
+            matches.extend(fallback_matches);
         }
 
+        Ok(matches)
+    }
+
+    /// Get matches from fallback patterns
+    fn fallback_matches(&self, event_map: &HashMap<&str, Vec<&Field>>) -> Vec<X> {
         // Heuristic: field indexing helps when patterns have diverse fields
-        // Use integer comparison: field_index.len() * 2 > patterns.len() (ratio > 0.5)
-        // Also require at least 10 patterns to benefit from indexing
-        let use_field_index =
-            self.patterns.len() >= 10 && self.field_index.len() * 2 > self.patterns.len();
+        let use_field_index = self.fallback_patterns.len() >= 10
+            && self.fallback_field_index.len() * 2 > self.fallback_patterns.len();
 
         if use_field_index {
-            self.matches_via_field_index(&event_map)
+            self.fallback_matches_via_field_index(event_map)
         } else {
-            self.matches_via_direct_iteration(&event_map)
+            self.fallback_matches_via_direct_iteration(event_map)
         }
     }
 
-    /// Match using field index (efficient when patterns have diverse fields)
-    fn matches_via_field_index(
+    /// Match fallback patterns using field index
+    fn fallback_matches_via_field_index(
         &self,
         event_map: &HashMap<&str, Vec<&Field>>,
-    ) -> Result<Vec<X>, QuaminaError> {
+    ) -> Vec<X> {
         let mut seen: HashSet<&X> = HashSet::new();
         let mut matches = Vec::new();
 
         // Check patterns from field index
         for event_field_path in event_map.keys() {
-            if let Some(pattern_ids) = self.field_index.get(*event_field_path) {
+            if let Some(pattern_ids) = self.fallback_field_index.get(*event_field_path) {
                 for id in pattern_ids {
                     if !seen.insert(id) {
                         continue;
                     }
-                    if let Some(patterns) = self.patterns.get(id) {
+                    if let Some(patterns) = self.fallback_patterns.get(id) {
                         for pattern in patterns {
                             if self.pattern_matches(&pattern.fields, event_map) {
                                 matches.push(id.clone());
@@ -152,11 +234,11 @@ impl<X: Clone + Eq + Hash> Quamina<X> {
         }
 
         // Also check patterns with exists:false
-        for id in &self.exists_false_patterns {
+        for id in &self.fallback_exists_false {
             if !seen.insert(id) {
                 continue;
             }
-            if let Some(patterns) = self.patterns.get(id) {
+            if let Some(patterns) = self.fallback_patterns.get(id) {
                 for pattern in patterns {
                     if self.pattern_matches(&pattern.fields, event_map) {
                         matches.push(id.clone());
@@ -166,16 +248,16 @@ impl<X: Clone + Eq + Hash> Quamina<X> {
             }
         }
 
-        Ok(matches)
+        matches
     }
 
-    /// Match using direct iteration (efficient when most patterns share fields)
-    fn matches_via_direct_iteration(
+    /// Match fallback patterns using direct iteration
+    fn fallback_matches_via_direct_iteration(
         &self,
         event_map: &HashMap<&str, Vec<&Field>>,
-    ) -> Result<Vec<X>, QuaminaError> {
+    ) -> Vec<X> {
         let mut matches = Vec::new();
-        for (id, patterns) in &self.patterns {
+        for (id, patterns) in &self.fallback_patterns {
             for pattern in patterns {
                 if self.pattern_matches(&pattern.fields, event_map) {
                     matches.push(id.clone());
@@ -183,7 +265,7 @@ impl<X: Clone + Eq + Hash> Quamina<X> {
                 }
             }
         }
-        Ok(matches)
+        matches
     }
 
     fn pattern_matches(
@@ -339,97 +421,37 @@ impl<X: Clone + Eq + Hash> Quamina<X> {
 
     /// Delete all patterns with the given identifier
     pub fn delete_patterns(&mut self, x: &X) -> Result<(), QuaminaError> {
-        // Remove from field index
-        if let Some(patterns) = self.patterns.get(x) {
+        // Check if pattern exists
+        if !self.pattern_defs.contains_key(x) || self.deleted_patterns.contains(x) {
+            return Ok(()); // Pattern doesn't exist or already deleted
+        }
+
+        // If this was a fallback pattern, remove from fallback structures
+        if let Some(patterns) = self.fallback_patterns.get(x) {
             for pattern in patterns {
                 for field_path in pattern.fields.keys() {
-                    if let Some(ids) = self.field_index.get_mut(field_path) {
+                    if let Some(ids) = self.fallback_field_index.get_mut(field_path) {
                         ids.remove(x);
                     }
                 }
             }
         }
-        // Clean up empty field index entries
-        self.field_index.retain(|_, ids| !ids.is_empty());
-        // Remove from exists_false_patterns
-        self.exists_false_patterns.remove(x);
-        self.patterns.remove(x);
+        self.fallback_field_index.retain(|_, ids| !ids.is_empty());
+        self.fallback_exists_false.remove(x);
+        self.fallback_patterns.remove(x);
+
+        // For automaton patterns, add to deleted set (automaton doesn't support deletion)
+        // This will filter the pattern from automaton results
+        self.deleted_patterns.insert(x.clone());
+
         Ok(())
     }
 
     /// Check if any pattern matches the event (returns early on first match)
     pub fn has_matches(&self, event: &[u8]) -> Result<bool, QuaminaError> {
-        let event_fields = json::flatten_event(event)?;
-        let mut event_map: HashMap<&str, Vec<&Field>> = HashMap::new();
-        for field in &event_fields {
-            event_map
-                .entry(field.path.as_str())
-                .or_default()
-                .push(field);
-        }
-
-        // Heuristic: field indexing helps when patterns have diverse fields
-        let use_field_index =
-            self.patterns.len() >= 10 && self.field_index.len() * 2 > self.patterns.len();
-
-        if use_field_index {
-            self.has_matches_via_field_index(&event_map)
-        } else {
-            self.has_matches_via_direct_iteration(&event_map)
-        }
-    }
-
-    fn has_matches_via_field_index(
-        &self,
-        event_map: &HashMap<&str, Vec<&Field>>,
-    ) -> Result<bool, QuaminaError> {
-        let mut seen: HashSet<&X> = HashSet::new();
-
-        for event_field_path in event_map.keys() {
-            if let Some(pattern_ids) = self.field_index.get(*event_field_path) {
-                for id in pattern_ids {
-                    if !seen.insert(id) {
-                        continue;
-                    }
-                    if let Some(patterns) = self.patterns.get(id) {
-                        for pattern in patterns {
-                            if self.pattern_matches(&pattern.fields, event_map) {
-                                return Ok(true);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        for id in &self.exists_false_patterns {
-            if !seen.insert(id) {
-                continue;
-            }
-            if let Some(patterns) = self.patterns.get(id) {
-                for pattern in patterns {
-                    if self.pattern_matches(&pattern.fields, event_map) {
-                        return Ok(true);
-                    }
-                }
-            }
-        }
-
-        Ok(false)
-    }
-
-    fn has_matches_via_direct_iteration(
-        &self,
-        event_map: &HashMap<&str, Vec<&Field>>,
-    ) -> Result<bool, QuaminaError> {
-        for patterns in self.patterns.values() {
-            for pattern in patterns {
-                if self.pattern_matches(&pattern.fields, event_map) {
-                    return Ok(true);
-                }
-            }
-        }
-        Ok(false)
+        // Use matches_for_event and check if non-empty
+        // This could be optimized to return early, but for now this is simpler
+        Ok(!self.matches_for_event(event)?.is_empty())
     }
 
     /// Count how many unique pattern IDs match the event
@@ -439,23 +461,29 @@ impl<X: Clone + Eq + Hash> Quamina<X> {
 
     /// Returns the number of unique pattern IDs stored
     pub fn pattern_count(&self) -> usize {
-        self.patterns.len()
+        self.pattern_defs
+            .keys()
+            .filter(|k| !self.deleted_patterns.contains(*k))
+            .count()
     }
 
     /// Returns true if no patterns are stored
     pub fn is_empty(&self) -> bool {
-        self.patterns.is_empty()
+        self.pattern_count() == 0
     }
 
     /// Removes all patterns
     pub fn clear(&mut self) {
-        self.patterns.clear();
-        self.field_index.clear();
-        self.exists_false_patterns.clear();
+        self.automaton = ThreadSafeCoreMatcher::new();
+        self.pattern_defs.clear();
+        self.fallback_patterns.clear();
+        self.fallback_field_index.clear();
+        self.fallback_exists_false.clear();
+        self.deleted_patterns.clear();
     }
 }
 
-impl<X: Clone + Eq + Hash> Default for Quamina<X> {
+impl<X: Clone + Eq + Hash + Send + Sync> Default for Quamina<X> {
     fn default() -> Self {
         Self::new()
     }

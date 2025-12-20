@@ -43,6 +43,36 @@ pub struct NumericComparison {
     pub upper: Option<(bool, f64)>, // (inclusive, value)
 }
 
+impl Matcher {
+    /// Check if this matcher is supported by the automaton-based matching engine.
+    ///
+    /// The automaton supports: Exact, Prefix, Shellstyle, Wildcard, AnythingBut, and Exists.
+    ///
+    /// Not fully supported (need runtime checking or have limitations):
+    /// - NumericExact: automaton does string matching but event values may have different representations
+    /// - EqualsIgnoreCase: automaton only does ASCII case folding, not full Unicode
+    /// - Suffix, Numeric comparisons, Regex: not implemented in automaton
+    pub fn is_automaton_compatible(&self) -> bool {
+        match self {
+            Matcher::Exact(_) => true,
+            Matcher::Exists(_) => true,
+            Matcher::Prefix(_) => true,
+            Matcher::Shellstyle(_) => true,
+            Matcher::Wildcard(_) => true,
+            Matcher::AnythingBut(_) => true,
+            // NumericExact: automaton matches on string representation, but event values
+            // may have different representations (35 vs 35.0 vs 3.5e1)
+            Matcher::NumericExact(_) => false,
+            // EqualsIgnoreCase: automaton only does ASCII case folding, not Unicode
+            Matcher::EqualsIgnoreCase(_) => false,
+            // Not supported by automaton
+            Matcher::Suffix(_) => false,
+            Matcher::Numeric(_) => false,
+            Matcher::Regex(_) => false,
+        }
+    }
+}
+
 /// Context for tracking array positions during flattening
 struct FlattenContext {
     array_count: u32,

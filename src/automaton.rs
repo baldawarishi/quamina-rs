@@ -741,44 +741,74 @@ fn make_anything_but_step(vals: &[Vec<u8>], index: usize, success: &Arc<FaState>
         std::array::from_fn(|_| Some(success.clone()));
 
     // Group values by the byte at current index
+    // Track both values that continue AND values that end at this position
     let mut vals_with_bytes_remaining: HashMap<u8, Vec<&Vec<u8>>> = HashMap::new();
-    let mut vals_ending_here: std::collections::HashSet<u8> = std::collections::HashSet::new();
+    let mut vals_ending_here: HashMap<u8, bool> = HashMap::new();
 
     for val in vals {
         let last_index = val.len().saturating_sub(1);
-        if index < last_index {
-            // This value has more bytes after index
+        if index <= last_index && !val.is_empty() {
             let utf8_byte = val[index];
-            vals_with_bytes_remaining
-                .entry(utf8_byte)
-                .or_default()
-                .push(val);
-        } else if index == last_index && !val.is_empty() {
-            // This value ends at index
-            vals_ending_here.insert(val[index]);
+            if index < last_index {
+                // This value has more bytes after index
+                vals_with_bytes_remaining
+                    .entry(utf8_byte)
+                    .or_default()
+                    .push(val);
+            }
+            if index == last_index {
+                // This value ends at index
+                vals_ending_here.insert(utf8_byte, true);
+            }
         }
-        // if index > last_index, this value is already exhausted, no-op
     }
 
-    // For each byte that continues some excluded values, recurse
-    for (utf8_byte, continuing_vals) in vals_with_bytes_remaining {
-        let owned_vals: Vec<Vec<u8>> = continuing_vals.into_iter().cloned().collect();
-        let next_table = make_anything_but_step(&owned_vals, index + 1, success);
-        let next_step = Arc::new(FaState::with_table(next_table));
-        unpacked[utf8_byte as usize] = Some(next_step);
-    }
+    // For each unique byte, build the appropriate state
+    let all_bytes: std::collections::HashSet<u8> = vals_with_bytes_remaining
+        .keys()
+        .chain(vals_ending_here.keys())
+        .copied()
+        .collect();
 
-    // For each byte that ends an excluded value, put a failure transition on VALUE_TERMINATOR
-    for utf8_byte in vals_ending_here {
-        // Failure state - no field transitions means no match
-        let fail_state = Arc::new(FaState::new());
-        // On VALUE_TERMINATOR, go to failure. On anything else, go to success.
-        let last_table = SmallTable::with_mappings(
-            Some(success.clone()),
-            &[VALUE_TERMINATOR],
-            &[fail_state],
-        );
-        unpacked[utf8_byte as usize] = Some(Arc::new(FaState::with_table(last_table)));
+    for utf8_byte in all_bytes {
+        let has_continuation = vals_with_bytes_remaining.contains_key(&utf8_byte);
+        let ends_here = vals_ending_here.contains_key(&utf8_byte);
+
+        if has_continuation && ends_here {
+            // This byte both continues some values AND ends others
+            // We need a state that:
+            // 1. On VALUE_TERMINATOR: fail (because some value ends here)
+            // 2. On other bytes: check continuation recursively
+            let continuing_vals = vals_with_bytes_remaining.get(&utf8_byte).unwrap();
+            let owned_vals: Vec<Vec<u8>> = continuing_vals.iter().cloned().cloned().collect();
+            let continuation_table = make_anything_but_step(&owned_vals, index + 1, success);
+
+            // Build table: fail on VALUE_TERMINATOR, use continuation table for others
+            let fail_state = Arc::new(FaState::new());
+            let mut combined_table = continuation_table;
+            // Override the VALUE_TERMINATOR transition to fail
+            let mut combined_unpacked = combined_table.unpack();
+            combined_unpacked[VALUE_TERMINATOR as usize] = Some(fail_state);
+            combined_table.pack(&combined_unpacked);
+
+            unpacked[utf8_byte as usize] = Some(Arc::new(FaState::with_table(combined_table)));
+        } else if has_continuation {
+            // Only continues, doesn't end here
+            let continuing_vals = vals_with_bytes_remaining.get(&utf8_byte).unwrap();
+            let owned_vals: Vec<Vec<u8>> = continuing_vals.iter().cloned().cloned().collect();
+            let next_table = make_anything_but_step(&owned_vals, index + 1, success);
+            let next_step = Arc::new(FaState::with_table(next_table));
+            unpacked[utf8_byte as usize] = Some(next_step);
+        } else if ends_here {
+            // Only ends here, doesn't continue
+            let fail_state = Arc::new(FaState::new());
+            let last_table = SmallTable::with_mappings(
+                Some(success.clone()),
+                &[VALUE_TERMINATOR],
+                &[fail_state],
+            );
+            unpacked[utf8_byte as usize] = Some(Arc::new(FaState::with_table(last_table)));
+        }
     }
 
     let mut table = SmallTable::new();
@@ -1627,6 +1657,16 @@ pub fn merge_fas(table1: &SmallTable, table2: &SmallTable) -> SmallTable {
     // Merge epsilons
     result.epsilons = table1.epsilons.clone();
     result.epsilons.extend(table2.epsilons.iter().cloned());
+
+    // Merge spinout - if either table has spinout, the merged table should have spinout
+    result.spinout = match (&table1.spinout, &table2.spinout) {
+        (None, None) => None,
+        (Some(s), None) | (None, Some(s)) => Some(s.clone()),
+        (Some(_), Some(_)) => {
+            // Both have spinout - use either one (they're just markers)
+            table1.spinout.clone()
+        }
+    };
 
     result
 }

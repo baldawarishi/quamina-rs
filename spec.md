@@ -202,24 +202,33 @@ Rust is now a correct implementation with full pattern operator parity to Go. Th
     - Uses pointer-based transition mapping between automaton and frozen structures
 - Memory optimization
 
-### Integration Notes
+### ✅ Integration Complete
 
-The automaton module (`pub mod automaton`) provides a complete automaton-based matching engine.
+The automaton module is now fully integrated with the main `Quamina` struct using a hybrid approach.
 
-**Thread Safety (Resolved):**
+**Thread Safety:**
+- `Quamina<X>` requires `X: Clone + Eq + Hash + Send + Sync`
 - `ThreadSafeCoreMatcher<X>` is `Send + Sync` for concurrent access
 - Uses build-then-freeze pattern: mutable `Rc<RefCell<>>` during building, immutable `Arc` for matching
 - `ArcSwap` enables atomic updates - pattern addition serialized via Mutex, matching is lock-free
-- 6 new tests verify Send + Sync bounds and matching correctness
+- Clone creates independent snapshots with rebuilt automaton from pattern definitions
 
-**Pattern Support in Automaton:**
-- ✅ Supported: Exact, NumericExact, Prefix, Shellstyle, Wildcard, AnythingBut, EqualsIgnoreCase, Exists
-- ❌ Not in automaton: Suffix (Rust-only), Numeric comparisons (Rust-only), Regex
+**Hybrid Matching Approach:**
+- Patterns are routed to automaton or fallback based on matcher compatibility
+- Automaton-compatible: Exact, Prefix, Shellstyle, Wildcard, AnythingBut, Exists
+- Fallback (HashMap-based): Suffix, NumericExact, EqualsIgnoreCase, Numeric comparisons, Regex
+- During matching, results from automaton and fallback are combined
+- Deleted patterns filtered from automaton results (automaton doesn't support deletion)
 
-**Next Steps for Full Integration:**
-- Integrate `ThreadSafeCoreMatcher` with main `Quamina` struct (hybrid approach)
-- Fall back to HashMap-based matching for unsupported matchers (Suffix, Numeric, Regex)
-- Benchmark to verify performance improvement
+**Bug Fixes During Integration:**
+- Fixed `merge_fas` to preserve spinout field when merging wildcard patterns
+- Fixed `make_anything_but_fa` to handle bytes that both continue AND end exclusion values
+- Event fields are now sorted before automaton matching (matching assumes sorted order)
+
+**Tests:**
+- All 110 tests passing
+- Snapshot/clone semantics verified
+- Multi-pattern, multi-field combinations tested
 
 ### Phase 5: Future Enhancements (not yet started)
 - Custom flatteners
