@@ -1,5 +1,6 @@
 //! quamina-rs: Fast pattern-matching library for filtering JSON events
 
+mod automaton;
 mod json;
 
 use json::{ArrayPos, Field, Matcher};
