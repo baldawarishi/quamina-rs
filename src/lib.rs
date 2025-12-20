@@ -113,8 +113,8 @@ impl<X: Clone + Eq + Hash> Quamina<X> {
         // Heuristic: field indexing helps when patterns have diverse fields
         // Use integer comparison: field_index.len() * 2 > patterns.len() (ratio > 0.5)
         // Also require at least 10 patterns to benefit from indexing
-        let use_field_index = self.patterns.len() >= 10
-            && self.field_index.len() * 2 > self.patterns.len();
+        let use_field_index =
+            self.patterns.len() >= 10 && self.field_index.len() * 2 > self.patterns.len();
 
         if use_field_index {
             self.matches_via_field_index(&event_map)
@@ -318,9 +318,7 @@ impl<X: Clone + Eq + Hash> Quamina<X> {
             Matcher::Wildcard(pattern) => wildcard_match(pattern, value),
             Matcher::Shellstyle(pattern) => shellstyle_match(pattern, value),
             Matcher::AnythingBut(excluded) => !excluded.iter().any(|e| e == value),
-            Matcher::EqualsIgnoreCase(expected) => {
-                value.to_lowercase() == expected.to_lowercase()
-            }
+            Matcher::EqualsIgnoreCase(expected) => value.to_lowercase() == expected.to_lowercase(),
             Matcher::Numeric(cmp) => value.parse::<f64>().ok().is_some_and(|num| {
                 let lower_ok = match cmp.lower {
                     Some((true, bound)) => num >= bound,
@@ -370,8 +368,8 @@ impl<X: Clone + Eq + Hash> Quamina<X> {
         }
 
         // Heuristic: field indexing helps when patterns have diverse fields
-        let use_field_index = self.patterns.len() >= 10
-            && self.field_index.len() * 2 > self.patterns.len();
+        let use_field_index =
+            self.patterns.len() >= 10 && self.field_index.len() * 2 > self.patterns.len();
 
         if use_field_index {
             self.has_matches_via_field_index(&event_map)
@@ -380,7 +378,10 @@ impl<X: Clone + Eq + Hash> Quamina<X> {
         }
     }
 
-    fn has_matches_via_field_index(&self, event_map: &HashMap<&str, Vec<&Field>>) -> Result<bool, QuaminaError> {
+    fn has_matches_via_field_index(
+        &self,
+        event_map: &HashMap<&str, Vec<&Field>>,
+    ) -> Result<bool, QuaminaError> {
         let mut seen: HashSet<&X> = HashSet::new();
 
         for event_field_path in event_map.keys() {
@@ -416,7 +417,10 @@ impl<X: Clone + Eq + Hash> Quamina<X> {
         Ok(false)
     }
 
-    fn has_matches_via_direct_iteration(&self, event_map: &HashMap<&str, Vec<&Field>>) -> Result<bool, QuaminaError> {
+    fn has_matches_via_direct_iteration(
+        &self,
+        event_map: &HashMap<&str, Vec<&Field>>,
+    ) -> Result<bool, QuaminaError> {
         for patterns in self.patterns.values() {
             for pattern in patterns {
                 if self.pattern_matches(&pattern.fields, event_map) {
