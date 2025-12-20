@@ -95,6 +95,46 @@ fn bench_has_matches(c: &mut Criterion) {
     });
 }
 
+/// Benchmark with diverse patterns - each pattern uses a DIFFERENT field
+/// This is a realistic scenario where field indexing would help
+fn bench_diverse_patterns(c: &mut Criterion) {
+    let mut q = Quamina::new();
+    // Add 100 patterns, each using a unique field name
+    for i in 0..100 {
+        q.add_pattern(
+            format!("p{}", i),
+            &format!(r#"{{"field_{}": ["value_{}"]}}"#, i, i),
+        )
+        .unwrap();
+    }
+
+    // Event only has field_50, so only 1 of 100 patterns could match
+    let event = r#"{"field_50": "value_50", "other": "data"}"#.as_bytes();
+
+    c.bench_function("100_diverse_patterns_1_match", |b| {
+        b.iter(|| q.matches_for_event(black_box(event)).unwrap())
+    });
+}
+
+/// Benchmark with diverse patterns and no match
+fn bench_diverse_no_match(c: &mut Criterion) {
+    let mut q = Quamina::new();
+    for i in 0..100 {
+        q.add_pattern(
+            format!("p{}", i),
+            &format!(r#"{{"field_{}": ["value_{}"]}}"#, i, i),
+        )
+        .unwrap();
+    }
+
+    // Event has a field that doesn't match any pattern
+    let event = r#"{"unrelated_field": "some_value"}"#.as_bytes();
+
+    c.bench_function("100_diverse_patterns_no_match", |b| {
+        b.iter(|| q.matches_for_event(black_box(event)).unwrap())
+    });
+}
+
 criterion_group!(
     benches,
     bench_exact_match,
@@ -103,5 +143,7 @@ criterion_group!(
     bench_regex_match,
     bench_no_match,
     bench_has_matches,
+    bench_diverse_patterns,
+    bench_diverse_no_match,
 );
 criterion_main!(benches);
