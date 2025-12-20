@@ -16,7 +16,7 @@ quamina-rs provides the same core functionality as the Go version:
 
 ## Current Status
 
-✅ **All core pattern operators implemented** (76 tests passing)
+✅ **All core pattern operators implemented** (85 tests passing)
 
 | Feature | Status |
 |---------|--------|
@@ -177,7 +177,13 @@ Rust is now a correct implementation with full pattern operator parity to Go. Th
 - ✅ Single-field pattern fast path (skip backtracking for common case)
 - ✅ Push/pop optimization for trail tracking (avoid allocations)
 - ✅ Field-path indexing with adaptive heuristic (70-82% improvement for diverse patterns)
-- Automaton-based matching (like Go version) - for performance with many patterns
+- 🔄 Automaton-based matching (like Go version) - foundation implemented, integration pending
+  - ✅ SmallTable (byte-indexed transition table with ceilings/steps)
+  - ✅ FaState (automaton state with table and field transitions)
+  - ✅ FA builders: make_string_fa, make_prefix_fa, make_shellstyle_fa
+  - ✅ DFA/NFA traversal with epsilon closure and spinout handling
+  - ✅ merge_fas for combining multiple automata
+  - ⏳ Integration with main Quamina matcher (pending)
 - Memory optimization
 
 ### Phase 5: Future Enhancements (not yet started)
