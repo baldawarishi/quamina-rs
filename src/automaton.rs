@@ -1662,7 +1662,11 @@ impl<X: Clone + Eq + std::hash::Hash> CoreMatcher<X> {
     ///
     /// Fields should already be sorted by path.
     /// The `bufs` parameter should be a reusable NfaBuffers instance for reduced allocations.
-    pub fn matches_for_fields_ref(&self, fields: &[EventFieldRef<'_>], bufs: &mut NfaBuffers) -> Vec<X> {
+    pub fn matches_for_fields_ref(
+        &self,
+        fields: &[EventFieldRef<'_>],
+        bufs: &mut NfaBuffers,
+    ) -> Vec<X> {
         if fields.is_empty() {
             return self.collect_exists_false_matches(&self.root);
         }
@@ -2456,7 +2460,11 @@ impl<X: Clone + Eq + Hash + Send + Sync> ThreadSafeCoreMatcher<X> {
     ///
     /// This method is lock-free and can be called concurrently from multiple threads.
     /// The `bufs` parameter should be a reusable NfaBuffers instance for reduced allocations.
-    pub fn matches_for_fields_ref(&self, fields: &[EventFieldRef<'_>], bufs: &mut NfaBuffers) -> Vec<X> {
+    pub fn matches_for_fields_ref(
+        &self,
+        fields: &[EventFieldRef<'_>],
+        bufs: &mut NfaBuffers,
+    ) -> Vec<X> {
         let root = self.root.load();
 
         if fields.is_empty() {
