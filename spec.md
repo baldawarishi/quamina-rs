@@ -1,6 +1,6 @@
 # quamina-rs
 
-A Rust port of [quamina](https://github.com/timbray/quamina) - fast pattern-matching for JSON events.
+Rust port of [quamina](https://github.com/timbray/quamina) - fast pattern-matching for JSON events.
 
 ## Status
 
@@ -21,43 +21,17 @@ A Rust port of [quamina](https://github.com/timbray/quamina) - fast pattern-matc
 | status_last_field | 7,217 | 5,213 | **Rust 1.38x** |
 | citylots | 3,812 | 4,937 | Go 1.29x |
 
-## Completed (1-10, 15)
+## Completed
 
-1. ✅ Benchmark baseline
-2. ✅ Port numbits.go (Q-numbers)
-3. ✅ Integrate Q-numbers into automaton
-4. ✅ JSON parsing optimization (segments_tree + streaming flattener)
-5. ✅ CityLots benchmark
-6. ✅ Reduce allocations (reusable flattener, NfaBuffers, Cow)
-7. ✅ Unicode case folding (2876 pairs from Go)
-8. ✅ Evaluate regex approach → Keep `regex` crate
-9. ✅ Zero-copy field matching (EventFieldRef)
-10. ✅ Switch to `parking_lot::Mutex` (566→554ns, ~2% improvement)
-15. ✅ Split automaton.rs (2,581→6 files, largest 815 lines)
-
-## Investigated (not beneficial)
-
-- **Combined MatchState Mutex (tasks 11-12)**: Tested combining flattener + nfa_bufs into single Mutex. Caused 12% regression in automaton-heavy benchmarks due to longer critical section. Two quick locks beat one long lock.
+Tasks 1-10, 15: Q-numbers, segments_tree, streaming flattener, allocations (NfaBuffers, Cow), Unicode case folding, EventFieldRef, parking_lot::Mutex, automaton split (2,581→6 files, largest 815 lines).
 
 ## Next Steps
 
-### Performance (close early-field gap)
-
-| # | Task | Impact |
-|---|------|--------|
-| 13 | Unsafe `from_utf8_unchecked` (optional) | ~5-10ns/field |
-
-### Code Health
-
-| # | Task | Current | Target |
-|---|------|---------|--------|
-| 14 | Add profiling (flamegraph, pprof comparison) | - | - |
-| 16 | Split lib.rs | 2,890 lines | ~3 files (match Go) |
-
-**Note:** automaton/ now contains 6 files: mod.rs (50), small_table.rs (311), nfa.rs (133),
-fa_builders.rs (649), mutable_matcher.rs (815), thread_safe.rs (730), tests.rs (1,017).
-
-**Go file sizes for reference:** largest is 869 lines (flatten_json.go)
+| # | Task | Notes |
+|---|------|-------|
+| 13 | Unsafe `from_utf8_unchecked` | Optional, ~5-10ns/field |
+| 14 | Add profiling | flamegraph, pprof comparison |
+| 16 | Split lib.rs | 2,890 lines → ~3 files |
 
 ## Parity
 
