@@ -118,13 +118,13 @@ Run with: `cargo bench` (Rust) and `go test -run=NONE -bench=. -benchmem` (Go)
 
 | Benchmark | Go (ns/op) | Rust (ns/op) | Notes |
 |-----------|------------|--------------|-------|
-| status_context_fields | 400 | ~568 | Go 1.4x faster (early field) |
-| status_middle_nested | 6,670 | 4,830 | Rust 1.38x faster! |
-| status_last_field | 7,117 | 5,110 | Rust 1.39x faster! |
-| citylots | 3,869 | 4,825 | Go 1.25x faster |
-| shellstyle_26 | - | 1,348 | - |
-| anything_but_match | - | 231 | - |
-| multi_field_and_3 | - | 580 | - |
+| status_context_fields | 404 | 566 | Go 1.40x faster (early field) |
+| status_middle_nested | 6,745 | 4,972 | Rust 1.36x faster! |
+| status_last_field | 7,217 | 5,213 | Rust 1.38x faster! |
+| citylots | 3,812 | 4,937 | Go 1.29x faster |
+| shellstyle_26 | - | 1,394 | - |
+| anything_but_match | - | 227 | - |
+| multi_field_and_3 | - | 395 | - |
 
 **Analysis**: Zero-copy field matching with borrowed bytes has been implemented:
 - ✅ Streaming JSON parser with field skipping (SegmentsTree)
@@ -133,8 +133,10 @@ Run with: `cargo bench` (Rust) and `go test -run=NONE -bench=. -benchmem` (Go)
 - ✅ Whitespace lookup table for O(1) checks
 - ✅ Zero-copy `EventFieldRef<'a>` using borrowed bytes (eliminates String allocations)
 - ✅ Path separator aligned with Go (uses `\n` throughout, no conversion needed)
+- ✅ Reusable NfaBuffers stored in Quamina struct (like Go's `q.bufs`)
+- ✅ Cow<[u8]> in transition_on to avoid value.to_vec() allocations
 - Rust now faster than Go on middle/last field benchmarks!
-- Citylots gap reduced from 1.5x to 1.25x
+- Citylots gap reduced from 1.5x to 1.29x
 
 ## Next Steps
 
