@@ -965,11 +965,12 @@ impl<X: Clone + Eq + std::hash::Hash> MutableFieldMatcher<X> {
         &self,
         path: &str,
         value: &[u8],
+        is_number: bool,
         bufs: &mut NfaBuffers,
     ) -> Vec<Rc<MutableFieldMatcher<X>>> {
         let transitions = self.transitions.borrow();
         if let Some(vm) = transitions.get(path) {
-            vm.transition_on(value, bufs)
+            vm.transition_on(value, is_number, bufs)
         } else {
             vec![]
         }
@@ -988,6 +989,8 @@ pub struct MutableValueMatcher<X: Clone + Eq + std::hash::Hash> {
     singleton_transition: RefCell<Option<Rc<MutableFieldMatcher<X>>>>,
     /// Whether this matcher requires NFA traversal
     is_nondeterministic: RefCell<bool>,
+    /// Whether this matcher has numeric patterns (for Q-number conversion)
+    has_numbers: RefCell<bool>,
     /// Mapping from Arc<FieldMatcher> to Rc<MutableFieldMatcher<X>>
     /// This bridges the automaton's field transitions to our mutable field matchers
     transition_map: RefCell<HashMap<*const FieldMatcher, Rc<MutableFieldMatcher<X>>>>,
@@ -1000,6 +1003,7 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
             singleton_match: RefCell::new(None),
             singleton_transition: RefCell::new(None),
             is_nondeterministic: RefCell::new(false),
+            has_numbers: RefCell::new(false),
             transition_map: RefCell::new(HashMap::new()),
         }
     }
@@ -1010,7 +1014,7 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
 
         match matcher {
             Matcher::Exact(s) => self.add_string_transition(s.as_bytes()),
-            Matcher::NumericExact(n) => self.add_string_transition(n.to_string().as_bytes()),
+            Matcher::NumericExact(n) => self.add_numeric_transition(*n),
             Matcher::Prefix(s) => self.add_prefix_transition(s.as_bytes()),
             Matcher::Shellstyle(s) => {
                 *self.is_nondeterministic.borrow_mut() = true;
@@ -1084,6 +1088,46 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
             *self.singleton_transition.borrow_mut() = None;
         } else {
             *start_table = Some(new_fa);
+        }
+
+        next_fm
+    }
+
+    /// Add a numeric transition that supports Q-number matching.
+    /// Builds both a string FA for the text representation and a Q-number FA.
+    fn add_numeric_transition(&self, num: f64) -> Rc<MutableFieldMatcher<X>> {
+        // Mark that this matcher has numeric patterns
+        *self.has_numbers.borrow_mut() = true;
+
+        let val_str = num.to_string();
+        let val = val_str.as_bytes();
+
+        // Get Q-number representation
+        let q_num = crate::numbits::q_num_from_f64(num);
+
+        let next_fm = Rc::new(MutableFieldMatcher::new());
+        let next_arc = Arc::new(FieldMatcher::new());
+        self.transition_map.borrow_mut().insert(Arc::as_ptr(&next_arc), next_fm.clone());
+
+        // Build string FA and Q-number FA, merge them
+        let string_fa = make_string_fa(val, next_arc.clone());
+        let q_num_fa = make_string_fa(&q_num, next_arc);
+        let merged_fa = merge_fas(&string_fa, &q_num_fa);
+
+        let mut start_table = self.start_table.borrow_mut();
+        if let Some(ref existing) = *start_table {
+            *start_table = Some(merge_fas(existing, &merged_fa));
+        } else if self.singleton_match.borrow().is_some() {
+            let singleton_val = self.singleton_match.borrow().clone().unwrap();
+            let singleton_trans = self.singleton_transition.borrow().clone().unwrap();
+            let singleton_arc = Arc::new(FieldMatcher::new());
+            self.transition_map.borrow_mut().insert(Arc::as_ptr(&singleton_arc), singleton_trans);
+            let singleton_fa = make_string_fa(&singleton_val, singleton_arc);
+            *start_table = Some(merge_fas(&singleton_fa, &merged_fa));
+            *self.singleton_match.borrow_mut() = None;
+            *self.singleton_transition.borrow_mut() = None;
+        } else {
+            *start_table = Some(merged_fa);
         }
 
         next_fm
@@ -1238,6 +1282,7 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
     pub fn transition_on(
         &self,
         value: &[u8],
+        is_number: bool,
         bufs: &mut NfaBuffers,
     ) -> Vec<Rc<MutableFieldMatcher<X>>> {
         // Check singleton first
@@ -1252,10 +1297,26 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
 
         // Use automaton
         if let Some(ref table) = *self.start_table.borrow() {
-            let arc_transitions = if *self.is_nondeterministic.borrow() {
-                traverse_nfa(table, value, bufs)
+            // Try with Q-number conversion if this matcher has numbers and value is numeric
+            let value_to_match = if *self.has_numbers.borrow() && is_number {
+                // Try to parse as f64 and convert to Q-number
+                if let Ok(s) = std::str::from_utf8(value) {
+                    if let Ok(n) = s.parse::<f64>() {
+                        crate::numbits::q_num_from_f64(n)
+                    } else {
+                        value.to_vec()
+                    }
+                } else {
+                    value.to_vec()
+                }
             } else {
-                traverse_dfa(table, value)
+                value.to_vec()
+            };
+
+            let arc_transitions = if *self.is_nondeterministic.borrow() {
+                traverse_nfa(table, &value_to_match, bufs)
+            } else {
+                traverse_dfa(table, &value_to_match)
             };
 
             // Map Arc<FieldMatcher> transitions to Rc<MutableFieldMatcher<X>>
@@ -1393,7 +1454,7 @@ impl<X: Clone + Eq + std::hash::Hash> CoreMatcher<X> {
         self.check_exists_false(state, fields, index, matches, bufs);
 
         // Try value transitions
-        let next_states = state.transition_on(&field.path, field.value.as_bytes(), bufs);
+        let next_states = state.transition_on(&field.path, field.value.as_bytes(), field.is_number, bufs);
 
         for next_state in next_states {
             // Add matches from next state
@@ -1453,6 +1514,8 @@ pub struct EventField {
     pub path: String,
     pub value: String,
     pub array_trail: Vec<crate::json::ArrayPos>,
+    /// True if the value is a JSON number (for Q-number conversion during matching)
+    pub is_number: bool,
 }
 
 impl From<&crate::json::Field> for EventField {
@@ -1461,6 +1524,7 @@ impl From<&crate::json::Field> for EventField {
             path: f.path.clone(),
             value: f.value.clone(),
             array_trail: f.array_trail.clone(),
+            is_number: f.is_number,
         }
     }
 }
@@ -1717,10 +1781,11 @@ impl<X: Clone + Eq + Hash> FrozenFieldMatcher<X> {
         &self,
         path: &str,
         value: &[u8],
+        is_number: bool,
         bufs: &mut NfaBuffers,
     ) -> Vec<Arc<FrozenFieldMatcher<X>>> {
         if let Some(vm) = self.transitions.get(path) {
-            vm.transition_on(value, bufs)
+            vm.transition_on(value, is_number, bufs)
         } else {
             vec![]
         }
@@ -1740,6 +1805,8 @@ pub struct FrozenValueMatcher<X: Clone + Eq + Hash> {
     singleton_transition: Option<Arc<FrozenFieldMatcher<X>>>,
     /// Whether this matcher requires NFA traversal
     is_nondeterministic: bool,
+    /// Whether this matcher has numeric patterns (for Q-number conversion)
+    has_numbers: bool,
     /// Mapping from FieldMatcher pointer (as usize) to FrozenFieldMatcher
     /// Uses the pointer address to bridge automaton transitions to our frozen matchers
     transition_map: HashMap<usize, Arc<FrozenFieldMatcher<X>>>,
@@ -1756,6 +1823,7 @@ impl<X: Clone + Eq + Hash> FrozenValueMatcher<X> {
             singleton_match: None,
             singleton_transition: None,
             is_nondeterministic: false,
+            has_numbers: false,
             transition_map: HashMap::new(),
         }
     }
@@ -1764,6 +1832,7 @@ impl<X: Clone + Eq + Hash> FrozenValueMatcher<X> {
     pub fn transition_on(
         &self,
         value: &[u8],
+        is_number: bool,
         bufs: &mut NfaBuffers,
     ) -> Vec<Arc<FrozenFieldMatcher<X>>> {
         // Check singleton first
@@ -1778,10 +1847,26 @@ impl<X: Clone + Eq + Hash> FrozenValueMatcher<X> {
 
         // Use automaton
         if let Some(ref table) = self.start_table {
-            let arc_transitions = if self.is_nondeterministic {
-                traverse_nfa(table, value, bufs)
+            // Try with Q-number conversion if this matcher has numbers and value is numeric
+            let value_to_match = if self.has_numbers && is_number {
+                // Try to parse as f64 and convert to Q-number
+                if let Ok(s) = std::str::from_utf8(value) {
+                    if let Ok(n) = s.parse::<f64>() {
+                        crate::numbits::q_num_from_f64(n)
+                    } else {
+                        value.to_vec()
+                    }
+                } else {
+                    value.to_vec()
+                }
             } else {
-                traverse_dfa(table, value)
+                value.to_vec()
+            };
+
+            let arc_transitions = if self.is_nondeterministic {
+                traverse_nfa(table, &value_to_match, bufs)
+            } else {
+                traverse_dfa(table, &value_to_match)
             };
 
             // Map FieldMatcher transitions to FrozenFieldMatcher using pointer address
@@ -1841,6 +1926,7 @@ impl<X: Clone + Eq + Hash> BuildState<X> {
 ///     path: "status".to_string(),
 ///     value: "active".to_string(),
 ///     array_trail: vec![],
+///     is_number: false,
 /// }];
 /// let matches = matcher.matches_for_fields(&fields);
 /// ```
@@ -2003,6 +2089,7 @@ impl<X: Clone + Eq + Hash + Send + Sync> ThreadSafeCoreMatcher<X> {
             singleton_match,
             singleton_transition,
             is_nondeterministic: *mutable.is_nondeterministic.borrow(),
+            has_numbers: *mutable.has_numbers.borrow(),
             transition_map,
         }
     }
@@ -2055,7 +2142,7 @@ impl<X: Clone + Eq + Hash + Send + Sync> ThreadSafeCoreMatcher<X> {
         self.check_exists_false(state, fields, index, matches, bufs);
 
         // Try value transitions
-        let next_states = state.transition_on(&field.path, field.value.as_bytes(), bufs);
+        let next_states = state.transition_on(&field.path, field.value.as_bytes(), field.is_number, bufs);
 
         for next_state in next_states {
             for m in &next_state.matches {
@@ -2419,6 +2506,7 @@ mod tests {
             path: "status".to_string(),
             value: "active".to_string(),
             array_trail: vec![],
+            is_number: false,
         }];
 
         let matches = matcher.matches_for_fields(&fields);
@@ -2444,6 +2532,7 @@ mod tests {
             path: "status".to_string(),
             value: "inactive".to_string(),
             array_trail: vec![],
+            is_number: false,
         }];
 
         let matches = matcher.matches_for_fields(&fields);
@@ -2467,6 +2556,7 @@ mod tests {
             path: "name".to_string(),
             value: "anything".to_string(),
             array_trail: vec![],
+            is_number: false,
         }];
 
         let matches = matcher.matches_for_fields(&fields);
@@ -2494,6 +2584,7 @@ mod tests {
             path: "other".to_string(),
             value: "value".to_string(),
             array_trail: vec![],
+            is_number: false,
         }];
 
         let matches = matcher.matches_for_fields(&fields);
@@ -2529,11 +2620,13 @@ mod tests {
                 path: "status".to_string(),
                 value: "active".to_string(),
                 array_trail: vec![],
+                is_number: false,
             },
             EventField {
                 path: "type".to_string(),
                 value: "user".to_string(),
                 array_trail: vec![],
+                is_number: false,
             },
         ];
 
@@ -2569,11 +2662,13 @@ mod tests {
                 path: "status".to_string(),
                 value: "active".to_string(),
                 array_trail: vec![],
+                is_number: false,
             },
             EventField {
                 path: "type".to_string(),
                 value: "admin".to_string(),
                 array_trail: vec![],
+                is_number: false,
             },
         ];
 
@@ -2607,6 +2702,7 @@ mod tests {
             path: "status".to_string(),
             value: "active".to_string(),
             array_trail: vec![],
+            is_number: false,
         }];
         let matches1 = matcher.matches_for_fields(&fields1);
         assert_eq!(matches1.len(), 1, "OR within field should match 'active'");
@@ -2616,6 +2712,7 @@ mod tests {
             path: "status".to_string(),
             value: "pending".to_string(),
             array_trail: vec![],
+            is_number: false,
         }];
         let matches2 = matcher.matches_for_fields(&fields2);
         assert_eq!(matches2.len(), 1, "OR within field should match 'pending'");
@@ -2625,6 +2722,7 @@ mod tests {
             path: "status".to_string(),
             value: "completed".to_string(),
             array_trail: vec![],
+            is_number: false,
         }];
         let matches3 = matcher.matches_for_fields(&fields3);
         assert!(
@@ -2662,6 +2760,7 @@ mod tests {
             path: "status".to_string(),
             value: "active".to_string(),
             array_trail: vec![],
+            is_number: false,
         }];
 
         let matches = matcher.matches_for_fields(&fields);
@@ -2907,6 +3006,7 @@ mod tests {
             path: "status".to_string(),
             value: "active".to_string(),
             array_trail: vec![],
+            is_number: false,
         }];
 
         let matches = matcher.matches_for_fields(&fields);
@@ -2932,6 +3032,7 @@ mod tests {
             path: "status".to_string(),
             value: "inactive".to_string(),
             array_trail: vec![],
+            is_number: false,
         }];
 
         let matches = matcher.matches_for_fields(&fields);
@@ -2955,6 +3056,7 @@ mod tests {
             path: "name".to_string(),
             value: "anything".to_string(),
             array_trail: vec![],
+            is_number: false,
         }];
 
         let matches = matcher.matches_for_fields(&fields);
@@ -2982,6 +3084,7 @@ mod tests {
             path: "other".to_string(),
             value: "value".to_string(),
             array_trail: vec![],
+            is_number: false,
         }];
 
         let matches = matcher.matches_for_fields(&fields);
@@ -3021,6 +3124,7 @@ mod tests {
             path: "status".to_string(),
             value: "active".to_string(),
             array_trail: vec![],
+            is_number: false,
         }];
 
         let matches = matcher.matches_for_fields(&fields);

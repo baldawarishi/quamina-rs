@@ -18,6 +18,8 @@ pub struct Field {
     pub path: String,
     pub value: String,
     pub array_trail: Vec<ArrayPos>,
+    /// True if the value is a JSON number (for Q-number conversion during matching)
+    pub is_number: bool,
 }
 
 /// A matcher for a pattern field value
@@ -406,6 +408,7 @@ fn flatten_value_with_trail(
                 path,
                 value: value_to_string(value),
                 array_trail: ctx.current_trail(),
+                is_number: matches!(value, Value::Number(_)),
             });
         }
     }
@@ -446,6 +449,7 @@ fn flatten_value_with_trail_inner(
                 path,
                 value: value_to_string(value),
                 array_trail: object_trail.to_vec(),
+                is_number: matches!(value, Value::Number(_)),
             });
         }
     }

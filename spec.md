@@ -1,6 +1,6 @@
 # quamina-rs
 
-<!-- Checkpoint: numbits.rs ported. Next: integrate Q-numbers into automaton for numeric matching -->
+<!-- Checkpoint: Q-numbers integrated into automaton. NumericExact patterns now use automaton-based matching -->
 
 A Rust port of [quamina](https://github.com/timbray/quamina) - a fast pattern-matching library for filtering JSON events.
 
@@ -18,7 +18,7 @@ quamina-rs provides the same core functionality as the Go version:
 
 ## Current Status
 
-All core pattern operators implemented (110 tests passing).
+All core pattern operators implemented (118 tests passing).
 
 | Feature | Status | Path |
 |---------|--------|------|
@@ -30,6 +30,7 @@ All core pattern operators implemented (110 tests passing).
 | Exists | ✅ | automaton |
 | Suffix | ✅ | fallback |
 | Equals-ignore-case | ✅ | fallback (ASCII only) |
+| Numeric exact | ✅ | automaton (Q-numbers) |
 | Numeric comparisons | ✅ | fallback |
 | Regex | ✅ | fallback (`regex` crate) |
 | Multiple values (OR) | ✅ | both |
@@ -131,7 +132,7 @@ Run with: `cargo bench` (Rust) and `go test -run=NONE -bench=. -benchmem` (Go)
 
 1. ~~**Benchmark baseline**~~ - ✅ Done. See Performance Baseline table above.
 2. ~~**Port numbits.go**~~ - ✅ Done. `numbits.rs` with IEEE 754 to ordered bytes.
-3. **Integrate Q-numbers** - Wire numbits into automaton for numeric exact match via automaton
+3. ~~**Integrate Q-numbers**~~ - ✅ Done. NumericExact patterns use automaton-based Q-number matching.
 4. **JSON parsing optimization** - Port Go's segment-based flattener for 10-200x speedup
 5. **CityLots benchmark** - Copy `testdata/citylots.jlines.gz`, implement Rust equivalent
 6. **Unicode case folding** - Port `monocase.go` + `case_folding.go` for full EqualsIgnoreCase
