@@ -9,6 +9,9 @@ use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::hash::Hash;
 
+/// Pattern definition: (field matchers, is_automaton_compatible)
+type PatternDef = (HashMap<String, Vec<Matcher>>, bool);
+
 /// Errors that can occur during pattern matching
 #[derive(Debug)]
 pub enum QuaminaError {
@@ -58,7 +61,7 @@ pub struct Quamina<X: Clone + Eq + Hash + Send + Sync = String> {
     /// Automaton-based matcher for patterns with supported operators
     automaton: ThreadSafeCoreMatcher<X>,
     /// All pattern definitions (source of truth for cloning)
-    pattern_defs: HashMap<X, Vec<(HashMap<String, Vec<Matcher>>, bool)>>, // (fields, is_automaton_compatible)
+    pattern_defs: HashMap<X, Vec<PatternDef>>,
     /// Fallback patterns that use unsupported operators (suffix, regex, numeric comparisons)
     fallback_patterns: HashMap<X, Vec<Pattern>>,
     /// Index mapping field paths to fallback pattern IDs

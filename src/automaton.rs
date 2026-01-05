@@ -1028,11 +1028,7 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
             Matcher::EqualsIgnoreCase(s) => self.add_monocase_transition(s.as_bytes()),
             // For complex matchers (Suffix, Numeric, Regex), we create a simple next state
             // These would need runtime checking or specialized handling
-            _ => {
-                let next_fm = Rc::new(MutableFieldMatcher::new());
-                // Store as a special case - will need runtime checking
-                next_fm
-            }
+            _ => Rc::new(MutableFieldMatcher::new())
         }
     }
 
