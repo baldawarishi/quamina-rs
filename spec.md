@@ -147,6 +147,12 @@ Run with: `cargo bench` (Rust) and `go test -run=NONE -bench=. -benchmem` (Go)
    - Rust now faster than Go on status_middle_nested and status_last_field!
 7. **Unicode case folding** - Port `monocase.go` + `case_folding.go` for full EqualsIgnoreCase
 8. **Evaluate regex approach** - Decide: keep `regex` crate or port custom NFA
+9. **Eliminate string conversions** - Close citylots gap (Go 1.5x faster) by removing field format conversions:
+   - Current: `flatten_json::Field<'a>` → `json::Field` → `EventField` (2 conversions, String allocations)
+   - Go uses `[]byte` throughout with zero conversions
+   - Fix: Refactor automaton to use `&[u8]` paths/values instead of `String`
+   - Skip intermediate `json::Field` format, pass flattened fields directly to automaton
+   - Eliminates per-field: UTF-8 validation, `.replace('\n', ".")`, String allocations
 
 ## Test Data
 
