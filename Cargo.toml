@@ -9,10 +9,20 @@ repository = "https://github.com/baldawarishi/quamina-rs"
 [dependencies]
 regex = "1"
 arc-swap = "1.7"
+simd-json = { version = "0.14", optional = true }
+
+[features]
+default = []
+simd = ["simd-json"]
 
 [dev-dependencies]
 criterion = "0.5"
+simd-json = "0.14"
 
 [[bench]]
 name = "matching"
+harness = false
+
+[[bench]]
+name = "simd_compare"
 harness = false

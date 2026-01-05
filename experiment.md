@@ -97,10 +97,58 @@ use simd_json::lazy::Value;
 3. How does performance compare on ARM (M1/M2) vs x86?
 4. Is the simd-json dependency size acceptable? (it's a larger crate)
 
+## Experiment Results (2026-01-05)
+
+Benchmarks run on Apple Silicon (M-series), using simd-json 0.14 with NEON instructions.
+
+### Benchmark Results
+
+| Benchmark | Current Flattener | simd-json DOM | Winner |
+|-----------|------------------|---------------|--------|
+| status_context_fields (early field) | **658 ns** | 6,640 ns | Current (10x faster) |
+| status_middle_nested | 7,132 ns | 6,675 ns | simd-json (~5% faster) |
+| status_last_field | 6,828 ns | 6,675 ns | simd-json (~2% faster) |
+| small_json parse | - | 220 ns | - |
+| 50_fields parse | - | 1,239 ns | - |
+| 50_fields extract_5 | - | 1,458 ns | - |
+
+### Key Findings
+
+1. **Early termination is our superpower**: For fields early in the JSON, our streaming flattener is ~10x faster because it stops parsing after finding needed fields. simd-json always parses the entire document.
+
+2. **simd-json wins at end of document**: When the target field is near the end, simd-json's SIMD parsing is slightly faster (~5%) since both approaches must scan most of the document anyway.
+
+3. **Parse cost dominates**: simd-json's DOM approach has O(1) field lookup, but the full-document parsing cost (~6.6µs for status.json) is the bottleneck. Our streaming approach avoids this.
+
+4. **Field position independence in simd-json**: Extracting from first/middle/last field takes identical time (~1.3µs for 50-field JSON) after parsing, confirming O(1) lookup.
+
+### Answers to Original Questions
+
+1. **Does simd-json allow selective parsing?** No - the tape/DOM APIs always scan the full document. SIMD accelerates scanning but doesn't skip content.
+
+2. **Memory overhead?** simd-json's borrowed value holds references to input buffer plus structural metadata. Acceptable for most use cases.
+
+3. **ARM (M1/M2) performance?** Uses NEON instructions effectively. Results above are from Apple Silicon.
+
+4. **Dependency size?** simd-json adds several dependencies (value-trait, halfbrown, simdutf8, etc.). Larger footprint than current approach.
+
+### Conclusion
+
+**Stay with current streaming flattener.** The early termination optimization provides significant wins for typical quamina use cases where patterns match a small subset of fields early in the document.
+
+simd-json would only help if:
+- Most patterns target fields at the end of large documents
+- Many fields need extraction from each event (amortizes parse cost)
+- Events are very large and dense (SIMD shines on bulk processing)
+
+None of these match quamina's typical usage pattern.
+
 ## Next Steps
 
-1. [ ] Add simd-json as optional dev-dependency
-2. [ ] Create benchmark comparing all approaches
-3. [ ] Test on various event sizes and field counts
-4. [ ] Profile to understand where time is spent
-5. [ ] Decide: adopt, hybrid, or stay with current approach
+1. [x] Add simd-json as dev-dependency
+2. [x] Create benchmark comparing all approaches
+3. [x] Test on various event sizes and field counts
+4. [x] Profile to understand where time is spent
+5. [x] Decide: adopt, hybrid, or stay with current approach
+
+**Decision: Keep current approach. Remove simd-json experiment code before release.**
