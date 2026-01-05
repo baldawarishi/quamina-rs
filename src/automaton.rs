@@ -1506,6 +1506,90 @@ impl<X: Clone + Eq + std::hash::Hash> CoreMatcher<X> {
         }
         result
     }
+
+    /// Match fields against patterns using zero-copy field references.
+    ///
+    /// Fields should already be sorted by path.
+    pub fn matches_for_fields_ref(&self, fields: &[EventFieldRef<'_>]) -> Vec<X> {
+        if fields.is_empty() {
+            return self.collect_exists_false_matches(&self.root);
+        }
+
+        let mut matches = MatchSet::new();
+        let mut bufs = NfaBuffers::new();
+
+        for i in 0..fields.len() {
+            self.try_to_match_ref(fields, i, &self.root, &mut matches, &mut bufs);
+        }
+
+        matches.into_vec()
+    }
+
+    /// Recursively try to match fields (zero-copy version)
+    fn try_to_match_ref(
+        &self,
+        fields: &[EventFieldRef<'_>],
+        index: usize,
+        state: &Rc<MutableFieldMatcher<X>>,
+        matches: &mut MatchSet<X>,
+        bufs: &mut NfaBuffers,
+    ) {
+        let field = &fields[index];
+
+        // Check exists:true transition
+        if let Some(exists_trans) = state.exists_true.borrow().get(field.path) {
+            for m in exists_trans.matches.borrow().iter() {
+                matches.add(m.clone());
+            }
+            for next_idx in (index + 1)..fields.len() {
+                if no_array_trail_conflict_ref(field.array_trail, fields[next_idx].array_trail) {
+                    self.try_to_match_ref(fields, next_idx, exists_trans, matches, bufs);
+                }
+            }
+            self.check_exists_false_ref(state, fields, index, matches, bufs);
+        }
+
+        // Check exists:false
+        self.check_exists_false_ref(state, fields, index, matches, bufs);
+
+        // Try value transitions
+        let next_states = state.transition_on(field.path, field.value, field.is_number, bufs);
+
+        for next_state in next_states {
+            for m in next_state.matches.borrow().iter() {
+                matches.add(m.clone());
+            }
+
+            for next_idx in (index + 1)..fields.len() {
+                if no_array_trail_conflict_ref(field.array_trail, fields[next_idx].array_trail) {
+                    self.try_to_match_ref(fields, next_idx, &next_state, matches, bufs);
+                }
+            }
+
+            self.check_exists_false_ref(&next_state, fields, index, matches, bufs);
+        }
+    }
+
+    /// Check exists:false patterns (zero-copy version)
+    fn check_exists_false_ref(
+        &self,
+        state: &Rc<MutableFieldMatcher<X>>,
+        fields: &[EventFieldRef<'_>],
+        index: usize,
+        matches: &mut MatchSet<X>,
+        bufs: &mut NfaBuffers,
+    ) {
+        for (path, exists_trans) in state.exists_false.borrow().iter() {
+            let field_exists = fields.iter().any(|f| f.path == path);
+
+            if !field_exists {
+                for m in exists_trans.matches.borrow().iter() {
+                    matches.add(m.clone());
+                }
+                self.try_to_match_ref(fields, index, exists_trans, matches, bufs);
+            }
+        }
+    }
 }
 
 /// An event field for matching (simplified version of json::Field)
@@ -1527,6 +1611,35 @@ impl From<&crate::json::Field> for EventField {
             is_number: f.is_number,
         }
     }
+}
+
+/// Zero-copy event field for matching.
+/// Borrows path and value bytes directly from the flattened fields.
+#[derive(Clone, Debug)]
+pub struct EventFieldRef<'a> {
+    /// Path as a string slice (converted from bytes)
+    pub path: &'a str,
+    /// Value as raw bytes
+    pub value: &'a [u8],
+    /// Array position tracking (borrowed slice)
+    pub array_trail: &'a [crate::flatten_json::ArrayPos],
+    /// True if the value is a JSON number
+    pub is_number: bool,
+}
+
+/// Check if two array trails have no conflicts (using flatten_json::ArrayPos)
+fn no_array_trail_conflict_ref(
+    from: &[crate::flatten_json::ArrayPos],
+    to: &[crate::flatten_json::ArrayPos],
+) -> bool {
+    for from_pos in from {
+        for to_pos in to {
+            if from_pos.array == to_pos.array && from_pos.pos != to_pos.pos {
+                return false;
+            }
+        }
+    }
+    true
 }
 
 /// Check if two array trails have no conflicts
@@ -2185,6 +2298,90 @@ impl<X: Clone + Eq + Hash + Send + Sync> ThreadSafeCoreMatcher<X> {
             result.extend(exists_trans.matches.iter().cloned());
         }
         result
+    }
+
+    /// Match fields using zero-copy field references.
+    ///
+    /// This method is lock-free and can be called concurrently from multiple threads.
+    pub fn matches_for_fields_ref(&self, fields: &[EventFieldRef<'_>]) -> Vec<X> {
+        let root = self.root.load();
+
+        if fields.is_empty() {
+            return self.collect_exists_false_matches(&root);
+        }
+
+        let mut matches = FrozenMatchSet::new();
+        let mut bufs = NfaBuffers::new();
+
+        for i in 0..fields.len() {
+            self.try_to_match_ref(fields, i, &root, &mut matches, &mut bufs);
+        }
+
+        matches.into_vec()
+    }
+
+    fn try_to_match_ref(
+        &self,
+        fields: &[EventFieldRef<'_>],
+        index: usize,
+        state: &Arc<FrozenFieldMatcher<X>>,
+        matches: &mut FrozenMatchSet<X>,
+        bufs: &mut NfaBuffers,
+    ) {
+        let field = &fields[index];
+
+        // Check exists:true transition
+        if let Some(exists_trans) = state.exists_true.get(field.path) {
+            for m in &exists_trans.matches {
+                matches.add(m.clone());
+            }
+            for next_idx in (index + 1)..fields.len() {
+                if no_array_trail_conflict_ref(field.array_trail, fields[next_idx].array_trail) {
+                    self.try_to_match_ref(fields, next_idx, exists_trans, matches, bufs);
+                }
+            }
+            self.check_exists_false_ref(state, fields, index, matches, bufs);
+        }
+
+        // Check exists:false
+        self.check_exists_false_ref(state, fields, index, matches, bufs);
+
+        // Try value transitions
+        let next_states = state.transition_on(field.path, field.value, field.is_number, bufs);
+
+        for next_state in next_states {
+            for m in &next_state.matches {
+                matches.add(m.clone());
+            }
+
+            for next_idx in (index + 1)..fields.len() {
+                if no_array_trail_conflict_ref(field.array_trail, fields[next_idx].array_trail) {
+                    self.try_to_match_ref(fields, next_idx, &next_state, matches, bufs);
+                }
+            }
+
+            self.check_exists_false_ref(&next_state, fields, index, matches, bufs);
+        }
+    }
+
+    fn check_exists_false_ref(
+        &self,
+        state: &Arc<FrozenFieldMatcher<X>>,
+        fields: &[EventFieldRef<'_>],
+        index: usize,
+        matches: &mut FrozenMatchSet<X>,
+        bufs: &mut NfaBuffers,
+    ) {
+        for (path, exists_trans) in &state.exists_false {
+            let field_exists = fields.iter().any(|f| f.path == path);
+
+            if !field_exists {
+                for m in &exists_trans.matches {
+                    matches.add(m.clone());
+                }
+                self.try_to_match_ref(fields, index, exists_trans, matches, bufs);
+            }
+        }
     }
 }
 

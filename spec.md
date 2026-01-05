@@ -1,6 +1,6 @@
 # quamina-rs
 
-<!-- Checkpoint: Allocation optimization done. Reusable FlattenJsonState, 29% faster on status benchmarks. Rust now beats Go on middle/last field! -->
+<!-- Checkpoint: Zero-copy field matching done. EventFieldRef with borrowed bytes, citylots gap reduced from 1.5x to 1.25x. -->
 
 A Rust port of [quamina](https://github.com/timbray/quamina) - a fast pattern-matching library for filtering JSON events.
 
@@ -118,20 +118,23 @@ Run with: `cargo bench` (Rust) and `go test -run=NONE -bench=. -benchmem` (Go)
 
 | Benchmark | Go (ns/op) | Rust (ns/op) | Notes |
 |-----------|------------|--------------|-------|
-| status_context_fields | 400 | ~660 | Go 1.6x faster (early field) |
-| status_middle_nested | 6,670 | 5,030 | Rust 1.3x faster! |
-| status_last_field | 7,117 | 5,370 | Rust 1.3x faster! |
-| citylots | 3,869 | 5,740 | Go 1.5x faster |
-| shellstyle_26 | - | 1,479 | - |
-| anything_but_match | - | 317 | - |
-| multi_field_and_3 | - | 626 | - |
+| status_context_fields | 400 | ~568 | Go 1.4x faster (early field) |
+| status_middle_nested | 6,670 | 4,830 | Rust 1.38x faster! |
+| status_last_field | 7,117 | 5,110 | Rust 1.39x faster! |
+| citylots | 3,869 | 4,825 | Go 1.25x faster |
+| shellstyle_26 | - | 1,348 | - |
+| anything_but_match | - | 231 | - |
+| multi_field_and_3 | - | 580 | - |
 
-**Analysis**: The segment-based flattener with reusable state has been implemented:
+**Analysis**: Zero-copy field matching with borrowed bytes has been implemented:
 - ✅ Streaming JSON parser with field skipping (SegmentsTree)
 - ✅ Early termination when all needed fields found
-- ✅ Reusable flattener state with Go's reset() pattern (29% improvement)
+- ✅ Reusable flattener state with Go's reset() pattern
 - ✅ Whitespace lookup table for O(1) checks
+- ✅ Zero-copy `EventFieldRef<'a>` using borrowed bytes (eliminates String allocations)
+- ✅ Path separator aligned with Go (uses `\n` throughout, no conversion needed)
 - Rust now faster than Go on middle/last field benchmarks!
+- Citylots gap reduced from 1.5x to 1.25x
 
 ## Next Steps
 
@@ -147,12 +150,12 @@ Run with: `cargo bench` (Rust) and `go test -run=NONE -bench=. -benchmem` (Go)
    - Rust now faster than Go on status_middle_nested and status_last_field!
 7. **Unicode case folding** - Port `monocase.go` + `case_folding.go` for full EqualsIgnoreCase
 8. **Evaluate regex approach** - Decide: keep `regex` crate or port custom NFA
-9. **Eliminate string conversions** - Close citylots gap (Go 1.5x faster) by removing field format conversions:
-   - Current: `flatten_json::Field<'a>` → `json::Field` → `EventField` (2 conversions, String allocations)
-   - Go uses `[]byte` throughout with zero conversions
-   - Fix: Refactor automaton to use `&[u8]` paths/values instead of `String`
-   - Skip intermediate `json::Field` format, pass flattened fields directly to automaton
-   - Eliminates per-field: UTF-8 validation, `.replace('\n', ".")`, String allocations
+9. ~~**Eliminate string conversions**~~ - ✅ Done. Citylots gap reduced from 1.5x to 1.25x:
+   - ✅ Path separator unified to `\n` (no `.replace()` conversion needed)
+   - ✅ Zero-copy `EventFieldRef<'a>` with borrowed `&str` path and `&[u8]` value
+   - ✅ Automaton `matches_for_fields_ref()` uses borrowed fields directly
+   - ✅ Skip intermediate `json::Field` format for automaton matching
+   - Fallback patterns still use legacy `Field` format (lazy conversion only when needed)
 
 ## Test Data
 

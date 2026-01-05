@@ -1,15 +1,17 @@
 //! Minimal JSON parser for flattening events and patterns
 
+use crate::segments_tree::SEGMENT_SEPARATOR;
 use crate::QuaminaError;
 use std::collections::HashMap;
 
 /// Represents a field's position within an array in the event.
 /// Array is a unique identifier for each array in the event.
 /// Pos is the field's index within that array.
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// Uses i32 to match Go's int32.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ArrayPos {
-    pub array: u32,
-    pub pos: u32,
+    pub array: i32,
+    pub pos: i32,
 }
 
 /// A flattened field from a JSON event, including array position tracking.
@@ -77,7 +79,7 @@ impl Matcher {
 
 /// Context for tracking array positions during flattening
 struct FlattenContext {
-    array_count: u32,
+    array_count: i32,
     array_trail: Vec<ArrayPos>,
 }
 
@@ -89,7 +91,7 @@ impl FlattenContext {
         }
     }
 
-    fn push_array(&mut self) -> u32 {
+    fn push_array(&mut self) -> i32 {
         let array_id = self.array_count;
         self.array_count += 1;
         self.array_trail.push(ArrayPos {
@@ -161,7 +163,7 @@ fn extract_pattern_fields(
         let path = if prefix.is_empty() {
             key.clone()
         } else {
-            format!("{}.{}", prefix, key)
+            format!("{}{}{}", prefix, SEGMENT_SEPARATOR, key)
         };
         match value {
             Value::Array(arr) => {

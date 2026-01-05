@@ -6,7 +6,7 @@ mod json;
 pub mod numbits;
 mod segments_tree;
 
-use automaton::{EventField, ThreadSafeCoreMatcher};
+use automaton::{EventFieldRef, ThreadSafeCoreMatcher};
 use flatten_json::FlattenJsonState;
 use json::{ArrayPos, Field, Matcher};
 use segments_tree::SegmentsTree;
@@ -189,54 +189,70 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
             flattener.flatten(event, &self.segments_tree)?
         };
 
-        // Convert streaming fields to the legacy Field format
-        let event_fields: Vec<Field> = streaming_fields
-            .into_iter()
-            .map(|f| {
-                // Convert newline-separated path to dot-separated
-                let path_str = String::from_utf8_lossy(&f.path).replace('\n', ".");
-                // Convert value bytes to string, stripping quotes from string values
-                let raw_bytes = f.val.as_bytes();
-                let value = if raw_bytes.starts_with(b"\"") && raw_bytes.ends_with(b"\"") {
-                    // String value - strip quotes
-                    String::from_utf8_lossy(&raw_bytes[1..raw_bytes.len() - 1]).into_owned()
-                } else {
-                    // Other value (number, bool, null) - use as-is
-                    String::from_utf8_lossy(raw_bytes).into_owned()
-                };
-                // Convert array trail (i32 to u32)
-                let array_trail = f
-                    .array_trail
-                    .into_iter()
-                    .map(|ap| ArrayPos {
-                        array: ap.array as u32,
-                        pos: ap.pos as u32,
-                    })
-                    .collect();
-                Field {
-                    path: path_str,
-                    value,
-                    array_trail,
-                    is_number: f.is_number,
-                }
-            })
-            .collect();
+        // Fast path: use zero-copy field references for automaton matching
+        // Convert paths from bytes to str (UTF-8 validation only, no allocation)
+        let mut ref_fields: Vec<EventFieldRef<'_>> = Vec::with_capacity(streaming_fields.len());
+        for f in &streaming_fields {
+            // Convert path bytes to str (JSON is valid UTF-8)
+            let path = std::str::from_utf8(&f.path).map_err(|_| QuaminaError::InvalidUtf8)?;
 
-        // Convert to automaton's EventField format and sort by path
-        // (automaton matching assumes fields are in sorted order, same as pattern building)
-        let mut automaton_fields: Vec<EventField> = event_fields.iter().map(|f| f.into()).collect();
-        automaton_fields.sort_by(|a, b| a.path.cmp(&b.path));
+            // Get value bytes, stripping quotes from string values
+            let raw_bytes = f.val.as_bytes();
+            let value = if raw_bytes.starts_with(b"\"") && raw_bytes.ends_with(b"\"") {
+                &raw_bytes[1..raw_bytes.len() - 1]
+            } else {
+                raw_bytes
+            };
 
-        // Get matches from automaton (filter out deleted patterns)
+            ref_fields.push(EventFieldRef {
+                path,
+                value,
+                array_trail: &f.array_trail,
+                is_number: f.is_number,
+            });
+        }
+
+        // Sort by path for automaton matching
+        ref_fields.sort_by(|a, b| a.path.cmp(b.path));
+
+        // Get matches from automaton using zero-copy fields
         let mut matches: Vec<X> = self
             .automaton
-            .matches_for_fields(&automaton_fields)
+            .matches_for_fields_ref(&ref_fields)
             .into_iter()
             .filter(|x| !self.deleted_patterns.contains(x))
             .collect();
 
-        // Get matches from fallback (if any fallback patterns exist)
+        // Slow path: fallback matching still needs legacy Field format (with String values)
         if !self.fallback_patterns.is_empty() {
+            // Only build legacy fields if we have fallback patterns
+            let event_fields: Vec<Field> = streaming_fields
+                .iter()
+                .map(|f| {
+                    let path_str = String::from_utf8_lossy(&f.path).into_owned();
+                    let raw_bytes = f.val.as_bytes();
+                    let value = if raw_bytes.starts_with(b"\"") && raw_bytes.ends_with(b"\"") {
+                        String::from_utf8_lossy(&raw_bytes[1..raw_bytes.len() - 1]).into_owned()
+                    } else {
+                        String::from_utf8_lossy(raw_bytes).into_owned()
+                    };
+                    let array_trail = f
+                        .array_trail
+                        .iter()
+                        .map(|ap| ArrayPos {
+                            array: ap.array,
+                            pos: ap.pos,
+                        })
+                        .collect();
+                    Field {
+                        path: path_str,
+                        value,
+                        array_trail,
+                        is_number: f.is_number,
+                    }
+                })
+                .collect();
+
             // Build multimap for fallback matching
             let mut event_map: HashMap<&str, Vec<&Field>> = HashMap::new();
             for field in &event_fields {
