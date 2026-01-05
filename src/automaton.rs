@@ -2013,7 +2013,7 @@ pub fn merge_fas(table1: &SmallTable, table2: &SmallTable) -> SmallTable {
 // with a mutex protecting writes.
 
 use arc_swap::ArcSwap;
-use std::sync::Mutex;
+use parking_lot::Mutex;
 
 /// Frozen (immutable) field matcher - Send + Sync
 ///
@@ -2230,7 +2230,7 @@ impl<X: Clone + Eq + Hash + Send + Sync> ThreadSafeCoreMatcher<X> {
     /// The pattern_fields should be a list of (path, matchers) tuples.
     pub fn add_pattern(&self, x: X, pattern_fields: &[(String, Vec<crate::json::Matcher>)]) {
         // Acquire build lock
-        let build_state = self.build_lock.lock().unwrap();
+        let build_state = self.build_lock.lock();
 
         // Sort fields lexically by path (like Go)
         let mut sorted_fields: Vec<_> = pattern_fields.to_vec();

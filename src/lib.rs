@@ -14,7 +14,7 @@ use segments_tree::SegmentsTree;
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::hash::Hash;
-use std::sync::Mutex;
+use parking_lot::Mutex;
 
 /// Pattern definition: (field matchers, is_automaton_compatible)
 type PatternDef = (HashMap<String, Vec<Matcher>>, bool);
@@ -190,7 +190,7 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
     pub fn matches_for_event(&self, event: &[u8]) -> Result<Vec<X>, QuaminaError> {
         // Use the reusable flattener with segments tree for field skipping
         let streaming_fields = {
-            let mut flattener = self.flattener.lock().unwrap();
+            let mut flattener = self.flattener.lock();
             flattener.flatten(event, &self.segments_tree)?
         };
 
@@ -222,7 +222,7 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
 
         // Get matches from automaton using zero-copy fields and reusable buffers
         let mut matches: Vec<X> = {
-            let mut bufs = self.nfa_bufs.lock().unwrap();
+            let mut bufs = self.nfa_bufs.lock();
             self.automaton
                 .matches_for_fields_ref(&ref_fields, &mut bufs)
                 .into_iter()

@@ -9,6 +9,7 @@ repository = "https://github.com/baldawarishi/quamina-rs"
 [dependencies]
 regex = "1"
 arc-swap = "1.7"
+parking_lot = "0.12"
 
 [dev-dependencies]
 criterion = "0.5"
