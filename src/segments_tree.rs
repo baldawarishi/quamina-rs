@@ -137,6 +137,7 @@ impl SegmentsTree {
     }
 
     /// Create a deep copy of this tree
+    #[allow(dead_code)]
     pub fn deep_copy(&self) -> Self {
         Self {
             is_root: self.is_root,

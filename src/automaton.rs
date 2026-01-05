@@ -8,6 +8,7 @@
 //! - `FieldMatcher`: Matches field names and dispatches to value matchers
 //! - `ValueMatcher`: Matches field values using the automaton
 
+use crate::case_folding::case_fold_char;
 use std::collections::HashMap;
 use std::hash::Hash;
 use std::sync::Arc;
@@ -819,15 +820,15 @@ fn make_anything_but_step(vals: &[Vec<u8>], index: usize, success: &Arc<FaState>
 /// Build an equals-ignore-case (monocase) FA.
 ///
 /// This creates an automaton that matches a string in a case-insensitive manner.
-/// For each character, if it has both upper and lower case forms, both paths
-/// lead to the same next state.
+/// For each Unicode character, if it has a case-folding alternate, both paths
+/// lead to the same next state. This handles full Unicode case folding, not just ASCII.
 ///
 /// # Arguments
-/// * `val` - The pattern value to match case-insensitively
+/// * `val` - The pattern value to match case-insensitively (UTF-8 bytes)
 /// * `next_field` - The field matcher to transition to on match
 pub fn make_monocase_fa(val: &[u8], next_field: Arc<FieldMatcher>) -> SmallTable {
+    // Empty string - match on value terminator only
     if val.is_empty() {
-        // Empty string - match on value terminator
         let match_state = Arc::new(FaState {
             table: SmallTable::new(),
             field_transitions: vec![next_field],
@@ -835,8 +836,149 @@ pub fn make_monocase_fa(val: &[u8], next_field: Arc<FieldMatcher>) -> SmallTable
         return SmallTable::with_mappings(None, &[VALUE_TERMINATOR], &[match_state]);
     }
 
-    // Build from end to start for easier construction
-    // First, create the final state that transitions on VALUE_TERMINATOR
+    // Convert to string for character iteration
+    let s = match std::str::from_utf8(val) {
+        Ok(s) => s,
+        Err(_) => {
+            // Invalid UTF-8 - fall back to byte-by-byte ASCII matching
+            return make_monocase_fa_ascii(val, next_field);
+        }
+    };
+
+    // Collect character info: (original bytes, alternate bytes if any)
+    let chars: Vec<(Vec<u8>, Option<Vec<u8>>)> = s
+        .char_indices()
+        .map(|(offset, ch)| {
+            let next_offset = s[offset..]
+                .chars()
+                .next()
+                .map(|c| offset + c.len_utf8())
+                .unwrap_or(val.len());
+            let orig = val[offset..next_offset].to_vec();
+
+            let alt = case_fold_char(ch).map(|alt_char| {
+                let mut buf = [0u8; 4];
+                alt_char.encode_utf8(&mut buf);
+                buf[..alt_char.len_utf8()].to_vec()
+            });
+
+            (orig, alt)
+        })
+        .collect();
+
+    // Build recursively from the last character backward
+    make_monocase_recursive(&chars, 0, next_field)
+}
+
+/// Recursively build the monocase FA from character index forward.
+/// Returns the SmallTable that starts matching from this character.
+fn make_monocase_recursive(
+    chars: &[(Vec<u8>, Option<Vec<u8>>)],
+    idx: usize,
+    next_field: Arc<FieldMatcher>,
+) -> SmallTable {
+    if idx >= chars.len() {
+        // End of string - create state that matches on VALUE_TERMINATOR
+        let match_state = Arc::new(FaState {
+            table: SmallTable::new(),
+            field_transitions: vec![next_field],
+        });
+        return SmallTable::with_mappings(None, &[VALUE_TERMINATOR], &[match_state]);
+    }
+
+    let (orig, alt) = &chars[idx];
+
+    // First, build the state for after this character
+    let next_table = make_monocase_recursive(chars, idx + 1, next_field);
+    let next_step = Arc::new(FaState::with_table(next_table));
+
+    // Now build the transition(s) for this character
+    if let Some(alt_bytes) = alt {
+        // Two paths to next state - handle common prefix
+        let common_prefix = orig
+            .iter()
+            .zip(alt_bytes.iter())
+            .take_while(|(a, b)| a == b)
+            .count();
+
+        if common_prefix == 0 {
+            // No common prefix - both paths start with different bytes
+            let orig_state = make_fa_fragment(orig, next_step.clone());
+            let alt_state = make_fa_fragment(alt_bytes, next_step);
+
+            let (b1, s1, b2, s2) = if orig[0] < alt_bytes[0] {
+                (orig[0], orig_state, alt_bytes[0], alt_state)
+            } else {
+                (alt_bytes[0], alt_state, orig[0], orig_state)
+            };
+            SmallTable::with_mappings(None, &[b1, b2], &[s1, s2])
+        } else {
+            // Common prefix - share states for common bytes, then branch
+            let orig_suffix = &orig[common_prefix..];
+            let alt_suffix = &alt_bytes[common_prefix..];
+
+            // Build the divergent part
+            let diverge_table = if orig_suffix.is_empty() && alt_suffix.is_empty() {
+                // Identical after common prefix (shouldn't happen but handle it)
+                next_step.table.clone()
+            } else if orig_suffix.is_empty() {
+                // Original is done, alternate has more bytes
+                let alt_state = make_fa_fragment(alt_suffix, next_step);
+                SmallTable::with_mappings(None, &[alt_suffix[0]], &[alt_state])
+            } else if alt_suffix.is_empty() {
+                // Alternate is done, original has more bytes
+                let orig_state = make_fa_fragment(orig_suffix, next_step);
+                SmallTable::with_mappings(None, &[orig_suffix[0]], &[orig_state])
+            } else {
+                // Both have remaining bytes
+                let orig_state = make_fa_fragment(orig_suffix, next_step.clone());
+                let alt_state = make_fa_fragment(alt_suffix, next_step);
+
+                let (b1, s1, b2, s2) = if orig_suffix[0] < alt_suffix[0] {
+                    (orig_suffix[0], orig_state, alt_suffix[0], alt_state)
+                } else {
+                    (alt_suffix[0], alt_state, orig_suffix[0], orig_state)
+                };
+                SmallTable::with_mappings(None, &[b1, b2], &[s1, s2])
+            };
+
+            // Now build the common prefix chain
+            let mut table = diverge_table;
+            for i in (0..common_prefix).rev() {
+                let state = Arc::new(FaState::with_table(table));
+                table = SmallTable::with_mappings(None, &[orig[i]], &[state]);
+            }
+            table
+        }
+    } else {
+        // No case alternate - single path
+        let state = make_fa_fragment(orig, next_step);
+        SmallTable::with_mappings(None, &[orig[0]], &[state])
+    }
+}
+
+/// Build an FA fragment for a byte sequence, ending at the given state.
+/// The returned state transitions on the first byte of val.
+fn make_fa_fragment(val: &[u8], end_at: Arc<FaState>) -> Arc<FaState> {
+    if val.is_empty() {
+        return end_at;
+    }
+    if val.len() == 1 {
+        return end_at;
+    }
+
+    // Build chain from last byte back to second byte
+    let mut current = end_at;
+    for i in (1..val.len()).rev() {
+        let table = SmallTable::with_mappings(None, &[val[i]], &[current]);
+        current = Arc::new(FaState::with_table(table));
+    }
+
+    current
+}
+
+/// Fallback byte-by-byte monocase FA for invalid UTF-8 (ASCII-only case folding)
+fn make_monocase_fa_ascii(val: &[u8], next_field: Arc<FieldMatcher>) -> SmallTable {
     let final_state = Arc::new(FaState {
         table: SmallTable::new(),
         field_transitions: vec![next_field],
@@ -846,11 +988,8 @@ pub fn make_monocase_fa(val: &[u8], next_field: Arc<FieldMatcher>) -> SmallTable
         field_transitions: vec![],
     });
 
-    // Process bytes from end to start
     for i in (0..val.len()).rev() {
         let byte = val[i];
-
-        // Check if this byte is an ASCII letter with a case counterpart
         let alt_byte = if byte.is_ascii_lowercase() {
             Some(byte.to_ascii_uppercase())
         } else if byte.is_ascii_uppercase() {
@@ -860,17 +999,22 @@ pub fn make_monocase_fa(val: &[u8], next_field: Arc<FieldMatcher>) -> SmallTable
         };
 
         let table = if let Some(alt) = alt_byte {
-            // Both original and alternate lead to the same next state
             if byte < alt {
-                SmallTable::with_mappings(None, &[byte, alt], &[current_next.clone(), current_next.clone()])
+                SmallTable::with_mappings(
+                    None,
+                    &[byte, alt],
+                    &[current_next.clone(), current_next.clone()],
+                )
             } else {
-                SmallTable::with_mappings(None, &[alt, byte], &[current_next.clone(), current_next.clone()])
+                SmallTable::with_mappings(
+                    None,
+                    &[alt, byte],
+                    &[current_next.clone(), current_next.clone()],
+                )
             }
         } else {
-            // No case variant
             SmallTable::with_mappings(None, &[byte], &[current_next.clone()])
         };
-
         current_next = Arc::new(FaState::with_table(table));
     }
 
@@ -1032,7 +1176,7 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
             Matcher::EqualsIgnoreCase(s) => self.add_monocase_transition(s.as_bytes()),
             // For complex matchers (Suffix, Numeric, Regex), we create a simple next state
             // These would need runtime checking or specialized handling
-            _ => Rc::new(MutableFieldMatcher::new())
+            _ => Rc::new(MutableFieldMatcher::new()),
         }
     }
 
@@ -1107,7 +1251,9 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
 
         let next_fm = Rc::new(MutableFieldMatcher::new());
         let next_arc = Arc::new(FieldMatcher::new());
-        self.transition_map.borrow_mut().insert(Arc::as_ptr(&next_arc), next_fm.clone());
+        self.transition_map
+            .borrow_mut()
+            .insert(Arc::as_ptr(&next_arc), next_fm.clone());
 
         // Build string FA and Q-number FA, merge them
         let string_fa = make_string_fa(val, next_arc.clone());
@@ -1121,7 +1267,9 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
             let singleton_val = self.singleton_match.borrow().clone().unwrap();
             let singleton_trans = self.singleton_transition.borrow().clone().unwrap();
             let singleton_arc = Arc::new(FieldMatcher::new());
-            self.transition_map.borrow_mut().insert(Arc::as_ptr(&singleton_arc), singleton_trans);
+            self.transition_map
+                .borrow_mut()
+                .insert(Arc::as_ptr(&singleton_arc), singleton_trans);
             let singleton_fa = make_string_fa(&singleton_val, singleton_arc);
             *start_table = Some(merge_fas(&singleton_fa, &merged_fa));
             *self.singleton_match.borrow_mut() = None;
@@ -1454,7 +1602,8 @@ impl<X: Clone + Eq + std::hash::Hash> CoreMatcher<X> {
         self.check_exists_false(state, fields, index, matches, bufs);
 
         // Try value transitions
-        let next_states = state.transition_on(&field.path, field.value.as_bytes(), field.is_number, bufs);
+        let next_states =
+            state.transition_on(&field.path, field.value.as_bytes(), field.is_number, bufs);
 
         for next_state in next_states {
             // Add matches from next state
@@ -2120,10 +2269,7 @@ impl<X: Clone + Eq + Hash + Send + Sync> ThreadSafeCoreMatcher<X> {
     }
 
     /// Freeze a MutableFieldMatcher into a FrozenFieldMatcher
-    fn freeze_field_matcher(
-        &self,
-        mutable: &Rc<MutableFieldMatcher<X>>,
-    ) -> FrozenFieldMatcher<X> {
+    fn freeze_field_matcher(&self, mutable: &Rc<MutableFieldMatcher<X>>) -> FrozenFieldMatcher<X> {
         // Use a cache to handle cycles and sharing
         let mut cache: HashMap<*const MutableFieldMatcher<X>, Arc<FrozenFieldMatcher<X>>> =
             HashMap::new();
@@ -2255,7 +2401,8 @@ impl<X: Clone + Eq + Hash + Send + Sync> ThreadSafeCoreMatcher<X> {
         self.check_exists_false(state, fields, index, matches, bufs);
 
         // Try value transitions
-        let next_states = state.transition_on(&field.path, field.value.as_bytes(), field.is_number, bufs);
+        let next_states =
+            state.transition_on(&field.path, field.value.as_bytes(), field.is_number, bufs);
 
         for next_state in next_states {
             for m in &next_state.matches {
@@ -3092,16 +3239,32 @@ mod tests {
 
         // All case variants should match
         let transitions = traverse_dfa(&table, b"cat");
-        assert_eq!(transitions.len(), 1, "cat should match equals-ignore-case cat");
+        assert_eq!(
+            transitions.len(),
+            1,
+            "cat should match equals-ignore-case cat"
+        );
 
         let transitions = traverse_dfa(&table, b"CAT");
-        assert_eq!(transitions.len(), 1, "CAT should match equals-ignore-case cat");
+        assert_eq!(
+            transitions.len(),
+            1,
+            "CAT should match equals-ignore-case cat"
+        );
 
         let transitions = traverse_dfa(&table, b"Cat");
-        assert_eq!(transitions.len(), 1, "Cat should match equals-ignore-case cat");
+        assert_eq!(
+            transitions.len(),
+            1,
+            "Cat should match equals-ignore-case cat"
+        );
 
         let transitions = traverse_dfa(&table, b"cAt");
-        assert_eq!(transitions.len(), 1, "cAt should match equals-ignore-case cat");
+        assert_eq!(
+            transitions.len(),
+            1,
+            "cAt should match equals-ignore-case cat"
+        );
 
         // Should NOT match different strings
         let transitions = traverse_dfa(&table, b"dog");
@@ -3170,6 +3333,96 @@ mod tests {
             transitions.is_empty(),
             "a should NOT match equals-ignore-case empty"
         );
+    }
+
+    #[test]
+    fn test_monocase_unicode_german() {
+        // Test German umlauts: Ü/ü, Ö/ö, Ä/ä
+        let next_field = Arc::new(FieldMatcher::new());
+        let table = make_monocase_fa("München".as_bytes(), next_field);
+
+        // All case variants should match
+        let transitions = traverse_dfa(&table, "München".as_bytes());
+        assert_eq!(transitions.len(), 1, "München should match");
+
+        let transitions = traverse_dfa(&table, "MÜNCHEN".as_bytes());
+        assert_eq!(transitions.len(), 1, "MÜNCHEN should match");
+
+        let transitions = traverse_dfa(&table, "münchen".as_bytes());
+        assert_eq!(transitions.len(), 1, "münchen should match");
+
+        let transitions = traverse_dfa(&table, "mÜnchen".as_bytes());
+        assert_eq!(transitions.len(), 1, "mÜnchen should match");
+
+        // Should NOT match different strings
+        let transitions = traverse_dfa(&table, "Berlin".as_bytes());
+        assert!(transitions.is_empty(), "Berlin should NOT match");
+    }
+
+    #[test]
+    fn test_monocase_unicode_hungarian() {
+        // Test Old Hungarian characters from Go's TestHungarianMono
+        // Original: [0x10C80, 0x10C9D, 0x10C95, 0x10C8B]
+        // Alts:     [0x10CC0, 0x10CDD, 0x10CD5, 0x10CCB]
+        let orig = "\u{10C80}\u{10C9D}\u{10C95}\u{10C8B}";
+        let alts = "\u{10CC0}\u{10CDD}\u{10CD5}\u{10CCB}";
+
+        let next_field = Arc::new(FieldMatcher::new());
+        let table = make_monocase_fa(orig.as_bytes(), next_field);
+
+        // Original should match
+        let transitions = traverse_dfa(&table, orig.as_bytes());
+        assert_eq!(transitions.len(), 1, "Original Hungarian should match");
+
+        // Alternate case should match
+        let transitions = traverse_dfa(&table, alts.as_bytes());
+        assert_eq!(
+            transitions.len(),
+            1,
+            "Alternate Hungarian case should match"
+        );
+
+        // Mixed case should match
+        let mixed = "\u{10C80}\u{10CDD}\u{10C95}\u{10CCB}";
+        let transitions = traverse_dfa(&table, mixed.as_bytes());
+        assert_eq!(transitions.len(), 1, "Mixed Hungarian case should match");
+    }
+
+    #[test]
+    fn test_monocase_intermittent() {
+        // Test from Go's TestIntermittentMono: "a,8899bc d" vs "A,8899BC D"
+        // Mixed letters and non-letters
+        let next_field = Arc::new(FieldMatcher::new());
+        let table = make_monocase_fa(b"a,8899bc d", next_field);
+
+        let transitions = traverse_dfa(&table, b"a,8899bc d");
+        assert_eq!(transitions.len(), 1, "lowercase should match");
+
+        let transitions = traverse_dfa(&table, b"A,8899BC D");
+        assert_eq!(transitions.len(), 1, "uppercase should match");
+
+        let transitions = traverse_dfa(&table, b"A,8899bc D");
+        assert_eq!(transitions.len(), 1, "mixed case should match");
+
+        // Wrong punctuation should not match
+        let transitions = traverse_dfa(&table, b"a.8899bc d");
+        assert!(transitions.is_empty(), "wrong punct should NOT match");
+    }
+
+    #[test]
+    fn test_monocase_greek() {
+        // Test Greek letters: Σ/σ (Sigma)
+        let next_field = Arc::new(FieldMatcher::new());
+        let table = make_monocase_fa("Σοφία".as_bytes(), next_field);
+
+        let transitions = traverse_dfa(&table, "Σοφία".as_bytes());
+        assert_eq!(transitions.len(), 1, "Original Greek should match");
+
+        let transitions = traverse_dfa(&table, "σοφία".as_bytes());
+        assert_eq!(transitions.len(), 1, "Lowercase Greek should match");
+
+        // Note: Final sigma (ς) is not in simple case folding, so won't match
+        // This is consistent with Go's behavior
     }
 
     // ========================================================================

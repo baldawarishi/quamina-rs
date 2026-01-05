@@ -271,7 +271,9 @@ fn bench_multi_field_and(c: &mut Criterion) {
     )
     .unwrap();
 
-    let event = r#"{"region": "us-east-1", "service": "lambda", "level": "error", "message": "timeout"}"#.as_bytes();
+    let event =
+        r#"{"region": "us-east-1", "service": "lambda", "level": "error", "message": "timeout"}"#
+            .as_bytes();
 
     c.bench_function("multi_field_and_3_fields", |b| {
         b.iter(|| q.matches_for_event(black_box(event)).unwrap())

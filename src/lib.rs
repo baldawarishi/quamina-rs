@@ -1,6 +1,7 @@
 //! quamina-rs: Fast pattern-matching library for filtering JSON events
 
 pub mod automaton;
+mod case_folding;
 mod flatten_json;
 mod json;
 pub mod numbits;
@@ -283,10 +284,7 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
     }
 
     /// Match fallback patterns using field index
-    fn fallback_matches_via_field_index(
-        &self,
-        event_map: &HashMap<&str, Vec<&Field>>,
-    ) -> Vec<X> {
+    fn fallback_matches_via_field_index(&self, event_map: &HashMap<&str, Vec<&Field>>) -> Vec<X> {
         let mut seen: HashSet<&X> = HashSet::new();
         let mut matches = Vec::new();
 

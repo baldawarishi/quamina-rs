@@ -46,7 +46,7 @@ enum MemberName<'a> {
     Owned(Vec<u8>),
 }
 
-impl<'a> MemberName<'a> {
+impl MemberName<'_> {
     fn as_bytes(&self) -> &[u8] {
         match self {
             MemberName::Borrowed(b) => b,
@@ -55,7 +55,7 @@ impl<'a> MemberName<'a> {
     }
 }
 
-impl<'a> FieldValue<'a> {
+impl FieldValue<'_> {
     pub fn as_bytes(&self) -> &[u8] {
         match self {
             FieldValue::Borrowed(s) => s,
@@ -137,7 +137,7 @@ struct FlattenContext<'a, 'b> {
     array_count: i32,
 }
 
-impl<'a, 'b> FlattenContext<'a, 'b> {
+impl<'a> FlattenContext<'a, '_> {
     fn flatten_impl(&mut self, tree: &SegmentsTree) -> Result<(), QuaminaError> {
         if self.event.is_empty() {
             return Err(QuaminaError::InvalidJson("empty event".into()));
@@ -219,9 +219,10 @@ impl<'a, 'b> FlattenContext<'a, 'b> {
                     } else if ch == b'}' {
                         return Ok(());
                     } else {
-                        return Err(FlattenError::Error(
-                            self.error(&format!("illegal character '{}' in JSON object", ch as char)),
-                        ));
+                        return Err(FlattenError::Error(self.error(&format!(
+                            "illegal character '{}' in JSON object",
+                            ch as char
+                        ))));
                     }
                 }
 
@@ -231,12 +232,10 @@ impl<'a, 'b> FlattenContext<'a, 'b> {
                     } else if ch == b':' {
                         state = ObjectState::MemberValue;
                     } else {
-                        return Err(FlattenError::Error(
-                            self.error(&format!(
-                                "illegal character '{}' while looking for colon",
-                                ch as char
-                            )),
-                        ));
+                        return Err(FlattenError::Error(self.error(&format!(
+                            "illegal character '{}' while looking for colon",
+                            ch as char
+                        ))));
                     }
                 }
 
@@ -300,7 +299,9 @@ impl<'a, 'b> FlattenContext<'a, 'b> {
                                 self.skip_block(b'[', b']')?;
                             } else {
                                 let array_tree = tree.get(member_name.as_bytes()).unwrap_or(tree);
-                                let path = tree.path_for_segment(member_name.as_bytes()).map(|p| p.to_vec());
+                                let path = tree
+                                    .path_for_segment(member_name.as_bytes())
+                                    .map(|p| p.to_vec());
                                 self.read_array(path, array_tree)?;
                             }
 
@@ -329,9 +330,10 @@ impl<'a, 'b> FlattenContext<'a, 'b> {
                             }
                         }
                         _ => {
-                            return Err(FlattenError::Error(
-                                self.error(&format!("illegal character '{}' after field name", ch as char)),
-                            ));
+                            return Err(FlattenError::Error(self.error(&format!(
+                                "illegal character '{}' after field name",
+                                ch as char
+                            ))));
                         }
                     }
 
@@ -590,7 +592,10 @@ impl<'a, 'b> FlattenContext<'a, 'b> {
     }
 
     /// Read a member name that contains escape sequences.
-    fn read_member_name_with_escapes(&mut self, start: usize) -> Result<MemberName<'a>, FlattenError> {
+    fn read_member_name_with_escapes(
+        &mut self,
+        start: usize,
+    ) -> Result<MemberName<'a>, FlattenError> {
         let mut name = Vec::new();
         // Copy content before the escape
         name.extend_from_slice(&self.event[start..self.index]);
@@ -647,7 +652,9 @@ impl<'a, 'b> FlattenContext<'a, 'b> {
                         self.index -= 1;
                     }
                     _ => {
-                        return Err(FlattenError::Error(self.error("malformed escape in field name")));
+                        return Err(FlattenError::Error(
+                            self.error("malformed escape in field name"),
+                        ));
                     }
                 }
             } else if ch <= 0x1f {
@@ -687,7 +694,10 @@ impl<'a, 'b> FlattenContext<'a, 'b> {
     }
 
     /// Read a string value that contains escape sequences.
-    fn read_string_with_escapes(&mut self, val_start: usize) -> Result<FieldValue<'a>, FlattenError> {
+    fn read_string_with_escapes(
+        &mut self,
+        val_start: usize,
+    ) -> Result<FieldValue<'a>, FlattenError> {
         let mut val = vec![b'"'];
         // Copy content from after opening quote to current position (the backslash)
         val.extend_from_slice(&self.event[val_start + 1..self.index]);
@@ -731,8 +741,7 @@ impl<'a, 'b> FlattenContext<'a, 'b> {
                                 self.index += 2;
                                 let low = self.read_hex_4()?;
                                 if (0xDC00..=0xDFFF).contains(&low) {
-                                    let full =
-                                        0x10000 + ((code - 0xD800) << 10) + (low - 0xDC00);
+                                    let full = 0x10000 + ((code - 0xD800) << 10) + (low - 0xDC00);
                                     val.push(0xF0 | ((full >> 18) as u8));
                                     val.push(0x80 | (((full >> 12) & 0x3F) as u8));
                                     val.push(0x80 | (((full >> 6) & 0x3F) as u8));
@@ -748,9 +757,7 @@ impl<'a, 'b> FlattenContext<'a, 'b> {
                         self.index -= 1; // will be incremented at end of loop
                     }
                     _ => {
-                        return Err(FlattenError::Error(
-                            self.error("malformed escape in text"),
-                        ));
+                        return Err(FlattenError::Error(self.error("malformed escape in text")));
                     }
                 }
             } else if ch <= 0x1f {
@@ -771,9 +778,7 @@ impl<'a, 'b> FlattenContext<'a, 'b> {
         let mut value = 0u32;
         for _ in 0..4 {
             if self.index >= self.event.len() {
-                return Err(FlattenError::Error(
-                    self.error("truncated unicode escape"),
-                ));
+                return Err(FlattenError::Error(self.error("truncated unicode escape")));
             }
             let ch = self.event[self.index];
             let digit = match ch {

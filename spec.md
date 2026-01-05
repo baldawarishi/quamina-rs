@@ -1,6 +1,6 @@
 # quamina-rs
 
-<!-- Checkpoint: Zero-copy field matching done. EventFieldRef with borrowed bytes, citylots gap reduced from 1.5x to 1.25x. -->
+<!-- Checkpoint: Unicode case folding done. Full Unicode support for equals-ignore-case via case_folding.rs. -->
 
 A Rust port of [quamina](https://github.com/timbray/quamina) - a fast pattern-matching library for filtering JSON events.
 
@@ -18,7 +18,7 @@ quamina-rs provides the same core functionality as the Go version:
 
 ## Current Status
 
-All core pattern operators implemented (133 tests passing).
+All core pattern operators implemented (142 tests passing).
 
 | Feature | Status | Path |
 |---------|--------|------|
@@ -29,7 +29,7 @@ All core pattern operators implemented (133 tests passing).
 | Anything-but | ✅ | automaton |
 | Exists | ✅ | automaton |
 | Suffix | ✅ | fallback |
-| Equals-ignore-case | ✅ | fallback (ASCII only) |
+| Equals-ignore-case | ✅ | automaton (Unicode) |
 | Numeric exact | ✅ | automaton (Q-numbers) |
 | Numeric comparisons | ✅ | fallback |
 | Regex | ✅ | fallback (`regex` crate) |
@@ -95,7 +95,7 @@ Note: Suffix is Rust-only (Go doesn't support it).
 | Automaton core | ✅ | ✅ | SmallTable, NFA/DFA, FieldMatcher |
 | Numeric Q-numbers | ✅ | ✅ | `numbits.rs` - IEEE 754 to ordered bytes |
 | Segment-based flattener | ✅ | ✅ | `segments_tree.rs` + `flatten_json.rs` |
-| Unicode case folding | ✅ | ❌ | `monocase.go` + `case_folding.go` |
+| Unicode case folding | ✅ | ✅ | `case_folding.rs` + automaton monocase FA |
 | Custom regex NFA | ✅ | ❌ | Using `regex` crate instead |
 | Pruner rebuilding | ✅ | ❌ | Using HashSet deletion |
 | Custom flatteners | ✅ | ❌ | JSON-only in Rust |
@@ -148,7 +148,10 @@ Run with: `cargo bench` (Rust) and `go test -run=NONE -bench=. -benchmem` (Go)
    - ✅ Pre-allocated and reused array_trail vector
    - ✅ `[u8; 256]` lookup table for whitespace
    - Rust now faster than Go on status_middle_nested and status_last_field!
-7. **Unicode case folding** - Port `monocase.go` + `case_folding.go` for full EqualsIgnoreCase
+7. ~~**Unicode case folding**~~ - ✅ Done. Full Unicode support via `case_folding.rs`:
+   - ✅ Generated 2876 Unicode case folding pairs from Go's `case_folding.go`
+   - ✅ Monocase automaton handles multi-byte UTF-8 with common prefix optimization
+   - ✅ EqualsIgnoreCase now automaton-compatible (was fallback-only)
 8. **Evaluate regex approach** - Decide: keep `regex` crate or port custom NFA
 9. ~~**Eliminate string conversions**~~ - ✅ Done. Citylots gap reduced from 1.5x to 1.25x:
    - ✅ Path separator unified to `\n` (no `.replace()` conversion needed)

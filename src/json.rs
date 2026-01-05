@@ -50,11 +50,11 @@ pub struct NumericComparison {
 impl Matcher {
     /// Check if this matcher is supported by the automaton-based matching engine.
     ///
-    /// The automaton supports: Exact, Prefix, Shellstyle, Wildcard, AnythingBut, and Exists.
+    /// The automaton supports: Exact, Prefix, Shellstyle, Wildcard, AnythingBut, Exists,
+    /// and EqualsIgnoreCase (with full Unicode case folding).
     ///
     /// Not fully supported (need runtime checking or have limitations):
     /// - NumericExact: automaton does string matching but event values may have different representations
-    /// - EqualsIgnoreCase: automaton only does ASCII case folding, not full Unicode
     /// - Suffix, Numeric comparisons, Regex: not implemented in automaton
     pub fn is_automaton_compatible(&self) -> bool {
         match self {
@@ -64,11 +64,11 @@ impl Matcher {
             Matcher::Shellstyle(_) => true,
             Matcher::Wildcard(_) => true,
             Matcher::AnythingBut(_) => true,
+            // EqualsIgnoreCase: automaton supports full Unicode case folding
+            Matcher::EqualsIgnoreCase(_) => true,
             // NumericExact: automaton matches on string representation, but event values
             // may have different representations (35 vs 35.0 vs 3.5e1)
             Matcher::NumericExact(_) => false,
-            // EqualsIgnoreCase: automaton only does ASCII case folding, not Unicode
-            Matcher::EqualsIgnoreCase(_) => false,
             // Not supported by automaton
             Matcher::Suffix(_) => false,
             Matcher::Numeric(_) => false,
@@ -78,11 +78,13 @@ impl Matcher {
 }
 
 /// Context for tracking array positions during flattening
+#[allow(dead_code)]
 struct FlattenContext {
     array_count: i32,
     array_trail: Vec<ArrayPos>,
 }
 
+#[allow(dead_code)]
 impl FlattenContext {
     fn new() -> Self {
         Self {
@@ -118,6 +120,7 @@ impl FlattenContext {
 
 /// Flatten a JSON event into fields with array position tracking.
 /// e.g., {"a": {"b": 1}} -> [Field { path: "a.b", value: "1", array_trail: [] }]
+#[allow(dead_code)]
 pub fn flatten_event(json: &[u8]) -> Result<Vec<Field>, QuaminaError> {
     let s = std::str::from_utf8(json).map_err(|_| QuaminaError::InvalidUtf8)?;
     let mut parser = Parser::new(s);
@@ -373,6 +376,7 @@ fn parse_numeric_comparison(arr: &[Value]) -> Option<NumericComparison> {
     Some(NumericComparison { lower, upper })
 }
 
+#[allow(dead_code)]
 fn flatten_value_with_trail(
     value: &Value,
     path: String,
@@ -416,6 +420,7 @@ fn flatten_value_with_trail(
     }
 }
 
+#[allow(dead_code)]
 fn flatten_value_with_trail_inner(
     value: &Value,
     path: String,
