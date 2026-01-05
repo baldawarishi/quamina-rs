@@ -5,6 +5,7 @@
 //! - Only parsing fields that appear in patterns (using SegmentsTree)
 //! - Early termination when all needed fields are found
 //! - Zero-copy field values as slices of the original event bytes
+//! - Reusable state with reset() pattern (like Go's flattenJSON)
 
 use crate::segments_tree::SegmentsTree;
 use crate::QuaminaError;
@@ -63,39 +64,81 @@ impl<'a> FieldValue<'a> {
     }
 }
 
-/// Streaming JSON flattener.
+/// Reusable JSON flattener state.
 ///
-/// This parser processes JSON character-by-character and uses a SegmentsTree
-/// to skip fields that don't appear in any pattern.
-pub struct FlattenJson<'a> {
-    /// Event being processed (immutable)
-    event: &'a [u8],
-    /// Current byte index into the event
-    index: usize,
-    /// The fields being built
-    fields: Vec<Field<'a>>,
-    /// Track whether we're within scope of an unused segment
-    skipping: i32,
-    /// Current array position trail
+/// This struct holds the working buffers that can be reused across multiple
+/// flatten calls, following Go's reset() pattern for reduced allocations.
+/// The fields capacity is tracked and grows as needed.
+pub struct FlattenJsonState {
+    /// Working array position trail (reused between calls)
     array_trail: Vec<ArrayPos>,
-    /// Counter for unique array IDs
-    array_count: i32,
+    /// Typical fields count (learned from previous calls for pre-allocation)
+    fields_hint: usize,
 }
-impl<'a> FlattenJson<'a> {
-    /// Create a new flattener for the given event.
-    pub fn new(event: &'a [u8]) -> Self {
+
+impl Default for FlattenJsonState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl FlattenJsonState {
+    /// Create a new reusable flattener state.
+    pub fn new() -> Self {
         Self {
-            event,
-            index: 0,
-            fields: Vec::with_capacity(32),
-            skipping: 0,
-            array_trail: Vec::new(),
-            array_count: 0,
+            array_trail: Vec::with_capacity(8),
+            fields_hint: 32,
         }
     }
 
-    /// Flatten the event using the given segments tree to determine which fields to extract.
-    pub fn flatten(mut self, tree: &SegmentsTree) -> Result<Vec<Field<'a>>, QuaminaError> {
+    /// Reset internal state for reuse.
+    #[inline]
+    fn reset(&mut self) {
+        self.array_trail.clear();
+    }
+
+    /// Flatten an event using this reusable state.
+    ///
+    /// This is the primary API for high-performance event processing.
+    /// The state is automatically reset before each call.
+    pub fn flatten<'a>(
+        &mut self,
+        event: &'a [u8],
+        tree: &SegmentsTree,
+    ) -> Result<Vec<Field<'a>>, QuaminaError> {
+        self.reset();
+
+        let mut ctx = FlattenContext {
+            event,
+            index: 0,
+            fields: Vec::with_capacity(self.fields_hint),
+            skipping: 0,
+            array_trail: &mut self.array_trail,
+            array_count: 0,
+        };
+
+        let result = ctx.flatten_impl(tree);
+
+        // Update hint for next call
+        self.fields_hint = self.fields_hint.max(ctx.fields.capacity());
+
+        result.map(|()| ctx.fields)
+    }
+}
+
+/// Internal context for a single flatten operation.
+/// Borrows the reusable array_trail from FlattenJsonState.
+struct FlattenContext<'a, 'b> {
+    event: &'a [u8],
+    index: usize,
+    fields: Vec<Field<'a>>,
+    skipping: i32,
+    array_trail: &'b mut Vec<ArrayPos>,
+    array_count: i32,
+}
+
+impl<'a, 'b> FlattenContext<'a, 'b> {
+    fn flatten_impl(&mut self, tree: &SegmentsTree) -> Result<(), QuaminaError> {
         if self.event.is_empty() {
             return Err(QuaminaError::InvalidJson("empty event".into()));
         }
@@ -106,7 +149,7 @@ impl<'a> FlattenJson<'a> {
             if ch == b'{' {
                 match self.read_object(tree) {
                     Ok(()) => {}
-                    Err(FlattenError::EarlyStop) => return Ok(self.fields),
+                    Err(FlattenError::EarlyStop) => return Ok(()),
                     Err(FlattenError::Error(e)) => return Err(e),
                 }
                 // Eat trailing whitespace
@@ -121,7 +164,7 @@ impl<'a> FlattenJson<'a> {
                     }
                     self.index += 1;
                 }
-                return Ok(self.fields);
+                return Ok(());
             } else if is_whitespace(ch) {
                 self.index += 1;
                 if self.index >= self.event.len() {
@@ -865,7 +908,6 @@ impl<'a> FlattenJson<'a> {
         ))
     }
 }
-
 #[derive(Clone, Copy)]
 enum ObjectState {
     InObject,
@@ -891,9 +933,20 @@ impl From<QuaminaError> for FlattenError {
     }
 }
 
+/// Whitespace lookup table - O(1) check vs match statement.
+/// Index by byte value, true if whitespace (space, tab, newline, carriage return).
+const IS_WHITESPACE: [bool; 256] = {
+    let mut table = [false; 256];
+    table[b' ' as usize] = true;
+    table[b'\t' as usize] = true;
+    table[b'\n' as usize] = true;
+    table[b'\r' as usize] = true;
+    table
+};
+
 #[inline]
 fn is_whitespace(b: u8) -> bool {
-    matches!(b, b' ' | b'\t' | b'\n' | b'\r')
+    IS_WHITESPACE[b as usize]
 }
 
 #[cfg(test)]
@@ -912,8 +965,8 @@ mod tests {
     fn test_simple_object() {
         let event = br#"{"status": "active", "count": 42}"#;
         let tree = make_tree(&["status"]);
-        let flattener = FlattenJson::new(event);
-        let fields = flattener.flatten(&tree).unwrap();
+        let mut state = FlattenJsonState::new();
+        let fields = state.flatten(event, &tree).unwrap();
 
         assert_eq!(fields.len(), 1);
         assert_eq!(fields[0].path.as_slice(), b"status");
@@ -924,8 +977,8 @@ mod tests {
     fn test_nested_object() {
         let event = br#"{"context": {"user": {"id": "123"}}}"#;
         let tree = make_tree(&["context\nuser\nid"]);
-        let flattener = FlattenJson::new(event);
-        let fields = flattener.flatten(&tree).unwrap();
+        let mut state = FlattenJsonState::new();
+        let fields = state.flatten(event, &tree).unwrap();
 
         assert_eq!(fields.len(), 1);
         assert_eq!(fields[0].path.as_slice(), b"context\nuser\nid");
@@ -936,8 +989,8 @@ mod tests {
     fn test_skips_unused_fields() {
         let event = br#"{"a": 1, "b": 2, "c": 3, "d": 4, "e": 5}"#;
         let tree = make_tree(&["c"]);
-        let flattener = FlattenJson::new(event);
-        let fields = flattener.flatten(&tree).unwrap();
+        let mut state = FlattenJsonState::new();
+        let fields = state.flatten(event, &tree).unwrap();
 
         assert_eq!(fields.len(), 1);
         assert_eq!(fields[0].path.as_slice(), b"c");
@@ -948,8 +1001,8 @@ mod tests {
     fn test_number_value() {
         let event = br#"{"price": 99.99}"#;
         let tree = make_tree(&["price"]);
-        let flattener = FlattenJson::new(event);
-        let fields = flattener.flatten(&tree).unwrap();
+        let mut state = FlattenJsonState::new();
+        let fields = state.flatten(event, &tree).unwrap();
 
         assert_eq!(fields.len(), 1);
         assert!(fields[0].is_number);
@@ -960,8 +1013,8 @@ mod tests {
     fn test_array_simple() {
         let event = br#"{"tags": ["a", "b", "c"]}"#;
         let tree = make_tree(&["tags"]);
-        let flattener = FlattenJson::new(event);
-        let fields = flattener.flatten(&tree).unwrap();
+        let mut state = FlattenJsonState::new();
+        let fields = state.flatten(event, &tree).unwrap();
 
         assert_eq!(fields.len(), 3);
         // Each element should have different array position
@@ -975,8 +1028,8 @@ mod tests {
         // With a large object, early termination should stop after finding needed fields
         let event = br#"{"first": 1, "second": 2, "third": 3, "fourth": 4, "fifth": 5}"#;
         let tree = make_tree(&["first"]);
-        let flattener = FlattenJson::new(event);
-        let fields = flattener.flatten(&tree).unwrap();
+        let mut state = FlattenJsonState::new();
+        let fields = state.flatten(event, &tree).unwrap();
 
         assert_eq!(fields.len(), 1);
         assert_eq!(fields[0].path.as_slice(), b"first");
@@ -986,8 +1039,8 @@ mod tests {
     fn test_escape_sequences() {
         let event = br#"{"msg": "hello\nworld"}"#;
         let tree = make_tree(&["msg"]);
-        let flattener = FlattenJson::new(event);
-        let fields = flattener.flatten(&tree).unwrap();
+        let mut state = FlattenJsonState::new();
+        let fields = state.flatten(event, &tree).unwrap();
 
         assert_eq!(fields.len(), 1);
         // Value should be unescaped
@@ -998,8 +1051,8 @@ mod tests {
     fn test_unicode_escape() {
         let event = br#"{"char": "\u0041"}"#;
         let tree = make_tree(&["char"]);
-        let flattener = FlattenJson::new(event);
-        let fields = flattener.flatten(&tree).unwrap();
+        let mut state = FlattenJsonState::new();
+        let fields = state.flatten(event, &tree).unwrap();
 
         assert_eq!(fields.len(), 1);
         assert_eq!(fields[0].val.as_bytes(), b"\"A\"");
@@ -1009,8 +1062,8 @@ mod tests {
     fn test_empty_object() {
         let event = br#"{}"#;
         let tree = make_tree(&["anything"]);
-        let flattener = FlattenJson::new(event);
-        let fields = flattener.flatten(&tree).unwrap();
+        let mut state = FlattenJsonState::new();
+        let fields = state.flatten(event, &tree).unwrap();
 
         assert_eq!(fields.len(), 0);
     }
@@ -1019,8 +1072,8 @@ mod tests {
     fn test_skip_nested_object() {
         let event = br#"{"skip": {"nested": {"deep": 1}}, "keep": "value"}"#;
         let tree = make_tree(&["keep"]);
-        let flattener = FlattenJson::new(event);
-        let fields = flattener.flatten(&tree).unwrap();
+        let mut state = FlattenJsonState::new();
+        let fields = state.flatten(event, &tree).unwrap();
 
         assert_eq!(fields.len(), 1);
         assert_eq!(fields[0].path.as_slice(), b"keep");
@@ -1030,10 +1083,27 @@ mod tests {
     fn test_skip_array() {
         let event = br#"{"skip": [1, 2, [3, 4]], "keep": "value"}"#;
         let tree = make_tree(&["keep"]);
-        let flattener = FlattenJson::new(event);
-        let fields = flattener.flatten(&tree).unwrap();
+        let mut state = FlattenJsonState::new();
+        let fields = state.flatten(event, &tree).unwrap();
 
         assert_eq!(fields.len(), 1);
         assert_eq!(fields[0].path.as_slice(), b"keep");
+    }
+
+    #[test]
+    fn test_state_reuse() {
+        // Test that the state can be reused across multiple flatten calls
+        let tree = make_tree(&["status"]);
+        let mut state = FlattenJsonState::new();
+
+        let event1 = br#"{"status": "active"}"#;
+        let fields1 = state.flatten(event1, &tree).unwrap();
+        assert_eq!(fields1.len(), 1);
+        assert_eq!(fields1[0].val.as_bytes(), b"\"active\"");
+
+        let event2 = br#"{"status": "pending"}"#;
+        let fields2 = state.flatten(event2, &tree).unwrap();
+        assert_eq!(fields2.len(), 1);
+        assert_eq!(fields2[0].val.as_bytes(), b"\"pending\"");
     }
 }

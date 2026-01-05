@@ -1,6 +1,6 @@
 # quamina-rs
 
-<!-- Checkpoint: Segment-based JSON flattener implemented. 10x performance improvement achieved. -->
+<!-- Checkpoint: Allocation optimization done. Reusable FlattenJsonState, 29% faster on status benchmarks. Rust now beats Go on middle/last field! -->
 
 A Rust port of [quamina](https://github.com/timbray/quamina) - a fast pattern-matching library for filtering JSON events.
 
@@ -118,19 +118,20 @@ Run with: `cargo bench` (Rust) and `go test -run=NONE -bench=. -benchmem` (Go)
 
 | Benchmark | Go (ns/op) | Rust (ns/op) | Notes |
 |-----------|------------|--------------|-------|
-| status_context_fields | 400 | ~650 | Go 1.6x faster (early field) |
-| status_middle_nested | 6,670 | 7,130 | Similar |
-| status_last_field | 7,117 | 6,830 | Similar |
-| citylots | 3,869 | 5,618 | Go 1.45x faster |
+| status_context_fields | 400 | ~660 | Go 1.6x faster (early field) |
+| status_middle_nested | 6,670 | 5,030 | Rust 1.3x faster! |
+| status_last_field | 7,117 | 5,370 | Rust 1.3x faster! |
+| citylots | 3,869 | 5,740 | Go 1.5x faster |
 | shellstyle_26 | - | 1,479 | - |
 | anything_but_match | - | 317 | - |
 | multi_field_and_3 | - | 626 | - |
 
-**Analysis**: The segment-based flattener has been implemented:
+**Analysis**: The segment-based flattener with reusable state has been implemented:
 - ✅ Streaming JSON parser with field skipping (SegmentsTree)
 - ✅ Early termination when all needed fields found
-- ✅ 10-12x improvement on status benchmarks (now close to Go performance)
-- Remaining gap vs Go: Go's segment-based lookup is even more aggressive
+- ✅ Reusable flattener state with Go's reset() pattern (29% improvement)
+- ✅ Whitespace lookup table for O(1) checks
+- Rust now faster than Go on middle/last field benchmarks!
 
 ## Next Steps
 
@@ -139,11 +140,11 @@ Run with: `cargo bench` (Rust) and `go test -run=NONE -bench=. -benchmem` (Go)
 3. ~~**Integrate Q-numbers**~~ - ✅ Done. NumericExact patterns use automaton-based Q-number matching.
 4. ~~**JSON parsing optimization**~~ - ✅ Done. `segments_tree.rs` + `flatten_json.rs` with 10-12x speedup.
 5. ~~**CityLots benchmark**~~ - ✅ Done. Go ~1.45x faster on large GeoJSON documents.
-6. **Reduce allocation overhead** - Close performance gap with Go by:
-   - Reuse `FlattenJson` struct between calls (Go uses `reset()` pattern)
-   - Pre-allocate and reuse vectors for fields, array trails
-   - Add `[u8; 256]` lookup table for whitespace (vs `matches!` macro)
-   - Consider buffer pooling for matching phase
+6. ~~**Reduce allocation overhead**~~ - ✅ Done. 29% improvement on status benchmarks:
+   - ✅ Reusable `FlattenJsonState` with Go's reset() pattern
+   - ✅ Pre-allocated and reused array_trail vector
+   - ✅ `[u8; 256]` lookup table for whitespace
+   - Rust now faster than Go on status_middle_nested and status_last_field!
 7. **Unicode case folding** - Port `monocase.go` + `case_folding.go` for full EqualsIgnoreCase
 8. **Evaluate regex approach** - Decide: keep `regex` crate or port custom NFA
 

@@ -7,12 +7,13 @@ pub mod numbits;
 mod segments_tree;
 
 use automaton::{EventField, ThreadSafeCoreMatcher};
-use flatten_json::FlattenJson;
+use flatten_json::FlattenJsonState;
 use json::{ArrayPos, Field, Matcher};
 use segments_tree::SegmentsTree;
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::hash::Hash;
+use std::sync::Mutex;
 
 /// Pattern definition: (field matchers, is_automaton_compatible)
 type PatternDef = (HashMap<String, Vec<Matcher>>, bool);
@@ -77,6 +78,8 @@ pub struct Quamina<X: Clone + Eq + Hash + Send + Sync = String> {
     deleted_patterns: HashSet<X>,
     /// Segments tree for fast field skipping during event parsing
     segments_tree: SegmentsTree,
+    /// Reusable JSON flattener state (Mutex for thread-safe access)
+    flattener: Mutex<FlattenJsonState>,
 }
 
 /// Internal representation of a compiled pattern
@@ -111,6 +114,7 @@ impl<X: Clone + Eq + Hash + Send + Sync> Clone for Quamina<X> {
             fallback_exists_false: self.fallback_exists_false.clone(),
             deleted_patterns: self.deleted_patterns.clone(),
             segments_tree: self.segments_tree.clone(),
+            flattener: Mutex::new(FlattenJsonState::new()),
         }
     }
 }
@@ -126,6 +130,7 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
             fallback_exists_false: HashSet::new(),
             deleted_patterns: HashSet::new(),
             segments_tree: SegmentsTree::new(),
+            flattener: Mutex::new(FlattenJsonState::new()),
         }
     }
 
@@ -178,9 +183,11 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
 
     /// Find all patterns that match the given event
     pub fn matches_for_event(&self, event: &[u8]) -> Result<Vec<X>, QuaminaError> {
-        // Use the streaming flattener with segments tree for field skipping
-        let flattener = FlattenJson::new(event);
-        let streaming_fields = flattener.flatten(&self.segments_tree)?;
+        // Use the reusable flattener with segments tree for field skipping
+        let streaming_fields = {
+            let mut flattener = self.flattener.lock().unwrap();
+            flattener.flatten(event, &self.segments_tree)?
+        };
 
         // Convert streaming fields to the legacy Field format
         let event_fields: Vec<Field> = streaming_fields
@@ -189,10 +196,7 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
                 // Convert newline-separated path to dot-separated
                 let path_str = String::from_utf8_lossy(&f.path).replace('\n', ".");
                 // Convert value bytes to string, stripping quotes from string values
-                let raw_bytes = match &f.val {
-                    flatten_json::FieldValue::Borrowed(bytes) => *bytes,
-                    flatten_json::FieldValue::Owned(bytes) => bytes.as_slice(),
-                };
+                let raw_bytes = f.val.as_bytes();
                 let value = if raw_bytes.starts_with(b"\"") && raw_bytes.ends_with(b"\"") {
                     // String value - strip quotes
                     String::from_utf8_lossy(&raw_bytes[1..raw_bytes.len() - 1]).into_owned()
