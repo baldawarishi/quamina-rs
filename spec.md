@@ -189,6 +189,30 @@ Go is 1.40x faster on early-field matching (`status_context_fields`) due to fixe
     - Use `from_utf8_unchecked` for paths
     - Requires careful safety audit
 
+### Profiling & Code Health
+
+14. **Add profiling infrastructure** - Compare Go vs Rust at function level
+    - Add `criterion` flamegraph support (`cargo bench -- --profile-time=5`)
+    - Document how to run `cargo flamegraph` for CPU profiling
+    - Create comparison script: Go `pprof` vs Rust flamegraphs
+15. **Refactor automaton.rs (3,598 lines)** - Split to match Go's structure
+
+    | Go File | Lines | Rust Target |
+    |---------|-------|-------------|
+    | small_table.go | 236 | `automaton/small_table.rs` |
+    | value_matcher.go | 264 | `automaton/value_matcher.rs` |
+    | core_matcher.go | 276 | `automaton/core_matcher.rs` |
+    | field_matcher.go | ~150 | `automaton/field_matcher.rs` |
+    | nfa.go | 319 | `automaton/nfa.rs` |
+
+16. **Refactor lib.rs (2,890 lines)** - Split to match Go's structure
+
+    | Go File | Lines | Rust Target |
+    |---------|-------|-------------|
+    | quamina.go | 150 | `quamina.rs` |
+    | pattern.go | 273 | `pattern.rs` |
+    | (tests) | - | `tests.rs` |
+
 ## Test Data
 
 | File | Status |
