@@ -2,6 +2,7 @@
 
 pub mod automaton;
 mod json;
+pub mod numbits;
 
 use automaton::{EventField, ThreadSafeCoreMatcher};
 use json::{ArrayPos, Field, Matcher};

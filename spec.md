@@ -1,6 +1,6 @@
 # quamina-rs
 
-<!-- Checkpoint: Automaton integrated (hybrid matching). Next: benchmark baseline, then port numbits.go -->
+<!-- Checkpoint: numbits.rs ported. Next: integrate Q-numbers into automaton for numeric matching -->
 
 A Rust port of [quamina](https://github.com/timbray/quamina) - a fast pattern-matching library for filtering JSON events.
 
@@ -92,7 +92,7 @@ Note: Suffix is Rust-only (Go doesn't support it).
 | Feature | Go | Rust | Notes |
 |---------|:--:|:----:|-------|
 | Automaton core | ✅ | ✅ | SmallTable, NFA/DFA, FieldMatcher |
-| Numeric Q-numbers | ✅ | ❌ | `numbits.go` - automaton numeric matching |
+| Numeric Q-numbers | ✅ | ✅ | `numbits.rs` - IEEE 754 to ordered bytes |
 | Unicode case folding | ✅ | ❌ | `monocase.go` + `case_folding.go` |
 | Custom regex NFA | ✅ | ❌ | Using `regex` crate instead |
 | Pruner rebuilding | ✅ | ❌ | Using HashSet deletion |
@@ -112,23 +112,30 @@ Note: Suffix is Rust-only (Go doesn't support it).
 
 ### Performance Baseline
 
-Run with: `cargo bench` (Rust) and `go test -bench=. -benchmem` (Go)
+Run with: `cargo bench` (Rust) and `go test -run=NONE -bench=. -benchmem` (Go)
 
-| Benchmark | Go (ns/op) | Rust (ns/op) | Notes |
-|-----------|------------|--------------|-------|
-| status_context_fields | - | - | TBD |
-| status_middle_nested | - | - | TBD |
-| status_last_field | - | - | TBD |
-| 100_patterns_match | - | - | TBD |
-| shellstyle_26 | - | - | TBD |
+| Benchmark | Go (ns/op) | Rust (ns/op) | Ratio | Notes |
+|-----------|------------|--------------|-------|-------|
+| status_context_fields | 400 | 85,500 | 214x | Go early-terminates; Rust parses full JSON |
+| status_middle_nested | 6,670 | 74,600 | 11x | Full JSON parse dominates |
+| status_last_field | 7,117 | 75,300 | 10.5x | Full JSON parse dominates |
+| 100_patterns | - | 411 | - | Rust-only benchmark |
+| shellstyle_26 | - | 1,657 | - | Rust-only benchmark |
+
+**Analysis**: The performance gap is primarily due to JSON parsing strategy:
+- Go's flattener uses segment-based lookup (only extracts needed fields)
+- Rust parses the full JSON for every event
+- Priority: implement lazy/streaming JSON parsing or segment-based extraction
 
 ## Next Steps
 
-1. **Benchmark baseline** - Run Go + Rust benchmarks, fill in Performance table
-2. **CityLots benchmark** - Copy `testdata/citylots.jlines.gz`, implement Rust equivalent
-3. **Port numbits.go** - IEEE 754 float64 to ordered bytes for automaton numeric matching
-4. **Unicode case folding** - Port `monocase.go` + `case_folding.go` for full EqualsIgnoreCase
-5. **Evaluate regex approach** - Decide: keep `regex` crate or port custom NFA
+1. ~~**Benchmark baseline**~~ - ✅ Done. See Performance Baseline table above.
+2. ~~**Port numbits.go**~~ - ✅ Done. `numbits.rs` with IEEE 754 to ordered bytes.
+3. **Integrate Q-numbers** - Wire numbits into automaton for numeric exact match via automaton
+4. **JSON parsing optimization** - Port Go's segment-based flattener for 10-200x speedup
+5. **CityLots benchmark** - Copy `testdata/citylots.jlines.gz`, implement Rust equivalent
+6. **Unicode case folding** - Port `monocase.go` + `case_folding.go` for full EqualsIgnoreCase
+7. **Evaluate regex approach** - Decide: keep `regex` crate or port custom NFA
 
 ## Test Data
 
