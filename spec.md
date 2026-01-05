@@ -165,6 +165,30 @@ Run with: `cargo bench` (Rust) and `go test -run=NONE -bench=. -benchmem` (Go)
    - ✅ Skip intermediate `json::Field` format for automaton matching
    - Fallback patterns still use legacy `Field` format (lazy conversion only when needed)
 
+### Performance Gap Analysis
+
+Go is 1.40x faster on early-field matching (`status_context_fields`) due to fixed overheads:
+
+| Factor | Rust Overhead | Potential Fix |
+|--------|---------------|---------------|
+| Mutex locks | 2 locks per call | Combine into single lock |
+| UTF-8 validation | `from_utf8()` on every path | Use `from_utf8_unchecked` (unsafe) |
+| Vec allocation | New `ref_fields` Vec per call | Reuse Vec in struct |
+
+10. **Switch to parking_lot::Mutex** - `parking_lot` is faster than std Mutex
+    - Lower overhead for uncontended locks
+    - No poisoning (simpler API)
+11. **Combine flattener + nfa_bufs into single Mutex** - Reduce lock acquisitions
+    - Create a `MatchState` struct holding both
+    - Single lock per `matches_for_event` call
+12. **Reuse ref_fields Vec** - Avoid allocation per call
+    - Store `Vec<EventFieldRef>` in `MatchState`
+    - Clear and repopulate each call (like Go's approach)
+13. **Unsafe UTF-8 skip** (optional, risky) - Skip `from_utf8` validation
+    - JSON parser already validates UTF-8
+    - Use `from_utf8_unchecked` for paths
+    - Requires careful safety audit
+
 ## Test Data
 
 | File | Status |
