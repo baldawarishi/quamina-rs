@@ -1,9 +1,11 @@
 //! Benchmarks for quamina-rs pattern matching
 //!
-//! Comparable benchmarks to Go's flatten_json_bench_test.go
+//! Comparable benchmarks to Go's flatten_json_bench_test.go and citylots_bench_test.go
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
+use flate2::read::GzDecoder;
 use quamina::Quamina;
+use std::io::{BufRead, BufReader};
 
 // Status.json patterns (matching Go benchmarks)
 const PATTERN_CONTEXT: &str = r#"{ "context": { "user_id": [9034], "friends_count": [158] } }"#;
@@ -276,6 +278,50 @@ fn bench_multi_field_and(c: &mut Criterion) {
     });
 }
 
+// === CityLots benchmarks (comparable to Go's citylots_bench_test.go) ===
+
+fn load_citylots_lines() -> Vec<Vec<u8>> {
+    let file = std::fs::File::open("testdata/citylots.jlines.gz")
+        .expect("Failed to open testdata/citylots.jlines.gz");
+    let decoder = GzDecoder::new(file);
+    let reader = BufReader::new(decoder);
+
+    reader
+        .lines()
+        .map(|line| line.expect("Failed to read line").into_bytes())
+        .collect()
+}
+
+/// CityLots benchmark - matches Go's BenchmarkCityLots
+/// Tests 4 patterns against 206k GeoJSON features from San Francisco parcel data
+fn bench_citylots(c: &mut Criterion) {
+    // Same patterns as Go benchmark
+    let patterns = [
+        r#"{ "properties": { "STREET": [ "CRANLEIGH" ] } }"#,
+        r#"{ "properties": { "STREET": [ "17TH" ], "ODD_EVEN": [ "E"] } }"#,
+        r#"{ "geometry": { "coordinates": [ 37.807807921694092 ] } }"#,
+        r#"{ "properties": { "MAPBLKLOT": ["0011008"], "BLKLOT": ["0011008"]},  "geometry": { "coordinates": [ 37.807807921694092 ] } }"#,
+    ];
+    let names = ["CRANLEIGH", "17TH Even", "Geometry", "0011008"];
+
+    let mut q = Quamina::new();
+    for (name, pattern) in names.iter().zip(patterns.iter()) {
+        q.add_pattern(*name, pattern).unwrap();
+    }
+
+    let lines = load_citylots_lines();
+    let num_lines = lines.len();
+
+    c.bench_function("citylots", |b| {
+        let mut i = 0;
+        b.iter(|| {
+            let line_index = i % num_lines;
+            i += 1;
+            q.matches_for_event(black_box(&lines[line_index])).unwrap()
+        })
+    });
+}
+
 criterion_group!(
     benches,
     bench_exact_match,
@@ -296,5 +342,7 @@ criterion_group!(
     bench_prefix_patterns,
     bench_anything_but,
     bench_multi_field_and,
+    // CityLots benchmark (comparable to Go)
+    bench_citylots,
 );
 criterion_main!(benches);

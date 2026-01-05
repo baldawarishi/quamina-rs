@@ -108,7 +108,7 @@ Note: Suffix is Rust-only (Go doesn't support it).
 | `Benchmark_JsonFlattner_Evaluate_ContextFields` | `bench_status_context_fields` | ✅ |
 | `Benchmark_JsonFlattner_Evaluate_MiddleNestedField` | `bench_status_middle_nested` | ✅ |
 | `Benchmark_JsonFlattner_Evaluate_LastField` | `bench_status_last_field` | ✅ |
-| `BenchmarkCityLots` | - | ❌ Need citylots.jlines.gz |
+| `BenchmarkCityLots` | `bench_citylots` | ✅ |
 | `BenchmarkNumberMatching` | - | ❌ Not started |
 | `TestBigShellStyle` (26 patterns) | `bench_shellstyle_alphabet` | ✅ |
 
@@ -116,15 +116,15 @@ Note: Suffix is Rust-only (Go doesn't support it).
 
 Run with: `cargo bench` (Rust) and `go test -run=NONE -bench=. -benchmem` (Go)
 
-| Benchmark | Go (ns/op) | Rust Old (ns/op) | Rust New (ns/op) | Improvement |
-|-----------|------------|------------------|------------------|-------------|
-| status_context_fields | 400 | 85,500 | ~6,500 | 13x faster |
-| status_middle_nested | 6,670 | 74,600 | 6,815 | 11x faster |
-| status_last_field | 7,117 | 75,300 | 6,279 | 12x faster |
-| 100_prefix_patterns | - | 471 | 380 | 24% faster |
-| shellstyle_26 | - | 1,657 | 1,479 | 12% faster |
-| anything_but_match | - | 476 | 317 | 33% faster |
-| multi_field_and_3 | - | 897 | 626 | 30% faster |
+| Benchmark | Go (ns/op) | Rust (ns/op) | Notes |
+|-----------|------------|--------------|-------|
+| status_context_fields | 400 | ~650 | Go 1.6x faster (early field) |
+| status_middle_nested | 6,670 | 7,130 | Similar |
+| status_last_field | 7,117 | 6,830 | Similar |
+| citylots | 3,869 | 5,618 | Go 1.45x faster |
+| shellstyle_26 | - | 1,479 | - |
+| anything_but_match | - | 317 | - |
+| multi_field_and_3 | - | 626 | - |
 
 **Analysis**: The segment-based flattener has been implemented:
 - ✅ Streaming JSON parser with field skipping (SegmentsTree)
@@ -138,7 +138,7 @@ Run with: `cargo bench` (Rust) and `go test -run=NONE -bench=. -benchmem` (Go)
 2. ~~**Port numbits.go**~~ - ✅ Done. `numbits.rs` with IEEE 754 to ordered bytes.
 3. ~~**Integrate Q-numbers**~~ - ✅ Done. NumericExact patterns use automaton-based Q-number matching.
 4. ~~**JSON parsing optimization**~~ - ✅ Done. `segments_tree.rs` + `flatten_json.rs` with 10-12x speedup.
-5. **CityLots benchmark** - Copy `testdata/citylots.jlines.gz`, implement Rust equivalent
+5. ~~**CityLots benchmark**~~ - ✅ Done. Go ~1.45x faster on large GeoJSON documents.
 6. **Unicode case folding** - Port `monocase.go` + `case_folding.go` for full EqualsIgnoreCase
 7. **Evaluate regex approach** - Decide: keep `regex` crate or port custom NFA
 
@@ -147,5 +147,5 @@ Run with: `cargo bench` (Rust) and `go test -run=NONE -bench=. -benchmem` (Go)
 | File | Status |
 |------|--------|
 | `testdata/status.json` | ✅ Present |
-| `testdata/citylots.jlines.gz` | ❌ Copy from Go |
-| `testdata/wwords.txt` | ❌ Copy from Go |
+| `testdata/citylots.jlines.gz` | ✅ Present (206k GeoJSON lines) |
+| `testdata/wwords.txt` | ✅ Present |
