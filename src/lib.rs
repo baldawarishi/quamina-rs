@@ -1,11 +1,15 @@
 //! quamina-rs: Fast pattern-matching library for filtering JSON events
 
 pub mod automaton;
+mod flatten_json;
 mod json;
 pub mod numbits;
+mod segments_tree;
 
 use automaton::{EventField, ThreadSafeCoreMatcher};
+use flatten_json::FlattenJson;
 use json::{ArrayPos, Field, Matcher};
+use segments_tree::SegmentsTree;
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::hash::Hash;
@@ -71,6 +75,8 @@ pub struct Quamina<X: Clone + Eq + Hash + Send + Sync = String> {
     fallback_exists_false: HashSet<X>,
     /// Deleted patterns (filtered from automaton results since automaton doesn't support deletion)
     deleted_patterns: HashSet<X>,
+    /// Segments tree for fast field skipping during event parsing
+    segments_tree: SegmentsTree,
 }
 
 /// Internal representation of a compiled pattern
@@ -104,6 +110,7 @@ impl<X: Clone + Eq + Hash + Send + Sync> Clone for Quamina<X> {
             fallback_field_index: self.fallback_field_index.clone(),
             fallback_exists_false: self.fallback_exists_false.clone(),
             deleted_patterns: self.deleted_patterns.clone(),
+            segments_tree: self.segments_tree.clone(),
         }
     }
 }
@@ -118,6 +125,7 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
             fallback_field_index: HashMap::new(),
             fallback_exists_false: HashSet::new(),
             deleted_patterns: HashSet::new(),
+            segments_tree: SegmentsTree::new(),
         }
     }
 
@@ -130,6 +138,12 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
             .values()
             .flat_map(|matchers| matchers.iter())
             .all(|m| m.is_automaton_compatible());
+
+        // Add field paths to segments tree (convert dot-separated to newline-separated)
+        for field_path in fields.keys() {
+            let segment_path = field_path.replace('.', "\n");
+            self.segments_tree.add(&segment_path);
+        }
 
         // Store pattern definition for cloning
         self.pattern_defs
@@ -164,7 +178,45 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
 
     /// Find all patterns that match the given event
     pub fn matches_for_event(&self, event: &[u8]) -> Result<Vec<X>, QuaminaError> {
-        let event_fields = json::flatten_event(event)?;
+        // Use the streaming flattener with segments tree for field skipping
+        let flattener = FlattenJson::new(event);
+        let streaming_fields = flattener.flatten(&self.segments_tree)?;
+
+        // Convert streaming fields to the legacy Field format
+        let event_fields: Vec<Field> = streaming_fields
+            .into_iter()
+            .map(|f| {
+                // Convert newline-separated path to dot-separated
+                let path_str = String::from_utf8_lossy(&f.path).replace('\n', ".");
+                // Convert value bytes to string, stripping quotes from string values
+                let raw_bytes = match &f.val {
+                    flatten_json::FieldValue::Borrowed(bytes) => *bytes,
+                    flatten_json::FieldValue::Owned(bytes) => bytes.as_slice(),
+                };
+                let value = if raw_bytes.starts_with(b"\"") && raw_bytes.ends_with(b"\"") {
+                    // String value - strip quotes
+                    String::from_utf8_lossy(&raw_bytes[1..raw_bytes.len() - 1]).into_owned()
+                } else {
+                    // Other value (number, bool, null) - use as-is
+                    String::from_utf8_lossy(raw_bytes).into_owned()
+                };
+                // Convert array trail (i32 to u32)
+                let array_trail = f
+                    .array_trail
+                    .into_iter()
+                    .map(|ap| ArrayPos {
+                        array: ap.array as u32,
+                        pos: ap.pos as u32,
+                    })
+                    .collect();
+                Field {
+                    path: path_str,
+                    value,
+                    array_trail,
+                    is_number: f.is_number,
+                }
+            })
+            .collect();
 
         // Convert to automaton's EventField format and sort by path
         // (automaton matching assumes fields are in sorted order, same as pattern building)
