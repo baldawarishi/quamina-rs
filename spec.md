@@ -154,7 +154,10 @@ Run with: `cargo bench` (Rust) and `go test -run=NONE -bench=. -benchmem` (Go)
    - ✅ Generated 2876 Unicode case folding pairs from Go's `case_folding.go`
    - ✅ Monocase automaton handles multi-byte UTF-8 with common prefix optimization
    - ✅ EqualsIgnoreCase now automaton-compatible (was fallback-only)
-8. **Evaluate regex approach** - Decide: keep `regex` crate or port custom NFA
+8. ~~**Evaluate regex approach**~~ - ✅ Decision: Keep `regex` crate
+   - Go's custom NFA is ~1000+ lines; porting adds complexity with marginal gains
+   - `regex` crate is battle-tested, well-maintained, and optimized
+   - Regex patterns are typically a small fraction of total patterns
 9. ~~**Eliminate string conversions**~~ - ✅ Done. Citylots gap reduced from 1.5x to 1.25x:
    - ✅ Path separator unified to `\n` (no `.replace()` conversion needed)
    - ✅ Zero-copy `EventFieldRef<'a>` with borrowed `&str` path and `&[u8]` value
