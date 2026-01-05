@@ -1446,19 +1446,21 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
         // Use automaton
         if let Some(ref table) = *self.start_table.borrow() {
             // Try with Q-number conversion if this matcher has numbers and value is numeric
-            let value_to_match = if *self.has_numbers.borrow() && is_number {
+            // Use Cow to avoid allocation when not converting to Q-number
+            use std::borrow::Cow;
+            let value_to_match: Cow<'_, [u8]> = if *self.has_numbers.borrow() && is_number {
                 // Try to parse as f64 and convert to Q-number
                 if let Ok(s) = std::str::from_utf8(value) {
                     if let Ok(n) = s.parse::<f64>() {
-                        crate::numbits::q_num_from_f64(n)
+                        Cow::Owned(crate::numbits::q_num_from_f64(n))
                     } else {
-                        value.to_vec()
+                        Cow::Borrowed(value)
                     }
                 } else {
-                    value.to_vec()
+                    Cow::Borrowed(value)
                 }
             } else {
-                value.to_vec()
+                Cow::Borrowed(value)
             };
 
             let arc_transitions = if *self.is_nondeterministic.borrow() {
@@ -1659,16 +1661,17 @@ impl<X: Clone + Eq + std::hash::Hash> CoreMatcher<X> {
     /// Match fields against patterns using zero-copy field references.
     ///
     /// Fields should already be sorted by path.
-    pub fn matches_for_fields_ref(&self, fields: &[EventFieldRef<'_>]) -> Vec<X> {
+    /// The `bufs` parameter should be a reusable NfaBuffers instance for reduced allocations.
+    pub fn matches_for_fields_ref(&self, fields: &[EventFieldRef<'_>], bufs: &mut NfaBuffers) -> Vec<X> {
         if fields.is_empty() {
             return self.collect_exists_false_matches(&self.root);
         }
 
         let mut matches = MatchSet::new();
-        let mut bufs = NfaBuffers::new();
+        bufs.clear(); // Reset buffers for reuse
 
         for i in 0..fields.len() {
-            self.try_to_match_ref(fields, i, &self.root, &mut matches, &mut bufs);
+            self.try_to_match_ref(fields, i, &self.root, &mut matches, bufs);
         }
 
         matches.into_vec()
@@ -2110,19 +2113,21 @@ impl<X: Clone + Eq + Hash> FrozenValueMatcher<X> {
         // Use automaton
         if let Some(ref table) = self.start_table {
             // Try with Q-number conversion if this matcher has numbers and value is numeric
-            let value_to_match = if self.has_numbers && is_number {
+            // Use Cow to avoid allocation when not converting to Q-number
+            use std::borrow::Cow;
+            let value_to_match: Cow<'_, [u8]> = if self.has_numbers && is_number {
                 // Try to parse as f64 and convert to Q-number
                 if let Ok(s) = std::str::from_utf8(value) {
                     if let Ok(n) = s.parse::<f64>() {
-                        crate::numbits::q_num_from_f64(n)
+                        Cow::Owned(crate::numbits::q_num_from_f64(n))
                     } else {
-                        value.to_vec()
+                        Cow::Borrowed(value)
                     }
                 } else {
-                    value.to_vec()
+                    Cow::Borrowed(value)
                 }
             } else {
-                value.to_vec()
+                Cow::Borrowed(value)
             };
 
             let arc_transitions = if self.is_nondeterministic {
@@ -2450,7 +2455,8 @@ impl<X: Clone + Eq + Hash + Send + Sync> ThreadSafeCoreMatcher<X> {
     /// Match fields using zero-copy field references.
     ///
     /// This method is lock-free and can be called concurrently from multiple threads.
-    pub fn matches_for_fields_ref(&self, fields: &[EventFieldRef<'_>]) -> Vec<X> {
+    /// The `bufs` parameter should be a reusable NfaBuffers instance for reduced allocations.
+    pub fn matches_for_fields_ref(&self, fields: &[EventFieldRef<'_>], bufs: &mut NfaBuffers) -> Vec<X> {
         let root = self.root.load();
 
         if fields.is_empty() {
@@ -2458,10 +2464,10 @@ impl<X: Clone + Eq + Hash + Send + Sync> ThreadSafeCoreMatcher<X> {
         }
 
         let mut matches = FrozenMatchSet::new();
-        let mut bufs = NfaBuffers::new();
+        bufs.clear(); // Reset buffers for reuse
 
         for i in 0..fields.len() {
-            self.try_to_match_ref(fields, i, &root, &mut matches, &mut bufs);
+            self.try_to_match_ref(fields, i, &root, &mut matches, bufs);
         }
 
         matches.into_vec()

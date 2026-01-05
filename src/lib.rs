@@ -7,7 +7,7 @@ mod json;
 pub mod numbits;
 mod segments_tree;
 
-use automaton::{EventFieldRef, ThreadSafeCoreMatcher};
+use automaton::{EventFieldRef, NfaBuffers, ThreadSafeCoreMatcher};
 use flatten_json::FlattenJsonState;
 use json::{ArrayPos, Field, Matcher};
 use segments_tree::SegmentsTree;
@@ -81,6 +81,8 @@ pub struct Quamina<X: Clone + Eq + Hash + Send + Sync = String> {
     segments_tree: SegmentsTree,
     /// Reusable JSON flattener state (Mutex for thread-safe access)
     flattener: Mutex<FlattenJsonState>,
+    /// Reusable NFA traversal buffers (Mutex for thread-safe access)
+    nfa_bufs: Mutex<NfaBuffers>,
 }
 
 /// Internal representation of a compiled pattern
@@ -116,6 +118,7 @@ impl<X: Clone + Eq + Hash + Send + Sync> Clone for Quamina<X> {
             deleted_patterns: self.deleted_patterns.clone(),
             segments_tree: self.segments_tree.clone(),
             flattener: Mutex::new(FlattenJsonState::new()),
+            nfa_bufs: Mutex::new(NfaBuffers::new()),
         }
     }
 }
@@ -132,6 +135,7 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
             deleted_patterns: HashSet::new(),
             segments_tree: SegmentsTree::new(),
             flattener: Mutex::new(FlattenJsonState::new()),
+            nfa_bufs: Mutex::new(NfaBuffers::new()),
         }
     }
 
@@ -216,13 +220,15 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
         // Sort by path for automaton matching
         ref_fields.sort_by(|a, b| a.path.cmp(b.path));
 
-        // Get matches from automaton using zero-copy fields
-        let mut matches: Vec<X> = self
-            .automaton
-            .matches_for_fields_ref(&ref_fields)
-            .into_iter()
-            .filter(|x| !self.deleted_patterns.contains(x))
-            .collect();
+        // Get matches from automaton using zero-copy fields and reusable buffers
+        let mut matches: Vec<X> = {
+            let mut bufs = self.nfa_bufs.lock().unwrap();
+            self.automaton
+                .matches_for_fields_ref(&ref_fields, &mut bufs)
+                .into_iter()
+                .filter(|x| !self.deleted_patterns.contains(x))
+                .collect()
+        };
 
         // Slow path: fallback matching still needs legacy Field format (with String values)
         if !self.fallback_patterns.is_empty() {
