@@ -139,8 +139,13 @@ Run with: `cargo bench` (Rust) and `go test -run=NONE -bench=. -benchmem` (Go)
 3. ~~**Integrate Q-numbers**~~ - ✅ Done. NumericExact patterns use automaton-based Q-number matching.
 4. ~~**JSON parsing optimization**~~ - ✅ Done. `segments_tree.rs` + `flatten_json.rs` with 10-12x speedup.
 5. ~~**CityLots benchmark**~~ - ✅ Done. Go ~1.45x faster on large GeoJSON documents.
-6. **Unicode case folding** - Port `monocase.go` + `case_folding.go` for full EqualsIgnoreCase
-7. **Evaluate regex approach** - Decide: keep `regex` crate or port custom NFA
+6. **Reduce allocation overhead** - Close performance gap with Go by:
+   - Reuse `FlattenJson` struct between calls (Go uses `reset()` pattern)
+   - Pre-allocate and reuse vectors for fields, array trails
+   - Add `[u8; 256]` lookup table for whitespace (vs `matches!` macro)
+   - Consider buffer pooling for matching phase
+7. **Unicode case folding** - Port `monocase.go` + `case_folding.go` for full EqualsIgnoreCase
+8. **Evaluate regex approach** - Decide: keep `regex` crate or port custom NFA
 
 ## Test Data
 
