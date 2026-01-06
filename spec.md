@@ -16,14 +16,14 @@ Rust port of [quamina](https://github.com/timbray/quamina) - fast pattern-matchi
 
 | Benchmark | Go (ns) | Rust (ns) | Winner |
 |-----------|---------|-----------|--------|
-| status_context_fields | 382 | 500 | Go 1.31x |
-| status_middle_nested | 6,400 | 4,700 | **Rust 1.36x** |
-| status_last_field | 6,600 | 5,000 | **Rust 1.32x** |
-| citylots | 3,400 | 4,100 | Go 1.21x |
+| status_context_fields | 382 | 487 | Go 1.27x |
+| status_middle_nested | 6,400 | 4,800 | **Rust 1.33x** |
+| status_last_field | 6,600 | 5,100 | **Rust 1.29x** |
+| citylots | 3,400 | 3,700 | Go 1.09x |
 
 ## Completed
 
-Tasks 1-10, 13, 15-16, 19-20, 22: Q-numbers, segments_tree, streaming flattener, allocations (NfaBuffers, Cow), Unicode case folding, parking_lot::Mutex, automaton split, lib.rs split (wildcard.rs), unsafe from_utf8_unchecked, SmallVec for Field path/array_trail, direct Field matching (removed EventFieldRef indirection).
+Tasks 1-10, 13, 15-16, 19-22: Q-numbers, segments_tree, streaming flattener, allocations (NfaBuffers, Cow), Unicode case folding, parking_lot::Mutex, automaton split, lib.rs split (wildcard.rs), unsafe from_utf8_unchecked, SmallVec for Field path/array_trail, direct Field matching (removed EventFieldRef indirection), Vec<Field> reuse across calls.
 
 ## Next Steps
 
@@ -31,9 +31,8 @@ Tasks 1-10, 13, 15-16, 19-20, 22: Q-numbers, segments_tree, streaming flattener,
 
 | # | Task | Impact | Notes |
 |---|------|--------|-------|
-| 21 | Reuse `Vec<Field>` across calls | ~50ns | Store in `FlattenJsonState`, return `&[Field]`. Requires lifetime refactor |
 | 23 | Remove `transition_map` lookup | ~20ns | Store `FrozenFieldMatcher` directly in transitions instead of pointer map |
-| 24 | Profile citylots gap | ~700ns | Use flamegraph to identify GeoJSON-specific bottlenecks |
+| 24 | Profile citylots gap | ~300ns | Use flamegraph to identify GeoJSON-specific bottlenecks |
 
 ### Feature Parity
 
@@ -48,7 +47,7 @@ Tasks 1-10, 13, 15-16, 19-20, 22: Q-numbers, segments_tree, streaming flattener,
 | Feature | Go | Rust | Notes |
 |---------|:--:|:----:|-------|
 | Automaton core | ✅ | ✅ | SmallTable, NFA/DFA |
-| Segment flattener | ✅ | ✅ | Early termination |
+| Segment flattener | ✅ | ✅ | Early termination, Vec reuse |
 | Unicode case folding | ✅ | ✅ | case_folding.rs |
 | Custom regex NFA | ✅ | ❌ | Go: `regexp_nfa.go`, `regexp_parse.go`. Rust: `regex` crate fallback |
 | Pruner rebuilding | ✅ | ❌ | Go: `pruner.go` auto-rebuilds. Rust: HashSet deletion (no rebuild) |
@@ -56,13 +55,19 @@ Tasks 1-10, 13, 15-16, 19-20, 22: Q-numbers, segments_tree, streaming flattener,
 ### Performance Gap Analysis
 
 **Where Go wins:**
-- `status_context_fields` (1.38x): Early termination with 2 fields. Gap: flatten 50ns + matching 94ns.
-- `citylots` (1.32x): Complex GeoJSON with 4 patterns.
+- `status_context_fields` (1.27x): Early termination with 2 fields. Gap narrowed from 1.31x.
+- `citylots` (1.09x): Complex GeoJSON. Gap narrowed significantly from 1.21x (700ns to 300ns).
 
 **Where Rust wins:**
-- `status_middle_nested` (1.28x): Deep nested matching.
-- `status_last_field` (1.25x): Late field in large JSON.
+- `status_middle_nested` (1.33x): Deep nested matching.
+- `status_last_field` (1.29x): Late field in large JSON.
 
-**Root causes identified:**
-- Flatten: Rust allocates new `Vec<Field>` per call; Go reuses slice with `fields[:0]`
-- Matching: Rust has `transition_map` lookup; `EventFieldRef` indirection eliminated
+**Task 21 Results (Vec<Field> reuse):**
+- `citylots`: -10% (4,100ns → 3,700ns)
+- `exact_match`: -11%
+- `nested_match`: -12%
+- `100_patterns_no_match`: -15%
+- `100_diverse_patterns_no_match`: -30%
+
+**Remaining root causes:**
+- Matching: Rust has `transition_map` lookup overhead

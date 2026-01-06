@@ -192,11 +192,10 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
 
     /// Find all patterns that match the given event
     pub fn matches_for_event(&self, event: &[u8]) -> Result<Vec<X>, QuaminaError> {
-        // Use the reusable flattener with segments tree for field skipping
-        let mut streaming_fields = {
-            let mut flattener = self.flattener.lock();
-            flattener.flatten(event, &self.segments_tree)?
-        };
+        // Use the reusable flattener with segments tree for field skipping.
+        // The flattener lock must be held while using the fields since they borrow from it.
+        let mut flattener = self.flattener.lock();
+        let streaming_fields = flattener.flatten(event, &self.segments_tree)?;
 
         // Sort by path for automaton matching (using byte comparison which is equivalent to str for ASCII paths)
         streaming_fields.sort_unstable_by(|a, b| a.path.cmp(&b.path));
@@ -204,7 +203,7 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
         // Get matches from automaton using fields directly (no intermediate EventFieldRef)
         let mut matches: Vec<X> = {
             let mut bufs = self.nfa_bufs.lock();
-            let raw_matches = self.automaton.matches_for_fields_direct(&streaming_fields, &mut bufs);
+            let raw_matches = self.automaton.matches_for_fields_direct(streaming_fields, &mut bufs);
             // Fast path: skip filtering if no patterns have been deleted
             if self.deleted_patterns.is_empty() {
                 raw_matches
@@ -265,10 +264,8 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
     /// Flatten an event without matching (for benchmarking)
     #[doc(hidden)]
     pub fn flatten_only(&self, event: &[u8]) -> Result<usize, QuaminaError> {
-        let fields = {
-            let mut flattener = self.flattener.lock();
-            flattener.flatten(event, &self.segments_tree)?
-        };
+        let mut flattener = self.flattener.lock();
+        let fields = flattener.flatten(event, &self.segments_tree)?;
         Ok(fields.len())
     }
 

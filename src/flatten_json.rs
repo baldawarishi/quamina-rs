@@ -104,12 +104,18 @@ impl FieldValue<'_> {
 ///
 /// This struct holds the working buffers that can be reused across multiple
 /// flatten calls, following Go's reset() pattern for reduced allocations.
-/// The fields capacity is tracked and grows as needed.
+/// Like Go's flattenJSON, we reuse the fields slice between calls to avoid
+/// reallocating the underlying array.
 pub struct FlattenJsonState {
     /// Working array position trail (reused between calls)
     array_trail: ArrayTrailVec,
-    /// Typical fields count (learned from previous calls for pre-allocation)
-    fields_hint: usize,
+    /// Reusable fields storage. We use 'static as a placeholder lifetime;
+    /// the actual borrows come from the event passed to flatten().
+    /// This is safe because:
+    /// 1. We clear the vec before each flatten call
+    /// 2. We only expose fields with the correct event lifetime
+    /// 3. The mutable borrow of self prevents concurrent access
+    fields: Vec<Field<'static>>,
 }
 
 impl Default for FlattenJsonState {
@@ -123,17 +129,23 @@ impl FlattenJsonState {
     pub fn new() -> Self {
         Self {
             array_trail: ArrayTrailVec::new(),
-            fields_hint: 32,
+            fields: Vec::with_capacity(32),
         }
     }
 
     /// Reset internal state for reuse.
+    /// Like Go's reset(), this clears the fields slice but keeps capacity.
     #[inline]
     fn reset(&mut self) {
         self.array_trail.clear();
+        self.fields.clear();
     }
 
     /// Flatten an event using this reusable state.
+    ///
+    /// Returns a mutable slice of fields that can be sorted in place.
+    /// The slice borrows from both self and the event, preventing reuse
+    /// until the caller is done with the fields.
     ///
     /// This is the primary API for high-performance event processing.
     /// The state is automatically reset before each call.
@@ -141,36 +153,71 @@ impl FlattenJsonState {
         &mut self,
         event: &'a [u8],
         tree: &SegmentsTree,
-    ) -> Result<Vec<Field<'a>>, QuaminaError> {
+    ) -> Result<&mut [Field<'a>], QuaminaError> {
         self.reset();
 
         let mut ctx = FlattenContext {
             event,
             index: 0,
-            fields: Vec::with_capacity(self.fields_hint),
+            fields: &mut self.fields,
             skipping: 0,
             array_trail: &mut self.array_trail,
             array_count: 0,
         };
 
-        let result = ctx.flatten_impl(tree);
+        ctx.flatten_impl(tree)?;
 
-        // Update hint for next call
-        self.fields_hint = self.fields_hint.max(ctx.fields.capacity());
+        // SAFETY: The Fields in self.fields contain borrows from `event` which has lifetime 'a.
+        // We store them with 'static lifetime internally, but return a slice with the correct
+        // 'a lifetime. This is safe because:
+        // 1. We cleared the vec at the start, so all borrows are from this event
+        // 2. The returned mutable slice borrows self, preventing concurrent flatten calls
+        // 3. The caller cannot use the slice after event is dropped (enforced by 'a)
+        let fields_slice: &mut [Field<'a>] = unsafe {
+            std::mem::transmute(self.fields.as_mut_slice())
+        };
 
-        result.map(|()| ctx.fields)
+        Ok(fields_slice)
+    }
+
+    /// Number of fields from the last flatten call.
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.fields.len()
+    }
+
+    /// Returns true if no fields were found in the last flatten call.
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.fields.is_empty()
     }
 }
 
 /// Internal context for a single flatten operation.
-/// Borrows the reusable array_trail from FlattenJsonState.
+/// Borrows the reusable fields vec and array_trail from FlattenJsonState.
 struct FlattenContext<'a, 'b> {
     event: &'a [u8],
     index: usize,
-    fields: Vec<Field<'a>>,
+    /// Borrowed mutable reference to the fields storage.
+    /// We store Field<'static> internally but the actual borrows are from event.
+    fields: &'b mut Vec<Field<'static>>,
     skipping: i32,
     array_trail: &'b mut ArrayTrailVec,
     array_count: i32,
+}
+
+impl<'a> FlattenContext<'a, '_> {
+    /// Push a field to the storage, transmuting the lifetime.
+    /// SAFETY: The field borrows from self.event which has lifetime 'a.
+    /// We store as 'static but the FlattenJsonState will return the correct lifetime.
+    #[inline]
+    fn push_field(&mut self, field: Field<'a>) {
+        // SAFETY: Field<'a> and Field<'static> have the same layout.
+        // The actual borrows are from self.event, and the caller will
+        // receive a slice with the correct 'a lifetime.
+        let static_field: Field<'static> = unsafe { std::mem::transmute(field) };
+        self.fields.push(static_field);
+    }
 }
 
 impl<'a> FlattenContext<'a, '_> {
@@ -377,7 +424,7 @@ impl<'a> FlattenContext<'a, '_> {
                         if let Some(v) = val {
                             if member_is_used {
                                 if let Some(path) = tree.path_for_segment(member_name.as_bytes()) {
-                                    self.fields.push(Field {
+                                    self.push_field(Field {
                                         path: PathVec::from_slice(path),
                                         val: v,
                                         array_trail: array_trail.clone(),
@@ -496,7 +543,7 @@ impl<'a> FlattenContext<'a, '_> {
                             if self.skipping == 0 {
                                 self.step_array_element();
                                 if let Some(ref p) = path {
-                                    self.fields.push(Field {
+                                    self.push_field(Field {
                                         path: p.clone(),
                                         val: v,
                                         array_trail: self.array_trail.clone(),
@@ -1133,18 +1180,25 @@ mod tests {
 
     #[test]
     fn test_state_reuse() {
-        // Test that the state can be reused across multiple flatten calls
+        // Test that the state can be reused across multiple flatten calls.
+        // The Vec storage is reused (capacity preserved), avoiding reallocation.
         let tree = make_tree(&["status"]);
         let mut state = FlattenJsonState::new();
 
+        // First call
         let event1 = br#"{"status": "active"}"#;
-        let fields1 = state.flatten(event1, &tree).unwrap();
-        assert_eq!(fields1.len(), 1);
-        assert_eq!(fields1[0].val.as_bytes(), b"\"active\"");
+        {
+            let fields1 = state.flatten(event1, &tree).unwrap();
+            assert_eq!(fields1.len(), 1);
+            assert_eq!(fields1[0].val.as_bytes(), b"\"active\"");
+        }
 
+        // Second call - state is reused, Vec capacity preserved
         let event2 = br#"{"status": "pending"}"#;
-        let fields2 = state.flatten(event2, &tree).unwrap();
-        assert_eq!(fields2.len(), 1);
-        assert_eq!(fields2[0].val.as_bytes(), b"\"pending\"");
+        {
+            let fields2 = state.flatten(event2, &tree).unwrap();
+            assert_eq!(fields2.len(), 1);
+            assert_eq!(fields2[0].val.as_bytes(), b"\"pending\"");
+        }
     }
 }
