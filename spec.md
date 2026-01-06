@@ -21,19 +21,65 @@ Rust port of [quamina](https://github.com/timbray/quamina) - fast pattern-matchi
 | status_last_field | 6,600 | 5,100 | **Rust 1.29x** |
 | citylots | 3,400 | 3,700 | Go 1.09x |
 
+Run: `cargo bench status` or `cargo bench citylots`
+
+## Architecture
+
+```
+src/
+├── lib.rs              # Public API (Quamina struct)
+├── json.rs             # Pattern parsing, Matcher enum
+├── flatten_json.rs     # Streaming JSON flattener (segments_tree)
+├── numbits.rs          # Q-number encoding for numeric comparisons
+├── automaton/
+│   ├── mod.rs          # Module exports
+│   ├── small_table.rs  # SmallTable, FaState, FieldMatcher, NfaBuffers
+│   ├── fa_builders.rs  # make_string_fa, make_prefix_fa, merge_fas, etc.
+│   ├── nfa.rs          # traverse_dfa, traverse_nfa
+│   ├── thread_safe.rs  # ThreadSafeCoreMatcher, FrozenFieldMatcher/ValueMatcher
+│   ├── mutable_matcher.rs  # MutableFieldMatcher/ValueMatcher (building)
+│   └── wildcard.rs     # Shellstyle/wildcard pattern handling
+└── fallback/           # Suffix, numeric ranges, regex (non-automaton)
+```
+
+**Key types:**
+- `SmallTable`: Compact byte-indexed transition table (ceilings/steps representation)
+- `FaState`: Automaton state with table + field_transitions
+- `FieldMatcher`: Low-level automaton node (path -> ValueMatcher transitions)
+- `FrozenFieldMatcher<X>`: Immutable matcher with pattern IDs, used during matching
+- `MutableFieldMatcher<X>`: RefCell-based builder, converted to Frozen after add_pattern
+
+**Matching flow:**
+1. `flatten()` JSON -> sorted `Vec<Field>` (path, value, array_trail, is_number)
+2. `matches_for_fields_direct()` traverses automaton from root
+3. For each field, `transition_on()` matches value via DFA/NFA traversal
+4. `FrozenValueMatcher.transition_map` (FxHashMap) maps FieldMatcher ptrs -> FrozenFieldMatcher
+
 ## Completed (Tasks 1-23)
 
-Core: Q-numbers, segments_tree, streaming flattener, NfaBuffers/Cow allocations, Unicode case folding, parking_lot::Mutex, automaton split, wildcard.rs extraction.
+**Core:** Q-numbers, segments_tree flattener, NfaBuffers reuse, Unicode case folding, parking_lot::Mutex, automaton module split.
 
-Optimizations: unsafe from_utf8_unchecked, SmallVec for Field path/array_trail, direct Field matching (no EventFieldRef), Vec<Field> reuse (returns `&mut [Field]`), FxHashMap for transition lookups.
+**Optimizations:**
+- `unsafe from_utf8_unchecked` in flattener (validated JSON)
+- `SmallVec` for Field path/array_trail
+- Direct Field matching (removed EventFieldRef indirection)
+- Vec<Field> reuse across flatten calls (returns `&mut [Field]`)
+- FxHashMap for transition lookups (faster than std HashMap for usize keys)
+
+**Task 23 learnings:** Attempted Vec-based indexing (store index in FieldMatcher, lookup by index). **Regressed 5-8%** because accessing `arc_fm.index` requires Arc dereference, while `Arc::as_ptr()` for HashMap keys doesn't dereference. FxHashMap was better solution.
 
 ## Next Steps
 
 | # | Task | Notes |
 |---|------|-------|
-| 24 | Profile citylots gap | Flamegraph for remaining ~300ns gap |
+| 24 | Profile citylots gap | Flamegraph to find remaining ~300ns gap vs Go |
 | 17 | Pruner rebuilding | Go auto-rebuilds at 0.2 ratio. See `pruner.go` |
-| 18 | Custom regex NFA | Go: `regexp_nfa.go`. Rust uses `regex` crate |
+| 18 | Custom regex NFA | Go: `regexp_nfa.go`. Rust uses `regex` crate fallback |
+
+**Potential optimizations:**
+- Inline `traverse_dfa` hot path
+- Pool allocations for result vectors
+- SIMD for SmallTable.step() ceiling search
 
 ## Parity
 
@@ -44,3 +90,23 @@ Optimizations: unsafe from_utf8_unchecked, SmallVec for Field path/array_trail, 
 | Unicode case folding | ✅ | ✅ | case_folding.rs |
 | Custom regex NFA | ✅ | ❌ | Rust uses `regex` crate fallback |
 | Pruner rebuilding | ✅ | ❌ | Rust: HashSet deletion only |
+
+## Go Reference Files
+
+| Feature | Go File | Notes |
+|---------|---------|-------|
+| Matching core | `core_matcher.go` | matchesForFields, tryToMatch |
+| Value matching | `value_matcher.go` | transitionOn, makeStringFA |
+| Flattening | `flatten_json.go` | segmentsTree, Flatten |
+| Pruner | `pruner.go` | rebuildRatio=0.2, deletePatterns |
+| Regex NFA | `regexp_nfa.go` | Custom NFA vs Rust's `regex` crate |
+| Benchmarks | `benchmarks_test.go` | Status patterns, citylots |
+
+## Commands
+
+```bash
+cargo test                    # Run all tests
+cargo bench status            # Run status_* benchmarks
+cargo bench citylots          # Run citylots benchmark
+cargo bench                   # Run all benchmarks
+```
