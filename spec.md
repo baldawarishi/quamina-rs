@@ -27,13 +27,22 @@ Tasks 1-10, 13, 15-16, 19-20: Q-numbers, segments_tree, streaming flattener, all
 
 ## Next Steps
 
+### Performance Optimization
+
+| # | Task | Impact | Notes |
+|---|------|--------|-------|
+| 21 | Reuse `Vec<Field>` across calls | ~50ns | Store in `FlattenJsonState`, return `&[Field]`. Requires lifetime refactor |
+| 22 | Eliminate `EventFieldRef` indirection | ~50ns | Pass `&[Field]` directly to automaton, avoid intermediate Vec |
+| 23 | Remove `transition_map` lookup | ~20ns | Store `FrozenFieldMatcher` directly in transitions instead of pointer map |
+| 24 | Profile citylots gap | ~1μs | Use flamegraph to identify GeoJSON-specific bottlenecks |
+
+### Feature Parity
+
 | # | Task | Notes |
 |---|------|-------|
 | 14 | Add profiling | flamegraph, pprof comparison |
 | 17 | Pruner rebuilding | Go: auto-rebuilds when filtered/emitted > 0.2. Rust: simple HashSet filter. See `pruner.go` |
 | 18 | Custom regex NFA | Go: custom NFA in automaton. Rust: `regex` crate fallback. See `regexp_nfa.go` |
-| 21 | Reduce early termination overhead | Go 382ns vs Rust 526ns. Gap is in flatten (50ns) + matching (94ns) |
-| 22 | Reduce citylots overhead | Go 3.4μs vs Rust 4.5μs. Profile GeoJSON processing |
 
 ## Parity
 
