@@ -39,7 +39,8 @@ fn test_string_fa() {
     let table = make_string_fa(b"abc", next_field);
 
     // Traverse the FA
-    let transitions = traverse_dfa(&table, b"abc");
+    let mut transitions = Vec::new();
+    traverse_dfa(&table, b"abc", &mut transitions);
     assert_eq!(transitions.len(), 1);
 }
 
@@ -48,7 +49,8 @@ fn test_string_fa_no_match() {
     let next_field = Arc::new(FieldMatcher::new());
     let table = make_string_fa(b"abc", next_field);
 
-    let transitions = traverse_dfa(&table, b"abd");
+    let mut transitions = Vec::new();
+    traverse_dfa(&table, b"abd", &mut transitions);
     assert!(transitions.is_empty());
 }
 
@@ -58,17 +60,21 @@ fn test_prefix_fa() {
     let table = make_prefix_fa(b"ab", next_field);
 
     // Should match "ab", "abc", "abcd", etc.
-    let transitions = traverse_dfa(&table, b"ab");
+    let mut transitions = Vec::new();
+    traverse_dfa(&table, b"ab", &mut transitions);
     assert_eq!(transitions.len(), 1);
 
-    let transitions = traverse_dfa(&table, b"abc");
+    transitions.clear();
+    traverse_dfa(&table, b"abc", &mut transitions);
     assert_eq!(transitions.len(), 1);
 
     // Should not match "a" or "ac"
-    let transitions = traverse_dfa(&table, b"a");
+    transitions.clear();
+    traverse_dfa(&table, b"a", &mut transitions);
     assert!(transitions.is_empty());
 
-    let transitions = traverse_dfa(&table, b"ac");
+    transitions.clear();
+    traverse_dfa(&table, b"ac", &mut transitions);
     assert!(transitions.is_empty());
 }
 
@@ -81,21 +87,26 @@ fn test_shellstyle_suffix() {
     let mut bufs = NfaBuffers::new();
 
     // Should match values ending in "bc"
-    let transitions = traverse_nfa(&table, b"bc", &mut bufs);
-    assert_eq!(transitions.len(), 1, "bc should match *bc");
+    bufs.transitions.clear();
+    traverse_nfa(&table, b"bc", &mut bufs);
+    assert_eq!(bufs.transitions.len(), 1, "bc should match *bc");
 
-    let transitions = traverse_nfa(&table, b"abc", &mut bufs);
-    assert_eq!(transitions.len(), 1, "abc should match *bc");
+    bufs.transitions.clear();
+    traverse_nfa(&table, b"abc", &mut bufs);
+    assert_eq!(bufs.transitions.len(), 1, "abc should match *bc");
 
-    let transitions = traverse_nfa(&table, b"xxbc", &mut bufs);
-    assert_eq!(transitions.len(), 1, "xxbc should match *bc");
+    bufs.transitions.clear();
+    traverse_nfa(&table, b"xxbc", &mut bufs);
+    assert_eq!(bufs.transitions.len(), 1, "xxbc should match *bc");
 
     // Should not match values not ending in "bc"
-    let transitions = traverse_nfa(&table, b"ab", &mut bufs);
-    assert!(transitions.is_empty(), "ab should not match *bc");
+    bufs.transitions.clear();
+    traverse_nfa(&table, b"ab", &mut bufs);
+    assert!(bufs.transitions.is_empty(), "ab should not match *bc");
 
-    let transitions = traverse_nfa(&table, b"bcx", &mut bufs);
-    assert!(transitions.is_empty(), "bcx should not match *bc");
+    bufs.transitions.clear();
+    traverse_nfa(&table, b"bcx", &mut bufs);
+    assert!(bufs.transitions.is_empty(), "bcx should not match *bc");
 }
 
 #[test]
@@ -107,21 +118,26 @@ fn test_shellstyle_prefix() {
     let mut bufs = NfaBuffers::new();
 
     // Should match values starting with "ab"
-    let transitions = traverse_nfa(&table, b"ab", &mut bufs);
-    assert_eq!(transitions.len(), 1, "ab should match ab*");
+    bufs.transitions.clear();
+    traverse_nfa(&table, b"ab", &mut bufs);
+    assert_eq!(bufs.transitions.len(), 1, "ab should match ab*");
 
-    let transitions = traverse_nfa(&table, b"abc", &mut bufs);
-    assert_eq!(transitions.len(), 1, "abc should match ab*");
+    bufs.transitions.clear();
+    traverse_nfa(&table, b"abc", &mut bufs);
+    assert_eq!(bufs.transitions.len(), 1, "abc should match ab*");
 
-    let transitions = traverse_nfa(&table, b"abxyz", &mut bufs);
-    assert_eq!(transitions.len(), 1, "abxyz should match ab*");
+    bufs.transitions.clear();
+    traverse_nfa(&table, b"abxyz", &mut bufs);
+    assert_eq!(bufs.transitions.len(), 1, "abxyz should match ab*");
 
     // Should not match values not starting with "ab"
-    let transitions = traverse_nfa(&table, b"a", &mut bufs);
-    assert!(transitions.is_empty(), "a should not match ab*");
+    bufs.transitions.clear();
+    traverse_nfa(&table, b"a", &mut bufs);
+    assert!(bufs.transitions.is_empty(), "a should not match ab*");
 
-    let transitions = traverse_nfa(&table, b"ba", &mut bufs);
-    assert!(transitions.is_empty(), "ba should not match ab*");
+    bufs.transitions.clear();
+    traverse_nfa(&table, b"ba", &mut bufs);
+    assert!(bufs.transitions.is_empty(), "ba should not match ab*");
 }
 
 #[test]
@@ -133,21 +149,26 @@ fn test_shellstyle_infix() {
     let mut bufs = NfaBuffers::new();
 
     // Should match values with "a" at start and "c" at end
-    let transitions = traverse_nfa(&table, b"ac", &mut bufs);
-    assert_eq!(transitions.len(), 1, "ac should match a*c");
+    bufs.transitions.clear();
+    traverse_nfa(&table, b"ac", &mut bufs);
+    assert_eq!(bufs.transitions.len(), 1, "ac should match a*c");
 
-    let transitions = traverse_nfa(&table, b"abc", &mut bufs);
-    assert_eq!(transitions.len(), 1, "abc should match a*c");
+    bufs.transitions.clear();
+    traverse_nfa(&table, b"abc", &mut bufs);
+    assert_eq!(bufs.transitions.len(), 1, "abc should match a*c");
 
-    let transitions = traverse_nfa(&table, b"axxc", &mut bufs);
-    assert_eq!(transitions.len(), 1, "axxc should match a*c");
+    bufs.transitions.clear();
+    traverse_nfa(&table, b"axxc", &mut bufs);
+    assert_eq!(bufs.transitions.len(), 1, "axxc should match a*c");
 
     // Should not match
-    let transitions = traverse_nfa(&table, b"ab", &mut bufs);
-    assert!(transitions.is_empty(), "ab should not match a*c");
+    bufs.transitions.clear();
+    traverse_nfa(&table, b"ab", &mut bufs);
+    assert!(bufs.transitions.is_empty(), "ab should not match a*c");
 
-    let transitions = traverse_nfa(&table, b"bc", &mut bufs);
-    assert!(transitions.is_empty(), "bc should not match a*c");
+    bufs.transitions.clear();
+    traverse_nfa(&table, b"bc", &mut bufs);
+    assert!(bufs.transitions.is_empty(), "bc should not match a*c");
 }
 
 #[test]
@@ -249,15 +270,18 @@ fn test_merge_fas() {
     let merged = merge_fas(&table1, &table2);
 
     // Both should match through the merged FA
-    let transitions1 = traverse_dfa(&merged, b"abc");
-    assert_eq!(transitions1.len(), 1, "abc should match merged FA");
+    let mut transitions = Vec::new();
+    traverse_dfa(&merged, b"abc", &mut transitions);
+    assert_eq!(transitions.len(), 1, "abc should match merged FA");
 
-    let transitions2 = traverse_dfa(&merged, b"abd");
-    assert_eq!(transitions2.len(), 1, "abd should match merged FA");
+    transitions.clear();
+    traverse_dfa(&merged, b"abd", &mut transitions);
+    assert_eq!(transitions.len(), 1, "abd should match merged FA");
 
     // Should not match unrelated
-    let transitions3 = traverse_dfa(&merged, b"xyz");
-    assert!(transitions3.is_empty(), "xyz should not match merged FA");
+    transitions.clear();
+    traverse_dfa(&merged, b"xyz", &mut transitions);
+    assert!(transitions.is_empty(), "xyz should not match merged FA");
 }
 
 // ========================================================================
@@ -558,21 +582,24 @@ fn test_anything_but_single_value() {
     let table = make_anything_but_fa(&excluded, next_field);
 
     // Should match non-excluded values
-    let transitions = traverse_dfa(&table, b"active");
+    let mut transitions = Vec::new();
+    traverse_dfa(&table, b"active", &mut transitions);
     assert_eq!(
         transitions.len(),
         1,
         "active should match anything-but [deleted]"
     );
 
-    let transitions = traverse_dfa(&table, b"pending");
+    transitions.clear();
+    traverse_dfa(&table, b"pending", &mut transitions);
     assert_eq!(
         transitions.len(),
         1,
         "pending should match anything-but [deleted]"
     );
 
-    let transitions = traverse_dfa(&table, b"");
+    transitions.clear();
+    traverse_dfa(&table, b"", &mut transitions);
     assert_eq!(
         transitions.len(),
         1,
@@ -580,7 +607,8 @@ fn test_anything_but_single_value() {
     );
 
     // Should NOT match excluded value
-    let transitions = traverse_dfa(&table, b"deleted");
+    transitions.clear();
+    traverse_dfa(&table, b"deleted", &mut transitions);
     assert!(
         transitions.is_empty(),
         "deleted should NOT match anything-but [deleted]"
@@ -595,23 +623,28 @@ fn test_anything_but_multiple_values() {
     let table = make_anything_but_fa(&excluded, next_field);
 
     // Should match non-excluded values
-    let transitions = traverse_dfa(&table, b"c");
+    let mut transitions = Vec::new();
+    traverse_dfa(&table, b"c", &mut transitions);
     assert_eq!(transitions.len(), 1, "c should match anything-but [a, b]");
 
-    let transitions = traverse_dfa(&table, b"ab");
+    transitions.clear();
+    traverse_dfa(&table, b"ab", &mut transitions);
     assert_eq!(transitions.len(), 1, "ab should match anything-but [a, b]");
 
-    let transitions = traverse_dfa(&table, b"ba");
+    transitions.clear();
+    traverse_dfa(&table, b"ba", &mut transitions);
     assert_eq!(transitions.len(), 1, "ba should match anything-but [a, b]");
 
     // Should NOT match excluded values
-    let transitions = traverse_dfa(&table, b"a");
+    transitions.clear();
+    traverse_dfa(&table, b"a", &mut transitions);
     assert!(
         transitions.is_empty(),
         "a should NOT match anything-but [a, b]"
     );
 
-    let transitions = traverse_dfa(&table, b"b");
+    transitions.clear();
+    traverse_dfa(&table, b"b", &mut transitions);
     assert!(
         transitions.is_empty(),
         "b should NOT match anything-but [a, b]"
@@ -626,21 +659,24 @@ fn test_anything_but_with_common_prefix() {
     let table = make_anything_but_fa(&excluded, next_field);
 
     // Should match non-excluded values
-    let transitions = traverse_dfa(&table, b"ab");
+    let mut transitions = Vec::new();
+    traverse_dfa(&table, b"ab", &mut transitions);
     assert_eq!(
         transitions.len(),
         1,
         "ab should match anything-but [abc, abd]"
     );
 
-    let transitions = traverse_dfa(&table, b"abe");
+    transitions.clear();
+    traverse_dfa(&table, b"abe", &mut transitions);
     assert_eq!(
         transitions.len(),
         1,
         "abe should match anything-but [abc, abd]"
     );
 
-    let transitions = traverse_dfa(&table, b"xyz");
+    transitions.clear();
+    traverse_dfa(&table, b"xyz", &mut transitions);
     assert_eq!(
         transitions.len(),
         1,
@@ -648,13 +684,15 @@ fn test_anything_but_with_common_prefix() {
     );
 
     // Should NOT match excluded values
-    let transitions = traverse_dfa(&table, b"abc");
+    transitions.clear();
+    traverse_dfa(&table, b"abc", &mut transitions);
     assert!(
         transitions.is_empty(),
         "abc should NOT match anything-but [abc, abd]"
     );
 
-    let transitions = traverse_dfa(&table, b"abd");
+    transitions.clear();
+    traverse_dfa(&table, b"abd", &mut transitions);
     assert!(
         transitions.is_empty(),
         "abd should NOT match anything-but [abc, abd]"
@@ -672,28 +710,32 @@ fn test_monocase_simple() {
     let table = make_monocase_fa(b"cat", next_field);
 
     // All case variants should match
-    let transitions = traverse_dfa(&table, b"cat");
+    let mut transitions = Vec::new();
+    traverse_dfa(&table, b"cat", &mut transitions);
     assert_eq!(
         transitions.len(),
         1,
         "cat should match equals-ignore-case cat"
     );
 
-    let transitions = traverse_dfa(&table, b"CAT");
+    transitions.clear();
+    traverse_dfa(&table, b"CAT", &mut transitions);
     assert_eq!(
         transitions.len(),
         1,
         "CAT should match equals-ignore-case cat"
     );
 
-    let transitions = traverse_dfa(&table, b"Cat");
+    transitions.clear();
+    traverse_dfa(&table, b"Cat", &mut transitions);
     assert_eq!(
         transitions.len(),
         1,
         "Cat should match equals-ignore-case cat"
     );
 
-    let transitions = traverse_dfa(&table, b"cAt");
+    transitions.clear();
+    traverse_dfa(&table, b"cAt", &mut transitions);
     assert_eq!(
         transitions.len(),
         1,
@@ -701,13 +743,15 @@ fn test_monocase_simple() {
     );
 
     // Should NOT match different strings
-    let transitions = traverse_dfa(&table, b"dog");
+    transitions.clear();
+    traverse_dfa(&table, b"dog", &mut transitions);
     assert!(
         transitions.is_empty(),
         "dog should NOT match equals-ignore-case cat"
     );
 
-    let transitions = traverse_dfa(&table, b"cats");
+    transitions.clear();
+    traverse_dfa(&table, b"cats", &mut transitions);
     assert!(
         transitions.is_empty(),
         "cats should NOT match equals-ignore-case cat"
@@ -720,21 +764,24 @@ fn test_monocase_with_numbers() {
     let next_field = Arc::new(FieldMatcher::new());
     let table = make_monocase_fa(b"abc123", next_field);
 
-    let transitions = traverse_dfa(&table, b"abc123");
+    let mut transitions = Vec::new();
+    traverse_dfa(&table, b"abc123", &mut transitions);
     assert_eq!(
         transitions.len(),
         1,
         "abc123 should match equals-ignore-case abc123"
     );
 
-    let transitions = traverse_dfa(&table, b"ABC123");
+    transitions.clear();
+    traverse_dfa(&table, b"ABC123", &mut transitions);
     assert_eq!(
         transitions.len(),
         1,
         "ABC123 should match equals-ignore-case abc123"
     );
 
-    let transitions = traverse_dfa(&table, b"Abc123");
+    transitions.clear();
+    traverse_dfa(&table, b"Abc123", &mut transitions);
     assert_eq!(
         transitions.len(),
         1,
@@ -742,7 +789,8 @@ fn test_monocase_with_numbers() {
     );
 
     // Should NOT match with different numbers
-    let transitions = traverse_dfa(&table, b"abc124");
+    transitions.clear();
+    traverse_dfa(&table, b"abc124", &mut transitions);
     assert!(
         transitions.is_empty(),
         "abc124 should NOT match equals-ignore-case abc123"
@@ -755,14 +803,16 @@ fn test_monocase_empty() {
     let next_field = Arc::new(FieldMatcher::new());
     let table = make_monocase_fa(b"", next_field);
 
-    let transitions = traverse_dfa(&table, b"");
+    let mut transitions = Vec::new();
+    traverse_dfa(&table, b"", &mut transitions);
     assert_eq!(
         transitions.len(),
         1,
         "empty should match equals-ignore-case empty"
     );
 
-    let transitions = traverse_dfa(&table, b"a");
+    transitions.clear();
+    traverse_dfa(&table, b"a", &mut transitions);
     assert!(
         transitions.is_empty(),
         "a should NOT match equals-ignore-case empty"
@@ -776,20 +826,25 @@ fn test_monocase_unicode_german() {
     let table = make_monocase_fa("München".as_bytes(), next_field);
 
     // All case variants should match
-    let transitions = traverse_dfa(&table, "München".as_bytes());
+    let mut transitions = Vec::new();
+    traverse_dfa(&table, "München".as_bytes(), &mut transitions);
     assert_eq!(transitions.len(), 1, "München should match");
 
-    let transitions = traverse_dfa(&table, "MÜNCHEN".as_bytes());
+    transitions.clear();
+    traverse_dfa(&table, "MÜNCHEN".as_bytes(), &mut transitions);
     assert_eq!(transitions.len(), 1, "MÜNCHEN should match");
 
-    let transitions = traverse_dfa(&table, "münchen".as_bytes());
+    transitions.clear();
+    traverse_dfa(&table, "münchen".as_bytes(), &mut transitions);
     assert_eq!(transitions.len(), 1, "münchen should match");
 
-    let transitions = traverse_dfa(&table, "mÜnchen".as_bytes());
+    transitions.clear();
+    traverse_dfa(&table, "mÜnchen".as_bytes(), &mut transitions);
     assert_eq!(transitions.len(), 1, "mÜnchen should match");
 
     // Should NOT match different strings
-    let transitions = traverse_dfa(&table, "Berlin".as_bytes());
+    transitions.clear();
+    traverse_dfa(&table, "Berlin".as_bytes(), &mut transitions);
     assert!(transitions.is_empty(), "Berlin should NOT match");
 }
 
@@ -805,11 +860,13 @@ fn test_monocase_unicode_hungarian() {
     let table = make_monocase_fa(orig.as_bytes(), next_field);
 
     // Original should match
-    let transitions = traverse_dfa(&table, orig.as_bytes());
+    let mut transitions = Vec::new();
+    traverse_dfa(&table, orig.as_bytes(), &mut transitions);
     assert_eq!(transitions.len(), 1, "Original Hungarian should match");
 
     // Alternate case should match
-    let transitions = traverse_dfa(&table, alts.as_bytes());
+    transitions.clear();
+    traverse_dfa(&table, alts.as_bytes(), &mut transitions);
     assert_eq!(
         transitions.len(),
         1,
@@ -818,7 +875,8 @@ fn test_monocase_unicode_hungarian() {
 
     // Mixed case should match
     let mixed = "\u{10C80}\u{10CDD}\u{10C95}\u{10CCB}";
-    let transitions = traverse_dfa(&table, mixed.as_bytes());
+    transitions.clear();
+    traverse_dfa(&table, mixed.as_bytes(), &mut transitions);
     assert_eq!(transitions.len(), 1, "Mixed Hungarian case should match");
 }
 
@@ -829,17 +887,21 @@ fn test_monocase_intermittent() {
     let next_field = Arc::new(FieldMatcher::new());
     let table = make_monocase_fa(b"a,8899bc d", next_field);
 
-    let transitions = traverse_dfa(&table, b"a,8899bc d");
+    let mut transitions = Vec::new();
+    traverse_dfa(&table, b"a,8899bc d", &mut transitions);
     assert_eq!(transitions.len(), 1, "lowercase should match");
 
-    let transitions = traverse_dfa(&table, b"A,8899BC D");
+    transitions.clear();
+    traverse_dfa(&table, b"A,8899BC D", &mut transitions);
     assert_eq!(transitions.len(), 1, "uppercase should match");
 
-    let transitions = traverse_dfa(&table, b"A,8899bc D");
+    transitions.clear();
+    traverse_dfa(&table, b"A,8899bc D", &mut transitions);
     assert_eq!(transitions.len(), 1, "mixed case should match");
 
     // Wrong punctuation should not match
-    let transitions = traverse_dfa(&table, b"a.8899bc d");
+    transitions.clear();
+    traverse_dfa(&table, b"a.8899bc d", &mut transitions);
     assert!(transitions.is_empty(), "wrong punct should NOT match");
 }
 
@@ -849,10 +911,12 @@ fn test_monocase_greek() {
     let next_field = Arc::new(FieldMatcher::new());
     let table = make_monocase_fa("Σοφία".as_bytes(), next_field);
 
-    let transitions = traverse_dfa(&table, "Σοφία".as_bytes());
+    let mut transitions = Vec::new();
+    traverse_dfa(&table, "Σοφία".as_bytes(), &mut transitions);
     assert_eq!(transitions.len(), 1, "Original Greek should match");
 
-    let transitions = traverse_dfa(&table, "σοφία".as_bytes());
+    transitions.clear();
+    traverse_dfa(&table, "σοφία".as_bytes(), &mut transitions);
     assert_eq!(transitions.len(), 1, "Lowercase Greek should match");
 
     // Note: Final sigma (ς) is not in simple case folding, so won't match

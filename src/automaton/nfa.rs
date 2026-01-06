@@ -11,17 +11,18 @@ use super::small_table::{FaState, FieldMatcher, NfaBuffers, SmallTable, VALUE_TE
 
 /// Traverse a DFA (deterministic finite automaton) on a value.
 ///
-/// Returns the field matchers that can be transitioned to after matching the value.
-pub fn traverse_dfa(table: &SmallTable, val: &[u8]) -> Vec<Arc<FieldMatcher>> {
-    let mut transitions = Vec::new();
+/// Appends the field matchers to the provided transitions Vec.
+/// Like Go, accepts a Vec to append to for reduced allocations.
+#[inline]
+pub fn traverse_dfa(
+    table: &SmallTable,
+    val: &[u8],
+    transitions: &mut Vec<Arc<FieldMatcher>>,
+) {
     let mut current_table = table;
 
     for i in 0..=val.len() {
-        let byte = if i < val.len() {
-            val[i]
-        } else {
-            VALUE_TERMINATOR
-        };
+        let byte = if i < val.len() { val[i] } else { VALUE_TERMINATOR };
 
         match current_table.dstep(byte) {
             Some(next) => {
@@ -31,25 +32,22 @@ pub fn traverse_dfa(table: &SmallTable, val: &[u8]) -> Vec<Arc<FieldMatcher>> {
             None => break,
         }
     }
-
-    transitions
 }
 
 /// Traverse an NFA (nondeterministic finite automaton) on a value.
 ///
 /// This handles epsilon transitions, multiple active states, and spinout (wildcard) states.
-pub fn traverse_nfa(
-    table: &SmallTable,
-    val: &[u8],
-    bufs: &mut NfaBuffers,
-) -> Vec<Arc<FieldMatcher>> {
-    bufs.clear();
+/// Appends transitions to bufs.transitions (assumes it's already cleared by caller).
+#[inline]
+pub fn traverse_nfa(table: &SmallTable, val: &[u8], bufs: &mut NfaBuffers) {
+    // Clear state buffers but NOT transitions (caller manages that)
+    bufs.current_states.clear();
+    bufs.next_states.clear();
 
     // Start with initial state
     let initial = Arc::new(FaState::with_table(table.clone()));
     bufs.current_states.push(initial);
 
-    let mut transitions = Vec::new();
     let mut seen_transitions: HashSet<*const FieldMatcher> = HashSet::new();
 
     for i in 0..=val.len() {
@@ -57,11 +55,7 @@ pub fn traverse_nfa(
             break;
         }
 
-        let byte = if i < val.len() {
-            val[i]
-        } else {
-            VALUE_TERMINATOR
-        };
+        let byte = if i < val.len() { val[i] } else { VALUE_TERMINATOR };
 
         for state in bufs.current_states.clone() {
             // Get epsilon closure
@@ -72,7 +66,7 @@ pub fn traverse_nfa(
                 for ft in &ec_state.field_transitions {
                     let ptr = Arc::as_ptr(ft);
                     if seen_transitions.insert(ptr) {
-                        transitions.push(ft.clone());
+                        bufs.transitions.push(ft.clone());
                     }
                 }
 
@@ -104,13 +98,11 @@ pub fn traverse_nfa(
             for ft in &ec_state.field_transitions {
                 let ptr = Arc::as_ptr(ft);
                 if seen_transitions.insert(ptr) {
-                    transitions.push(ft.clone());
+                    bufs.transitions.push(ft.clone());
                 }
             }
         }
     }
-
-    transitions
 }
 
 /// Compute the epsilon closure of a state.

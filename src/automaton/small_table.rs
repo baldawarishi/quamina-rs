@@ -146,6 +146,7 @@ impl SmallTable {
     /// Take a step through the automaton on the given byte.
     ///
     /// Returns the state to transition to (if any) and the epsilon transitions.
+    #[inline]
     pub fn step(&self, utf8_byte: u8) -> (Option<&Arc<FaState>>, &[Arc<FaState>]) {
         for (i, &ceiling) in self.ceilings.iter().enumerate() {
             if utf8_byte < ceiling {
@@ -157,6 +158,7 @@ impl SmallTable {
     }
 
     /// Deterministic step - for when we know there's no NFA branching.
+    #[inline]
     pub fn dstep(&self, utf8_byte: u8) -> Option<&Arc<FaState>> {
         for (i, &ceiling) in self.ceilings.iter().enumerate() {
             if utf8_byte < ceiling {
@@ -294,6 +296,8 @@ impl ValueMatcher {
 pub struct NfaBuffers {
     pub current_states: Vec<Arc<FaState>>,
     pub next_states: Vec<Arc<FaState>>,
+    /// Reusable buffer for collecting field transitions
+    pub transitions: Vec<Arc<FieldMatcher>>,
 }
 
 impl NfaBuffers {
@@ -301,11 +305,13 @@ impl NfaBuffers {
         Self {
             current_states: Vec::with_capacity(16),
             next_states: Vec::with_capacity(16),
+            transitions: Vec::with_capacity(8),
         }
     }
 
     pub fn clear(&mut self) {
         self.current_states.clear();
         self.next_states.clear();
+        self.transitions.clear();
     }
 }

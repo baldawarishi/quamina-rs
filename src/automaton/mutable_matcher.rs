@@ -477,17 +477,20 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
                 Cow::Borrowed(value)
             };
 
-            let arc_transitions = if *self.is_nondeterministic.borrow() {
-                traverse_nfa(table, &value_to_match, bufs)
+            // Clear and reuse the transitions buffer
+            bufs.transitions.clear();
+
+            if *self.is_nondeterministic.borrow() {
+                traverse_nfa(table, &value_to_match, bufs);
             } else {
-                traverse_dfa(table, &value_to_match)
-            };
+                traverse_dfa(table, &value_to_match, &mut bufs.transitions);
+            }
 
             // Map Arc<FieldMatcher> transitions to Rc<MutableFieldMatcher<X>>
             let transition_map = self.transition_map.borrow();
             let mut result = Vec::new();
-            for arc_fm in arc_transitions {
-                let ptr = Arc::as_ptr(&arc_fm);
+            for arc_fm in &bufs.transitions {
+                let ptr = Arc::as_ptr(arc_fm);
                 if let Some(mutable_fm) = transition_map.get(&ptr) {
                     result.push(mutable_fm.clone());
                 }

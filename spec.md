@@ -16,10 +16,10 @@ Rust port of [quamina](https://github.com/timbray/quamina) - fast pattern-matchi
 
 | Benchmark | Go (ns) | Rust (ns) | Winner |
 |-----------|---------|-----------|--------|
-| status_context_fields | 382 | 494 | Go 1.29x |
-| status_middle_nested | 6,400 | 4,857 | **Rust 1.32x** |
-| status_last_field | 6,600 | 4,980 | **Rust 1.33x** |
-| citylots | 3,400 | 3,738 | Go 1.10x |
+| status_context_fields | 382 | 492 | Go 1.29x |
+| status_middle_nested | 6,400 | 4,558 | **Rust 1.40x** |
+| status_last_field | 6,600 | 4,826 | **Rust 1.37x** |
+| citylots | 3,400 | 3,624 | Go 1.07x |
 
 Run: `cargo bench status` or `cargo bench citylots`
 
@@ -56,7 +56,7 @@ src/
 3. For each field, `transition_on()` matches value via DFA/NFA traversal
 4. `FrozenValueMatcher.transition_map` (FxHashMap) maps FieldMatcher ptrs -> FrozenFieldMatcher
 
-## Completed (Tasks 1-25)
+## Completed (Tasks 1-26)
 
 **Core:** Q-numbers, segments_tree flattener, NfaBuffers reuse, Unicode case folding, parking_lot::Mutex, automaton module split, custom regex NFA, pruner rebuilding.
 
@@ -66,6 +66,8 @@ src/
 - Direct Field matching (removed EventFieldRef indirection)
 - Vec<Field> reuse across flatten calls (returns `&mut [Field]`)
 - FxHashMap for transition lookups (faster than std HashMap for usize keys)
+- Vec reuse in traverse_dfa/traverse_nfa via NfaBuffers.transitions
+- `#[inline]` on hot functions (dstep, step, traverse_dfa, traverse_nfa, transition_on)
 
 **Task 18 (regex NFA):** Ported I-Regexp subset parser and NFA builder from Go. Supports `.`, `[...]`, `|`, `(...)`, `?`. Escape char is `~` (not `\`). Unsupported features (`*`, `+`, `{n,m}`, `~p{...}`) fall back to `regex` crate.
 
@@ -73,16 +75,18 @@ src/
 
 **Task 25 (pruner rebuilding):** Added `PrunerStats` to track emitted/filtered patterns. `rebuild()` creates new automaton with only live patterns. `maybe_rebuild()` auto-triggers when filtered/emitted > 0.2 and activity > 1000. Matches Go's `pruner.go` behavior.
 
+**Task 26 (traverse optimization):** Modified traverse_dfa/traverse_nfa to accept mutable Vec reference instead of returning new Vec. Added transitions buffer to NfaBuffers for reuse. Improved status_middle_nested by 8%, status_last_field by 3.4%. Citylots gap narrowed to 1.07x (was 1.10x).
+
 ## Next Steps
 
 | # | Task | Notes |
 |---|------|-------|
-| 24 | Profile citylots gap | Flamegraph to find remaining ~300ns gap vs Go |
+| 27 | Optimize citylots gap | Profile JSON flattening vs matching; citylots dominated by many small values |
 
 **Potential optimizations:**
-- Inline `traverse_dfa` hot path
-- Pool allocations for result vectors
+- Pool allocations for result vectors in transition_on
 - SIMD for SmallTable.step() ceiling search
+- Generic FaState<T> to eliminate HashMap indirection for frozen matchers
 
 ## Parity
 

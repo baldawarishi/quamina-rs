@@ -1250,13 +1250,15 @@ mod tests {
 
         // Test with empty value (just VALUE_TERMINATOR)
         let empty_value = vec![VALUE_TERMINATOR];
-        let matches = traverse_dfa(&table, &empty_value);
+        let mut matches = Vec::new();
+        traverse_dfa(&table, &empty_value, &mut matches);
         assert!(!matches.is_empty(), "Empty regexp should match empty string");
         assert!(std::sync::Arc::ptr_eq(&matches[0], &field_matcher), "Should transition to field_matcher");
 
         // Test with non-empty value
         let non_empty_value = vec![b'h', b'i', VALUE_TERMINATOR];
-        let matches2 = traverse_dfa(&table, &non_empty_value);
+        let mut matches2 = Vec::new();
+        traverse_dfa(&table, &non_empty_value, &mut matches2);
         assert!(!matches2.is_empty(), "Empty regexp should match non-empty string");
     }
 }

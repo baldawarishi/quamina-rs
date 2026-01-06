@@ -136,6 +136,7 @@ impl<X: Clone + Eq + Hash> FrozenValueMatcher<X> {
     }
 
     /// Transition on a value during matching
+    #[inline]
     pub fn transition_on(
         &self,
         value: &[u8],
@@ -171,16 +172,19 @@ impl<X: Clone + Eq + Hash> FrozenValueMatcher<X> {
                 Cow::Borrowed(value)
             };
 
-            let arc_transitions = if self.is_nondeterministic {
-                traverse_nfa(table, &value_to_match, bufs)
+            // Clear and reuse the transitions buffer
+            bufs.transitions.clear();
+
+            if self.is_nondeterministic {
+                traverse_nfa(table, &value_to_match, bufs);
             } else {
-                traverse_dfa(table, &value_to_match)
-            };
+                traverse_dfa(table, &value_to_match, &mut bufs.transitions);
+            }
 
             // Map FieldMatcher transitions to FrozenFieldMatcher using pointer address
-            let mut result = Vec::new();
-            for arc_fm in arc_transitions {
-                let ptr = Arc::as_ptr(&arc_fm) as usize;
+            let mut result = Vec::with_capacity(bufs.transitions.len());
+            for arc_fm in &bufs.transitions {
+                let ptr = Arc::as_ptr(arc_fm) as usize;
                 if let Some(frozen_fm) = self.transition_map.get(&ptr) {
                     result.push(frozen_fm.clone());
                 }
@@ -800,17 +804,17 @@ impl<X: Clone + Eq + std::hash::Hash> AutomatonValueMatcher<X> {
             None => return vec![],
         };
 
-        let transitions = if self.is_nondeterministic {
-            let mut bufs = NfaBuffers::new();
-            traverse_nfa(table, value, &mut bufs)
+        let mut bufs = NfaBuffers::new();
+        if self.is_nondeterministic {
+            traverse_nfa(table, value, &mut bufs);
         } else {
-            traverse_dfa(table, value)
-        };
+            traverse_dfa(table, value, &mut bufs.transitions);
+        }
 
         // Map transitions back to pattern identifiers using match_id
         let mut matches = Vec::new();
         let mut seen_ids = HashSet::new();
-        for fm in transitions {
+        for fm in &bufs.transitions {
             if let Some(match_id) = fm.match_id {
                 if seen_ids.insert(match_id) {
                     if let Some(x) = self.pattern_map.get(&match_id) {
