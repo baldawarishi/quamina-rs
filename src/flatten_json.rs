@@ -9,6 +9,7 @@
 
 use crate::segments_tree::SegmentsTree;
 use crate::QuaminaError;
+use smallvec::SmallVec;
 
 /// Represents a field's position within an array in the event.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -17,15 +18,20 @@ pub struct ArrayPos {
     pub pos: i32,
 }
 
+/// Type alias for path storage - inline up to 64 bytes to avoid heap allocation
+pub type PathVec = SmallVec<[u8; 64]>;
+/// Type alias for array trail storage - inline up to 4 elements
+pub type ArrayTrailVec = SmallVec<[ArrayPos; 4]>;
+
 /// A flattened field from a JSON event.
 #[derive(Clone, Debug)]
 pub struct Field<'a> {
-    /// Full path (e.g., "context\nuser\nid") - owned because it comes from SegmentsTree
-    pub path: Vec<u8>,
+    /// Full path (e.g., "context\nuser\nid") - uses SmallVec to avoid heap allocation
+    pub path: PathVec,
     /// Value bytes from the event
     pub val: FieldValue<'a>,
-    /// Array position tracking
-    pub array_trail: Vec<ArrayPos>,
+    /// Array position tracking - uses SmallVec to avoid heap allocation
+    pub array_trail: ArrayTrailVec,
     /// True if the value is a JSON number
     pub is_number: bool,
 }
@@ -71,7 +77,7 @@ impl FieldValue<'_> {
 /// The fields capacity is tracked and grows as needed.
 pub struct FlattenJsonState {
     /// Working array position trail (reused between calls)
-    array_trail: Vec<ArrayPos>,
+    array_trail: ArrayTrailVec,
     /// Typical fields count (learned from previous calls for pre-allocation)
     fields_hint: usize,
 }
@@ -86,7 +92,7 @@ impl FlattenJsonState {
     /// Create a new reusable flattener state.
     pub fn new() -> Self {
         Self {
-            array_trail: Vec::with_capacity(8),
+            array_trail: ArrayTrailVec::new(),
             fields_hint: 32,
         }
     }
@@ -133,7 +139,7 @@ struct FlattenContext<'a, 'b> {
     index: usize,
     fields: Vec<Field<'a>>,
     skipping: i32,
-    array_trail: &'b mut Vec<ArrayPos>,
+    array_trail: &'b mut ArrayTrailVec,
     array_count: i32,
 }
 
@@ -185,10 +191,10 @@ impl<'a> FlattenContext<'a, '_> {
         let mut nodes_count = tree.nodes_count();
 
         // Snapshot array trail for object member fields
-        let array_trail = if self.skipping == 0 {
+        let array_trail: ArrayTrailVec = if self.skipping == 0 {
             self.array_trail.clone()
         } else {
-            Vec::new()
+            ArrayTrailVec::new()
         };
 
         let mut member_name: MemberName<'a> = MemberName::Borrowed(&[]);
@@ -301,7 +307,7 @@ impl<'a> FlattenContext<'a, '_> {
                                 let array_tree = tree.get(member_name.as_bytes()).unwrap_or(tree);
                                 let path = tree
                                     .path_for_segment(member_name.as_bytes())
-                                    .map(|p| p.to_vec());
+                                    .map(PathVec::from_slice);
                                 self.read_array(path, array_tree)?;
                             }
 
@@ -342,7 +348,7 @@ impl<'a> FlattenContext<'a, '_> {
                             if member_is_used {
                                 if let Some(path) = tree.path_for_segment(member_name.as_bytes()) {
                                     self.fields.push(Field {
-                                        path: path.to_vec(),
+                                        path: PathVec::from_slice(path),
                                         val: v,
                                         array_trail: array_trail.clone(),
                                         is_number,
@@ -378,7 +384,7 @@ impl<'a> FlattenContext<'a, '_> {
     /// Read a JSON array, recursing into elements as needed.
     fn read_array(
         &mut self,
-        path: Option<Vec<u8>>,
+        path: Option<PathVec>,
         tree: &SegmentsTree,
     ) -> Result<(), FlattenError> {
         // index points at [

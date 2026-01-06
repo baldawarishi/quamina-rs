@@ -16,14 +16,14 @@ Rust port of [quamina](https://github.com/timbray/quamina) - fast pattern-matchi
 
 | Benchmark | Go (ns) | Rust (ns) | Winner |
 |-----------|---------|-----------|--------|
-| status_context_fields | 404 | 524 | Go 1.30x |
-| status_middle_nested | 6,745 | 4,885 | **Rust 1.38x** |
-| status_last_field | 7,217 | 5,037 | **Rust 1.43x** |
-| citylots | 3,812 | 5,029 | Go 1.32x |
+| status_context_fields | 382 | 526 | Go 1.38x |
+| status_middle_nested | 6,400 | 5,000 | **Rust 1.28x** |
+| status_last_field | 6,600 | 5,300 | **Rust 1.25x** |
+| citylots | 3,400 | 4,500 | Go 1.32x |
 
 ## Completed
 
-Tasks 1-10, 13, 15-16: Q-numbers, segments_tree, streaming flattener, allocations (NfaBuffers, Cow), Unicode case folding, EventFieldRef, parking_lot::Mutex, automaton split, lib.rs split (wildcard.rs), unsafe from_utf8_unchecked (~5% improvement on status_context_fields).
+Tasks 1-10, 13, 15-16, 19-20: Q-numbers, segments_tree, streaming flattener, allocations (NfaBuffers, Cow), Unicode case folding, EventFieldRef, parking_lot::Mutex, automaton split, lib.rs split (wildcard.rs), unsafe from_utf8_unchecked, SmallVec for Field path/array_trail.
 
 ## Next Steps
 
@@ -32,8 +32,8 @@ Tasks 1-10, 13, 15-16: Q-numbers, segments_tree, streaming flattener, allocation
 | 14 | Add profiling | flamegraph, pprof comparison |
 | 17 | Pruner rebuilding | Go: auto-rebuilds when filtered/emitted > 0.2. Rust: simple HashSet filter. See `pruner.go` |
 | 18 | Custom regex NFA | Go: custom NFA in automaton. Rust: `regex` crate fallback. See `regexp_nfa.go` |
-| 19 | Investigate citylots gap | Go 3.8μs vs Rust 5μs (1.32x). Profile JSON flattening for GeoJSON |
-| 20 | Investigate context_fields gap | Go 404ns vs Rust 524ns (1.30x). Profile early termination path |
+| 21 | Reduce early termination overhead | Go 382ns vs Rust 526ns. Gap is in flatten (50ns) + matching (94ns) |
+| 22 | Reduce citylots overhead | Go 3.4μs vs Rust 4.5μs. Profile GeoJSON processing |
 
 ## Parity
 
@@ -48,11 +48,13 @@ Tasks 1-10, 13, 15-16: Q-numbers, segments_tree, streaming flattener, allocation
 ### Performance Gap Analysis
 
 **Where Go wins:**
-- `status_context_fields` (1.30x): Early termination with small JSON. Rust may have overhead in field processing.
-- `citylots` (1.32x): Complex GeoJSON. Rust flattener may allocate more or have slower traversal.
+- `status_context_fields` (1.38x): Early termination with 2 fields. Gap: flatten 50ns + matching 94ns.
+- `citylots` (1.32x): Complex GeoJSON with 4 patterns.
 
 **Where Rust wins:**
-- `status_middle_nested` (1.38x): Deep nested matching.
-- `status_last_field` (1.43x): Late field in large JSON.
+- `status_middle_nested` (1.28x): Deep nested matching.
+- `status_last_field` (1.25x): Late field in large JSON.
 
-**Investigation needed:** Profile both gaps with flamegraph to identify specific bottlenecks.
+**Root causes identified:**
+- Flatten: Rust allocates new `Vec<Field>` per call; Go reuses slice with `fields[:0]`
+- Matching: Rust has extra indirection via `EventFieldRef` and `transition_map` lookup

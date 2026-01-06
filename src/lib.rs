@@ -2,10 +2,12 @@
 
 pub mod automaton;
 mod case_folding;
-mod flatten_json;
+#[doc(hidden)]
+pub mod flatten_json;
 mod json;
 pub mod numbits;
-mod segments_tree;
+#[doc(hidden)]
+pub mod segments_tree;
 mod wildcard;
 
 use automaton::{EventFieldRef, NfaBuffers, ThreadSafeCoreMatcher};
@@ -233,11 +235,16 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
         // Get matches from automaton using zero-copy fields and reusable buffers
         let mut matches: Vec<X> = {
             let mut bufs = self.nfa_bufs.lock();
-            self.automaton
-                .matches_for_fields_ref(&ref_fields, &mut bufs)
-                .into_iter()
-                .filter(|x| !self.deleted_patterns.contains(x))
-                .collect()
+            let raw_matches = self.automaton.matches_for_fields_ref(&ref_fields, &mut bufs);
+            // Fast path: skip filtering if no patterns have been deleted
+            if self.deleted_patterns.is_empty() {
+                raw_matches
+            } else {
+                raw_matches
+                    .into_iter()
+                    .filter(|x| !self.deleted_patterns.contains(x))
+                    .collect()
+            }
         };
 
         // Slow path: fallback matching still needs legacy Field format (with String values)
@@ -284,6 +291,16 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
         }
 
         Ok(matches)
+    }
+
+    /// Flatten an event without matching (for benchmarking)
+    #[doc(hidden)]
+    pub fn flatten_only(&self, event: &[u8]) -> Result<usize, QuaminaError> {
+        let fields = {
+            let mut flattener = self.flattener.lock();
+            flattener.flatten(event, &self.segments_tree)?
+        };
+        Ok(fields.len())
     }
 
     /// Get matches from fallback patterns

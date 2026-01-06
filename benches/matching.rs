@@ -4,6 +4,8 @@
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use flate2::read::GzDecoder;
+use quamina::flatten_json::FlattenJsonState;
+use quamina::segments_tree::SegmentsTree;
 use quamina::Quamina;
 use std::io::{BufRead, BufReader};
 
@@ -149,6 +151,55 @@ fn bench_diverse_no_match(c: &mut Criterion) {
 }
 
 // === Benchmarks comparable to Go's flatten_json_bench_test.go ===
+
+/// Flatten-only benchmark for context fields (compare to Go's Benchmark_JsonFlattener_ContextFields)
+fn bench_flatten_context_fields(c: &mut Criterion) {
+    let mut q = Quamina::new();
+    q.add_pattern("context", PATTERN_CONTEXT).unwrap();
+    let event = load_status_json();
+
+    c.bench_function("flatten_context_fields", |b| {
+        b.iter(|| q.flatten_only(black_box(&event)).unwrap())
+    });
+}
+
+/// Direct flattener benchmark without Mutex overhead
+fn bench_flatten_direct_context_fields(c: &mut Criterion) {
+    let mut tree = SegmentsTree::new();
+    tree.add("context\nuser_id");
+    tree.add("context\nfriends_count");
+    let mut flattener = FlattenJsonState::new();
+    let event = load_status_json();
+
+    c.bench_function("flatten_direct_context_fields", |b| {
+        b.iter(|| {
+            let fields = flattener.flatten(black_box(&event), &tree).unwrap();
+            black_box(fields.len())
+        })
+    });
+}
+
+/// Flatten-only benchmark for middle nested field
+fn bench_flatten_middle_nested(c: &mut Criterion) {
+    let mut q = Quamina::new();
+    q.add_pattern("middle", PATTERN_MIDDLE_NESTED).unwrap();
+    let event = load_status_json();
+
+    c.bench_function("flatten_middle_nested", |b| {
+        b.iter(|| q.flatten_only(black_box(&event)).unwrap())
+    });
+}
+
+/// Flatten-only benchmark for last field
+fn bench_flatten_last_field(c: &mut Criterion) {
+    let mut q = Quamina::new();
+    q.add_pattern("last", PATTERN_LAST_FIELD).unwrap();
+    let event = load_status_json();
+
+    c.bench_function("flatten_last_field", |b| {
+        b.iter(|| q.flatten_only(black_box(&event)).unwrap())
+    });
+}
 
 /// Match on context fields (early in large JSON)
 fn bench_status_context_fields(c: &mut Criterion) {
@@ -334,7 +385,12 @@ criterion_group!(
     bench_has_matches,
     bench_diverse_patterns,
     bench_diverse_no_match,
-    // Status.json benchmarks (comparable to Go)
+    // Flatten-only benchmarks (comparable to Go's Benchmark_JsonFlattener_*)
+    bench_flatten_context_fields,
+    bench_flatten_direct_context_fields,
+    bench_flatten_middle_nested,
+    bench_flatten_last_field,
+    // Status.json full matching benchmarks (comparable to Go's Benchmark_JsonFlattner_Evaluate_*)
     bench_status_context_fields,
     bench_status_middle_nested,
     bench_status_last_field,
