@@ -1,5 +1,6 @@
 //! Minimal JSON parser for flattening events and patterns
 
+use crate::regexp::{parse_regexp, RegexpRoot};
 use crate::segments_tree::SEGMENT_SEPARATOR;
 use crate::QuaminaError;
 use std::collections::HashMap;
@@ -37,6 +38,9 @@ pub enum Matcher {
     AnythingBut(Vec<String>),
     EqualsIgnoreCase(String),
     Numeric(NumericComparison),
+    /// Regex pattern parsed into our custom NFA (automaton-compatible)
+    ParsedRegexp(RegexpRoot),
+    /// Regex pattern using the regex crate (fallback for unsupported features)
     Regex(regex::Regex),
 }
 
@@ -66,6 +70,8 @@ impl Matcher {
             Matcher::AnythingBut(_) => true,
             // EqualsIgnoreCase: automaton supports full Unicode case folding
             Matcher::EqualsIgnoreCase(_) => true,
+            // ParsedRegexp: uses our custom NFA integrated into automaton
+            Matcher::ParsedRegexp(_) => true,
             // NumericExact: automaton matches on string representation, but event values
             // may have different representations (35 vs 35.0 vs 3.5e1)
             Matcher::NumericExact(_) => false,
@@ -299,15 +305,22 @@ fn value_to_matcher(value: &Value) -> Result<Matcher, QuaminaError> {
                             "numeric value must be an array".into(),
                         ));
                     }
-                    "regex" => {
+                    "regexp" | "regex" => {
                         if let Value::String(s) = val {
-                            match regex::Regex::new(s) {
-                                Ok(re) => return Ok(Matcher::Regex(re)),
-                                Err(e) => {
-                                    return Err(QuaminaError::InvalidPattern(format!(
-                                        "invalid regex: {}",
-                                        e
-                                    )))
+                            // Try our custom parser first (automaton-compatible)
+                            match parse_regexp(s) {
+                                Ok(tree) => return Ok(Matcher::ParsedRegexp(tree)),
+                                Err(_) => {
+                                    // Fall back to regex crate for unsupported features
+                                    match regex::Regex::new(s) {
+                                        Ok(re) => return Ok(Matcher::Regex(re)),
+                                        Err(e) => {
+                                            return Err(QuaminaError::InvalidPattern(format!(
+                                                "invalid regex: {}",
+                                                e
+                                            )))
+                                        }
+                                    }
                                 }
                             }
                         }

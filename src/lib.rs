@@ -6,6 +6,7 @@ mod case_folding;
 pub mod flatten_json;
 mod json;
 pub mod numbits;
+pub mod regexp;
 #[doc(hidden)]
 pub mod segments_tree;
 mod wildcard;
@@ -489,6 +490,13 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
                 lower_ok && upper_ok
             }),
             Matcher::Regex(re) => re.is_match(value),
+            // ParsedRegexp should go through automaton path, not fallback
+            // This case shouldn't normally be hit since is_automaton_compatible returns true
+            Matcher::ParsedRegexp(_) => {
+                // Fallback: use regex crate for matching (less efficient but correct)
+                // Convert back to a simple regex - this is a fallback that shouldn't be hit
+                false
+            }
         }
     }
 

@@ -15,6 +15,7 @@ use super::fa_builders::{
     make_anything_but_fa, make_monocase_fa, make_prefix_fa, make_shellstyle_fa, make_string_fa,
     make_wildcard_fa, merge_fas,
 };
+use crate::regexp::make_regexp_nfa;
 use super::nfa::{traverse_dfa, traverse_nfa};
 use super::small_table::{FieldMatcher, NfaBuffers, SmallTable};
 
@@ -154,7 +155,11 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
                 self.add_anything_but_transition(&excluded_bytes)
             }
             Matcher::EqualsIgnoreCase(s) => self.add_monocase_transition(s.as_bytes()),
-            // For complex matchers (Suffix, Numeric, Regex), we create a simple next state
+            Matcher::ParsedRegexp(ref tree) => {
+                *self.is_nondeterministic.borrow_mut() = true;
+                self.add_regexp_transition(tree)
+            }
+            // For complex matchers (Suffix, Numeric, Regex fallback), we create a simple next state
             // These would need runtime checking or specialized handling
             _ => Rc::new(MutableFieldMatcher::new()),
         }
@@ -384,6 +389,36 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
             .borrow_mut()
             .insert(Arc::as_ptr(&next_arc), next_fm.clone());
         let new_fa = make_monocase_fa(val, next_arc);
+
+        let mut start_table = self.start_table.borrow_mut();
+        if let Some(ref existing) = *start_table {
+            *start_table = Some(merge_fas(existing, &new_fa));
+        } else if self.singleton_match.borrow().is_some() {
+            let singleton_val = self.singleton_match.borrow().clone().unwrap();
+            let singleton_trans = self.singleton_transition.borrow().clone().unwrap();
+            let singleton_arc = Arc::new(FieldMatcher::new());
+            self.transition_map
+                .borrow_mut()
+                .insert(Arc::as_ptr(&singleton_arc), singleton_trans);
+            let singleton_fa = make_string_fa(&singleton_val, singleton_arc);
+            *start_table = Some(merge_fas(&singleton_fa, &new_fa));
+            *self.singleton_match.borrow_mut() = None;
+            *self.singleton_transition.borrow_mut() = None;
+        } else {
+            *start_table = Some(new_fa);
+        }
+
+        next_fm
+    }
+
+    fn add_regexp_transition(&self, tree: &crate::regexp::RegexpRoot) -> Rc<MutableFieldMatcher<X>> {
+        // Build the regexp NFA. forField=false because Rust doesn't pass values with quotes.
+        let (new_fa, field_matcher_arc) = make_regexp_nfa(tree.clone(), false);
+
+        let next_fm = Rc::new(MutableFieldMatcher::new());
+        self.transition_map
+            .borrow_mut()
+            .insert(Arc::as_ptr(&field_matcher_arc), next_fm.clone());
 
         let mut start_table = self.start_table.borrow_mut();
         if let Some(ref existing) = *start_table {

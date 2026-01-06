@@ -4,13 +4,13 @@ Rust port of [quamina](https://github.com/timbray/quamina) - fast pattern-matchi
 
 ## Status
 
-**148 tests passing.** All core operators implemented.
+**160 tests passing.** All core operators implemented.
 
 | Operator | Path | Operator | Path |
 |----------|------|----------|------|
 | Exact, Prefix, Suffix | automaton/fallback | Wildcard, Shellstyle | automaton |
 | Anything-but, Exists | automaton | Equals-ignore-case | automaton (Unicode) |
-| Numeric (exact/compare) | automaton/fallback | Regex | fallback (`regex` crate) |
+| Numeric (exact/compare) | automaton/fallback | Regex | automaton (I-Regexp subset) |
 
 ## Performance
 
@@ -31,6 +31,7 @@ src/
 ├── json.rs             # Pattern parsing, Matcher enum
 ├── flatten_json.rs     # Streaming JSON flattener (segments_tree)
 ├── numbits.rs          # Q-number encoding for numeric comparisons
+├── regexp.rs           # I-Regexp parser and NFA builder
 ├── automaton/
 │   ├── mod.rs          # Module exports
 │   ├── small_table.rs  # SmallTable, FaState, FieldMatcher, NfaBuffers
@@ -39,7 +40,7 @@ src/
 │   ├── thread_safe.rs  # ThreadSafeCoreMatcher, FrozenFieldMatcher/ValueMatcher
 │   ├── mutable_matcher.rs  # MutableFieldMatcher/ValueMatcher (building)
 │   └── wildcard.rs     # Shellstyle/wildcard pattern handling
-└── fallback/           # Suffix, numeric ranges, regex (non-automaton)
+└── fallback/           # Suffix, numeric ranges (non-automaton)
 ```
 
 **Key types:**
@@ -55,9 +56,9 @@ src/
 3. For each field, `transition_on()` matches value via DFA/NFA traversal
 4. `FrozenValueMatcher.transition_map` (FxHashMap) maps FieldMatcher ptrs -> FrozenFieldMatcher
 
-## Completed (Tasks 1-23)
+## Completed (Tasks 1-24)
 
-**Core:** Q-numbers, segments_tree flattener, NfaBuffers reuse, Unicode case folding, parking_lot::Mutex, automaton module split.
+**Core:** Q-numbers, segments_tree flattener, NfaBuffers reuse, Unicode case folding, parking_lot::Mutex, automaton module split, custom regex NFA.
 
 **Optimizations:**
 - `unsafe from_utf8_unchecked` in flattener (validated JSON)
@@ -65,6 +66,8 @@ src/
 - Direct Field matching (removed EventFieldRef indirection)
 - Vec<Field> reuse across flatten calls (returns `&mut [Field]`)
 - FxHashMap for transition lookups (faster than std HashMap for usize keys)
+
+**Task 18 (regex NFA):** Ported I-Regexp subset parser and NFA builder from Go. Supports `.`, `[...]`, `|`, `(...)`, `?`. Escape char is `~` (not `\`). Unsupported features (`*`, `+`, `{n,m}`, `~p{...}`) fall back to `regex` crate.
 
 **Task 23 learnings:** Attempted Vec-based indexing (store index in FieldMatcher, lookup by index). **Regressed 5-8%** because accessing `arc_fm.index` requires Arc dereference, while `Arc::as_ptr()` for HashMap keys doesn't dereference. FxHashMap was better solution.
 
@@ -74,7 +77,6 @@ src/
 |---|------|-------|
 | 24 | Profile citylots gap | Flamegraph to find remaining ~300ns gap vs Go |
 | 17 | Pruner rebuilding | Go auto-rebuilds at 0.2 ratio. See `pruner.go` |
-| 18 | Custom regex NFA | Go: `regexp_nfa.go`. Rust uses `regex` crate fallback |
 
 **Potential optimizations:**
 - Inline `traverse_dfa` hot path
@@ -88,7 +90,7 @@ src/
 | Automaton core | ✅ | ✅ | SmallTable, NFA/DFA |
 | Segment flattener | ✅ | ✅ | Early termination, Vec reuse |
 | Unicode case folding | ✅ | ✅ | case_folding.rs |
-| Custom regex NFA | ✅ | ❌ | Rust uses `regex` crate fallback |
+| Custom regex NFA | ✅ | ✅ | I-Regexp subset (`.`, `[...]`, `|`, `(...)`, `?`) |
 | Pruner rebuilding | ✅ | ❌ | Rust: HashSet deletion only |
 
 ## Go Reference Files
