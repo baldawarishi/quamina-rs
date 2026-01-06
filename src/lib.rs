@@ -10,24 +10,15 @@ pub mod numbits;
 pub mod segments_tree;
 mod wildcard;
 
-use automaton::{EventFieldRef, NfaBuffers, ThreadSafeCoreMatcher};
+use automaton::{NfaBuffers, ThreadSafeCoreMatcher};
 use flatten_json::FlattenJsonState;
 use json::{ArrayPos, Field, Matcher};
-use wildcard::{shellstyle_match, wildcard_match};
+use parking_lot::Mutex;
 use segments_tree::SegmentsTree;
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::hash::Hash;
-use parking_lot::Mutex;
-
-/// Convert bytes to str without UTF-8 validation.
-///
-/// # Safety
-/// Safe for JSON-derived data because JSON is guaranteed to be valid UTF-8.
-#[inline(always)]
-unsafe fn bytes_to_str_unchecked(bytes: &[u8]) -> &str {
-    std::str::from_utf8_unchecked(bytes)
-}
+use wildcard::{shellstyle_match, wildcard_match};
 
 /// Pattern definition: (field matchers, is_automaton_compatible)
 type PatternDef = (HashMap<String, Vec<Matcher>>, bool);
@@ -202,40 +193,18 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
     /// Find all patterns that match the given event
     pub fn matches_for_event(&self, event: &[u8]) -> Result<Vec<X>, QuaminaError> {
         // Use the reusable flattener with segments tree for field skipping
-        let streaming_fields = {
+        let mut streaming_fields = {
             let mut flattener = self.flattener.lock();
             flattener.flatten(event, &self.segments_tree)?
         };
 
-        // Fast path: use zero-copy field references for automaton matching
-        let mut ref_fields: Vec<EventFieldRef<'_>> = Vec::with_capacity(streaming_fields.len());
-        for f in &streaming_fields {
-            // SAFETY: JSON is valid UTF-8, flattener already validated the input
-            let path = unsafe { bytes_to_str_unchecked(&f.path) };
+        // Sort by path for automaton matching (using byte comparison which is equivalent to str for ASCII paths)
+        streaming_fields.sort_unstable_by(|a, b| a.path.cmp(&b.path));
 
-            // Get value bytes, stripping quotes from string values
-            let raw_bytes = f.val.as_bytes();
-            let value = if raw_bytes.starts_with(b"\"") && raw_bytes.ends_with(b"\"") {
-                &raw_bytes[1..raw_bytes.len() - 1]
-            } else {
-                raw_bytes
-            };
-
-            ref_fields.push(EventFieldRef {
-                path,
-                value,
-                array_trail: &f.array_trail,
-                is_number: f.is_number,
-            });
-        }
-
-        // Sort by path for automaton matching
-        ref_fields.sort_by(|a, b| a.path.cmp(b.path));
-
-        // Get matches from automaton using zero-copy fields and reusable buffers
+        // Get matches from automaton using fields directly (no intermediate EventFieldRef)
         let mut matches: Vec<X> = {
             let mut bufs = self.nfa_bufs.lock();
-            let raw_matches = self.automaton.matches_for_fields_ref(&ref_fields, &mut bufs);
+            let raw_matches = self.automaton.matches_for_fields_direct(&streaming_fields, &mut bufs);
             // Fast path: skip filtering if no patterns have been deleted
             if self.deleted_patterns.is_empty() {
                 raw_matches

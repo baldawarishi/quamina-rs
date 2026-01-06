@@ -579,6 +579,99 @@ impl<X: Clone + Eq + Hash + Send + Sync> ThreadSafeCoreMatcher<X> {
             }
         }
     }
+
+    /// Match fields using flattened fields directly.
+    ///
+    /// This avoids the intermediate EventFieldRef allocation by working
+    /// directly with flatten_json::Field. Fields should already be sorted by path.
+    /// This method is lock-free and can be called concurrently from multiple threads.
+    pub fn matches_for_fields_direct(
+        &self,
+        fields: &[crate::flatten_json::Field<'_>],
+        bufs: &mut NfaBuffers,
+    ) -> Vec<X> {
+        let root = self.root.load();
+
+        if fields.is_empty() {
+            return self.collect_exists_false_matches(&root);
+        }
+
+        let mut matches = FrozenMatchSet::new();
+        bufs.clear();
+
+        for i in 0..fields.len() {
+            self.try_to_match_direct(fields, i, &root, &mut matches, bufs);
+        }
+
+        matches.into_vec()
+    }
+
+    fn try_to_match_direct(
+        &self,
+        fields: &[crate::flatten_json::Field<'_>],
+        index: usize,
+        state: &Arc<FrozenFieldMatcher<X>>,
+        matches: &mut FrozenMatchSet<X>,
+        bufs: &mut NfaBuffers,
+    ) {
+        let field = &fields[index];
+        let path = field.path_str();
+        let value = field.value_bytes();
+        let array_trail = field.array_trail_slice();
+
+        // Check exists:true transition
+        if let Some(exists_trans) = state.exists_true.get(path) {
+            for m in &exists_trans.matches {
+                matches.add(m.clone());
+            }
+            for next_idx in (index + 1)..fields.len() {
+                if no_array_trail_conflict_ref(array_trail, fields[next_idx].array_trail_slice()) {
+                    self.try_to_match_direct(fields, next_idx, exists_trans, matches, bufs);
+                }
+            }
+            self.check_exists_false_direct(state, fields, index, matches, bufs);
+        }
+
+        // Check exists:false
+        self.check_exists_false_direct(state, fields, index, matches, bufs);
+
+        // Try value transitions
+        let next_states = state.transition_on(path, value, field.is_number, bufs);
+
+        for next_state in next_states {
+            for m in &next_state.matches {
+                matches.add(m.clone());
+            }
+
+            for next_idx in (index + 1)..fields.len() {
+                if no_array_trail_conflict_ref(array_trail, fields[next_idx].array_trail_slice()) {
+                    self.try_to_match_direct(fields, next_idx, &next_state, matches, bufs);
+                }
+            }
+
+            self.check_exists_false_direct(&next_state, fields, index, matches, bufs);
+        }
+    }
+
+    fn check_exists_false_direct(
+        &self,
+        state: &Arc<FrozenFieldMatcher<X>>,
+        fields: &[crate::flatten_json::Field<'_>],
+        index: usize,
+        matches: &mut FrozenMatchSet<X>,
+        bufs: &mut NfaBuffers,
+    ) {
+        for (path, exists_trans) in &state.exists_false {
+            let field_exists = fields.iter().any(|f| f.path_str() == path);
+
+            if !field_exists {
+                for m in &exists_trans.matches {
+                    matches.add(m.clone());
+                }
+                self.try_to_match_direct(fields, index, exists_trans, matches, bufs);
+            }
+        }
+    }
 }
 
 impl<X: Clone + Eq + Hash + Send + Sync> Default for ThreadSafeCoreMatcher<X> {

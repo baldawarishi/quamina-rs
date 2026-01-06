@@ -36,6 +36,36 @@ pub struct Field<'a> {
     pub is_number: bool,
 }
 
+impl Field<'_> {
+    /// Returns the path as a string slice.
+    ///
+    /// # Safety
+    /// This uses unsafe conversion because JSON field names are guaranteed
+    /// to be valid UTF-8 by the JSON specification.
+    #[inline]
+    pub fn path_str(&self) -> &str {
+        // SAFETY: JSON field names are valid UTF-8
+        unsafe { std::str::from_utf8_unchecked(&self.path) }
+    }
+
+    /// Returns the value as raw bytes, stripping surrounding quotes from strings.
+    #[inline]
+    pub fn value_bytes(&self) -> &[u8] {
+        let raw = self.val.as_bytes();
+        if raw.len() >= 2 && raw[0] == b'"' && raw[raw.len() - 1] == b'"' {
+            &raw[1..raw.len() - 1]
+        } else {
+            raw
+        }
+    }
+
+    /// Returns the array trail as a slice.
+    #[inline]
+    pub fn array_trail_slice(&self) -> &[ArrayPos] {
+        &self.array_trail
+    }
+}
+
 /// Field value - either a slice of the original event or an owned string
 /// for values containing escape sequences.
 #[derive(Clone, Debug)]
