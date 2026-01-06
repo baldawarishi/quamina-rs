@@ -17,9 +17,9 @@ Rust port of [quamina](https://github.com/timbray/quamina) - fast pattern-matchi
 | Benchmark | Go (ns) | Rust (ns) | Winner |
 |-----------|---------|-----------|--------|
 | status_context_fields | 382 | 492 | Go 1.29x |
-| status_middle_nested | 6,400 | 4,558 | **Rust 1.40x** |
-| status_last_field | 6,600 | 4,826 | **Rust 1.37x** |
-| citylots | 3,400 | 3,624 | Go 1.07x |
+| status_middle_nested | 6,400 | 4,556 | **Rust 1.40x** |
+| status_last_field | 6,600 | 4,920 | **Rust 1.34x** |
+| citylots | 3,400 | 3,417 | Parity |
 
 Run: `cargo bench status` or `cargo bench citylots`
 
@@ -56,13 +56,14 @@ src/
 3. For each field, `transition_on()` matches value via DFA/NFA traversal
 4. `FrozenValueMatcher.transition_map` (FxHashMap) maps FieldMatcher ptrs -> FrozenFieldMatcher
 
-## Completed (Tasks 1-26)
+## Completed (Tasks 1-27)
 
 **Core:** Q-numbers, segments_tree flattener, NfaBuffers reuse, Unicode case folding, parking_lot::Mutex, automaton module split, custom regex NFA, pruner rebuilding.
 
 **Optimizations:**
 - `unsafe from_utf8_unchecked` in flattener (validated JSON)
-- `SmallVec` for Field path/array_trail
+- `Arc<[u8]>` for Field paths (O(1) cloning from SegmentsTree)
+- `SmallVec` for Field array_trail
 - Direct Field matching (removed EventFieldRef indirection)
 - Vec<Field> reuse across flatten calls (returns `&mut [Field]`)
 - FxHashMap for transition lookups (faster than std HashMap for usize keys)
@@ -77,16 +78,19 @@ src/
 
 **Task 26 (traverse optimization):** Modified traverse_dfa/traverse_nfa to accept mutable Vec reference instead of returning new Vec. Added transitions buffer to NfaBuffers for reuse. Improved status_middle_nested by 8%, status_last_field by 3.4%. Citylots gap narrowed to 1.07x (was 1.10x).
 
+**Task 27 (citylots optimization):** Changed Field.path from `SmallVec<[u8; 64]>` to `Arc<[u8]>`. Paths are now shared from SegmentsTree with O(1) cloning. Citylots improved 20% (3.42µs vs 4.26µs), now at parity with Go's 3.4µs.
+
 ## Next Steps
 
 | # | Task | Notes |
 |---|------|-------|
-| 27 | Optimize citylots gap | Profile JSON flattening vs matching; citylots dominated by many small values |
+| 28 | Further optimizations | Profile remaining gaps if any |
 
 **Potential optimizations:**
 - Pool allocations for result vectors in transition_on
 - SIMD for SmallTable.step() ceiling search
 - Generic FaState<T> to eliminate HashMap indirection for frozen matchers
+- status_context_fields optimization (Go 1.29x faster)
 
 ## Parity
 

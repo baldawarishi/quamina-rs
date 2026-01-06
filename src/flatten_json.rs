@@ -10,6 +10,7 @@
 use crate::segments_tree::SegmentsTree;
 use crate::QuaminaError;
 use smallvec::SmallVec;
+use std::sync::Arc;
 
 /// Represents a field's position within an array in the event.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -18,7 +19,9 @@ pub struct ArrayPos {
     pub pos: i32,
 }
 
-/// Type alias for path storage - inline up to 64 bytes to avoid heap allocation
+/// Type alias for path storage - Arc for O(1) cloning (paths are shared from SegmentsTree)
+pub type PathArc = Arc<[u8]>;
+/// Legacy type alias for path storage - inline up to 64 bytes to avoid heap allocation
 pub type PathVec = SmallVec<[u8; 64]>;
 /// Type alias for array trail storage - inline up to 4 elements
 pub type ArrayTrailVec = SmallVec<[ArrayPos; 4]>;
@@ -26,8 +29,8 @@ pub type ArrayTrailVec = SmallVec<[ArrayPos; 4]>;
 /// A flattened field from a JSON event.
 #[derive(Clone, Debug)]
 pub struct Field<'a> {
-    /// Full path (e.g., "context\nuser\nid") - uses SmallVec to avoid heap allocation
-    pub path: PathVec,
+    /// Full path (e.g., "context\nuser\nid") - Arc for O(1) cloning
+    pub path: PathArc,
     /// Value bytes from the event
     pub val: FieldValue<'a>,
     /// Array position tracking - uses SmallVec to avoid heap allocation
@@ -173,9 +176,8 @@ impl FlattenJsonState {
         // 1. We cleared the vec at the start, so all borrows are from this event
         // 2. The returned mutable slice borrows self, preventing concurrent flatten calls
         // 3. The caller cannot use the slice after event is dropped (enforced by 'a)
-        let fields_slice: &mut [Field<'a>] = unsafe {
-            std::mem::transmute(self.fields.as_mut_slice())
-        };
+        let fields_slice: &mut [Field<'a>] =
+            unsafe { std::mem::transmute(self.fields.as_mut_slice()) };
 
         Ok(fields_slice)
     }
@@ -382,9 +384,7 @@ impl<'a> FlattenContext<'a, '_> {
                                 self.skip_block(b'[', b']')?;
                             } else {
                                 let array_tree = tree.get(member_name.as_bytes()).unwrap_or(tree);
-                                let path = tree
-                                    .path_for_segment(member_name.as_bytes())
-                                    .map(PathVec::from_slice);
+                                let path = tree.path_arc_for_segment(member_name.as_bytes());
                                 self.read_array(path, array_tree)?;
                             }
 
@@ -423,9 +423,11 @@ impl<'a> FlattenContext<'a, '_> {
                     if is_leaf {
                         if let Some(v) = val {
                             if member_is_used {
-                                if let Some(path) = tree.path_for_segment(member_name.as_bytes()) {
+                                if let Some(path) =
+                                    tree.path_arc_for_segment(member_name.as_bytes())
+                                {
                                     self.push_field(Field {
-                                        path: PathVec::from_slice(path),
+                                        path,
                                         val: v,
                                         array_trail: array_trail.clone(),
                                         is_number,
@@ -461,7 +463,7 @@ impl<'a> FlattenContext<'a, '_> {
     /// Read a JSON array, recursing into elements as needed.
     fn read_array(
         &mut self,
-        path: Option<PathVec>,
+        path: Option<PathArc>,
         tree: &SegmentsTree,
     ) -> Result<(), FlattenError> {
         // index points at [
@@ -1057,7 +1059,7 @@ mod tests {
         let fields = state.flatten(event, &tree).unwrap();
 
         assert_eq!(fields.len(), 1);
-        assert_eq!(fields[0].path.as_slice(), b"status");
+        assert_eq!(fields[0].path.as_ref(), b"status");
         assert_eq!(fields[0].val.as_bytes(), b"\"active\"");
     }
 
@@ -1069,7 +1071,7 @@ mod tests {
         let fields = state.flatten(event, &tree).unwrap();
 
         assert_eq!(fields.len(), 1);
-        assert_eq!(fields[0].path.as_slice(), b"context\nuser\nid");
+        assert_eq!(fields[0].path.as_ref(), b"context\nuser\nid");
         assert_eq!(fields[0].val.as_bytes(), b"\"123\"");
     }
 
@@ -1081,7 +1083,7 @@ mod tests {
         let fields = state.flatten(event, &tree).unwrap();
 
         assert_eq!(fields.len(), 1);
-        assert_eq!(fields[0].path.as_slice(), b"c");
+        assert_eq!(fields[0].path.as_ref(), b"c");
         assert_eq!(fields[0].val.as_bytes(), b"3");
     }
 
@@ -1120,7 +1122,7 @@ mod tests {
         let fields = state.flatten(event, &tree).unwrap();
 
         assert_eq!(fields.len(), 1);
-        assert_eq!(fields[0].path.as_slice(), b"first");
+        assert_eq!(fields[0].path.as_ref(), b"first");
     }
 
     #[test]
@@ -1164,7 +1166,7 @@ mod tests {
         let fields = state.flatten(event, &tree).unwrap();
 
         assert_eq!(fields.len(), 1);
-        assert_eq!(fields[0].path.as_slice(), b"keep");
+        assert_eq!(fields[0].path.as_ref(), b"keep");
     }
 
     #[test]
@@ -1175,7 +1177,7 @@ mod tests {
         let fields = state.flatten(event, &tree).unwrap();
 
         assert_eq!(fields.len(), 1);
-        assert_eq!(fields[0].path.as_slice(), b"keep");
+        assert_eq!(fields[0].path.as_ref(), b"keep");
     }
 
     #[test]

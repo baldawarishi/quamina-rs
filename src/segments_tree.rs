@@ -4,6 +4,7 @@
 //! providing a significant performance optimization.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 /// Separator used between path segments (e.g., "context\nuser\nid")
 pub const SEGMENT_SEPARATOR: char = '\n';
@@ -32,8 +33,8 @@ pub struct SegmentsTree {
     /// Maps segment name -> child tree
     nodes: HashMap<String, SegmentsTree>,
     /// Leaf fields at this level
-    /// Maps segment name -> full path bytes
-    fields: HashMap<String, Vec<u8>>,
+    /// Maps segment name -> full path bytes (Arc for O(1) cloning)
+    fields: HashMap<String, Arc<[u8]>>,
 }
 
 impl Default for SegmentsTree {
@@ -69,7 +70,7 @@ impl SegmentsTree {
         if segments.len() == 1 {
             // Direct field on this node
             self.fields
-                .insert(path.to_string(), path.as_bytes().to_vec());
+                .insert(path.to_string(), Arc::from(path.as_bytes()));
             return;
         }
 
@@ -79,7 +80,7 @@ impl SegmentsTree {
             if i == segments.len() - 1 {
                 // Last segment is a field
                 node.fields
-                    .insert((*segment).to_string(), path.as_bytes().to_vec());
+                    .insert((*segment).to_string(), Arc::from(path.as_bytes()));
             } else {
                 // Create node if it doesn't exist
                 node = node
@@ -115,13 +116,22 @@ impl SegmentsTree {
             .and_then(|s| self.nodes.get(s))
     }
 
-    /// Get the full path for a leaf segment
+    /// Get the full path for a leaf segment as a slice reference
     #[inline]
     pub fn path_for_segment(&self, segment: &[u8]) -> Option<&[u8]> {
         std::str::from_utf8(segment)
             .ok()
             .and_then(|s| self.fields.get(s))
-            .map(|v| v.as_slice())
+            .map(|v| v.as_ref())
+    }
+
+    /// Get the full path for a leaf segment as an Arc (O(1) clone)
+    #[inline]
+    pub fn path_arc_for_segment(&self, segment: &[u8]) -> Option<Arc<[u8]>> {
+        std::str::from_utf8(segment)
+            .ok()
+            .and_then(|s| self.fields.get(s))
+            .cloned()
     }
 
     /// Number of child nodes (non-leaf)

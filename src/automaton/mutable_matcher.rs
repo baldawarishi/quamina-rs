@@ -15,9 +15,9 @@ use super::fa_builders::{
     make_anything_but_fa, make_monocase_fa, make_prefix_fa, make_shellstyle_fa, make_string_fa,
     make_wildcard_fa, merge_fas,
 };
-use crate::regexp::make_regexp_nfa;
 use super::nfa::{traverse_dfa, traverse_nfa};
 use super::small_table::{FieldMatcher, NfaBuffers, SmallTable};
+use crate::regexp::make_regexp_nfa;
 
 /// A mutable field matcher used during pattern building.
 /// This is similar to Go's fieldMatcher with its updateable atomic pointer.
@@ -411,7 +411,10 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
         next_fm
     }
 
-    fn add_regexp_transition(&self, tree: &crate::regexp::RegexpRoot) -> Rc<MutableFieldMatcher<X>> {
+    fn add_regexp_transition(
+        &self,
+        tree: &crate::regexp::RegexpRoot,
+    ) -> Rc<MutableFieldMatcher<X>> {
         // Build the regexp NFA. forField=false because Rust doesn't pass values with quotes.
         let (new_fa, field_matcher_arc) = make_regexp_nfa(tree.clone(), false);
 

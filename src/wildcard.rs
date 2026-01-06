@@ -249,10 +249,7 @@ mod tests {
             parse_wildcard_pattern("hello"),
             vec![WildcardSegment::Literal("hello".to_string())]
         );
-        assert_eq!(
-            parse_wildcard_pattern("*"),
-            vec![WildcardSegment::Star]
-        );
+        assert_eq!(parse_wildcard_pattern("*"), vec![WildcardSegment::Star]);
         assert_eq!(
             parse_wildcard_pattern("a*b"),
             vec![

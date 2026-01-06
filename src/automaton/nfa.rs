@@ -14,15 +14,15 @@ use super::small_table::{FaState, FieldMatcher, NfaBuffers, SmallTable, VALUE_TE
 /// Appends the field matchers to the provided transitions Vec.
 /// Like Go, accepts a Vec to append to for reduced allocations.
 #[inline]
-pub fn traverse_dfa(
-    table: &SmallTable,
-    val: &[u8],
-    transitions: &mut Vec<Arc<FieldMatcher>>,
-) {
+pub fn traverse_dfa(table: &SmallTable, val: &[u8], transitions: &mut Vec<Arc<FieldMatcher>>) {
     let mut current_table = table;
 
     for i in 0..=val.len() {
-        let byte = if i < val.len() { val[i] } else { VALUE_TERMINATOR };
+        let byte = if i < val.len() {
+            val[i]
+        } else {
+            VALUE_TERMINATOR
+        };
 
         match current_table.dstep(byte) {
             Some(next) => {
@@ -55,7 +55,11 @@ pub fn traverse_nfa(table: &SmallTable, val: &[u8], bufs: &mut NfaBuffers) {
             break;
         }
 
-        let byte = if i < val.len() { val[i] } else { VALUE_TERMINATOR };
+        let byte = if i < val.len() {
+            val[i]
+        } else {
+            VALUE_TERMINATOR
+        };
 
         for state in bufs.current_states.clone() {
             // Get epsilon closure

@@ -12,7 +12,9 @@
 
 use std::sync::Arc;
 
-use crate::automaton::{FaState, FieldMatcher, SmallTable, BYTE_CEILING, VALUE_TERMINATOR, merge_fas};
+use crate::automaton::{
+    merge_fas, FaState, FieldMatcher, SmallTable, BYTE_CEILING, VALUE_TERMINATOR,
+};
 
 /// A pair of runes representing an inclusive range [lo, hi].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -332,14 +334,12 @@ fn read_atom(parse: &mut RegexpParse) -> Result<QuantifiedAtom, RegexpError> {
     let b = parse.next_rune()?;
 
     match b {
-        c if is_normal_char(c) => {
-            Ok(QuantifiedAtom {
-                runes: vec![RunePair { lo: c, hi: c }],
-                quant_min: 1,
-                quant_max: 1,
-                ..Default::default()
-            })
-        }
+        c if is_normal_char(c) => Ok(QuantifiedAtom {
+            runes: vec![RunePair { lo: c, hi: c }],
+            quant_min: 1,
+            quant_max: 1,
+            ..Default::default()
+        }),
         '.' => {
             parse.record_feature(RegexpFeature::Dot);
             Ok(QuantifiedAtom {
@@ -386,12 +386,10 @@ fn read_atom(parse: &mut RegexpParse) -> Result<QuantifiedAtom, RegexpError> {
                 ..Default::default()
             })
         }
-        ']' => {
-            Err(RegexpError {
-                message: "invalid ']'".into(),
-                offset: parse.last_index,
-            })
-        }
+        ']' => Err(RegexpError {
+            message: "invalid ']'".into(),
+            offset: parse.last_index,
+        }),
         c if c == ESCAPE => {
             let next = parse.next_rune().map_err(|_| RegexpError {
                 message: format!("'{}' at end of regular expression", ESCAPE),
@@ -400,7 +398,10 @@ fn read_atom(parse: &mut RegexpParse) -> Result<QuantifiedAtom, RegexpError> {
 
             if let Some(escaped) = check_single_char_escape(next) {
                 return Ok(QuantifiedAtom {
-                    runes: vec![RunePair { lo: escaped, hi: escaped }],
+                    runes: vec![RunePair {
+                        lo: escaped,
+                        hi: escaped,
+                    }],
                     quant_min: 1,
                     quant_max: 1,
                     ..Default::default()
@@ -418,12 +419,10 @@ fn read_atom(parse: &mut RegexpParse) -> Result<QuantifiedAtom, RegexpError> {
                 offset: parse.last_index,
             })
         }
-        '?' | '+' | '*' | '{' => {
-            Err(RegexpError {
-                message: format!("invalid character '{}' (quantifier without atom)", b),
-                offset: parse.last_index,
-            })
-        }
+        '?' | '+' | '*' | '{' => Err(RegexpError {
+            message: format!("invalid character '{}' (quantifier without atom)", b),
+            offset: parse.last_index,
+        }),
         '|' => {
             parse.backup1(b);
             Err(RegexpError {
@@ -526,7 +525,10 @@ fn read_cce1(parse: &mut RegexpParse, first: bool) -> Result<RuneRange, RegexpEr
             return Ok(Vec::new());
         }
         check_single_char_escape(next).ok_or_else(|| RegexpError {
-            message: format!("invalid character '{}' after {} in character class", next, ESCAPE),
+            message: format!(
+                "invalid character '{}' after {} in character class",
+                next, ESCAPE
+            ),
             offset: parse.last_index,
         })?
     } else {
@@ -649,7 +651,10 @@ fn read_category(parse: &mut RegexpParse) -> Result<(), RegexpError> {
 
     if !valid_details.contains(cat_detail) {
         return Err(RegexpError {
-            message: format!("unknown category {}p{{{}{}", ESCAPE, cat_initial, cat_detail),
+            message: format!(
+                "unknown category {}p{{{}{}",
+                ESCAPE, cat_initial, cat_detail
+            ),
             offset: parse.last_index,
         });
     }
@@ -700,7 +705,10 @@ fn read_quantifier(parse: &mut RegexpParse, qa: &mut QuantifiedAtom) -> Result<(
 }
 
 /// Read a range quantifier {m,n}
-fn read_range_quantifier(parse: &mut RegexpParse, qa: &mut QuantifiedAtom) -> Result<(), RegexpError> {
+fn read_range_quantifier(
+    parse: &mut RegexpParse,
+    qa: &mut QuantifiedAtom,
+) -> Result<(), RegexpError> {
     let mut lo_digits = String::new();
 
     loop {
@@ -743,7 +751,10 @@ fn read_range_quantifier(parse: &mut RegexpParse, qa: &mut QuantifiedAtom) -> Re
 
     if !b.is_ascii_digit() {
         return Err(RegexpError {
-            message: format!("invalid character '{}' in quantifier range, wanted a digit", b),
+            message: format!(
+                "invalid character '{}' in quantifier range, wanted a digit",
+                b
+            ),
             offset: parse.last_index,
         });
     }
@@ -898,7 +909,11 @@ fn make_empty_regexp_fa(next_field: &Arc<FieldMatcher>) -> SmallTable {
 }
 
 /// Build NFA for one branch (sequence of atoms).
-fn make_one_regexp_branch_fa(branch: &RegexpBranch, next_step: &Arc<FaState>, for_field: bool) -> SmallTable {
+fn make_one_regexp_branch_fa(
+    branch: &RegexpBranch,
+    next_step: &Arc<FaState>,
+    for_field: bool,
+) -> SmallTable {
     let mut current_next = next_step.clone();
     let mut table = SmallTable::new();
 
@@ -1103,30 +1118,30 @@ pub fn make_dot_fa(dest: &Arc<FaState>) -> SmallTable {
     // Main dot table
     SmallTable {
         ceilings: vec![
-            0x80,              // 0: ASCII (single byte)
-            0xC2,              // 1: invalid continuation or overlong
-            0xE0,              // 2: 2-byte sequences
-            0xE1,              // 3: E0 special case
-            0xED,              // 4: 3-byte sequences E1-EC
-            0xEE,              // 5: ED special case (surrogates)
-            0xF0,              // 6: 3-byte sequences EE-EF
-            0xF1,              // 7: F0 special case
-            0xF4,              // 8: 4-byte sequences F1-F3
-            0xF5,              // 9: F4 special case
+            0x80,               // 0: ASCII (single byte)
+            0xC2,               // 1: invalid continuation or overlong
+            0xE0,               // 2: 2-byte sequences
+            0xE1,               // 3: E0 special case
+            0xED,               // 4: 3-byte sequences E1-EC
+            0xEE,               // 5: ED special case (surrogates)
+            0xF0,               // 6: 3-byte sequences EE-EF
+            0xF1,               // 7: F0 special case
+            0xF4,               // 8: 4-byte sequences F1-F3
+            0xF5,               // 9: F4 special case
             BYTE_CEILING as u8, // 10: invalid
         ],
         steps: vec![
-            Some(dest.clone()),       // 0: ASCII
-            None,                      // 1: invalid
-            Some(target_last.clone()), // 2: 2-byte
-            Some(target_e0.clone()),   // 3: E0
-            Some(target_last_inter.clone()), // 4: E1-EC
-            Some(target_ed.clone()),   // 5: ED
-            Some(target_last_inter.clone()), // 6: EE-EF
-            Some(target_f0.clone()),   // 7: F0
+            Some(dest.clone()),               // 0: ASCII
+            None,                             // 1: invalid
+            Some(target_last.clone()),        // 2: 2-byte
+            Some(target_e0.clone()),          // 3: E0
+            Some(target_last_inter.clone()),  // 4: E1-EC
+            Some(target_ed.clone()),          // 5: ED
+            Some(target_last_inter.clone()),  // 6: EE-EF
+            Some(target_f0.clone()),          // 7: F0
             Some(target_first_inter.clone()), // 8: F1-F3
-            Some(target_f4.clone()),   // 9: F4
-            None,                      // 10: invalid
+            Some(target_f4.clone()),          // 9: F4
+            None,                             // 10: invalid
         ],
         epsilons: Vec::new(),
         spinout: None,
@@ -1199,10 +1214,7 @@ mod tests {
 
     #[test]
     fn test_simplify_rune_range() {
-        let rr = vec![
-            RunePair { lo: 'a', hi: 'c' },
-            RunePair { lo: 'b', hi: 'd' },
-        ];
+        let rr = vec![RunePair { lo: 'a', hi: 'c' }, RunePair { lo: 'b', hi: 'd' }];
         let simplified = simplify_rune_range(rr);
         assert_eq!(simplified.len(), 1);
         assert_eq!(simplified[0].lo, 'a');
@@ -1211,10 +1223,7 @@ mod tests {
 
     #[test]
     fn test_rune_range_iterator() {
-        let rr = vec![
-            RunePair { lo: 'a', hi: 'c' },
-            RunePair { lo: 'f', hi: 'f' },
-        ];
+        let rr = vec![RunePair { lo: 'a', hi: 'c' }, RunePair { lo: 'f', hi: 'f' }];
         let mut iter = RuneRangeIterator::new(rr).unwrap();
         assert_eq!(iter.next_rune(), Some('a'));
         assert_eq!(iter.next_rune(), Some('b'));
@@ -1252,13 +1261,22 @@ mod tests {
         let empty_value = vec![VALUE_TERMINATOR];
         let mut matches = Vec::new();
         traverse_dfa(&table, &empty_value, &mut matches);
-        assert!(!matches.is_empty(), "Empty regexp should match empty string");
-        assert!(std::sync::Arc::ptr_eq(&matches[0], &field_matcher), "Should transition to field_matcher");
+        assert!(
+            !matches.is_empty(),
+            "Empty regexp should match empty string"
+        );
+        assert!(
+            std::sync::Arc::ptr_eq(&matches[0], &field_matcher),
+            "Should transition to field_matcher"
+        );
 
         // Test with non-empty value
         let non_empty_value = vec![b'h', b'i', VALUE_TERMINATOR];
         let mut matches2 = Vec::new();
         traverse_dfa(&table, &non_empty_value, &mut matches2);
-        assert!(!matches2.is_empty(), "Empty regexp should match non-empty string");
+        assert!(
+            !matches2.is_empty(),
+            "Empty regexp should match non-empty string"
+        );
     }
 }

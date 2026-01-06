@@ -17,12 +17,8 @@ use rustc_hash::FxHashMap;
 use arc_swap::ArcSwap;
 use parking_lot::Mutex;
 
-use super::fa_builders::{
-    make_prefix_fa, make_shellstyle_fa, make_string_fa, merge_fas,
-};
-use super::mutable_matcher::{
-    EventField, EventFieldRef, MutableFieldMatcher, MutableValueMatcher,
-};
+use super::fa_builders::{make_prefix_fa, make_shellstyle_fa, make_string_fa, merge_fas};
+use super::mutable_matcher::{EventField, EventFieldRef, MutableFieldMatcher, MutableValueMatcher};
 use super::nfa::{traverse_dfa, traverse_nfa};
 use super::small_table::{FieldMatcher, NfaBuffers, SmallTable};
 
