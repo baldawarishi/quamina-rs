@@ -21,17 +21,16 @@ Rust port of [quamina](https://github.com/timbray/quamina) - fast pattern-matchi
 | status_last_field | 6,600 | 5,100 | **Rust 1.29x** |
 | citylots | 3,400 | 3,700 | Go 1.09x |
 
-## Completed (Tasks 1-22)
+## Completed (Tasks 1-23)
 
 Core: Q-numbers, segments_tree, streaming flattener, NfaBuffers/Cow allocations, Unicode case folding, parking_lot::Mutex, automaton split, wildcard.rs extraction.
 
-Optimizations: unsafe from_utf8_unchecked, SmallVec for Field path/array_trail, direct Field matching (no EventFieldRef), Vec<Field> reuse (returns `&mut [Field]`).
+Optimizations: unsafe from_utf8_unchecked, SmallVec for Field path/array_trail, direct Field matching (no EventFieldRef), Vec<Field> reuse (returns `&mut [Field]`), FxHashMap for transition lookups.
 
 ## Next Steps
 
 | # | Task | Notes |
 |---|------|-------|
-| 23 | Remove `transition_map` lookup | Store FrozenFieldMatcher directly (~20ns) |
 | 24 | Profile citylots gap | Flamegraph for remaining ~300ns gap |
 | 17 | Pruner rebuilding | Go auto-rebuilds at 0.2 ratio. See `pruner.go` |
 | 18 | Custom regex NFA | Go: `regexp_nfa.go`. Rust uses `regex` crate |

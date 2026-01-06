@@ -12,6 +12,8 @@ use std::hash::Hash;
 use std::rc::Rc;
 use std::sync::Arc;
 
+use rustc_hash::FxHashMap;
+
 use arc_swap::ArcSwap;
 use parking_lot::Mutex;
 
@@ -113,11 +115,11 @@ pub struct FrozenValueMatcher<X: Clone + Eq + Hash> {
     /// Whether this matcher has numeric patterns (for Q-number conversion)
     has_numbers: bool,
     /// Mapping from FieldMatcher pointer (as usize) to FrozenFieldMatcher
-    /// Uses the pointer address to bridge automaton transitions to our frozen matchers
-    transition_map: HashMap<usize, Arc<FrozenFieldMatcher<X>>>,
+    /// Uses FxHashMap for fast integer key lookup
+    transition_map: FxHashMap<usize, Arc<FrozenFieldMatcher<X>>>,
 }
 
-// Safety: FrozenValueMatcher only contains Arc, HashMap, Option, and primitives
+// Safety: FrozenValueMatcher only contains Arc, FxHashMap, Option, and primitives
 unsafe impl<X: Clone + Eq + Hash + Send + Sync> Send for FrozenValueMatcher<X> {}
 unsafe impl<X: Clone + Eq + Hash + Send + Sync> Sync for FrozenValueMatcher<X> {}
 
@@ -129,7 +131,7 @@ impl<X: Clone + Eq + Hash> FrozenValueMatcher<X> {
             singleton_transition: None,
             is_nondeterministic: false,
             has_numbers: false,
-            transition_map: HashMap::new(),
+            transition_map: FxHashMap::default(),
         }
     }
 
@@ -380,7 +382,7 @@ impl<X: Clone + Eq + Hash + Send + Sync> ThreadSafeCoreMatcher<X> {
 
         // Build transition map for automaton-based matching
         // Use the pointer address as the key - this matches what traverse_dfa/nfa returns
-        let mut transition_map = HashMap::new();
+        let mut transition_map = FxHashMap::default();
         for (ptr, mutable_fm) in mutable.transition_map.borrow().iter() {
             let frozen_fm = self.freeze_field_matcher_impl(mutable_fm, cache);
             // Use the raw pointer value as the key (cast to usize for hash stability)
