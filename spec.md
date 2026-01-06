@@ -16,14 +16,14 @@ Rust port of [quamina](https://github.com/timbray/quamina) - fast pattern-matchi
 
 | Benchmark | Go (ns) | Rust (ns) | Winner |
 |-----------|---------|-----------|--------|
-| status_context_fields | 382 | 526 | Go 1.38x |
-| status_middle_nested | 6,400 | 5,000 | **Rust 1.28x** |
-| status_last_field | 6,600 | 5,300 | **Rust 1.25x** |
-| citylots | 3,400 | 4,500 | Go 1.32x |
+| status_context_fields | 382 | 500 | Go 1.31x |
+| status_middle_nested | 6,400 | 4,700 | **Rust 1.36x** |
+| status_last_field | 6,600 | 5,000 | **Rust 1.32x** |
+| citylots | 3,400 | 4,100 | Go 1.21x |
 
 ## Completed
 
-Tasks 1-10, 13, 15-16, 19-20: Q-numbers, segments_tree, streaming flattener, allocations (NfaBuffers, Cow), Unicode case folding, EventFieldRef, parking_lot::Mutex, automaton split, lib.rs split (wildcard.rs), unsafe from_utf8_unchecked, SmallVec for Field path/array_trail.
+Tasks 1-10, 13, 15-16, 19-20, 22: Q-numbers, segments_tree, streaming flattener, allocations (NfaBuffers, Cow), Unicode case folding, parking_lot::Mutex, automaton split, lib.rs split (wildcard.rs), unsafe from_utf8_unchecked, SmallVec for Field path/array_trail, direct Field matching (removed EventFieldRef indirection).
 
 ## Next Steps
 
@@ -32,9 +32,8 @@ Tasks 1-10, 13, 15-16, 19-20: Q-numbers, segments_tree, streaming flattener, all
 | # | Task | Impact | Notes |
 |---|------|--------|-------|
 | 21 | Reuse `Vec<Field>` across calls | ~50ns | Store in `FlattenJsonState`, return `&[Field]`. Requires lifetime refactor |
-| 22 | Eliminate `EventFieldRef` indirection | ~50ns | Pass `&[Field]` directly to automaton, avoid intermediate Vec |
 | 23 | Remove `transition_map` lookup | ~20ns | Store `FrozenFieldMatcher` directly in transitions instead of pointer map |
-| 24 | Profile citylots gap | ~1μs | Use flamegraph to identify GeoJSON-specific bottlenecks |
+| 24 | Profile citylots gap | ~700ns | Use flamegraph to identify GeoJSON-specific bottlenecks |
 
 ### Feature Parity
 
@@ -66,4 +65,4 @@ Tasks 1-10, 13, 15-16, 19-20: Q-numbers, segments_tree, streaming flattener, all
 
 **Root causes identified:**
 - Flatten: Rust allocates new `Vec<Field>` per call; Go reuses slice with `fields[:0]`
-- Matching: Rust has extra indirection via `EventFieldRef` and `transition_map` lookup
+- Matching: Rust has `transition_map` lookup; `EventFieldRef` indirection eliminated
