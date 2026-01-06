@@ -4,7 +4,7 @@ Rust port of [quamina](https://github.com/timbray/quamina) - fast pattern-matchi
 
 ## Status
 
-**160 tests passing.** All core operators implemented.
+**164 tests passing.** All core operators implemented.
 
 | Operator | Path | Operator | Path |
 |----------|------|----------|------|
@@ -16,10 +16,10 @@ Rust port of [quamina](https://github.com/timbray/quamina) - fast pattern-matchi
 
 | Benchmark | Go (ns) | Rust (ns) | Winner |
 |-----------|---------|-----------|--------|
-| status_context_fields | 382 | 487 | Go 1.27x |
-| status_middle_nested | 6,400 | 4,800 | **Rust 1.33x** |
-| status_last_field | 6,600 | 5,100 | **Rust 1.29x** |
-| citylots | 3,400 | 3,700 | Go 1.09x |
+| status_context_fields | 382 | 494 | Go 1.29x |
+| status_middle_nested | 6,400 | 4,857 | **Rust 1.32x** |
+| status_last_field | 6,600 | 4,980 | **Rust 1.33x** |
+| citylots | 3,400 | 3,738 | Go 1.10x |
 
 Run: `cargo bench status` or `cargo bench citylots`
 
@@ -56,9 +56,9 @@ src/
 3. For each field, `transition_on()` matches value via DFA/NFA traversal
 4. `FrozenValueMatcher.transition_map` (FxHashMap) maps FieldMatcher ptrs -> FrozenFieldMatcher
 
-## Completed (Tasks 1-24)
+## Completed (Tasks 1-25)
 
-**Core:** Q-numbers, segments_tree flattener, NfaBuffers reuse, Unicode case folding, parking_lot::Mutex, automaton module split, custom regex NFA.
+**Core:** Q-numbers, segments_tree flattener, NfaBuffers reuse, Unicode case folding, parking_lot::Mutex, automaton module split, custom regex NFA, pruner rebuilding.
 
 **Optimizations:**
 - `unsafe from_utf8_unchecked` in flattener (validated JSON)
@@ -71,12 +71,13 @@ src/
 
 **Task 23 learnings:** Attempted Vec-based indexing (store index in FieldMatcher, lookup by index). **Regressed 5-8%** because accessing `arc_fm.index` requires Arc dereference, while `Arc::as_ptr()` for HashMap keys doesn't dereference. FxHashMap was better solution.
 
+**Task 25 (pruner rebuilding):** Added `PrunerStats` to track emitted/filtered patterns. `rebuild()` creates new automaton with only live patterns. `maybe_rebuild()` auto-triggers when filtered/emitted > 0.2 and activity > 1000. Matches Go's `pruner.go` behavior.
+
 ## Next Steps
 
 | # | Task | Notes |
 |---|------|-------|
 | 24 | Profile citylots gap | Flamegraph to find remaining ~300ns gap vs Go |
-| 17 | Pruner rebuilding | Go auto-rebuilds at 0.2 ratio. See `pruner.go` |
 
 **Potential optimizations:**
 - Inline `traverse_dfa` hot path
@@ -91,7 +92,7 @@ src/
 | Segment flattener | ✅ | ✅ | Early termination, Vec reuse |
 | Unicode case folding | ✅ | ✅ | case_folding.rs |
 | Custom regex NFA | ✅ | ✅ | I-Regexp subset (`.`, `[...]`, `|`, `(...)`, `?`) |
-| Pruner rebuilding | ✅ | ❌ | Rust: HashSet deletion only |
+| Pruner rebuilding | ✅ | ✅ | Auto-rebuild at 0.2 filtered/emitted ratio |
 
 ## Go Reference Files
 

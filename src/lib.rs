@@ -19,7 +19,75 @@ use segments_tree::SegmentsTree;
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::hash::Hash;
+use std::sync::atomic::{AtomicU64, Ordering};
 use wildcard::{shellstyle_match, wildcard_match};
+
+/// Statistics for pruner rebuilding decisions
+#[derive(Debug, Default)]
+pub struct PrunerStats {
+    /// Count of patterns emitted (returned after filtering) since last rebuild
+    emitted: AtomicU64,
+    /// Count of patterns filtered out (deleted) since last rebuild
+    filtered: AtomicU64,
+}
+
+impl PrunerStats {
+    fn new() -> Self {
+        Self::default()
+    }
+
+    fn reset(&self) {
+        self.emitted.store(0, Ordering::Relaxed);
+        self.filtered.store(0, Ordering::Relaxed);
+    }
+
+    fn add_emitted(&self, count: u64) {
+        self.emitted.fetch_add(count, Ordering::Relaxed);
+    }
+
+    fn add_filtered(&self, count: u64) {
+        self.filtered.fetch_add(count, Ordering::Relaxed);
+    }
+
+    /// Get current emitted count
+    pub fn emitted(&self) -> u64 {
+        self.emitted.load(Ordering::Relaxed)
+    }
+
+    /// Get current filtered count
+    pub fn filtered(&self) -> u64 {
+        self.filtered.load(Ordering::Relaxed)
+    }
+
+    /// Check if rebuild should be triggered (Go uses 0.2 ratio, 1000 minimum)
+    fn should_rebuild(&self) -> bool {
+        let emitted = self.emitted.load(Ordering::Relaxed);
+        let filtered = self.filtered.load(Ordering::Relaxed);
+
+        // Minimum activity threshold
+        if emitted + filtered < 1000 {
+            return false;
+        }
+
+        // Avoid division by zero
+        if emitted == 0 {
+            return false;
+        }
+
+        // Trigger rebuild when filtered/emitted > 0.2
+        let ratio = filtered as f64 / emitted as f64;
+        ratio > 0.2
+    }
+}
+
+impl Clone for PrunerStats {
+    fn clone(&self) -> Self {
+        Self {
+            emitted: AtomicU64::new(self.emitted.load(Ordering::Relaxed)),
+            filtered: AtomicU64::new(self.filtered.load(Ordering::Relaxed)),
+        }
+    }
+}
 
 /// Pattern definition: (field matchers, is_automaton_compatible)
 type PatternDef = (HashMap<String, Vec<Matcher>>, bool);
@@ -88,6 +156,10 @@ pub struct Quamina<X: Clone + Eq + Hash + Send + Sync = String> {
     flattener: Mutex<FlattenJsonState>,
     /// Reusable NFA traversal buffers (Mutex for thread-safe access)
     nfa_bufs: Mutex<NfaBuffers>,
+    /// Statistics for auto-rebuild decisions
+    pruner_stats: PrunerStats,
+    /// Whether auto-rebuild is enabled (default: true)
+    auto_rebuild_enabled: bool,
 }
 
 /// Internal representation of a compiled pattern
@@ -124,6 +196,8 @@ impl<X: Clone + Eq + Hash + Send + Sync> Clone for Quamina<X> {
             segments_tree: self.segments_tree.clone(),
             flattener: Mutex::new(FlattenJsonState::new()),
             nfa_bufs: Mutex::new(NfaBuffers::new()),
+            pruner_stats: self.pruner_stats.clone(),
+            auto_rebuild_enabled: self.auto_rebuild_enabled,
         }
     }
 }
@@ -141,6 +215,8 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
             segments_tree: SegmentsTree::new(),
             flattener: Mutex::new(FlattenJsonState::new()),
             nfa_bufs: Mutex::new(NfaBuffers::new()),
+            pruner_stats: PrunerStats::new(),
+            auto_rebuild_enabled: true,
         }
     }
 
@@ -207,12 +283,20 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
             let raw_matches = self.automaton.matches_for_fields_direct(streaming_fields, &mut bufs);
             // Fast path: skip filtering if no patterns have been deleted
             if self.deleted_patterns.is_empty() {
+                // Track stats: all matches are emitted
+                self.pruner_stats.add_emitted(raw_matches.len() as u64);
                 raw_matches
             } else {
-                raw_matches
+                // Slow path: filter deleted patterns and track stats
+                let raw_count = raw_matches.len();
+                let filtered: Vec<X> = raw_matches
                     .into_iter()
                     .filter(|x| !self.deleted_patterns.contains(x))
-                    .collect()
+                    .collect();
+                let filtered_count = raw_count - filtered.len();
+                self.pruner_stats.add_emitted(filtered.len() as u64);
+                self.pruner_stats.add_filtered(filtered_count as u64);
+                filtered
             }
         };
 
@@ -553,6 +637,76 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
         self.pattern_count() == 0
     }
 
+    /// Get the pruner statistics
+    pub fn pruner_stats(&self) -> &PrunerStats {
+        &self.pruner_stats
+    }
+
+    /// Enable or disable auto-rebuild
+    pub fn set_auto_rebuild(&mut self, enabled: bool) {
+        self.auto_rebuild_enabled = enabled;
+    }
+
+    /// Check if auto-rebuild is enabled
+    pub fn auto_rebuild_enabled(&self) -> bool {
+        self.auto_rebuild_enabled
+    }
+
+    /// Rebuild the automaton from only live patterns, removing deleted patterns permanently.
+    /// This reclaims memory from deleted patterns and improves matching performance.
+    /// Returns the number of patterns that were purged from the automaton.
+    pub fn rebuild(&mut self) -> usize {
+        let purged = self.deleted_patterns.len();
+        if purged == 0 {
+            return 0;
+        }
+
+        // Create new automaton with only live patterns
+        let new_automaton = ThreadSafeCoreMatcher::new();
+
+        for (id, patterns) in &self.pattern_defs {
+            if self.deleted_patterns.contains(id) {
+                continue;
+            }
+            for (fields, is_automaton_compatible) in patterns {
+                if *is_automaton_compatible {
+                    let pattern_fields: Vec<(String, Vec<Matcher>)> =
+                        fields.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+                    new_automaton.add_pattern(id.clone(), &pattern_fields);
+                }
+            }
+        }
+
+        // Remove deleted patterns from pattern_defs (they're now permanently gone)
+        self.pattern_defs
+            .retain(|id, _| !self.deleted_patterns.contains(id));
+
+        // Clear the deleted set and reset stats
+        self.deleted_patterns.clear();
+        self.pruner_stats.reset();
+
+        // Swap in new automaton
+        self.automaton = new_automaton;
+
+        purged
+    }
+
+    /// Check if rebuild is recommended based on pruner statistics.
+    /// Returns true when filtered/emitted ratio exceeds 0.2 and activity threshold is met.
+    pub fn should_rebuild(&self) -> bool {
+        self.pruner_stats.should_rebuild()
+    }
+
+    /// Perform rebuild if the pruner statistics indicate it would be beneficial.
+    /// Returns the number of patterns purged, or 0 if no rebuild was needed.
+    pub fn maybe_rebuild(&mut self) -> usize {
+        if self.auto_rebuild_enabled && self.pruner_stats.should_rebuild() {
+            self.rebuild()
+        } else {
+            0
+        }
+    }
+
     /// Removes all patterns
     pub fn clear(&mut self) {
         self.automaton = ThreadSafeCoreMatcher::new();
@@ -561,6 +715,7 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
         self.fallback_field_index.clear();
         self.fallback_exists_false.clear();
         self.deleted_patterns.clear();
+        self.pruner_stats.reset();
     }
 }
 
@@ -1123,6 +1278,152 @@ mod tests {
             .matches_for_event(r#"{"status": "pending"}"#.as_bytes())
             .unwrap();
         assert!(m3.contains(&"p2"));
+    }
+
+    #[test]
+    fn test_rebuild_after_delete() {
+        let mut q = Quamina::new();
+        q.add_pattern("p1", r#"{"status": ["active"]}"#).unwrap();
+        q.add_pattern("p2", r#"{"status": ["pending"]}"#).unwrap();
+        q.add_pattern("p3", r#"{"status": ["review"]}"#).unwrap();
+
+        // Initial count
+        assert_eq!(q.pattern_count(), 3);
+
+        // Delete p1
+        q.delete_patterns(&"p1").unwrap();
+        assert_eq!(q.pattern_count(), 2);
+
+        // p1 is in deleted set
+        assert!(q.deleted_patterns.contains(&"p1"));
+
+        // Rebuild should purge deleted patterns
+        let purged = q.rebuild();
+        assert_eq!(purged, 1);
+
+        // After rebuild, deleted set is clear
+        assert!(q.deleted_patterns.is_empty());
+        assert_eq!(q.pattern_count(), 2);
+
+        // p2 and p3 still work
+        let m2 = q
+            .matches_for_event(r#"{"status": "pending"}"#.as_bytes())
+            .unwrap();
+        assert!(m2.contains(&"p2"));
+
+        let m3 = q
+            .matches_for_event(r#"{"status": "review"}"#.as_bytes())
+            .unwrap();
+        assert!(m3.contains(&"p3"));
+
+        // p1 does not match (and is not in deleted set, was purged)
+        let m1 = q
+            .matches_for_event(r#"{"status": "active"}"#.as_bytes())
+            .unwrap();
+        assert!(m1.is_empty());
+    }
+
+    #[test]
+    fn test_pruner_stats() {
+        let mut q = Quamina::new();
+        q.add_pattern("p1", r#"{"status": ["active"]}"#).unwrap();
+        q.add_pattern("p2", r#"{"status": ["pending"]}"#).unwrap();
+
+        // Initially stats are zero
+        assert_eq!(q.pruner_stats().emitted(), 0);
+        assert_eq!(q.pruner_stats().filtered(), 0);
+
+        // Match - should increment emitted
+        let _ = q
+            .matches_for_event(r#"{"status": "active"}"#.as_bytes())
+            .unwrap();
+        assert_eq!(q.pruner_stats().emitted(), 1);
+        assert_eq!(q.pruner_stats().filtered(), 0);
+
+        // Delete p1
+        q.delete_patterns(&"p1").unwrap();
+
+        // Match active - should increment filtered (was deleted)
+        let _ = q
+            .matches_for_event(r#"{"status": "active"}"#.as_bytes())
+            .unwrap();
+        assert_eq!(q.pruner_stats().emitted(), 1); // still 1
+        assert_eq!(q.pruner_stats().filtered(), 1); // now 1
+
+        // Match pending - should increment emitted
+        let _ = q
+            .matches_for_event(r#"{"status": "pending"}"#.as_bytes())
+            .unwrap();
+        assert_eq!(q.pruner_stats().emitted(), 2);
+        assert_eq!(q.pruner_stats().filtered(), 1);
+
+        // Rebuild resets stats
+        q.rebuild();
+        assert_eq!(q.pruner_stats().emitted(), 0);
+        assert_eq!(q.pruner_stats().filtered(), 0);
+    }
+
+    #[test]
+    fn test_should_rebuild_threshold() {
+        let mut q = Quamina::new();
+
+        // Add patterns that will match many events
+        q.add_pattern("p1", r#"{"x": ["a"]}"#).unwrap();
+        q.add_pattern("p2", r#"{"x": ["a"]}"#).unwrap();
+        q.add_pattern("p3", r#"{"x": ["a"]}"#).unwrap();
+        q.add_pattern("p4", r#"{"x": ["a"]}"#).unwrap();
+        q.add_pattern("p5", r#"{"x": ["a"]}"#).unwrap();
+
+        // Delete half
+        q.delete_patterns(&"p1").unwrap();
+        q.delete_patterns(&"p2").unwrap();
+
+        // Not enough activity yet - should not trigger rebuild
+        assert!(!q.should_rebuild());
+
+        // Simulate lots of matches
+        let event = br#"{"x": "a"}"#;
+        for _ in 0..500 {
+            let _ = q.matches_for_event(event).unwrap();
+        }
+
+        // After 500 matches with 5 patterns, 3 emit, 2 filtered
+        // filtered = 500 * 2 = 1000
+        // emitted = 500 * 3 = 1500
+        // Total activity = 2500 > 1000 threshold
+        // Ratio = 1000/1500 = 0.67 > 0.2
+        assert!(q.should_rebuild());
+
+        // maybe_rebuild should trigger
+        let purged = q.maybe_rebuild();
+        assert_eq!(purged, 2);
+
+        // After rebuild, no longer needs rebuild
+        assert!(!q.should_rebuild());
+    }
+
+    #[test]
+    fn test_auto_rebuild_disabled() {
+        let mut q = Quamina::new();
+        q.set_auto_rebuild(false);
+
+        q.add_pattern("p1", r#"{"x": ["a"]}"#).unwrap();
+        q.add_pattern("p2", r#"{"x": ["a"]}"#).unwrap();
+
+        q.delete_patterns(&"p1").unwrap();
+
+        // Simulate enough activity to trigger
+        let event = br#"{"x": "a"}"#;
+        for _ in 0..2000 {
+            let _ = q.matches_for_event(event).unwrap();
+        }
+
+        // Should want rebuild but auto is disabled
+        assert!(q.should_rebuild());
+
+        // maybe_rebuild returns 0 when disabled
+        let purged = q.maybe_rebuild();
+        assert_eq!(purged, 0);
     }
 
     #[test]
