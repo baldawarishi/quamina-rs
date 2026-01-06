@@ -273,24 +273,24 @@ fn read_piece(parse: &mut RegexpParse) -> Result<QuantifiedAtom, RegexpError> {
 fn is_normal_char(c: char) -> bool {
     let code = c as u32;
 
-    if code <= 0x27 || c == ',' || c == '-' || (code >= 0x2F && code <= 0x3E) {
+    if code <= 0x27 || c == ',' || c == '-' || (0x2F..=0x3E).contains(&code) {
         return true;
     }
-    if code >= 0x40 && code <= 0x5A {
+    if (0x40..=0x5A).contains(&code) {
         return true;
     }
     // allow backslash
     if code == 0x5c {
         return true;
     }
-    if code >= 0x5E && code <= 0x7A {
+    if (0x5E..=0x7A).contains(&code) {
         return true;
     }
     // exclude ~
-    if code >= 0x7F && code <= 0xD7FF {
+    if (0x7F..=0xD7FF).contains(&code) {
         return true;
     }
-    if code >= 0xE000 && code <= 0x10FFFF {
+    if (0xE000..=0x10FFFF).contains(&code) {
         return true;
     }
     false
@@ -301,11 +301,11 @@ fn check_single_char_escape(c: char) -> Option<char> {
     let code = c as u32;
 
     // ( ) * +
-    if code >= 0x28 && code <= 0x2B {
+    if (0x28..=0x2B).contains(&code) {
         return Some(c);
     }
     // - . ? [ \ ] ^
-    if c == '-' || c == '.' || c == '?' || (code >= 0x5B && code <= 0x5E) {
+    if c == '-' || c == '.' || c == '?' || (0x5B..=0x5E).contains(&code) {
         return Some(c);
     }
     // Special escapes
@@ -319,7 +319,7 @@ fn check_single_char_escape(c: char) -> Option<char> {
         return Some('\t');
     }
     // { | }
-    if code >= 0x7B && code <= 0x7D {
+    if (0x7B..=0x7D).contains(&code) {
         return Some(c);
     }
     // Escape itself
@@ -490,13 +490,13 @@ fn read_cce1s(parse: &mut RegexpParse) -> Result<RuneRange, RegexpError> {
 /// Check if a character is valid in a character class
 fn is_cc_char(r: char) -> bool {
     let code = r as u32;
-    if code <= 0x2c || (code >= 0x2e && code <= 0x5A) {
+    if code <= 0x2c || (0x2e..=0x5A).contains(&code) {
         return true;
     }
-    if code >= 0x5e && code <= 0xd7ff {
+    if (0x5e..=0xd7ff).contains(&code) {
         return true;
     }
-    if code >= 0xe000 && code <= 0x10ffff {
+    if (0xe000..=0x10ffff).contains(&code) {
         return true;
     }
     if r == '\\' {
@@ -603,8 +603,7 @@ fn simplify_rune_range(mut rranges: RuneRange) -> RuneRange {
     let mut out = Vec::new();
     let mut current = rranges[0];
 
-    for i in 1..rranges.len() {
-        let next = rranges[i];
+    for next in rranges.iter().skip(1).copied() {
         if next.lo as u32 > current.hi as u32 + 1 {
             out.push(current);
             current = next;
@@ -854,7 +853,7 @@ pub fn make_regexp_nfa(root: RegexpRoot, for_field: bool) -> (SmallTable, Arc<Fi
 
     let mut next_step_state = next_step;
     if for_field {
-        let table = SmallTable::with_mappings(None, &[b'"'], &[next_step_state]);
+        let table = SmallTable::with_mappings(None, b"\"", &[next_step_state]);
         next_step_state = Arc::new(FaState::with_table(table));
     }
 
@@ -883,7 +882,7 @@ fn make_nfa_from_branches(
         let next_branch = if branch.is_empty() {
             // Empty branch - just go directly to next_step (VALUE_TERMINATOR transition)
             // This matches empty string at this position
-            SmallTable::with_mappings(None, &[VALUE_TERMINATOR], &[next_step.clone()])
+            SmallTable::with_mappings(None, &[VALUE_TERMINATOR], std::slice::from_ref(next_step))
         } else {
             make_one_regexp_branch_fa(branch, next_step, for_field)
         };
@@ -951,7 +950,7 @@ fn make_one_regexp_branch_fa(
 
     if for_field {
         let first_state = Arc::new(FaState::with_table(table.clone()));
-        table = SmallTable::with_mappings(None, &[b'"'], &[first_state]);
+        table = SmallTable::with_mappings(None, b"\"", &[first_state]);
     }
 
     table
