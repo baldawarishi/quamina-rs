@@ -4,7 +4,7 @@ Rust port of [quamina](https://github.com/timbray/quamina) - fast pattern-matchi
 
 ## Status
 
-**164 tests passing.** All core operators implemented. Feature parity with Go.
+**164 tests passing.** All core operators implemented. Performance parity achieved.
 
 | Benchmark | Go (ns) | Rust (ns) | Status |
 |-----------|---------|-----------|--------|
@@ -12,6 +12,31 @@ Rust port of [quamina](https://github.com/timbray/quamina) - fast pattern-matchi
 | status_middle_nested | 7,700 | 4,650 | **Rust 1.66x faster** |
 | status_last_field | 8,100 | 4,964 | **Rust 1.63x faster** |
 | citylots | 3,570 | 3,446 | **Rust 3% faster** |
+
+## Parity Gaps
+
+### Functional (non-blocking)
+| Gap | Notes |
+|-----|-------|
+| Suffix operator | Parsed but not automaton-integrated (uses fallback) |
+| Numeric ranges | Parsed but uses runtime fallback, not automaton |
+| Config options | Go has WithMediaType, WithFlattener, WithPatternDeletion; Rust uses simple new() |
+| Custom Flattener | Go allows pluggable flatteners; Rust hardcodes JSON |
+
+### Test Coverage Gaps
+| Category | Priority | Notes |
+|----------|----------|-------|
+| Large-scale stress tests | HIGH | Go tests 27 patterns × 150K events; Rust lacks |
+| Race condition tests | HIGH | Go uses -race flag; Rust needs equivalent |
+| Fuzzing | HIGH | Go has TestFuzzValueMatcher; Rust has none |
+| Pruner edge cases | MEDIUM | Go has 8+ tests; Rust has 4 |
+| Concurrent update stress | MEDIUM | Test pattern add during active matching |
+
+### Rust-only features (not in Go)
+- `has_matches()`, `count_matches()` - optimized boolean/count queries
+- `pattern_count()`, `is_empty()`, `clear()` - inventory management
+- `pruner_stats()`, `set_auto_rebuild()` - explicit rebuild control
+- Better number parsing: Rust accepts `1e0`, Go rejects (Go bug)
 
 ## Architecture
 
@@ -53,12 +78,16 @@ src/
 - Task 23: Vec-based indexing regressed 5-8% (Arc deref cost). FxHashMap with Arc::as_ptr() is faster.
 - Task 27: Path cloning was citylots bottleneck. Go uses slice refs; now we use Arc<[u8]>.
 
-## Next Steps
+## Future Work
 
-Performance parity achieved. Potential future optimizations:
+**Performance (diminishing returns):**
 - SIMD for SmallTable.step() ceiling search
 - Pool allocations for transition_on result vectors
-- Generic FaState<T> to eliminate HashMap indirection
+
+**Test coverage:**
+- Add large-scale stress tests (1000+ patterns)
+- Add property-based fuzzing (proptest/quickcheck)
+- Add concurrent update stress tests
 
 ## Go Reference
 
