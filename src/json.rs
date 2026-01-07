@@ -59,7 +59,7 @@ impl Matcher {
     ///
     /// Not fully supported (need runtime checking or have limitations):
     /// - NumericExact: automaton does string matching but event values may have different representations
-    /// - Suffix, Numeric comparisons, Regex: not implemented in automaton
+    /// - Numeric comparisons, Regex: not implemented in automaton
     pub fn is_automaton_compatible(&self) -> bool {
         match self {
             Matcher::Exact(_) => true,
@@ -75,8 +75,8 @@ impl Matcher {
             // NumericExact: automaton matches on string representation, but event values
             // may have different representations (35 vs 35.0 vs 3.5e1)
             Matcher::NumericExact(_) => false,
-            // Not supported by automaton
-            Matcher::Suffix(_) => false,
+            // Suffix uses shellstyle with leading *
+            Matcher::Suffix(_) => true,
             Matcher::Numeric(_) => false,
             Matcher::Regex(_) => false,
         }

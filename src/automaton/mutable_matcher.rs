@@ -159,7 +159,13 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
                 *self.is_nondeterministic.borrow_mut() = true;
                 self.add_regexp_transition(tree)
             }
-            // For complex matchers (Suffix, Numeric, Regex fallback), we create a simple next state
+            Matcher::Suffix(s) => {
+                // Suffix "abc" is equivalent to shellstyle "*abc"
+                *self.is_nondeterministic.borrow_mut() = true;
+                let pattern = format!("*{}", s);
+                self.add_shellstyle_transition(pattern.as_bytes())
+            }
+            // For complex matchers (Numeric, Regex fallback), we create a simple next state
             // These would need runtime checking or specialized handling
             _ => Rc::new(MutableFieldMatcher::new()),
         }

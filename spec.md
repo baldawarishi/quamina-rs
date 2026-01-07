@@ -18,7 +18,6 @@ Rust port of [quamina](https://github.com/timbray/quamina) - fast pattern-matchi
 ### Functional (non-blocking)
 | Gap | Notes |
 |-----|-------|
-| Suffix operator | Parsed but not automaton-integrated (uses fallback) |
 | Numeric ranges | Parsed but uses runtime fallback, not automaton |
 | Config options | Go has WithMediaType, WithFlattener, WithPatternDeletion; Rust uses simple new() |
 | Custom Flattener | Go allows pluggable flatteners; Rust hardcodes JSON |
