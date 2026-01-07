@@ -4,24 +4,14 @@ Rust port of [quamina](https://github.com/timbray/quamina) - fast pattern-matchi
 
 ## Status
 
-**164 tests passing.** All core operators implemented.
+**164 tests passing.** All core operators implemented. Feature parity with Go.
 
-| Operator | Path | Operator | Path |
-|----------|------|----------|------|
-| Exact, Prefix, Suffix | automaton/fallback | Wildcard, Shellstyle | automaton |
-| Anything-but, Exists | automaton | Equals-ignore-case | automaton (Unicode) |
-| Numeric (exact/compare) | automaton/fallback | Regex | automaton (I-Regexp subset) |
-
-## Performance
-
-| Benchmark | Go (ns) | Rust (ns) | Winner |
+| Benchmark | Go (ns) | Rust (ns) | Status |
 |-----------|---------|-----------|--------|
-| status_context_fields | 382 | 492 | Go 1.29x |
-| status_middle_nested | 6,400 | 4,556 | **Rust 1.40x** |
-| status_last_field | 6,600 | 4,920 | **Rust 1.34x** |
+| status_context_fields | 382 | 492 | Go 1.29x faster |
+| status_middle_nested | 6,400 | 4,556 | **Rust 1.40x faster** |
+| status_last_field | 6,600 | 4,920 | **Rust 1.34x faster** |
 | citylots | 3,400 | 3,417 | Parity |
-
-Run: `cargo bench status` or `cargo bench citylots`
 
 ## Architecture
 
@@ -29,95 +19,75 @@ Run: `cargo bench status` or `cargo bench citylots`
 src/
 ├── lib.rs              # Public API (Quamina struct)
 ├── json.rs             # Pattern parsing, Matcher enum
-├── flatten_json.rs     # Streaming JSON flattener (segments_tree)
+├── flatten_json.rs     # Streaming JSON flattener
+├── segments_tree.rs    # Field path tracking for skip optimization
 ├── numbits.rs          # Q-number encoding for numeric comparisons
 ├── regexp.rs           # I-Regexp parser and NFA builder
 ├── automaton/
-│   ├── mod.rs          # Module exports
-│   ├── small_table.rs  # SmallTable, FaState, FieldMatcher, NfaBuffers
-│   ├── fa_builders.rs  # make_string_fa, make_prefix_fa, merge_fas, etc.
+│   ├── small_table.rs  # SmallTable (byte transition table), FaState, NfaBuffers
+│   ├── fa_builders.rs  # make_string_fa, make_prefix_fa, merge_fas
 │   ├── nfa.rs          # traverse_dfa, traverse_nfa
-│   ├── thread_safe.rs  # ThreadSafeCoreMatcher, FrozenFieldMatcher/ValueMatcher
-│   ├── mutable_matcher.rs  # MutableFieldMatcher/ValueMatcher (building)
-│   └── wildcard.rs     # Shellstyle/wildcard pattern handling
-└── fallback/           # Suffix, numeric ranges (non-automaton)
+│   ├── thread_safe.rs  # FrozenFieldMatcher/ValueMatcher (immutable, for matching)
+│   ├── mutable_matcher.rs  # MutableFieldMatcher/ValueMatcher (for building)
+│   └── wildcard.rs     # Shellstyle/wildcard patterns
+└── fallback/           # Suffix, numeric ranges (non-automaton path)
 ```
 
-**Key types:**
-- `SmallTable`: Compact byte-indexed transition table (ceilings/steps representation)
-- `FaState`: Automaton state with table + field_transitions
-- `FieldMatcher`: Low-level automaton node (path -> ValueMatcher transitions)
-- `FrozenFieldMatcher<X>`: Immutable matcher with pattern IDs, used during matching
-- `MutableFieldMatcher<X>`: RefCell-based builder, converted to Frozen after add_pattern
-
 **Matching flow:**
-1. `flatten()` JSON -> sorted `Vec<Field>` (path, value, array_trail, is_number)
+1. `flatten()` JSON -> sorted `Vec<Field>` (path as Arc, value, array_trail)
 2. `matches_for_fields_direct()` traverses automaton from root
 3. For each field, `transition_on()` matches value via DFA/NFA traversal
-4. `FrozenValueMatcher.transition_map` (FxHashMap) maps FieldMatcher ptrs -> FrozenFieldMatcher
 
-## Completed (Tasks 1-27)
+## Optimizations Applied (Tasks 1-27)
 
-**Core:** Q-numbers, segments_tree flattener, NfaBuffers reuse, Unicode case folding, parking_lot::Mutex, automaton module split, custom regex NFA, pruner rebuilding.
+| Optimization | Impact | Notes |
+|-------------|--------|-------|
+| Arc<[u8]> for paths | citylots -20% | O(1) cloning from SegmentsTree |
+| FxHashMap transitions | ~5% | Faster than std HashMap for ptr keys |
+| NfaBuffers reuse | ~8% | Vec reuse in traverse_dfa/traverse_nfa |
+| Direct Field matching | ~3% | Removed EventFieldRef indirection |
+| SmallVec array_trail | minor | Inline storage for shallow nesting |
+| #[inline] hot paths | varies | dstep, step, traverse_*, transition_on |
 
-**Optimizations:**
-- `unsafe from_utf8_unchecked` in flattener (validated JSON)
-- `Arc<[u8]>` for Field paths (O(1) cloning from SegmentsTree)
-- `SmallVec` for Field array_trail
-- Direct Field matching (removed EventFieldRef indirection)
-- Vec<Field> reuse across flatten calls (returns `&mut [Field]`)
-- FxHashMap for transition lookups (faster than std HashMap for usize keys)
-- Vec reuse in traverse_dfa/traverse_nfa via NfaBuffers.transitions
-- `#[inline]` on hot functions (dstep, step, traverse_dfa, traverse_nfa, transition_on)
-
-**Task 18 (regex NFA):** Ported I-Regexp subset parser and NFA builder from Go. Supports `.`, `[...]`, `|`, `(...)`, `?`. Escape char is `~` (not `\`). Unsupported features (`*`, `+`, `{n,m}`, `~p{...}`) fall back to `regex` crate.
-
-**Task 23 learnings:** Attempted Vec-based indexing (store index in FieldMatcher, lookup by index). **Regressed 5-8%** because accessing `arc_fm.index` requires Arc dereference, while `Arc::as_ptr()` for HashMap keys doesn't dereference. FxHashMap was better solution.
-
-**Task 25 (pruner rebuilding):** Added `PrunerStats` to track emitted/filtered patterns. `rebuild()` creates new automaton with only live patterns. `maybe_rebuild()` auto-triggers when filtered/emitted > 0.2 and activity > 1000. Matches Go's `pruner.go` behavior.
-
-**Task 26 (traverse optimization):** Modified traverse_dfa/traverse_nfa to accept mutable Vec reference instead of returning new Vec. Added transitions buffer to NfaBuffers for reuse. Improved status_middle_nested by 8%, status_last_field by 3.4%. Citylots gap narrowed to 1.07x (was 1.10x).
-
-**Task 27 (citylots optimization):** Changed Field.path from `SmallVec<[u8; 64]>` to `Arc<[u8]>`. Paths are now shared from SegmentsTree with O(1) cloning. Citylots improved 20% (3.42µs vs 4.26µs), now at parity with Go's 3.4µs.
+**Key learnings:**
+- Task 23: Vec-based indexing regressed 5-8% (Arc deref cost). FxHashMap with Arc::as_ptr() is faster.
+- Task 27: Path cloning was citylots bottleneck. Go uses slice refs; now we use Arc<[u8]>.
 
 ## Next Steps
 
 | # | Task | Notes |
 |---|------|-------|
-| 28 | Further optimizations | Profile remaining gaps if any |
+| 28 | status_context_fields | Go 1.29x faster - profile to find bottleneck |
 
 **Potential optimizations:**
-- Pool allocations for result vectors in transition_on
 - SIMD for SmallTable.step() ceiling search
-- Generic FaState<T> to eliminate HashMap indirection for frozen matchers
-- status_context_fields optimization (Go 1.29x faster)
+- Pool allocations for transition_on result vectors
+- Generic FaState<T> to eliminate HashMap indirection
 
-## Parity
+## Go Reference
 
-| Feature | Go | Rust | Notes |
-|---------|:--:|:----:|-------|
-| Automaton core | ✅ | ✅ | SmallTable, NFA/DFA |
-| Segment flattener | ✅ | ✅ | Early termination, Vec reuse |
-| Unicode case folding | ✅ | ✅ | case_folding.rs |
-| Custom regex NFA | ✅ | ✅ | I-Regexp subset (`.`, `[...]`, `|`, `(...)`, `?`) |
-| Pruner rebuilding | ✅ | ✅ | Auto-rebuild at 0.2 filtered/emitted ratio |
-
-## Go Reference Files
-
-| Feature | Go File | Notes |
-|---------|---------|-------|
-| Matching core | `core_matcher.go` | matchesForFields, tryToMatch |
-| Value matching | `value_matcher.go` | transitionOn, makeStringFA |
-| Flattening | `flatten_json.go` | segmentsTree, Flatten |
+| Feature | Go File | Key Functions |
+|---------|---------|---------------|
+| Matching | `core_matcher.go` | matchesForFields, tryToMatch |
+| Values | `value_matcher.go` | transitionOn, makeStringFA |
+| Flatten | `flatten_json.go` | segmentsTree, Flatten |
 | Pruner | `pruner.go` | rebuildRatio=0.2, deletePatterns |
-| Regex NFA | `regexp_nfa.go` | Custom NFA vs Rust's `regex` crate |
-| Benchmarks | `benchmarks_test.go` | Status patterns, citylots |
+| Regex | `regexp_nfa.go` | Custom NFA (I-Regexp subset) |
+| Bench | `benchmarks_test.go` | Status patterns, citylots |
 
 ## Commands
 
 ```bash
-cargo test                    # Run all tests
-cargo bench status            # Run status_* benchmarks
-cargo bench citylots          # Run citylots benchmark
-cargo bench                   # Run all benchmarks
+cargo test                    # 164 tests
+cargo bench status            # status_* benchmarks
+cargo bench citylots          # citylots benchmark
+cargo clippy -- -D warnings   # CI runs this
 ```
+
+## Session Notes
+
+When continuing work:
+1. Read this spec for context
+2. For Go behavior, read Go source directly (don't trust past interpretations)
+3. Run benchmarks before/after changes: `cargo bench <name>`
+4. Push often and check CI (`gh run list`)
