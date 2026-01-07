@@ -8,10 +8,10 @@ Rust port of [quamina](https://github.com/timbray/quamina) - fast pattern-matchi
 
 | Benchmark | Go (ns) | Rust (ns) | Status |
 |-----------|---------|-----------|--------|
-| status_context_fields | 382 | 492 | Go 1.29x faster |
-| status_middle_nested | 6,400 | 4,556 | **Rust 1.40x faster** |
-| status_last_field | 6,600 | 4,920 | **Rust 1.34x faster** |
-| citylots | 3,400 | 3,417 | Parity |
+| status_context_fields | 442 | 458 | Parity (4% gap) |
+| status_middle_nested | 7,700 | 4,650 | **Rust 1.66x faster** |
+| status_last_field | 8,100 | 4,964 | **Rust 1.63x faster** |
+| citylots | 3,570 | 3,446 | **Rust 3% faster** |
 
 ## Architecture
 
@@ -55,11 +55,7 @@ src/
 
 ## Next Steps
 
-| # | Task | Notes |
-|---|------|-------|
-| 28 | status_context_fields | Go 1.29x faster - profile to find bottleneck |
-
-**Potential optimizations:**
+Performance parity achieved. Potential future optimizations:
 - SIMD for SmallTable.step() ceiling search
 - Pool allocations for transition_on result vectors
 - Generic FaState<T> to eliminate HashMap indirection
