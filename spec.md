@@ -18,7 +18,6 @@ Rust port of [quamina](https://github.com/timbray/quamina) - fast pattern-matchi
 ### Functional (non-blocking)
 | Gap | Notes |
 |-----|-------|
-| Numeric ranges | Parsed but uses runtime fallback, not automaton |
 | Config options | Go has WithMediaType, WithFlattener, WithPatternDeletion; Rust uses simple new() |
 | Custom Flattener | Go allows pluggable flatteners; Rust hardcodes JSON |
 
@@ -32,6 +31,8 @@ Rust port of [quamina](https://github.com/timbray/quamina) - fast pattern-matchi
 | Concurrent update stress | MEDIUM | Test pattern add during active matching |
 
 ### Rust-only features (not in Go)
+- `{"numeric": ["<", 100]}` - numeric range operators (uses fallback)
+- `{"suffix": ".jpg"}` - dedicated suffix operator (automaton-integrated)
 - `has_matches()`, `count_matches()` - optimized boolean/count queries
 - `pattern_count()`, `is_empty()`, `clear()` - inventory management
 - `pruner_stats()`, `set_auto_rebuild()` - explicit rebuild control

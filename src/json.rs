@@ -58,7 +58,6 @@ impl Matcher {
     /// and EqualsIgnoreCase (with full Unicode case folding).
     ///
     /// Not fully supported (need runtime checking or have limitations):
-    /// - NumericExact: automaton does string matching but event values may have different representations
     /// - Numeric comparisons, Regex: not implemented in automaton
     pub fn is_automaton_compatible(&self) -> bool {
         match self {
@@ -72,9 +71,8 @@ impl Matcher {
             Matcher::EqualsIgnoreCase(_) => true,
             // ParsedRegexp: uses our custom NFA integrated into automaton
             Matcher::ParsedRegexp(_) => true,
-            // NumericExact: automaton matches on string representation, but event values
-            // may have different representations (35 vs 35.0 vs 3.5e1)
-            Matcher::NumericExact(_) => false,
+            // NumericExact: uses merged string + Q-number FAs to handle different representations
+            Matcher::NumericExact(_) => true,
             // Suffix uses shellstyle with leading *
             Matcher::Suffix(_) => true,
             Matcher::Numeric(_) => false,
