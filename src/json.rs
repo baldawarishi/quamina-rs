@@ -75,7 +75,8 @@ impl Matcher {
             Matcher::NumericExact(_) => true,
             // Suffix uses shellstyle with leading *
             Matcher::Suffix(_) => true,
-            Matcher::Numeric(_) => false,
+            // Numeric ranges use Q-number ordering in automaton
+            Matcher::Numeric(_) => true,
             Matcher::Regex(_) => false,
         }
     }

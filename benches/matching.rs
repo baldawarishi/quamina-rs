@@ -331,6 +331,60 @@ fn bench_multi_field_and(c: &mut Criterion) {
     });
 }
 
+/// Numeric range patterns benchmark (single-sided: < 100)
+fn bench_numeric_range_single(c: &mut Criterion) {
+    let mut q = Quamina::new();
+    q.add_pattern("below_100", r#"{"score": [{"numeric": ["<", 100]}]}"#)
+        .unwrap();
+
+    let event = r#"{"score": 50, "name": "test"}"#.as_bytes();
+
+    c.bench_function("numeric_range_single", |b| {
+        b.iter(|| q.matches_for_event(black_box(event)).unwrap())
+    });
+}
+
+/// Numeric range patterns benchmark (two-sided: >= 0 AND <= 100)
+fn bench_numeric_range_two_sided(c: &mut Criterion) {
+    let mut q = Quamina::new();
+    q.add_pattern(
+        "range_0_100",
+        r#"{"score": [{"numeric": [">=", 0, "<=", 100]}]}"#,
+    )
+    .unwrap();
+
+    let event = r#"{"score": 50, "name": "test"}"#.as_bytes();
+
+    c.bench_function("numeric_range_two_sided", |b| {
+        b.iter(|| q.matches_for_event(black_box(event)).unwrap())
+    });
+}
+
+/// Multiple numeric range patterns
+fn bench_numeric_range_multiple(c: &mut Criterion) {
+    let mut q = Quamina::new();
+    // Add 10 non-overlapping ranges
+    for i in 0..10 {
+        let lower = i * 100;
+        let upper = (i + 1) * 100;
+        q.add_pattern(
+            format!("range_{}", i),
+            &format!(
+                r#"{{"score": [{{"numeric": [">=", {}, "<", {}]}}]}}"#,
+                lower, upper
+            ),
+        )
+        .unwrap();
+    }
+
+    // Event value 550 should match range_5 (500-600)
+    let event = r#"{"score": 550}"#.as_bytes();
+
+    c.bench_function("numeric_range_10_patterns", |b| {
+        b.iter(|| q.matches_for_event(black_box(event)).unwrap())
+    });
+}
+
 // === CityLots benchmarks (comparable to Go's citylots_bench_test.go) ===
 
 fn load_citylots_lines() -> Vec<Vec<u8>> {
@@ -400,6 +454,10 @@ criterion_group!(
     bench_prefix_patterns,
     bench_anything_but,
     bench_multi_field_and,
+    // Numeric range benchmarks
+    bench_numeric_range_single,
+    bench_numeric_range_two_sided,
+    bench_numeric_range_multiple,
     // CityLots benchmark (comparable to Go)
     bench_citylots,
 );

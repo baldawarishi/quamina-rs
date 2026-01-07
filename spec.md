@@ -4,7 +4,7 @@ Rust port of [quamina](https://github.com/timbray/quamina) - fast pattern-matchi
 
 ## Status
 
-**164 tests passing.** All core operators implemented. Performance parity achieved.
+**167 tests passing.** All core operators implemented. Performance parity achieved. Numeric ranges now use automaton.
 
 | Benchmark | Go (ns) | Rust (ns) | Status |
 |-----------|---------|-----------|--------|
@@ -12,12 +12,19 @@ Rust port of [quamina](https://github.com/timbray/quamina) - fast pattern-matchi
 | status_middle_nested | 7,700 | 4,650 | **Rust 1.66x faster** |
 | status_last_field | 8,100 | 4,964 | **Rust 1.63x faster** |
 | citylots | 3,570 | 3,446 | **Rust 3% faster** |
+| numeric_range_single | - | 142 | Automaton-based |
+| numeric_range_two_sided | - | 143 | Automaton-based |
+| numeric_range_10_patterns | - | 176 | Automaton-based |
 
-## Next Task: Automaton-Based Numeric Ranges (Experiment)
+## Recent: Automaton-Based Numeric Ranges (Completed)
 
-Move `{"numeric": ["<", 100]}` from fallback to automaton. See "Future Work" section for full details.
+Successfully moved `{"numeric": ["<", 100]}` from fallback to automaton-based matching.
 
-**Quick summary:** Q-numbers preserve ordering, so we can build an FA that accepts "all Q-numbers < X". This is experimental - revert if too complex or slower than fallback.
+**Implementation:**
+- `make_numeric_less_fa()` - FA for `<` and `<=` operators
+- `make_numeric_greater_fa()` - FA for `>` and `>=` operators
+- `make_numeric_range_fa()` - Combined FA for two-sided ranges (e.g., `>= 0, < 100`)
+- Q-numbers preserve lexicographic ordering, enabling byte-by-byte comparison
 
 ## Parity Gaps
 
@@ -37,7 +44,7 @@ Move `{"numeric": ["<", 100]}` from fallback to automaton. See "Future Work" sec
 | Concurrent update stress | MEDIUM | Test pattern add during active matching |
 
 ### Rust-only features (not in Go)
-- `{"numeric": ["<", 100]}` - numeric range operators (uses fallback)
+- `{"numeric": ["<", 100]}` - numeric range operators (automaton-integrated)
 - `{"suffix": ".jpg"}` - dedicated suffix operator (automaton-integrated)
 - `has_matches()`, `count_matches()` - optimized boolean/count queries
 - `pattern_count()`, `is_empty()`, `clear()` - inventory management
@@ -86,34 +93,17 @@ src/
 
 ## Future Work
 
-### Experiment: Automaton-Based Numeric Ranges
+### Completed: Automaton-Based Numeric Ranges
 
-**Goal:** Move `{"numeric": ["<", 100]}` from fallback to automaton.
+~~**Goal:** Move `{"numeric": ["<", 100]}` from fallback to automaton.~~
 
-**Why it might work:** Q-numbers (see `numbits.rs`) preserve ordering. If `a < b`, then `qNum(a) < qNum(b)` lexicographically. This means we can build an automaton that accepts "all Q-numbers less than X".
+**Status: COMPLETED.** Numeric ranges now use automaton-based matching with ~142ns latency.
 
-**Approach:**
-1. Convert bound (e.g., 100) to Q-number bytes: `[0x41, 0x19, ...]`
-2. Build FA that accepts any byte sequence lexicographically less than bound
-3. For `< bound`: accept if first differing byte is less, OR if shorter and all bytes match prefix
-4. For `>= bound`: similar but accept if first differing byte is greater or equal
-5. Two-sided ranges (`>= 50, < 100`): intersection of two FAs
-
-**Key challenge:** Q-numbers are variable length (1-10 bytes). Shorter Q-numbers represent smaller absolute values. The FA must handle:
-- Early termination (shorter input)
-- Byte-by-byte comparison with "less than" branches at each position
-
-**Files to modify:**
-- `src/automaton/fa_builders.rs` - add `make_numeric_range_fa()`
-- `src/automaton/mutable_matcher.rs` - add `add_numeric_range_transition()`
-- `src/json.rs` - mark `Matcher::Numeric` as automaton-compatible
-
-**Test approach:**
-1. Create benchmark with 100+ numeric range patterns
-2. Compare fallback vs automaton performance
-3. If automaton is slower or too complex, revert
-
-**Reference:** Go doesn't have this feature yet (EventBridge parity goal). This is experimental.
+**Implementation details:**
+- Single-sided ranges (`< 100`, `>= 50`): Direct FA construction via `make_numeric_less_fa`/`make_numeric_greater_fa`
+- Two-sided ranges (`>= 0, < 100`): Combined FA via `make_numeric_range_fa` (not intersection-based)
+- Q-numbers preserve lexicographic ordering, enabling byte-by-byte comparison
+- FA handles variable-length Q-numbers (1-10 bytes) correctly
 
 ---
 
@@ -140,9 +130,10 @@ src/
 ## Commands
 
 ```bash
-cargo test                    # 164 tests
+cargo test                    # 167 tests
 cargo bench status            # status_* benchmarks
 cargo bench citylots          # citylots benchmark
+cargo bench numeric_range     # numeric range benchmarks
 cargo clippy -- -D warnings   # CI runs this
 ```
 

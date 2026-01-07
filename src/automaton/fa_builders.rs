@@ -600,6 +600,301 @@ fn make_monocase_fa_ascii(val: &[u8], next_field: Arc<FieldMatcher>) -> SmallTab
     current_next.table.clone()
 }
 
+/// Build an FA that matches Q-numbers lexicographically less than a bound.
+///
+/// This is used for numeric range patterns like `{"numeric": ["<", 100]}`.
+/// Q-numbers preserve ordering, so we can compare bytes lexicographically.
+///
+/// # Arguments
+/// * `bound` - The numeric bound
+/// * `inclusive` - If true, matches <= bound; if false, matches < bound
+/// * `next_field` - The field matcher to transition to on match
+pub fn make_numeric_less_fa(
+    bound: f64,
+    inclusive: bool,
+    next_field: Arc<FieldMatcher>,
+) -> SmallTable {
+    let bound_q = crate::numbits::q_num_from_f64(bound);
+    make_less_fa_step(&bound_q, 0, inclusive, next_field)
+}
+
+fn make_less_fa_step(
+    bound_q: &[u8],
+    index: usize,
+    inclusive: bool,
+    next_field: Arc<FieldMatcher>,
+) -> SmallTable {
+    // "Accept rest" state: when we know input < bound, accept and match
+    // This has field_transitions to mark the match
+    // Empty table causes traversal to stop after collecting field_transitions
+    let accept_rest = Arc::new(FaState {
+        table: SmallTable::new(),
+        field_transitions: vec![next_field.clone()],
+    });
+
+    if index >= bound_q.len() {
+        // All bound bytes consumed
+        // VALUE_TERMINATOR: input == bound (if inclusive, match; else no match)
+        // Any other byte: input > bound (no match)
+        if inclusive {
+            // On VALUE_TERMINATOR: match (equal case)
+            return SmallTable::with_mappings(None, &[VALUE_TERMINATOR], &[accept_rest]);
+        } else {
+            // No match for equal case
+            return SmallTable::new();
+        }
+    }
+
+    let bound_byte = bound_q[index];
+
+    // Continuation for when input byte == bound_byte
+    let continuation = make_less_fa_step(bound_q, index + 1, inclusive, next_field);
+    let continuation_state = Arc::new(FaState::with_table(continuation));
+
+    // Build table using unpack/pack for flexibility with range transitions
+    let mut unpacked: [Option<Arc<FaState>>; BYTE_CEILING] = std::array::from_fn(|_| None);
+
+    // VALUE_TERMINATOR: input shorter than bound = input < bound, MATCH
+    unpacked[VALUE_TERMINATOR as usize] = Some(accept_rest.clone());
+
+    // Bytes 0..(bound_byte-1): input < bound, MATCH
+    for b in 0..bound_byte {
+        if b != VALUE_TERMINATOR {
+            unpacked[b as usize] = Some(accept_rest.clone());
+        }
+    }
+
+    // Byte == bound_byte: check rest
+    unpacked[bound_byte as usize] = Some(continuation_state);
+
+    // Bytes > bound_byte: no transition (implicit fail)
+
+    let mut table = SmallTable::new();
+    table.pack(&unpacked);
+    table
+}
+
+/// Build an FA that matches Q-numbers lexicographically greater than a bound.
+///
+/// This is used for numeric range patterns like `{"numeric": [">", 0]}`.
+/// Q-numbers preserve ordering, so we can compare bytes lexicographically.
+///
+/// # Arguments
+/// * `bound` - The numeric bound
+/// * `inclusive` - If true, matches >= bound; if false, matches > bound
+/// * `next_field` - The field matcher to transition to on match
+pub fn make_numeric_greater_fa(
+    bound: f64,
+    inclusive: bool,
+    next_field: Arc<FieldMatcher>,
+) -> SmallTable {
+    let bound_q = crate::numbits::q_num_from_f64(bound);
+    make_greater_fa_step(&bound_q, 0, inclusive, next_field)
+}
+
+/// Build an FA that matches Q-numbers within a two-sided range.
+///
+/// This is used for numeric range patterns like `{"numeric": [">=", 0, "<=", 100]}`.
+/// Builds a single combined FA rather than intersecting two separate FAs.
+///
+/// # Arguments
+/// * `lower` - Lower bound value
+/// * `lower_incl` - If true, lower bound is inclusive (>=)
+/// * `upper` - Upper bound value
+/// * `upper_incl` - If true, upper bound is inclusive (<=)
+/// * `next_field` - The field matcher to transition to on match
+pub fn make_numeric_range_fa(
+    lower: f64,
+    lower_incl: bool,
+    upper: f64,
+    upper_incl: bool,
+    next_field: Arc<FieldMatcher>,
+) -> SmallTable {
+    let lower_q = crate::numbits::q_num_from_f64(lower);
+    let upper_q = crate::numbits::q_num_from_f64(upper);
+    make_range_fa_step(&lower_q, &upper_q, 0, lower_incl, upper_incl, next_field)
+}
+
+/// Build one step of the two-sided range FA.
+///
+/// At each position, we track whether we're:
+/// - Still matching the lower bound prefix (need byte >= lower[i])
+/// - Still matching the upper bound prefix (need byte <= upper[i])
+/// - Already above lower bound (any byte >= 0 is fine for lower check)
+/// - Already below upper bound (any byte is fine for upper check)
+fn make_range_fa_step(
+    lower_q: &[u8],
+    upper_q: &[u8],
+    index: usize,
+    lower_incl: bool,
+    upper_incl: bool,
+    next_field: Arc<FieldMatcher>,
+) -> SmallTable {
+    // Accept state - reached when we know input is within range
+    let accept_rest = Arc::new(FaState {
+        table: SmallTable::new(),
+        field_transitions: vec![next_field.clone()],
+    });
+
+    let lower_done = index >= lower_q.len();
+    let upper_done = index >= upper_q.len();
+
+    // Both bounds exhausted - check terminators
+    if lower_done && upper_done {
+        // Input has same length as both bounds
+        // VALUE_TERMINATOR means we've matched both bounds exactly
+        if lower_incl && upper_incl {
+            // Both inclusive - accept equal
+            return SmallTable::with_mappings(None, &[VALUE_TERMINATOR], &[accept_rest]);
+        } else {
+            // At least one exclusive - reject equal
+            return SmallTable::new();
+        }
+    }
+
+    // Only lower done - we've established input >= lower, now just check upper
+    if lower_done {
+        // Any byte that keeps us <= upper is fine
+        // Delegate to upper-only check
+        return make_less_fa_step(upper_q, index, upper_incl, next_field);
+    }
+
+    // Only upper done - we've established input <= upper, now just check lower
+    if upper_done {
+        // Input has more bytes than upper bound, so input > upper
+        // This means input is out of range (> upper bound)
+        return SmallTable::new();
+    }
+
+    // Both bounds have bytes at this position
+    let lower_byte = lower_q[index];
+    let upper_byte = upper_q[index];
+
+    if lower_byte == upper_byte {
+        // Same byte in both bounds - only that byte continues, others fail
+        let continuation = make_range_fa_step(
+            lower_q,
+            upper_q,
+            index + 1,
+            lower_incl,
+            upper_incl,
+            next_field,
+        );
+        let continuation_state = Arc::new(FaState::with_table(continuation));
+
+        let mut unpacked: [Option<Arc<FaState>>; BYTE_CEILING] = std::array::from_fn(|_| None);
+
+        // VALUE_TERMINATOR: input shorter than both bounds = input < lower, fail
+        // Bytes < lower_byte: fail (< lower)
+        // Byte == lower_byte == upper_byte: continue
+        // Bytes > upper_byte: fail (> upper)
+
+        unpacked[lower_byte as usize] = Some(continuation_state);
+
+        let mut table = SmallTable::new();
+        table.pack(&unpacked);
+        return table;
+    }
+
+    // Different bytes in bounds - we have a range of valid first bytes
+    // lower_byte < upper_byte (since lower < upper)
+    let mut unpacked: [Option<Arc<FaState>>; BYTE_CEILING] = std::array::from_fn(|_| None);
+
+    // VALUE_TERMINATOR: input shorter than both bounds, input < lower, fail
+
+    // Bytes < lower_byte: fail (< lower)
+
+    // Byte == lower_byte: need to check rest >= lower[index+1:]
+    // At this point we know byte == lower_byte, so for lower check we continue
+    // For upper check, byte < upper_byte, so we're already < upper, no need to check
+    let lower_continuation =
+        make_greater_fa_step(lower_q, index + 1, lower_incl, next_field.clone());
+    unpacked[lower_byte as usize] = Some(Arc::new(FaState::with_table(lower_continuation)));
+
+    // Bytes in (lower_byte, upper_byte): accept (> lower and < upper)
+    for b in (lower_byte + 1)..upper_byte {
+        unpacked[b as usize] = Some(accept_rest.clone());
+    }
+
+    // Byte == upper_byte: need to check rest <= upper[index+1:]
+    // At this point we know byte == upper_byte > lower_byte, so we're > lower
+    // For upper check, byte == upper_byte, so we continue checking
+    let upper_continuation =
+        make_less_fa_step(upper_q, index + 1, upper_incl, next_field.clone());
+    unpacked[upper_byte as usize] = Some(Arc::new(FaState::with_table(upper_continuation)));
+
+    // Bytes > upper_byte: fail (> upper)
+
+    let mut table = SmallTable::new();
+    table.pack(&unpacked);
+    table
+}
+
+fn make_greater_fa_step(
+    bound_q: &[u8],
+    index: usize,
+    inclusive: bool,
+    next_field: Arc<FieldMatcher>,
+) -> SmallTable {
+    // "Accept rest" state: when we know input > bound, accept and match
+    let accept_rest = Arc::new(FaState {
+        table: SmallTable::new(),
+        field_transitions: vec![next_field.clone()],
+    });
+
+    if index >= bound_q.len() {
+        // All bound bytes consumed
+        // VALUE_TERMINATOR: input == bound
+        // Any other byte: input has more bytes, so input > bound, MATCH
+        if inclusive {
+            // Accept both VALUE_TERMINATOR (equal) and any other byte (greater)
+            let unpacked: [Option<Arc<FaState>>; BYTE_CEILING] =
+                std::array::from_fn(|_| Some(accept_rest.clone()));
+            // VALUE_TERMINATOR also matches (equal case)
+            let mut table = SmallTable::new();
+            table.pack(&unpacked);
+            return table;
+        } else {
+            // Only accept if input has more bytes (strictly greater)
+            // VALUE_TERMINATOR = equal, don't match
+            let mut unpacked: [Option<Arc<FaState>>; BYTE_CEILING] =
+                std::array::from_fn(|_| Some(accept_rest.clone()));
+            unpacked[VALUE_TERMINATOR as usize] = None; // equal case: no match
+            let mut table = SmallTable::new();
+            table.pack(&unpacked);
+            return table;
+        }
+    }
+
+    let bound_byte = bound_q[index];
+
+    // Continuation for when input byte == bound_byte
+    let continuation = make_greater_fa_step(bound_q, index + 1, inclusive, next_field);
+    let continuation_state = Arc::new(FaState::with_table(continuation));
+
+    // Build table:
+    // - VALUE_TERMINATOR: input shorter than bound = input < bound, NO MATCH
+    // - byte < bound_byte: input < bound, NO MATCH
+    // - byte == bound_byte: check rest
+    // - byte > bound_byte: input > bound, MATCH
+
+    let mut unpacked: [Option<Arc<FaState>>; BYTE_CEILING] = std::array::from_fn(|_| None);
+
+    // Byte == bound_byte: check rest
+    unpacked[bound_byte as usize] = Some(continuation_state);
+
+    // Bytes > bound_byte: input > bound, MATCH
+    for b in (bound_byte + 1)..(BYTE_CEILING as u8) {
+        unpacked[b as usize] = Some(accept_rest.clone());
+    }
+
+    // VALUE_TERMINATOR and bytes < bound_byte: no transition (implicit fail)
+
+    let mut table = SmallTable::new();
+    table.pack(&unpacked);
+    table
+}
+
 /// Merge two finite automata into one that matches either pattern.
 ///
 /// This computes the union of two automata by merging their transition tables.
@@ -646,4 +941,113 @@ pub fn merge_fas(table1: &SmallTable, table2: &SmallTable) -> SmallTable {
     };
 
     result
+}
+
+#[cfg(test)]
+mod numeric_range_tests {
+    use super::*;
+    use crate::numbits::q_num_from_f64;
+
+    #[test]
+    fn test_numeric_less_fa_basic() {
+        let next_field = Arc::new(FieldMatcher::new());
+        let fa = make_numeric_less_fa(100.0, true, next_field.clone());
+        
+        // Test with Q-number for 50 (should match < 100)
+        let q50 = q_num_from_f64(50.0);
+        let q100 = q_num_from_f64(100.0);
+        let q150 = q_num_from_f64(150.0);
+        
+        println!("Q(50) = {:?}", q50);
+        println!("Q(100) = {:?}", q100);
+        println!("Q(150) = {:?}", q150);
+        
+        // Manually traverse
+        let mut transitions = Vec::new();
+        crate::automaton::nfa::traverse_dfa(&fa, &q50, &mut transitions);
+        println!("Transitions for Q(50): {}", transitions.len());
+        assert!(!transitions.is_empty(), "Q(50) should match <= 100");
+        
+        transitions.clear();
+        crate::automaton::nfa::traverse_dfa(&fa, &q100, &mut transitions);
+        println!("Transitions for Q(100): {}", transitions.len());
+        assert!(!transitions.is_empty(), "Q(100) should match <= 100 (inclusive)");
+        
+        transitions.clear();
+        crate::automaton::nfa::traverse_dfa(&fa, &q150, &mut transitions);
+        println!("Transitions for Q(150): {}", transitions.len());
+        assert!(transitions.is_empty(), "Q(150) should NOT match <= 100");
+    }
+    
+    #[test]
+    fn test_numeric_greater_fa_basic() {
+        let next_field = Arc::new(FieldMatcher::new());
+        let fa = make_numeric_greater_fa(0.0, true, next_field.clone());
+        
+        let q0 = q_num_from_f64(0.0);
+        let q50 = q_num_from_f64(50.0);
+        let q_neg = q_num_from_f64(-10.0);
+        
+        println!("Q(0) = {:?}", q0);
+        println!("Q(50) = {:?}", q50);
+        println!("Q(-10) = {:?}", q_neg);
+        
+        let mut transitions = Vec::new();
+        crate::automaton::nfa::traverse_dfa(&fa, &q50, &mut transitions);
+        println!("Transitions for Q(50): {}", transitions.len());
+        assert!(!transitions.is_empty(), "Q(50) should match >= 0");
+        
+        transitions.clear();
+        crate::automaton::nfa::traverse_dfa(&fa, &q0, &mut transitions);
+        println!("Transitions for Q(0): {}", transitions.len());
+        assert!(!transitions.is_empty(), "Q(0) should match >= 0 (inclusive)");
+        
+        transitions.clear();
+        crate::automaton::nfa::traverse_dfa(&fa, &q_neg, &mut transitions);
+        println!("Transitions for Q(-10): {}", transitions.len());
+        assert!(transitions.is_empty(), "Q(-10) should NOT match >= 0");
+    }
+
+    #[test]
+    fn test_numeric_range_combined() {
+        let next_field = Arc::new(FieldMatcher::new());
+
+        // Create combined FA for >= 0 AND <= 100
+        let range_fa = make_numeric_range_fa(0.0, true, 100.0, true, next_field.clone());
+
+        let q50 = q_num_from_f64(50.0);
+        let q0 = q_num_from_f64(0.0);
+        let q100 = q_num_from_f64(100.0);
+        let q150 = q_num_from_f64(150.0);
+        let q_neg = q_num_from_f64(-10.0);
+
+        println!("Q(0) = {:?}", q0);
+        println!("Q(50) = {:?}", q50);
+        println!("Q(100) = {:?}", q100);
+
+        let mut transitions = Vec::new();
+        crate::automaton::nfa::traverse_dfa(&range_fa, &q50, &mut transitions);
+        println!("Range transitions for Q(50): {}", transitions.len());
+        assert!(!transitions.is_empty(), "Q(50) should match [0, 100]");
+
+        transitions.clear();
+        crate::automaton::nfa::traverse_dfa(&range_fa, &q0, &mut transitions);
+        println!("Range transitions for Q(0): {}", transitions.len());
+        assert!(!transitions.is_empty(), "Q(0) should match [0, 100]");
+
+        transitions.clear();
+        crate::automaton::nfa::traverse_dfa(&range_fa, &q100, &mut transitions);
+        println!("Range transitions for Q(100): {}", transitions.len());
+        assert!(!transitions.is_empty(), "Q(100) should match [0, 100]");
+
+        transitions.clear();
+        crate::automaton::nfa::traverse_dfa(&range_fa, &q150, &mut transitions);
+        println!("Range transitions for Q(150): {}", transitions.len());
+        assert!(transitions.is_empty(), "Q(150) should NOT match [0, 100]");
+
+        transitions.clear();
+        crate::automaton::nfa::traverse_dfa(&range_fa, &q_neg, &mut transitions);
+        println!("Range transitions for Q(-10): {}", transitions.len());
+        assert!(transitions.is_empty(), "Q(-10) should NOT match [0, 100]");
+    }
 }

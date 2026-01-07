@@ -12,8 +12,9 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use super::fa_builders::{
-    make_anything_but_fa, make_monocase_fa, make_prefix_fa, make_shellstyle_fa, make_string_fa,
-    make_wildcard_fa, merge_fas,
+    make_anything_but_fa, make_monocase_fa, make_numeric_greater_fa, make_numeric_less_fa,
+    make_numeric_range_fa, make_prefix_fa, make_shellstyle_fa, make_string_fa, make_wildcard_fa,
+    merge_fas,
 };
 use super::nfa::{traverse_dfa, traverse_nfa};
 use super::small_table::{FieldMatcher, NfaBuffers, SmallTable};
@@ -165,8 +166,13 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
                 let pattern = format!("*{}", s);
                 self.add_shellstyle_transition(pattern.as_bytes())
             }
-            // For complex matchers (Numeric, Regex fallback), we create a simple next state
-            // These would need runtime checking or specialized handling
+            Matcher::Numeric(cmp) => {
+                // Numeric ranges use Q-number ordering in the automaton
+                *self.has_numbers.borrow_mut() = true;
+                self.add_numeric_range_transition(cmp)
+            }
+            // For Regex fallback, we create a simple next state
+            // These would need runtime checking
             _ => Rc::new(MutableFieldMatcher::new()),
         }
     }
@@ -428,6 +434,62 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
         self.transition_map
             .borrow_mut()
             .insert(Arc::as_ptr(&field_matcher_arc), next_fm.clone());
+
+        let mut start_table = self.start_table.borrow_mut();
+        if let Some(ref existing) = *start_table {
+            *start_table = Some(merge_fas(existing, &new_fa));
+        } else if self.singleton_match.borrow().is_some() {
+            let singleton_val = self.singleton_match.borrow().clone().unwrap();
+            let singleton_trans = self.singleton_transition.borrow().clone().unwrap();
+            let singleton_arc = Arc::new(FieldMatcher::new());
+            self.transition_map
+                .borrow_mut()
+                .insert(Arc::as_ptr(&singleton_arc), singleton_trans);
+            let singleton_fa = make_string_fa(&singleton_val, singleton_arc);
+            *start_table = Some(merge_fas(&singleton_fa, &new_fa));
+            *self.singleton_match.borrow_mut() = None;
+            *self.singleton_transition.borrow_mut() = None;
+        } else {
+            *start_table = Some(new_fa);
+        }
+
+        next_fm
+    }
+
+    /// Add a numeric range transition that uses Q-number ordering in the automaton.
+    ///
+    /// For two-sided ranges (e.g., >= 5, < 100), we merge the lower and upper bound FAs.
+    /// For single-sided ranges (e.g., < 100), we only use the relevant FA.
+    fn add_numeric_range_transition(
+        &self,
+        cmp: &crate::json::NumericComparison,
+    ) -> Rc<MutableFieldMatcher<X>> {
+        let next_fm = Rc::new(MutableFieldMatcher::new());
+        let next_arc = Arc::new(FieldMatcher::new());
+        self.transition_map
+            .borrow_mut()
+            .insert(Arc::as_ptr(&next_arc), next_fm.clone());
+
+        // Build the FA(s) based on the comparison operators
+        let new_fa = match (&cmp.lower, &cmp.upper) {
+            (Some((lower_incl, lower_val)), Some((upper_incl, upper_val))) => {
+                // Two-sided range: build a combined FA that handles both bounds
+                make_numeric_range_fa(*lower_val, *lower_incl, *upper_val, *upper_incl, next_arc)
+            }
+            (Some((incl, val)), None) => {
+                // Lower bound only: >= or >
+                make_numeric_greater_fa(*val, *incl, next_arc)
+            }
+            (None, Some((incl, val))) => {
+                // Upper bound only: <= or <
+                make_numeric_less_fa(*val, *incl, next_arc)
+            }
+            (None, None) => {
+                // No bounds specified - match any number
+                // This shouldn't happen in practice
+                return next_fm;
+            }
+        };
 
         let mut start_table = self.start_table.borrow_mut();
         if let Some(ref existing) = *start_table {
