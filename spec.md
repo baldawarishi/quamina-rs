@@ -4,7 +4,7 @@ Rust port of [quamina](https://github.com/timbray/quamina) - fast pattern-matchi
 
 ## Status
 
-**174 tests passing.** All core operators implemented. Rust outperforms Go on all benchmarks.
+**179 tests passing.** All core operators implemented. Rust outperforms Go on all benchmarks.
 
 | Benchmark | Go (ns) | Rust (ns) | Status |
 |-----------|---------|-----------|--------|
@@ -38,10 +38,10 @@ Successfully moved `{"numeric": ["<", 100]}` from fallback to automaton-based ma
 | Category | Priority | Notes |
 |----------|----------|-------|
 | ~~Large-scale stress tests~~ | ~~HIGH~~ | ✓ Ported: 10K string/number fuzz, citylots2 213K events |
-| Race condition tests | HIGH | Go uses -race flag; Rust needs equivalent |
+| ~~Race condition tests~~ | ~~HIGH~~ | ✓ Ported: test_concurrent_update_during_matching |
 | ~~Fuzzing~~ | ~~HIGH~~ | ✓ Ported: test_stress_fuzz_strings, test_stress_fuzz_numbers |
-| Pruner edge cases | MEDIUM | Go has 8+ tests; Rust has 4 |
-| Concurrent update stress | MEDIUM | Test pattern add during active matching |
+| ~~Pruner edge cases~~ | ~~MEDIUM~~ | ✓ Ported: multiple patterns same ID, bad pattern/event handling, rebuild edge cases |
+| ~~Concurrent update stress~~ | ~~MEDIUM~~ | ✓ Ported: test_concurrent_update_during_matching (852 patterns added during matching) |
 
 ### Known Issues
 None currently.
@@ -133,7 +133,7 @@ src/
 ## Commands
 
 ```bash
-cargo test                    # 174 tests
+cargo test                    # 179 tests
 cargo bench status            # status_* benchmarks
 cargo bench citylots          # citylots benchmark
 cargo bench numeric_range     # numeric range benchmarks

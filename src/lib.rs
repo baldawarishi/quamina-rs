@@ -3381,4 +3381,240 @@ mod tests {
             );
         }
     }
+
+    /// Port of Go's TestConcurrency
+    /// Tests concurrent pattern addition during active matching
+    /// The key test is that concurrent updates don't crash and all patterns are functional
+    #[test]
+    fn test_concurrent_update_during_matching() {
+        use flate2::read::GzDecoder;
+        use std::fs::File;
+        use std::io::{BufRead, BufReader};
+        use std::sync::mpsc;
+        use std::sync::Arc;
+        use std::thread;
+
+        const UPDATE_INTERVAL: usize = 250;
+
+        // Load citylots2.json.gz
+        let path = "testdata/citylots2.json.gz";
+        let file = File::open(path).expect("Failed to open citylots2.json.gz");
+        let decoder = GzDecoder::new(file);
+        let reader = BufReader::new(decoder);
+        let lines: Vec<Vec<u8>> = reader
+            .lines()
+            .map(|l| l.expect("Failed to read line").into_bytes())
+            .collect();
+
+        // Initial patterns that match citylots2 structure
+        let patterns = [
+            ("CRANLEIGH", r#"{"properties": {"STREET": ["CRANLEIGH"]}}"#),
+            ("shellstyle", r#"{"properties": {"STREET": [{"shellstyle": "B*K"}]}}"#),
+        ];
+
+        // Create matcher and add initial patterns
+        let q = Arc::new(std::sync::RwLock::new(Quamina::new()));
+        {
+            let mut q_write = q.write().unwrap();
+            for (name, pattern) in &patterns {
+                q_write.add_pattern(name.to_string(), pattern).unwrap();
+            }
+        }
+
+        // Channel for tracking added patterns
+        let (tx, rx) = mpsc::channel::<String>();
+
+        // Concurrent updater function - adds unique street patterns
+        fn add_pattern_concurrent(
+            q: Arc<std::sync::RwLock<Quamina<String>>>,
+            idx: usize,
+            tx: mpsc::Sender<String>,
+        ) {
+            let val = format!("CONCURRENT_STREET_{}", idx);
+            let pattern = format!(r#"{{"properties": {{"STREET": ["{}"]}}}}"#, val);
+
+            {
+                let mut q_write = q.write().unwrap();
+                q_write
+                    .add_pattern(val.clone(), &pattern)
+                    .expect("add_pattern failed");
+            }
+            let _ = tx.send(val); // Ignore send errors (receiver may be dropped)
+        }
+
+        // Run matching with concurrent updates
+        let mut total_matches = 0usize;
+        let mut sent = 0;
+
+        let start = std::time::Instant::now();
+        for (i, line) in lines.iter().enumerate() {
+            // Match against current patterns
+            let matches = {
+                let q_read = q.read().unwrap();
+                q_read.matches_for_event(line).expect("matches_for_event failed")
+            };
+            total_matches += matches.len();
+
+            // Every UPDATE_INTERVAL lines, spawn a thread to add a new pattern
+            if (i + 1) % UPDATE_INTERVAL == 0 {
+                sent += 1;
+                let q_clone = Arc::clone(&q);
+                let tx_clone = tx.clone();
+                let idx = sent;
+                thread::spawn(move || {
+                    add_pattern_concurrent(q_clone, idx, tx_clone);
+                });
+            }
+        }
+        let elapsed = start.elapsed();
+
+        // Drop the sender so rx.iter() will complete
+        drop(tx);
+
+        // Wait a moment for all threads to complete
+        std::thread::sleep(std::time::Duration::from_millis(100));
+
+        // Verify all concurrently added patterns are now in the matcher and work
+        let mut verified = 0;
+        for val in rx.iter() {
+            let event = format!(r#"{{"properties": {{"STREET": "{}"}}}}"#, val);
+
+            let q_read = q.read().unwrap();
+            let matches = q_read
+                .matches_for_event(event.as_bytes())
+                .expect("matches_for_event failed");
+            assert!(
+                matches.contains(&val),
+                "Concurrent pattern {} not found in matches: {:?}",
+                val,
+                matches
+            );
+            verified += 1;
+        }
+
+        let events_per_sec = lines.len() as f64 / elapsed.as_secs_f64();
+        println!(
+            "Concurrent update test: {:.0} events/sec, {} total matches, {} patterns added concurrently, {} verified",
+            events_per_sec, total_matches, sent, verified
+        );
+
+        // Key assertions:
+        // 1. No crashes during concurrent updates
+        // 2. All concurrently added patterns were verified as working
+        assert_eq!(sent, verified, "Not all concurrent patterns were verified");
+        assert!(sent > 0, "Should have added some patterns concurrently");
+        assert!(total_matches > 0, "Should have gotten some matches");
+    }
+
+    /// Tests that multiple patterns with the same ID work correctly
+    /// Port of Go's TestMultiplePatternsWithSameId
+    #[test]
+    fn test_multiple_patterns_same_id_comprehensive() {
+        let mut q = Quamina::new();
+        let id = "shared_id";
+
+        // Add two different patterns with the same ID
+        q.add_pattern(id, r#"{"enjoys": ["queso"]}"#).unwrap();
+        q.add_pattern(id, r#"{"needs": ["chips"]}"#).unwrap();
+
+        // Both patterns should match (returning the same ID)
+        let m1 = q
+            .matches_for_event(r#"{"enjoys": "queso"}"#.as_bytes())
+            .unwrap();
+        assert_eq!(m1, vec![id], "First pattern should match");
+
+        let m2 = q
+            .matches_for_event(r#"{"needs": "chips"}"#.as_bytes())
+            .unwrap();
+        assert_eq!(m2, vec![id], "Second pattern should match");
+
+        // pattern_count returns unique IDs (we have 1 ID with 2 patterns)
+        assert_eq!(q.pattern_count(), 1, "Should have 1 unique pattern ID");
+
+        // Delete by ID should remove both patterns
+        q.delete_patterns(&id).unwrap();
+
+        // Verify both were deleted (pattern count drops to 0)
+        assert_eq!(q.pattern_count(), 0, "Should have 0 live patterns after delete");
+
+        // Neither pattern should match now
+        let m3 = q
+            .matches_for_event(r#"{"enjoys": "queso"}"#.as_bytes())
+            .unwrap();
+        assert!(m3.is_empty(), "No match after delete");
+
+        let m4 = q
+            .matches_for_event(r#"{"needs": "chips"}"#.as_bytes())
+            .unwrap();
+        assert!(m4.is_empty(), "No match after delete");
+    }
+
+    /// Tests error handling for invalid patterns
+    /// Port of Go's TestBadPattern - tests parse-level errors
+    #[test]
+    fn test_bad_pattern_error_handling() {
+        let mut q: Quamina<&str> = Quamina::new();
+
+        // Invalid JSON - not a JSON object
+        let result = q.add_pattern("p1", "Dream baby dream");
+        assert!(result.is_err(), "Should reject non-JSON pattern");
+
+        // Invalid JSON - unclosed brace
+        let result = q.add_pattern("p2", r#"{"likes": ["tacos"]"#);
+        assert!(result.is_err(), "Should reject malformed JSON");
+
+        // Invalid pattern structure - value not an array
+        let result = q.add_pattern("p3", r#"{"likes": "tacos"}"#);
+        assert!(result.is_err(), "Should reject non-array field value");
+
+        // Note: Empty pattern {} is accepted (matches any event with any field)
+
+        // Invalid operator
+        let result = q.add_pattern("p5", r#"{"x": [{"invalid-op": "foo"}]}"#);
+        assert!(result.is_err(), "Should reject invalid operator");
+
+        // Empty byte input
+        let result = q.add_pattern("p6", "");
+        assert!(result.is_err(), "Should reject empty input");
+    }
+
+    /// Tests error handling for invalid events
+    /// Port of Go's TestBadEvent
+    #[test]
+    fn test_bad_event_error_handling() {
+        let mut q = Quamina::new();
+        q.add_pattern("p1", r#"{"likes": ["tacos"]}"#).unwrap();
+
+        // Invalid JSON events
+        let result = q.matches_for_event(b"My heart's not in it");
+        assert!(result.is_err(), "Should reject non-JSON event");
+
+        let result = q.matches_for_event(b"{incomplete");
+        assert!(result.is_err(), "Should reject incomplete JSON");
+
+        let result = q.matches_for_event(b"null");
+        assert!(result.is_err(), "Should reject null event");
+
+        let result = q.matches_for_event(b"[]");
+        assert!(result.is_err(), "Should reject array event");
+
+        let result = q.matches_for_event(b"123");
+        assert!(result.is_err(), "Should reject number event");
+    }
+
+    /// Tests rebuild trigger with zero denominator doesn't panic
+    /// Port of Go's TestTriggerTooManyFilteredDenom
+    #[test]
+    fn test_rebuild_zero_filtered_denominator() {
+        let mut q: Quamina<&str> = Quamina::new();
+
+        // Add and immediately delete a pattern
+        q.add_pattern("p1", r#"{"likes": ["tacos"]}"#).unwrap();
+        q.delete_patterns(&"p1").unwrap();
+
+        // Matching should not panic with zero patterns
+        let result = q.matches_for_event(r#"{"likes": "tacos"}"#.as_bytes());
+        assert!(result.is_ok(), "Should not panic with empty matcher");
+        assert!(result.unwrap().is_empty(), "No matches expected");
+    }
 }
