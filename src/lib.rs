@@ -3409,7 +3409,10 @@ mod tests {
         // Initial patterns that match citylots2 structure
         let patterns = [
             ("CRANLEIGH", r#"{"properties": {"STREET": ["CRANLEIGH"]}}"#),
-            ("shellstyle", r#"{"properties": {"STREET": [{"shellstyle": "B*K"}]}}"#),
+            (
+                "shellstyle",
+                r#"{"properties": {"STREET": [{"shellstyle": "B*K"}]}}"#,
+            ),
         ];
 
         // Create matcher and add initial patterns
@@ -3451,7 +3454,9 @@ mod tests {
             // Match against current patterns
             let matches = {
                 let q_read = q.read().unwrap();
-                q_read.matches_for_event(line).expect("matches_for_event failed")
+                q_read
+                    .matches_for_event(line)
+                    .expect("matches_for_event failed")
             };
             total_matches += matches.len();
 
@@ -3535,7 +3540,11 @@ mod tests {
         q.delete_patterns(&id).unwrap();
 
         // Verify both were deleted (pattern count drops to 0)
-        assert_eq!(q.pattern_count(), 0, "Should have 0 live patterns after delete");
+        assert_eq!(
+            q.pattern_count(),
+            0,
+            "Should have 0 live patterns after delete"
+        );
 
         // Neither pattern should match now
         let m3 = q
