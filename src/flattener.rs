@@ -229,9 +229,7 @@ impl Flattener for JsonFlattener {
             .as_any()
             .downcast_ref::<SegmentsTree>()
             .ok_or_else(|| {
-                QuaminaError::InvalidJson(
-                    "JsonFlattener requires SegmentsTree as tracker".into(),
-                )
+                QuaminaError::InvalidJson("JsonFlattener requires SegmentsTree as tracker".into())
             })?;
 
         let fields = self.state.flatten(event, segments_tree)?;

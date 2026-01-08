@@ -13,8 +13,8 @@ pub mod segments_tree;
 mod wildcard;
 
 // Re-export flattener types for custom implementations
-pub use crate::flattener::{Flattener, JsonFlattener, OwnedField, SegmentsTreeTracker};
 pub use crate::flatten_json::ArrayPos;
+pub use crate::flattener::{Flattener, JsonFlattener, OwnedField, SegmentsTreeTracker};
 
 use automaton::{NfaBuffers, ThreadSafeCoreMatcher};
 use flatten_json::FlattenJsonState;
