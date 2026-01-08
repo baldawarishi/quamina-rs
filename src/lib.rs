@@ -4,6 +4,7 @@ pub mod automaton;
 mod case_folding;
 #[doc(hidden)]
 pub mod flatten_json;
+mod flattener;
 mod json;
 pub mod numbits;
 pub mod regexp;
@@ -11,9 +12,13 @@ pub mod regexp;
 pub mod segments_tree;
 mod wildcard;
 
+// Re-export flattener types for custom implementations
+pub use crate::flattener::{Flattener, JsonFlattener, OwnedField, SegmentsTreeTracker};
+pub use crate::flatten_json::ArrayPos;
+
 use automaton::{NfaBuffers, ThreadSafeCoreMatcher};
 use flatten_json::FlattenJsonState;
-use json::{ArrayPos, Field, Matcher};
+use json::{Field, Matcher};
 use parking_lot::Mutex;
 use segments_tree::SegmentsTree;
 use std::collections::{HashMap, HashSet};
@@ -137,6 +142,8 @@ pub struct QuaminaBuilder<X: Clone + Eq + Hash + Send + Sync = String> {
     auto_rebuild_enabled: bool,
     /// Media type (only "application/json" supported)
     media_type_validated: bool,
+    /// Custom flattener (if provided, replaces default JSON flattener)
+    custom_flattener: Option<Box<dyn flattener::Flattener>>,
     /// PhantomData to carry the X type parameter
     _phantom: std::marker::PhantomData<X>,
 }
@@ -147,6 +154,7 @@ impl<X: Clone + Eq + Hash + Send + Sync> QuaminaBuilder<X> {
         QuaminaBuilder {
             auto_rebuild_enabled: true,
             media_type_validated: false,
+            custom_flattener: None,
             _phantom: std::marker::PhantomData,
         }
     }
@@ -173,6 +181,12 @@ impl<X: Clone + Eq + Hash + Send + Sync> QuaminaBuilder<X> {
     /// assert!(result.is_err());
     /// ```
     pub fn with_media_type(mut self, media_type: &str) -> Result<Self, QuaminaError> {
+        // Check for conflict with custom flattener
+        if self.custom_flattener.is_some() {
+            return Err(QuaminaError::InvalidPattern(
+                "flattener already specified".into(),
+            ));
+        }
         match media_type {
             "application/json" => {
                 self.media_type_validated = true;
@@ -180,6 +194,62 @@ impl<X: Clone + Eq + Hash + Send + Sync> QuaminaBuilder<X> {
             }
             other => Err(QuaminaError::UnsupportedMediaType(other.to_string())),
         }
+    }
+
+    /// Specify a custom flattener for event parsing.
+    ///
+    /// This allows using custom parsers for non-JSON formats (CBOR, Protocol Buffers, etc.).
+    /// When a custom flattener is provided, the default JSON flattener is replaced.
+    ///
+    /// This option cannot be combined with `with_media_type()`.
+    ///
+    /// # Errors
+    /// Returns an error if `with_media_type()` has already been called.
+    ///
+    /// # Example
+    /// ```
+    /// use quamina::{QuaminaBuilder, Flattener, SegmentsTreeTracker, OwnedField, QuaminaError};
+    ///
+    /// struct MyFlattener;
+    ///
+    /// impl Flattener for MyFlattener {
+    ///     fn flatten(
+    ///         &mut self,
+    ///         event: &[u8],
+    ///         tracker: &dyn SegmentsTreeTracker,
+    ///     ) -> Result<Vec<OwnedField>, QuaminaError> {
+    ///         // Custom parsing logic
+    ///         Ok(vec![])
+    ///     }
+    ///
+    ///     fn copy(&self) -> Box<dyn Flattener> {
+    ///         Box::new(MyFlattener)
+    ///     }
+    /// }
+    ///
+    /// let q = QuaminaBuilder::<String>::new()
+    ///     .with_flattener(Box::new(MyFlattener))
+    ///     .unwrap()
+    ///     .build()
+    ///     .unwrap();
+    /// ```
+    pub fn with_flattener(
+        mut self,
+        flattener: Box<dyn flattener::Flattener>,
+    ) -> Result<Self, QuaminaError> {
+        // Check for conflict with media type
+        if self.media_type_validated {
+            return Err(QuaminaError::InvalidPattern(
+                "media-type already specified".into(),
+            ));
+        }
+        if self.custom_flattener.is_some() {
+            return Err(QuaminaError::InvalidPattern(
+                "flattener specified more than once".into(),
+            ));
+        }
+        self.custom_flattener = Some(flattener);
+        Ok(self)
     }
 
     /// Enable or disable automatic pruner rebuilding
@@ -223,6 +293,7 @@ impl<X: Clone + Eq + Hash + Send + Sync> QuaminaBuilder<X> {
             deleted_patterns: HashSet::new(),
             segments_tree: SegmentsTree::new(),
             flattener: Mutex::new(FlattenJsonState::new()),
+            custom_flattener: self.custom_flattener.map(Mutex::new),
             nfa_bufs: Mutex::new(NfaBuffers::new()),
             pruner_stats: PrunerStats::new(),
             auto_rebuild_enabled: self.auto_rebuild_enabled,
@@ -278,6 +349,8 @@ pub struct Quamina<X: Clone + Eq + Hash + Send + Sync = String> {
     segments_tree: SegmentsTree,
     /// Reusable JSON flattener state (Mutex for thread-safe access)
     flattener: Mutex<FlattenJsonState>,
+    /// Custom flattener for non-JSON formats (if provided)
+    custom_flattener: Option<Mutex<Box<dyn flattener::Flattener>>>,
     /// Reusable NFA traversal buffers (Mutex for thread-safe access)
     nfa_bufs: Mutex<NfaBuffers>,
     /// Statistics for auto-rebuild decisions
@@ -310,6 +383,12 @@ impl<X: Clone + Eq + Hash + Send + Sync> Clone for Quamina<X> {
             }
         }
 
+        // Copy custom flattener if present
+        let custom_flattener = self.custom_flattener.as_ref().map(|f| {
+            let flattener = f.lock();
+            Mutex::new(flattener.copy())
+        });
+
         Quamina {
             automaton,
             pattern_defs: self.pattern_defs.clone(),
@@ -319,6 +398,7 @@ impl<X: Clone + Eq + Hash + Send + Sync> Clone for Quamina<X> {
             deleted_patterns: self.deleted_patterns.clone(),
             segments_tree: self.segments_tree.clone(),
             flattener: Mutex::new(FlattenJsonState::new()),
+            custom_flattener,
             nfa_bufs: Mutex::new(NfaBuffers::new()),
             pruner_stats: self.pruner_stats.clone(),
             auto_rebuild_enabled: self.auto_rebuild_enabled,
@@ -338,6 +418,7 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
             deleted_patterns: HashSet::new(),
             segments_tree: SegmentsTree::new(),
             flattener: Mutex::new(FlattenJsonState::new()),
+            custom_flattener: None,
             nfa_bufs: Mutex::new(NfaBuffers::new()),
             pruner_stats: PrunerStats::new(),
             auto_rebuild_enabled: true,
@@ -393,8 +474,13 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
 
     /// Find all patterns that match the given event
     pub fn matches_for_event(&self, event: &[u8]) -> Result<Vec<X>, QuaminaError> {
-        // Use the reusable flattener with segments tree for field skipping.
-        // The flattener lock must be held while using the fields since they borrow from it.
+        // Check if we have a custom flattener
+        if let Some(ref custom_flattener_mutex) = self.custom_flattener {
+            // Use custom flattener path
+            return self.matches_for_event_custom_flattener(event, custom_flattener_mutex);
+        }
+
+        // Default path: use optimized JSON flattener with borrowed data
         let mut flattener = self.flattener.lock();
         let streaming_fields = flattener.flatten(event, &self.segments_tree)?;
 
@@ -442,7 +528,7 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
                     let array_trail = f
                         .array_trail
                         .iter()
-                        .map(|ap| ArrayPos {
+                        .map(|ap| json::ArrayPos {
                             array: ap.array,
                             pos: ap.pos,
                         })
@@ -457,6 +543,101 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
                 .collect();
 
             // Build multimap for fallback matching
+            let mut event_map: HashMap<&str, Vec<&Field>> = HashMap::new();
+            for field in &event_fields {
+                event_map
+                    .entry(field.path.as_str())
+                    .or_default()
+                    .push(field);
+            }
+
+            let fallback_matches = self.fallback_matches(&event_map);
+            matches.extend(fallback_matches);
+        }
+
+        Ok(matches)
+    }
+
+    /// Match using a custom flattener (slower path with owned data)
+    fn matches_for_event_custom_flattener(
+        &self,
+        event: &[u8],
+        custom_flattener_mutex: &Mutex<Box<dyn flattener::Flattener>>,
+    ) -> Result<Vec<X>, QuaminaError> {
+        use std::sync::Arc;
+
+        // Get owned fields from custom flattener
+        let mut custom_flattener = custom_flattener_mutex.lock();
+        let owned_fields = custom_flattener.flatten(event, &self.segments_tree)?;
+        drop(custom_flattener); // Release lock early
+
+        // Convert OwnedField to flatten_json::Field with owned data
+        let mut streaming_fields: Vec<flatten_json::Field<'static>> = owned_fields
+            .into_iter()
+            .map(|f| flatten_json::Field {
+                path: Arc::from(f.path.as_slice()),
+                val: flatten_json::FieldValue::Owned(f.val),
+                array_trail: f.array_trail.into(),
+                is_number: f.is_number,
+            })
+            .collect();
+
+        // Sort by path for automaton matching
+        streaming_fields.sort_unstable_by(|a, b| a.path.cmp(&b.path));
+
+        // Get matches from automaton
+        let mut matches: Vec<X> = {
+            let mut bufs = self.nfa_bufs.lock();
+            let raw_matches = self
+                .automaton
+                .matches_for_fields_direct(&streaming_fields, &mut bufs);
+            // Fast path: skip filtering if no patterns have been deleted
+            if self.deleted_patterns.is_empty() {
+                self.pruner_stats.add_emitted(raw_matches.len() as u64);
+                raw_matches
+            } else {
+                // Slow path: filter deleted patterns and track stats
+                let raw_count = raw_matches.len();
+                let filtered: Vec<X> = raw_matches
+                    .into_iter()
+                    .filter(|x| !self.deleted_patterns.contains(x))
+                    .collect();
+                let filtered_count = raw_count - filtered.len();
+                self.pruner_stats.add_emitted(filtered.len() as u64);
+                self.pruner_stats.add_filtered(filtered_count as u64);
+                filtered
+            }
+        };
+
+        // Fallback matching
+        if !self.fallback_patterns.is_empty() {
+            let event_fields: Vec<Field> = streaming_fields
+                .iter()
+                .map(|f| {
+                    let path_str = String::from_utf8_lossy(&f.path).into_owned();
+                    let raw_bytes = f.val.as_bytes();
+                    let value = if raw_bytes.starts_with(b"\"") && raw_bytes.ends_with(b"\"") {
+                        String::from_utf8_lossy(&raw_bytes[1..raw_bytes.len() - 1]).into_owned()
+                    } else {
+                        String::from_utf8_lossy(raw_bytes).into_owned()
+                    };
+                    let array_trail = f
+                        .array_trail
+                        .iter()
+                        .map(|ap| json::ArrayPos {
+                            array: ap.array,
+                            pos: ap.pos,
+                        })
+                        .collect();
+                    Field {
+                        path: path_str,
+                        value,
+                        array_trail,
+                        is_number: f.is_number,
+                    }
+                })
+                .collect();
+
             let mut event_map: HashMap<&str, Vec<&Field>> = HashMap::new();
             for field in &event_fields {
                 event_map
@@ -610,7 +791,7 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
         &self,
         pattern_fields: &[(&String, &Vec<Matcher>)],
         field_idx: usize,
-        current_trails: &mut Vec<&'a [ArrayPos]>,
+        current_trails: &mut Vec<&'a [json::ArrayPos]>,
         event_map: &HashMap<&str, Vec<&'a Field>>,
     ) -> bool {
         if field_idx >= pattern_fields.len() {
@@ -854,7 +1035,7 @@ impl<X: Clone + Eq + Hash + Send + Sync> Default for Quamina<X> {
 /// Check if two array trails are compatible (no conflict).
 /// Two trails conflict if they reference different positions in the same array.
 /// This prevents matching across different elements of the same array.
-fn no_array_trail_conflict(from: &[ArrayPos], to: &[ArrayPos]) -> bool {
+fn no_array_trail_conflict(from: &[json::ArrayPos], to: &[json::ArrayPos]) -> bool {
     for from_pos in from {
         for to_pos in to {
             if from_pos.array == to_pos.array && from_pos.pos != to_pos.pos {
@@ -3857,5 +4038,191 @@ mod tests {
         q.add_pattern("test", r#"{"x": [1]}"#).unwrap();
         let matches = q.matches_for_event(r#"{"x": 1}"#.as_bytes()).unwrap();
         assert_eq!(matches, vec!["test"]);
+    }
+
+    // ==========================================================================
+    // Custom Flattener Tests
+    // ==========================================================================
+
+    /// A simple custom flattener that returns hardcoded fields for testing
+    struct MockFlattener {
+        fields: Vec<OwnedField>,
+    }
+
+    impl MockFlattener {
+        fn new(fields: Vec<OwnedField>) -> Self {
+            Self { fields }
+        }
+    }
+
+    impl Flattener for MockFlattener {
+        fn flatten(
+            &mut self,
+            _event: &[u8],
+            _tracker: &dyn SegmentsTreeTracker,
+        ) -> Result<Vec<OwnedField>, QuaminaError> {
+            Ok(self.fields.clone())
+        }
+
+        fn copy(&self) -> Box<dyn Flattener> {
+            Box::new(MockFlattener {
+                fields: self.fields.clone(),
+            })
+        }
+    }
+
+    #[test]
+    fn test_custom_flattener_basic() {
+        // Create a mock flattener that returns a single field
+        let flattener = MockFlattener::new(vec![OwnedField {
+            path: b"status".to_vec(),
+            val: b"\"active\"".to_vec(),
+            array_trail: vec![],
+            is_number: false,
+        }]);
+
+        let mut q = QuaminaBuilder::<String>::new()
+            .with_flattener(Box::new(flattener))
+            .unwrap()
+            .build()
+            .unwrap();
+
+        q.add_pattern("p1".to_string(), r#"{"status": ["active"]}"#)
+            .unwrap();
+
+        // The mock flattener always returns {"status": "active"} regardless of input
+        let matches = q.matches_for_event(b"{}").unwrap();
+        assert_eq!(matches, vec!["p1"]);
+
+        // Even with different input, should still match (mock returns same fields)
+        let matches = q.matches_for_event(b"anything").unwrap();
+        assert_eq!(matches, vec!["p1"]);
+    }
+
+    #[test]
+    fn test_custom_flattener_no_match() {
+        let flattener = MockFlattener::new(vec![OwnedField {
+            path: b"status".to_vec(),
+            val: b"\"inactive\"".to_vec(),
+            array_trail: vec![],
+            is_number: false,
+        }]);
+
+        let mut q = QuaminaBuilder::<String>::new()
+            .with_flattener(Box::new(flattener))
+            .unwrap()
+            .build()
+            .unwrap();
+
+        q.add_pattern("p1".to_string(), r#"{"status": ["active"]}"#)
+            .unwrap();
+
+        // Mock returns "inactive" so pattern won't match
+        let matches = q.matches_for_event(b"{}").unwrap();
+        assert!(matches.is_empty());
+    }
+
+    #[test]
+    fn test_custom_flattener_with_numbers() {
+        let flattener = MockFlattener::new(vec![OwnedField {
+            path: b"count".to_vec(),
+            val: b"42".to_vec(),
+            array_trail: vec![],
+            is_number: true,
+        }]);
+
+        let mut q = QuaminaBuilder::<String>::new()
+            .with_flattener(Box::new(flattener))
+            .unwrap()
+            .build()
+            .unwrap();
+
+        q.add_pattern("p1".to_string(), r#"{"count": [42]}"#)
+            .unwrap();
+
+        let matches = q.matches_for_event(b"{}").unwrap();
+        assert_eq!(matches, vec!["p1"]);
+    }
+
+    #[test]
+    fn test_custom_flattener_clone() {
+        let flattener = MockFlattener::new(vec![OwnedField {
+            path: b"status".to_vec(),
+            val: b"\"active\"".to_vec(),
+            array_trail: vec![],
+            is_number: false,
+        }]);
+
+        let mut q = QuaminaBuilder::<String>::new()
+            .with_flattener(Box::new(flattener))
+            .unwrap()
+            .build()
+            .unwrap();
+
+        q.add_pattern("p1".to_string(), r#"{"status": ["active"]}"#)
+            .unwrap();
+
+        // Clone the Quamina instance
+        let q2 = q.clone();
+
+        // Both should work independently
+        let matches1 = q.matches_for_event(b"{}").unwrap();
+        let matches2 = q2.matches_for_event(b"{}").unwrap();
+
+        assert_eq!(matches1, vec!["p1"]);
+        assert_eq!(matches2, vec!["p1"]);
+    }
+
+    #[test]
+    fn test_with_flattener_conflicts_with_media_type() {
+        let flattener = MockFlattener::new(vec![]);
+
+        // First set flattener, then try media_type
+        let result = QuaminaBuilder::<String>::new()
+            .with_flattener(Box::new(flattener))
+            .unwrap()
+            .with_media_type("application/json");
+
+        assert!(result.is_err());
+
+        // First set media_type, then try flattener
+        let flattener2 = MockFlattener::new(vec![]);
+        let result = QuaminaBuilder::<String>::new()
+            .with_media_type("application/json")
+            .unwrap()
+            .with_flattener(Box::new(flattener2));
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_with_flattener_cannot_be_set_twice() {
+        let flattener1 = MockFlattener::new(vec![]);
+        let flattener2 = MockFlattener::new(vec![]);
+
+        let result = QuaminaBuilder::<String>::new()
+            .with_flattener(Box::new(flattener1))
+            .unwrap()
+            .with_flattener(Box::new(flattener2));
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_json_flattener_through_trait() {
+        // Use the JsonFlattener explicitly through the trait interface
+        let mut q = QuaminaBuilder::<String>::new()
+            .with_flattener(Box::new(JsonFlattener::new()))
+            .unwrap()
+            .build()
+            .unwrap();
+
+        q.add_pattern("p1".to_string(), r#"{"status": ["active"]}"#)
+            .unwrap();
+
+        let matches = q
+            .matches_for_event(r#"{"status": "active"}"#.as_bytes())
+            .unwrap();
+        assert_eq!(matches, vec!["p1"]);
     }
 }

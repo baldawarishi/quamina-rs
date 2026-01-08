@@ -4,7 +4,7 @@ Rust port of [quamina](https://github.com/timbray/quamina) - fast pattern-matchi
 
 ## Status
 
-**186 tests passing.** All core operators implemented. Rust outperforms Go on all benchmarks.
+**195 tests passing.** All core operators implemented. Full Go parity achieved. Rust outperforms Go on all benchmarks.
 
 | Benchmark | Go (ns) | Rust (ns) | Status |
 |-----------|---------|-----------|--------|
@@ -28,11 +28,13 @@ Successfully moved `{"numeric": ["<", 100]}` from fallback to automaton-based ma
 
 ## Parity Gaps
 
-### Functional (non-blocking)
+### Functional
 | Gap | Notes |
 |-----|-------|
 | ~~Config options~~ | ✓ Added QuaminaBuilder with with_media_type(), with_auto_rebuild() |
-| Custom Flattener | Go allows pluggable flatteners; Rust hardcodes JSON |
+| ~~Custom Flattener~~ | ✓ Added Flattener trait, SegmentsTreeTracker trait, with_flattener() |
+
+**All functional parity gaps closed.**
 
 ### Test Coverage Gaps
 | Category | Priority | Notes |
@@ -54,13 +56,52 @@ None currently.
 - `pruner_stats()`, `set_auto_rebuild()` - explicit rebuild control
 - Better number parsing: Rust accepts `1e0`, Go rejects (Go bug)
 
+## Custom Flattener API
+
+The `Flattener` trait allows custom event parsers for non-JSON formats:
+
+```rust
+use quamina::{Flattener, SegmentsTreeTracker, OwnedField, QuaminaError};
+
+struct MyFlattener;
+
+impl Flattener for MyFlattener {
+    fn flatten(
+        &mut self,
+        event: &[u8],
+        tracker: &dyn SegmentsTreeTracker,
+    ) -> Result<Vec<OwnedField>, QuaminaError> {
+        // Custom parsing logic - use tracker to skip unused fields
+        Ok(vec![])
+    }
+
+    fn copy(&self) -> Box<dyn Flattener> {
+        Box::new(MyFlattener)
+    }
+}
+
+// Usage:
+let q = QuaminaBuilder::<String>::new()
+    .with_flattener(Box::new(MyFlattener))
+    .unwrap()
+    .build()
+    .unwrap();
+```
+
+Key types:
+- `Flattener` - Trait for event parsers
+- `SegmentsTreeTracker` - Trait for field path tracking (enables skip optimization)
+- `OwnedField` - Returned by custom flatteners (path, value, array_trail, is_number)
+- `JsonFlattener` - Default JSON implementation (also usable through trait)
+
 ## Architecture
 
 ```
 src/
-├── lib.rs              # Public API (Quamina struct)
+├── lib.rs              # Public API (Quamina struct, QuaminaBuilder)
 ├── json.rs             # Pattern parsing, Matcher enum
-├── flatten_json.rs     # Streaming JSON flattener
+├── flatten_json.rs     # Streaming JSON flattener (internal)
+├── flattener.rs        # Flattener/SegmentsTreeTracker traits, JsonFlattener
 ├── segments_tree.rs    # Field path tracking for skip optimization
 ├── numbits.rs          # Q-number encoding for numeric comparisons
 ├── regexp.rs           # I-Regexp parser and NFA builder
@@ -133,7 +174,7 @@ src/
 ## Commands
 
 ```bash
-cargo test                    # 186 tests
+cargo test                    # 195 tests
 cargo bench status            # status_* benchmarks
 cargo bench citylots          # citylots benchmark
 cargo bench numeric_range     # numeric range benchmarks
