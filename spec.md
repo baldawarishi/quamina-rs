@@ -4,7 +4,7 @@ Rust port of [quamina](https://github.com/timbray/quamina) - fast pattern-matchi
 
 ## Status
 
-**179 tests passing.** All core operators implemented. Rust outperforms Go on all benchmarks.
+**186 tests passing.** All core operators implemented. Rust outperforms Go on all benchmarks.
 
 | Benchmark | Go (ns) | Rust (ns) | Status |
 |-----------|---------|-----------|--------|
@@ -31,7 +31,7 @@ Successfully moved `{"numeric": ["<", 100]}` from fallback to automaton-based ma
 ### Functional (non-blocking)
 | Gap | Notes |
 |-----|-------|
-| Config options | Go has WithMediaType, WithFlattener, WithPatternDeletion; Rust uses simple new() |
+| ~~Config options~~ | ✓ Added QuaminaBuilder with with_media_type(), with_auto_rebuild() |
 | Custom Flattener | Go allows pluggable flatteners; Rust hardcodes JSON |
 
 ### Test Coverage Gaps
@@ -133,7 +133,7 @@ src/
 ## Commands
 
 ```bash
-cargo test                    # 179 tests
+cargo test                    # 186 tests
 cargo bench status            # status_* benchmarks
 cargo bench citylots          # citylots benchmark
 cargo bench numeric_range     # numeric range benchmarks

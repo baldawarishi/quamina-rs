@@ -98,6 +98,7 @@ pub enum QuaminaError {
     InvalidJson(String),
     InvalidPattern(String),
     InvalidUtf8,
+    UnsupportedMediaType(String),
 }
 
 impl fmt::Display for QuaminaError {
@@ -106,11 +107,134 @@ impl fmt::Display for QuaminaError {
             QuaminaError::InvalidJson(msg) => write!(f, "invalid JSON: {}", msg),
             QuaminaError::InvalidPattern(msg) => write!(f, "invalid pattern: {}", msg),
             QuaminaError::InvalidUtf8 => write!(f, "invalid UTF-8"),
+            QuaminaError::UnsupportedMediaType(mt) => {
+                write!(f, "media type \"{}\" is not supported by Quamina", mt)
+            }
         }
     }
 }
 
 impl std::error::Error for QuaminaError {}
+
+/// Builder for configuring a Quamina instance
+///
+/// This provides a Go-compatible builder pattern for creating Quamina instances
+/// with custom configuration options.
+///
+/// # Example
+/// ```
+/// use quamina::QuaminaBuilder;
+///
+/// let q = QuaminaBuilder::<String>::new()
+///     .with_media_type("application/json")
+///     .unwrap()
+///     .with_auto_rebuild(true)
+///     .build()
+///     .unwrap();
+/// ```
+pub struct QuaminaBuilder<X: Clone + Eq + Hash + Send + Sync = String> {
+    /// Whether auto-rebuild is enabled (default: true)
+    auto_rebuild_enabled: bool,
+    /// Media type (only "application/json" supported)
+    media_type_validated: bool,
+    /// PhantomData to carry the X type parameter
+    _phantom: std::marker::PhantomData<X>,
+}
+
+impl<X: Clone + Eq + Hash + Send + Sync> QuaminaBuilder<X> {
+    /// Create a new QuaminaBuilder with default settings
+    pub fn new() -> Self {
+        QuaminaBuilder {
+            auto_rebuild_enabled: true,
+            media_type_validated: false,
+            _phantom: std::marker::PhantomData,
+        }
+    }
+
+    /// Specify the media type for event parsing
+    ///
+    /// Currently only "application/json" is supported.
+    ///
+    /// # Errors
+    /// Returns `QuaminaError::UnsupportedMediaType` if the media type is not supported.
+    ///
+    /// # Example
+    /// ```
+    /// use quamina::QuaminaBuilder;
+    ///
+    /// // Valid media type
+    /// let builder = QuaminaBuilder::<String>::new()
+    ///     .with_media_type("application/json")
+    ///     .unwrap();
+    ///
+    /// // Invalid media type
+    /// let result = QuaminaBuilder::<String>::new()
+    ///     .with_media_type("text/html");
+    /// assert!(result.is_err());
+    /// ```
+    pub fn with_media_type(mut self, media_type: &str) -> Result<Self, QuaminaError> {
+        match media_type {
+            "application/json" => {
+                self.media_type_validated = true;
+                Ok(self)
+            }
+            other => Err(QuaminaError::UnsupportedMediaType(other.to_string())),
+        }
+    }
+
+    /// Enable or disable automatic pruner rebuilding
+    ///
+    /// When enabled (default), the matcher will automatically rebuild its internal
+    /// data structures when the ratio of deleted to active patterns exceeds a threshold.
+    /// This helps maintain matching performance after many deletions.
+    ///
+    /// # Example
+    /// ```
+    /// use quamina::QuaminaBuilder;
+    ///
+    /// // Disable auto-rebuild for manual control
+    /// let q = QuaminaBuilder::<String>::new()
+    ///     .with_auto_rebuild(false)
+    ///     .build()
+    ///     .unwrap();
+    /// ```
+    pub fn with_auto_rebuild(mut self, enabled: bool) -> Self {
+        self.auto_rebuild_enabled = enabled;
+        self
+    }
+
+    /// Build the Quamina instance
+    ///
+    /// # Example
+    /// ```
+    /// use quamina::QuaminaBuilder;
+    ///
+    /// let q = QuaminaBuilder::<String>::new()
+    ///     .build()
+    ///     .unwrap();
+    /// ```
+    pub fn build(self) -> Result<Quamina<X>, QuaminaError> {
+        Ok(Quamina {
+            automaton: ThreadSafeCoreMatcher::new(),
+            pattern_defs: HashMap::new(),
+            fallback_patterns: HashMap::new(),
+            fallback_field_index: HashMap::new(),
+            fallback_exists_false: HashSet::new(),
+            deleted_patterns: HashSet::new(),
+            segments_tree: SegmentsTree::new(),
+            flattener: Mutex::new(FlattenJsonState::new()),
+            nfa_bufs: Mutex::new(NfaBuffers::new()),
+            pruner_stats: PrunerStats::new(),
+            auto_rebuild_enabled: self.auto_rebuild_enabled,
+        })
+    }
+}
+
+impl<X: Clone + Eq + Hash + Send + Sync> Default for QuaminaBuilder<X> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 /// The main pattern matcher
 ///
@@ -3625,5 +3749,113 @@ mod tests {
         let result = q.matches_for_event(r#"{"likes": "tacos"}"#.as_bytes());
         assert!(result.is_ok(), "Should not panic with empty matcher");
         assert!(result.unwrap().is_empty(), "No matches expected");
+    }
+
+    // =========================================================================
+    // QuaminaBuilder tests (port of Go's TestNewQOptions)
+    // =========================================================================
+
+    /// Tests basic builder construction
+    #[test]
+    fn test_builder_basic() {
+        let q = QuaminaBuilder::<String>::new().build().unwrap();
+        assert!(q.is_empty(), "New builder should create empty matcher");
+        assert!(
+            q.auto_rebuild_enabled(),
+            "Auto-rebuild should be enabled by default"
+        );
+    }
+
+    /// Tests builder with valid media type
+    #[test]
+    fn test_builder_with_media_type_json() {
+        let q = QuaminaBuilder::<String>::new()
+            .with_media_type("application/json")
+            .unwrap()
+            .build()
+            .unwrap();
+        assert!(q.is_empty());
+    }
+
+    /// Tests builder with invalid media type
+    #[test]
+    fn test_builder_with_invalid_media_type() {
+        let result = QuaminaBuilder::<String>::new().with_media_type("text/html");
+        assert!(result.is_err(), "Should reject text/html");
+
+        if let Err(QuaminaError::UnsupportedMediaType(mt)) = result {
+            assert_eq!(mt, "text/html");
+        } else {
+            panic!("Expected UnsupportedMediaType error");
+        }
+
+        // Test other invalid types
+        let result = QuaminaBuilder::<String>::new().with_media_type("application/xml");
+        assert!(result.is_err(), "Should reject application/xml");
+
+        let result = QuaminaBuilder::<String>::new().with_media_type("");
+        assert!(result.is_err(), "Should reject empty media type");
+    }
+
+    /// Tests builder with auto-rebuild option
+    #[test]
+    fn test_builder_with_auto_rebuild() {
+        // Disable auto-rebuild
+        let q = QuaminaBuilder::<String>::new()
+            .with_auto_rebuild(false)
+            .build()
+            .unwrap();
+        assert!(!q.auto_rebuild_enabled(), "Auto-rebuild should be disabled");
+
+        // Enable auto-rebuild (explicit)
+        let q = QuaminaBuilder::<String>::new()
+            .with_auto_rebuild(true)
+            .build()
+            .unwrap();
+        assert!(q.auto_rebuild_enabled(), "Auto-rebuild should be enabled");
+    }
+
+    /// Tests builder with all options combined
+    #[test]
+    fn test_builder_combined_options() {
+        let mut q = QuaminaBuilder::<String>::new()
+            .with_media_type("application/json")
+            .unwrap()
+            .with_auto_rebuild(false)
+            .build()
+            .unwrap();
+
+        // Verify the instance works correctly
+        q.add_pattern("p1".to_string(), r#"{"status": ["active"]}"#)
+            .unwrap();
+        let matches = q
+            .matches_for_event(r#"{"status": "active"}"#.as_bytes())
+            .unwrap();
+        assert_eq!(matches, vec!["p1".to_string()]);
+        assert!(!q.auto_rebuild_enabled());
+    }
+
+    /// Tests builder default implementation
+    #[test]
+    fn test_builder_default() {
+        let q = QuaminaBuilder::<String>::default().build().unwrap();
+        assert!(q.is_empty());
+        assert!(q.auto_rebuild_enabled());
+    }
+
+    /// Tests that builder can be used with different pattern ID types
+    #[test]
+    fn test_builder_generic_type() {
+        // With i32 as pattern ID
+        let mut q = QuaminaBuilder::<i32>::new().build().unwrap();
+        q.add_pattern(42, r#"{"x": [1]}"#).unwrap();
+        let matches = q.matches_for_event(r#"{"x": 1}"#.as_bytes()).unwrap();
+        assert_eq!(matches, vec![42]);
+
+        // With &str as pattern ID
+        let mut q = QuaminaBuilder::<&str>::new().build().unwrap();
+        q.add_pattern("test", r#"{"x": [1]}"#).unwrap();
+        let matches = q.matches_for_event(r#"{"x": 1}"#.as_bytes()).unwrap();
+        assert_eq!(matches, vec!["test"]);
     }
 }
