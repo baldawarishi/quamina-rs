@@ -305,28 +305,52 @@ fn test_merge_fas_shellstyle_spinout() {
     // Test pattern 1: a*b
     bufs.transitions.clear();
     traverse_nfa(&merged, b"ab", &mut bufs);
-    assert_eq!(bufs.transitions.len(), 1, "ab should match merged (from a*b)");
+    assert_eq!(
+        bufs.transitions.len(),
+        1,
+        "ab should match merged (from a*b)"
+    );
 
     bufs.transitions.clear();
     traverse_nfa(&merged, b"aXb", &mut bufs);
-    assert_eq!(bufs.transitions.len(), 1, "aXb should match merged (from a*b)");
+    assert_eq!(
+        bufs.transitions.len(),
+        1,
+        "aXb should match merged (from a*b)"
+    );
 
     bufs.transitions.clear();
     traverse_nfa(&merged, b"aXXXb", &mut bufs);
-    assert_eq!(bufs.transitions.len(), 1, "aXXXb should match merged (from a*b)");
+    assert_eq!(
+        bufs.transitions.len(),
+        1,
+        "aXXXb should match merged (from a*b)"
+    );
 
     // Test pattern 2: a*c
     bufs.transitions.clear();
     traverse_nfa(&merged, b"ac", &mut bufs);
-    assert_eq!(bufs.transitions.len(), 1, "ac should match merged (from a*c)");
+    assert_eq!(
+        bufs.transitions.len(),
+        1,
+        "ac should match merged (from a*c)"
+    );
 
     bufs.transitions.clear();
     traverse_nfa(&merged, b"aXc", &mut bufs);
-    assert_eq!(bufs.transitions.len(), 1, "aXc should match merged (from a*c)");
+    assert_eq!(
+        bufs.transitions.len(),
+        1,
+        "aXc should match merged (from a*c)"
+    );
 
     bufs.transitions.clear();
     traverse_nfa(&merged, b"aXXXc", &mut bufs);
-    assert_eq!(bufs.transitions.len(), 1, "aXXXc should match merged (from a*c)");
+    assert_eq!(
+        bufs.transitions.len(),
+        1,
+        "aXXXc should match merged (from a*c)"
+    );
 
     // Non-matches
     bufs.transitions.clear();

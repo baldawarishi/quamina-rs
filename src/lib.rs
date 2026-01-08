@@ -2304,12 +2304,12 @@ mod tests {
 
         // Test individual patterns work correctly
         let test_cases: Vec<(&str, Vec<&str>)> = vec![
-            ("1430022", vec!["pattern_143"]),       // matches 143*
-            ("2607117", vec!["pattern_2017"]),      // matches 2*0*1*7
-            ("2607218", vec!["pattern_218"]),       // matches *218
-            ("3745012", vec!["pattern_352"]),       // matches 3*5*2
-            ("VACSTWIL", vec!["pattern_vail"]),     // matches VA*IL (note: incorrect, should be VACTSTWIL?)
-            ("xyz", vec![]),                         // no match
+            ("1430022", vec!["pattern_143"]),   // matches 143*
+            ("2607117", vec!["pattern_2017"]),  // matches 2*0*1*7
+            ("2607218", vec!["pattern_218"]),   // matches *218
+            ("3745012", vec!["pattern_352"]),   // matches 3*5*2
+            ("VACSTWIL", vec!["pattern_vail"]), // matches VA*IL (note: incorrect, should be VACTSTWIL?)
+            ("xyz", vec![]),                    // no match
         ];
 
         for (value, expected_patterns) in test_cases {
