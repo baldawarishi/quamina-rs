@@ -4,7 +4,7 @@ Rust port of [quamina](https://github.com/timbray/quamina) - fast pattern-matchi
 
 ## Status
 
-**167 tests passing.** All core operators implemented. Rust outperforms Go on all benchmarks.
+**170 tests passing.** All core operators implemented. Rust outperforms Go on all benchmarks.
 
 | Benchmark | Go (ns) | Rust (ns) | Status |
 |-----------|---------|-----------|--------|
@@ -37,11 +37,16 @@ Successfully moved `{"numeric": ["<", 100]}` from fallback to automaton-based ma
 ### Test Coverage Gaps
 | Category | Priority | Notes |
 |----------|----------|-------|
-| Large-scale stress tests | HIGH | Go tests 27 patterns × 150K events; Rust lacks |
+| ~~Large-scale stress tests~~ | ~~HIGH~~ | ✓ Ported: 10K string/number fuzz, citylots2 213K events |
 | Race condition tests | HIGH | Go uses -race flag; Rust needs equivalent |
-| Fuzzing | HIGH | Go has TestFuzzValueMatcher; Rust has none |
+| ~~Fuzzing~~ | ~~HIGH~~ | ✓ Ported: test_stress_fuzz_strings, test_stress_fuzz_numbers |
 | Pruner edge cases | MEDIUM | Go has 8+ tests; Rust has 4 |
 | Concurrent update stress | MEDIUM | Test pattern add during active matching |
+
+### Known Issues
+| Issue | Notes |
+|-------|-------|
+| merge_fas spinout bug | Multiple shellstyle patterns on same field give incorrect results due to improper spinout merging. Go's `mergeFAStates` handles this; Rust workaround: run patterns individually. |
 
 ### Rust-only features (not in Go)
 - `{"numeric": ["<", 100]}` - numeric range operators (automaton-integrated)

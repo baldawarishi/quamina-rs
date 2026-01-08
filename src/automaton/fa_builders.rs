@@ -819,8 +819,7 @@ fn make_range_fa_step(
     // Byte == upper_byte: need to check rest <= upper[index+1:]
     // At this point we know byte == upper_byte > lower_byte, so we're > lower
     // For upper check, byte == upper_byte, so we continue checking
-    let upper_continuation =
-        make_less_fa_step(upper_q, index + 1, upper_incl, next_field.clone());
+    let upper_continuation = make_less_fa_step(upper_q, index + 1, upper_incl, next_field.clone());
     unpacked[upper_byte as usize] = Some(Arc::new(FaState::with_table(upper_continuation)));
 
     // Bytes > upper_byte: fail (> upper)
@@ -952,56 +951,62 @@ mod numeric_range_tests {
     fn test_numeric_less_fa_basic() {
         let next_field = Arc::new(FieldMatcher::new());
         let fa = make_numeric_less_fa(100.0, true, next_field.clone());
-        
+
         // Test with Q-number for 50 (should match < 100)
         let q50 = q_num_from_f64(50.0);
         let q100 = q_num_from_f64(100.0);
         let q150 = q_num_from_f64(150.0);
-        
+
         println!("Q(50) = {:?}", q50);
         println!("Q(100) = {:?}", q100);
         println!("Q(150) = {:?}", q150);
-        
+
         // Manually traverse
         let mut transitions = Vec::new();
         crate::automaton::nfa::traverse_dfa(&fa, &q50, &mut transitions);
         println!("Transitions for Q(50): {}", transitions.len());
         assert!(!transitions.is_empty(), "Q(50) should match <= 100");
-        
+
         transitions.clear();
         crate::automaton::nfa::traverse_dfa(&fa, &q100, &mut transitions);
         println!("Transitions for Q(100): {}", transitions.len());
-        assert!(!transitions.is_empty(), "Q(100) should match <= 100 (inclusive)");
-        
+        assert!(
+            !transitions.is_empty(),
+            "Q(100) should match <= 100 (inclusive)"
+        );
+
         transitions.clear();
         crate::automaton::nfa::traverse_dfa(&fa, &q150, &mut transitions);
         println!("Transitions for Q(150): {}", transitions.len());
         assert!(transitions.is_empty(), "Q(150) should NOT match <= 100");
     }
-    
+
     #[test]
     fn test_numeric_greater_fa_basic() {
         let next_field = Arc::new(FieldMatcher::new());
         let fa = make_numeric_greater_fa(0.0, true, next_field.clone());
-        
+
         let q0 = q_num_from_f64(0.0);
         let q50 = q_num_from_f64(50.0);
         let q_neg = q_num_from_f64(-10.0);
-        
+
         println!("Q(0) = {:?}", q0);
         println!("Q(50) = {:?}", q50);
         println!("Q(-10) = {:?}", q_neg);
-        
+
         let mut transitions = Vec::new();
         crate::automaton::nfa::traverse_dfa(&fa, &q50, &mut transitions);
         println!("Transitions for Q(50): {}", transitions.len());
         assert!(!transitions.is_empty(), "Q(50) should match >= 0");
-        
+
         transitions.clear();
         crate::automaton::nfa::traverse_dfa(&fa, &q0, &mut transitions);
         println!("Transitions for Q(0): {}", transitions.len());
-        assert!(!transitions.is_empty(), "Q(0) should match >= 0 (inclusive)");
-        
+        assert!(
+            !transitions.is_empty(),
+            "Q(0) should match >= 0 (inclusive)"
+        );
+
         transitions.clear();
         crate::automaton::nfa::traverse_dfa(&fa, &q_neg, &mut transitions);
         println!("Transitions for Q(-10): {}", transitions.len());

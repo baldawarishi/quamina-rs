@@ -16,6 +16,7 @@ rustc-hash = "2.1"
 [dev-dependencies]
 criterion = "0.5"
 flate2 = "1.0"
+rand = "0.8"
 
 [[bench]]
 name = "matching"
