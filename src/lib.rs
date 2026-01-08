@@ -2233,6 +2233,111 @@ mod tests {
     }
 
     #[test]
+    fn test_multiple_shellstyle_same_field() {
+        // Test multiple shellstyle patterns on the SAME field
+        // This is the merge_fas spinout bug reproduction test
+        let mut q = Quamina::new();
+
+        // Add multiple shellstyle patterns on the same field
+        q.add_pattern("suffix_bc", r#"{"x": [{"shellstyle": "*bc"}]}"#)
+            .unwrap();
+        q.add_pattern("suffix_xc", r#"{"x": [{"shellstyle": "*xc"}]}"#)
+            .unwrap();
+        q.add_pattern("prefix_ab", r#"{"x": [{"shellstyle": "ab*"}]}"#)
+            .unwrap();
+
+        // Test suffix_bc pattern
+        let m1 = q.matches_for_event(r#"{"x": "abc"}"#.as_bytes()).unwrap();
+        assert!(
+            m1.contains(&"suffix_bc"),
+            "*bc should match abc, got: {:?}",
+            m1
+        );
+        // abc also matches ab* prefix pattern
+        assert!(
+            m1.contains(&"prefix_ab"),
+            "ab* should match abc, got: {:?}",
+            m1
+        );
+
+        // Test suffix_xc pattern
+        let m2 = q.matches_for_event(r#"{"x": "axc"}"#.as_bytes()).unwrap();
+        assert!(
+            m2.contains(&"suffix_xc"),
+            "*xc should match axc, got: {:?}",
+            m2
+        );
+
+        // Test prefix_ab pattern
+        let m3 = q
+            .matches_for_event(r#"{"x": "abcdef"}"#.as_bytes())
+            .unwrap();
+        assert!(
+            m3.contains(&"prefix_ab"),
+            "ab* should match abcdef, got: {:?}",
+            m3
+        );
+
+        // Test non-match
+        let m4 = q.matches_for_event(r#"{"x": "xyz"}"#.as_bytes()).unwrap();
+        assert!(m4.is_empty(), "Nothing should match xyz, got: {:?}", m4);
+    }
+
+    #[test]
+    fn test_multiple_shellstyle_citylots_patterns() {
+        // Test multiple complex shellstyle patterns on the SAME field (citylots-like)
+        // This tests patterns similar to the citylots stress test that had to be
+        // run individually due to merge_fas spinout bug.
+        let mut q = Quamina::new();
+
+        // These mirror the citylots shellstyle patterns
+        q.add_pattern("pattern_143", r#"{"x": [{"shellstyle": "143*"}]}"#)
+            .unwrap();
+        q.add_pattern("pattern_2017", r#"{"x": [{"shellstyle": "2*0*1*7"}]}"#)
+            .unwrap();
+        q.add_pattern("pattern_218", r#"{"x": [{"shellstyle": "*218"}]}"#)
+            .unwrap();
+        q.add_pattern("pattern_352", r#"{"x": [{"shellstyle": "3*5*2"}]}"#)
+            .unwrap();
+        q.add_pattern("pattern_vail", r#"{"x": [{"shellstyle": "VA*IL"}]}"#)
+            .unwrap();
+
+        // Test individual patterns work correctly
+        let test_cases: Vec<(&str, Vec<&str>)> = vec![
+            ("1430022", vec!["pattern_143"]),       // matches 143*
+            ("2607117", vec!["pattern_2017"]),      // matches 2*0*1*7
+            ("2607218", vec!["pattern_218"]),       // matches *218
+            ("3745012", vec!["pattern_352"]),       // matches 3*5*2
+            ("VACSTWIL", vec!["pattern_vail"]),     // matches VA*IL (note: incorrect, should be VACTSTWIL?)
+            ("xyz", vec![]),                         // no match
+        ];
+
+        for (value, expected_patterns) in test_cases {
+            let event = format!(r#"{{"x": "{}"}}"#, value);
+            let matches = q.matches_for_event(event.as_bytes()).unwrap();
+
+            if expected_patterns.is_empty() {
+                assert!(
+                    matches.is_empty(),
+                    "Expected no match for '{}', got: {:?}",
+                    value,
+                    matches
+                );
+            } else {
+                for expected in &expected_patterns {
+                    assert!(
+                        matches.contains(expected),
+                        "Expected '{}' to match '{}', but got: {:?}",
+                        value,
+                        expected,
+                        matches
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
     fn test_anything_but_prefix_relationship() {
         // Based on Go quamina's TestFootCornerCase
         // Tests that anything-but ["foo"] matches "foot" (since "foot" != "foo")
@@ -3196,9 +3301,8 @@ mod tests {
             &anything_but_expected,
         );
 
-        // Test SHELLSTYLE patterns - run individually due to merge_fas bug with multiple
-        // shellstyle patterns on same field. Go's mergeFAStates handles spinout merging
-        // more carefully. TODO: Fix merge_fas to handle this case.
+        // Test SHELLSTYLE patterns - all patterns together
+        // This tests the merge_fas spinout handling
         let shellstyle_rules = [
             r#"{"properties": {"MAPBLKLOT": [{"shellstyle": "143*"}]}}"#,
             r#"{"properties": {"MAPBLKLOT": [{"shellstyle": "2*0*1*7"}]}}"#,
@@ -3207,19 +3311,12 @@ mod tests {
             r#"{"properties": {"MAPBLKLOT": [{"shellstyle": "VA*IL"}]}}"#,
         ];
         let shellstyle_expected: [usize; 5] = [490, 713, 43, 2540, 1];
-        // Run each shellstyle pattern individually to avoid merge bug
-        for (i, (rule, expected)) in shellstyle_rules
-            .iter()
-            .zip(shellstyle_expected.iter())
-            .enumerate()
-        {
-            run_stress_test(
-                &format!("SHELLSTYLE[{}]", i),
-                &lines,
-                &[*rule],
-                &[*expected],
-            );
-        }
+        run_stress_test(
+            "SHELLSTYLE",
+            &lines,
+            &shellstyle_rules,
+            &shellstyle_expected,
+        );
 
         // Test EQUALS-IGNORE-CASE patterns
         let equals_ignore_case_rules = [

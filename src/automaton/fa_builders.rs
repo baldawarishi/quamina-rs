@@ -897,48 +897,129 @@ fn make_greater_fa_step(
 /// Merge two finite automata into one that matches either pattern.
 ///
 /// This computes the union of two automata by merging their transition tables.
+/// The algorithm recursively merges states and properly handles spinout (wildcard)
+/// states by creating splice states when both have epsilons.
 pub fn merge_fas(table1: &SmallTable, table2: &SmallTable) -> SmallTable {
-    let mut result = SmallTable::new();
+    // Wrap tables in FaState for recursive merging
+    let state1 = Arc::new(FaState::with_table(table1.clone()));
+    let state2 = Arc::new(FaState::with_table(table2.clone()));
 
-    // Unpack both tables
+    let mut memo: HashMap<(*const FaState, *const FaState), Arc<FaState>> = HashMap::new();
+    let result_state = merge_fa_states(&state1, &state2, &mut memo);
+    result_state.table.clone()
+}
+
+/// Key type for memoizing merged states
+type MergeKey = (*const FaState, *const FaState);
+
+/// Recursively merge two FA states.
+///
+/// This handles the merging of FA states including spinout (wildcard) states.
+/// Following Go's approach:
+/// - If neither has epsilons, do byte-wise merge
+/// - If both have spinouts, recursively merge them and combine epsilons
+/// - If one has spinout and other has no epsilons, adopt the spinout with byte merge
+/// - Otherwise (either has non-spinout epsilons), create a splice (branch to both)
+fn merge_fa_states(
+    state1: &Arc<FaState>,
+    state2: &Arc<FaState>,
+    memo: &mut HashMap<MergeKey, Arc<FaState>>,
+) -> Arc<FaState> {
+    // Check memo
+    let key = (Arc::as_ptr(state1), Arc::as_ptr(state2));
+    if let Some(cached) = memo.get(&key) {
+        return cached.clone();
+    }
+
+    // Detect spinout states: has spinout marker AND exactly 1 epsilon (the spinout convention)
+    let s1_has_spinout = state1.table.spinout.is_some() && state1.table.epsilons.len() == 1;
+    let s2_has_spinout = state2.table.spinout.is_some() && state2.table.epsilons.len() == 1;
+    let s1_has_epsilons = !state1.table.epsilons.is_empty();
+    let s2_has_epsilons = !state2.table.epsilons.is_empty();
+
+    // Handle the various cases following Go's mergeFAStates logic
+    if s1_has_spinout && s2_has_spinout {
+        // Both have spinouts - merge the spinouts recursively
+        // The spinouts contain the continuation patterns, merge them
+        let spinout1 = &state1.table.epsilons[0];
+        let spinout2 = &state2.table.epsilons[0];
+        let merged_spinout = merge_fa_states(spinout1, spinout2, memo);
+
+        // Merge byte transitions
+        let mut combined_table = merge_tables_bytewise(&state1.table, &state2.table, memo);
+        combined_table.spinout = Some(merged_spinout.clone());
+        combined_table.epsilons = vec![merged_spinout];
+
+        let mut field_transitions = state1.field_transitions.clone();
+        field_transitions.extend(state2.field_transitions.iter().cloned());
+
+        let combined = Arc::new(FaState {
+            table: combined_table,
+            field_transitions,
+        });
+
+        memo.insert(key, combined.clone());
+        return combined;
+    }
+
+    // If either has epsilons (including spinout cases where only one has spinout),
+    // create a splice that branches to try both patterns independently.
+    // This is the safe approach that keeps patterns from interfering with each other.
+    if s1_has_epsilons || s2_has_epsilons {
+        // Create a splice - an empty state with epsilons to both original states
+        // This branches to try both patterns independently
+        let combined = Arc::new(FaState {
+            table: SmallTable {
+                ceilings: vec![BYTE_CEILING as u8],
+                steps: vec![None],
+                epsilons: vec![state1.clone(), state2.clone()],
+                spinout: None,
+            },
+            field_transitions: vec![],
+        });
+
+        memo.insert(key, combined.clone());
+        return combined;
+    }
+
+    // Neither has epsilons - do byte-wise merge
+    let combined_table = merge_tables_bytewise(&state1.table, &state2.table, memo);
+
+    let mut field_transitions = state1.field_transitions.clone();
+    field_transitions.extend(state2.field_transitions.iter().cloned());
+
+    let combined = Arc::new(FaState {
+        table: combined_table,
+        field_transitions,
+    });
+
+    memo.insert(key, combined.clone());
+    combined
+}
+
+/// Merge two tables byte-by-byte, recursively merging overlapping transitions.
+fn merge_tables_bytewise(
+    table1: &SmallTable,
+    table2: &SmallTable,
+    memo: &mut HashMap<MergeKey, Arc<FaState>>,
+) -> SmallTable {
     let unpacked1 = table1.unpack();
     let unpacked2 = table2.unpack();
 
-    // Merge by taking non-None values (simplified - real implementation needs recursion)
     let mut merged: [Option<Arc<FaState>>; BYTE_CEILING] = std::array::from_fn(|_| None);
     for i in 0..BYTE_CEILING {
         merged[i] = match (&unpacked1[i], &unpacked2[i]) {
             (None, None) => None,
             (Some(s), None) | (None, Some(s)) => Some(s.clone()),
             (Some(s1), Some(s2)) => {
-                // Need to recursively merge the states
-                let merged_table = merge_fas(&s1.table, &s2.table);
-                let mut merged_transitions = s1.field_transitions.clone();
-                merged_transitions.extend(s2.field_transitions.iter().cloned());
-                Some(Arc::new(FaState {
-                    table: merged_table,
-                    field_transitions: merged_transitions,
-                }))
+                // Recursively merge the states
+                Some(merge_fa_states(s1, s2, memo))
             }
         };
     }
 
+    let mut result = SmallTable::new();
     result.pack(&merged);
-
-    // Merge epsilons
-    result.epsilons = table1.epsilons.clone();
-    result.epsilons.extend(table2.epsilons.iter().cloned());
-
-    // Merge spinout - if either table has spinout, the merged table should have spinout
-    result.spinout = match (&table1.spinout, &table2.spinout) {
-        (None, None) => None,
-        (Some(s), None) | (None, Some(s)) => Some(s.clone()),
-        (Some(_), Some(_)) => {
-            // Both have spinout - use either one (they're just markers)
-            table1.spinout.clone()
-        }
-    };
-
     result
 }
 

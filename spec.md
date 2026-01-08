@@ -4,7 +4,7 @@ Rust port of [quamina](https://github.com/timbray/quamina) - fast pattern-matchi
 
 ## Status
 
-**170 tests passing.** All core operators implemented. Rust outperforms Go on all benchmarks.
+**174 tests passing.** All core operators implemented. Rust outperforms Go on all benchmarks.
 
 | Benchmark | Go (ns) | Rust (ns) | Status |
 |-----------|---------|-----------|--------|
@@ -44,9 +44,7 @@ Successfully moved `{"numeric": ["<", 100]}` from fallback to automaton-based ma
 | Concurrent update stress | MEDIUM | Test pattern add during active matching |
 
 ### Known Issues
-| Issue | Notes |
-|-------|-------|
-| merge_fas spinout bug | Multiple shellstyle patterns on same field give incorrect results due to improper spinout merging. Go's `mergeFAStates` handles this; Rust workaround: run patterns individually. |
+None currently.
 
 ### Rust-only features (not in Go)
 - `{"numeric": ["<", 100]}` - numeric range operators (automaton-integrated)
@@ -135,7 +133,7 @@ src/
 ## Commands
 
 ```bash
-cargo test                    # 167 tests
+cargo test                    # 174 tests
 cargo bench status            # status_* benchmarks
 cargo bench citylots          # citylots benchmark
 cargo bench numeric_range     # numeric range benchmarks

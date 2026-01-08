@@ -284,6 +284,90 @@ fn test_merge_fas() {
     assert!(transitions.is_empty(), "xyz should not match merged FA");
 }
 
+#[test]
+fn test_merge_fas_shellstyle_spinout() {
+    // This test exercises the merge_fas spinout bug
+    // Two shellstyle patterns with different escape characters after the wildcard
+    // Pattern 1: a*b (matches "ab", "aXb", "aXXb", etc.)
+    // Pattern 2: a*c (matches "ac", "aXc", "aXXc", etc.)
+    // When merged, both should still work
+
+    let field1 = Arc::new(FieldMatcher::new());
+    let field2 = Arc::new(FieldMatcher::new());
+
+    let table1 = make_shellstyle_fa(b"a*b", field1);
+    let table2 = make_shellstyle_fa(b"a*c", field2);
+
+    let merged = merge_fas(&table1, &table2);
+
+    let mut bufs = NfaBuffers::new();
+
+    // Test pattern 1: a*b
+    bufs.transitions.clear();
+    traverse_nfa(&merged, b"ab", &mut bufs);
+    assert_eq!(bufs.transitions.len(), 1, "ab should match merged (from a*b)");
+
+    bufs.transitions.clear();
+    traverse_nfa(&merged, b"aXb", &mut bufs);
+    assert_eq!(bufs.transitions.len(), 1, "aXb should match merged (from a*b)");
+
+    bufs.transitions.clear();
+    traverse_nfa(&merged, b"aXXXb", &mut bufs);
+    assert_eq!(bufs.transitions.len(), 1, "aXXXb should match merged (from a*b)");
+
+    // Test pattern 2: a*c
+    bufs.transitions.clear();
+    traverse_nfa(&merged, b"ac", &mut bufs);
+    assert_eq!(bufs.transitions.len(), 1, "ac should match merged (from a*c)");
+
+    bufs.transitions.clear();
+    traverse_nfa(&merged, b"aXc", &mut bufs);
+    assert_eq!(bufs.transitions.len(), 1, "aXc should match merged (from a*c)");
+
+    bufs.transitions.clear();
+    traverse_nfa(&merged, b"aXXXc", &mut bufs);
+    assert_eq!(bufs.transitions.len(), 1, "aXXXc should match merged (from a*c)");
+
+    // Non-matches
+    bufs.transitions.clear();
+    traverse_nfa(&merged, b"xyz", &mut bufs);
+    assert!(bufs.transitions.is_empty(), "xyz should not match");
+}
+
+#[test]
+fn test_merge_fas_shellstyle_suffix_patterns() {
+    // Two suffix patterns on the same field: *bc and *xc
+    // These represent the citylots stress test case
+
+    let field1 = Arc::new(FieldMatcher::new());
+    let field2 = Arc::new(FieldMatcher::new());
+
+    let table1 = make_shellstyle_fa(b"*bc", field1);
+    let table2 = make_shellstyle_fa(b"*xc", field2);
+
+    let merged = merge_fas(&table1, &table2);
+
+    let mut bufs = NfaBuffers::new();
+
+    // Test pattern 1: *bc
+    bufs.transitions.clear();
+    traverse_nfa(&merged, b"abc", &mut bufs);
+    assert_eq!(bufs.transitions.len(), 1, "abc should match *bc");
+
+    bufs.transitions.clear();
+    traverse_nfa(&merged, b"bc", &mut bufs);
+    assert_eq!(bufs.transitions.len(), 1, "bc should match *bc");
+
+    // Test pattern 2: *xc
+    bufs.transitions.clear();
+    traverse_nfa(&merged, b"axc", &mut bufs);
+    assert_eq!(bufs.transitions.len(), 1, "axc should match *xc");
+
+    bufs.transitions.clear();
+    traverse_nfa(&merged, b"xc", &mut bufs);
+    assert_eq!(bufs.transitions.len(), 1, "xc should match *xc");
+}
+
 // ========================================================================
 // CoreMatcher Tests
 // ========================================================================
