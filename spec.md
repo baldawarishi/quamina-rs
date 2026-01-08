@@ -4,17 +4,17 @@ Rust port of [quamina](https://github.com/timbray/quamina) - fast pattern-matchi
 
 ## Status
 
-**167 tests passing.** All core operators implemented. Performance parity achieved. Numeric ranges now use automaton.
+**167 tests passing.** All core operators implemented. Rust outperforms Go on all benchmarks.
 
 | Benchmark | Go (ns) | Rust (ns) | Status |
 |-----------|---------|-----------|--------|
-| status_context_fields | 442 | 458 | Parity (4% gap) |
-| status_middle_nested | 7,700 | 4,650 | **Rust 1.66x faster** |
-| status_last_field | 8,100 | 4,964 | **Rust 1.63x faster** |
-| citylots | 3,570 | 3,446 | **Rust 3% faster** |
-| numeric_range_single | - | 142 | Automaton-based |
-| numeric_range_two_sided | - | 143 | Automaton-based |
-| numeric_range_10_patterns | - | 176 | Automaton-based |
+| status_context_fields | 442 | 408 | **Rust 8% faster** |
+| status_middle_nested | 7,700 | 4,866 | **Rust 1.58x faster** |
+| status_last_field | 8,100 | 5,139 | **Rust 1.58x faster** |
+| citylots | 3,570 | 2,105 | **Rust 1.70x faster** |
+| numeric_range_single | - | 145 | Rust-only (automaton) |
+| numeric_range_two_sided | - | 144 | Rust-only (automaton) |
+| numeric_range_10_patterns | - | 176 | Rust-only (automaton) |
 
 ## Recent: Automaton-Based Numeric Ranges (Completed)
 
