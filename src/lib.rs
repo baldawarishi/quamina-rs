@@ -3041,6 +3041,57 @@ mod tests {
     }
 
     #[test]
+    fn test_anything_but_with_shellstyle() {
+        // Based on Go quamina's TestAnythingButMerging (second part)
+        // Tests that anything-but can be merged with shellstyle (NFA) patterns
+        let mut q = Quamina::new();
+
+        // Add shellstyle pattern for "foo*"
+        q.add_pattern("pFooStar", r#"{"z": [{"shellstyle": "foo*"}]}"#)
+            .unwrap();
+        // Add anything-but for "foot"
+        q.add_pattern("pAbFoot", r#"{"z": [{"anything-but": ["foot"]}]}"#)
+            .unwrap();
+
+        // "foo" should match BOTH patterns:
+        // - pFooStar: matches "foo*"
+        // - pAbFoot: "foo" is not "foot"
+        let matches = q.matches_for_event(r#"{"z": "foo"}"#.as_bytes()).unwrap();
+        assert_eq!(
+            matches.len(),
+            2,
+            "foo should match both pFooStar and pAbFoot, got {:?}",
+            matches
+        );
+        assert!(matches.contains(&"pFooStar"));
+        assert!(matches.contains(&"pAbFoot"));
+
+        // "foot" should match only pFooStar:
+        // - pFooStar: matches "foo*"
+        // - pAbFoot: excluded (is "foot")
+        let matches2 = q.matches_for_event(r#"{"z": "foot"}"#.as_bytes()).unwrap();
+        assert_eq!(
+            matches2.len(),
+            1,
+            "foot should only match pFooStar, got {:?}",
+            matches2
+        );
+        assert!(matches2.contains(&"pFooStar"));
+
+        // "bar" should match only pAbFoot:
+        // - pFooStar: doesn't match "foo*"
+        // - pAbFoot: "bar" is not "foot"
+        let matches3 = q.matches_for_event(r#"{"z": "bar"}"#.as_bytes()).unwrap();
+        assert_eq!(
+            matches3.len(),
+            1,
+            "bar should only match pAbFoot, got {:?}",
+            matches3
+        );
+        assert!(matches3.contains(&"pAbFoot"));
+    }
+
+    #[test]
     fn test_anything_but_with_overlapping_exclusions() {
         // Based on Go quamina's TestAnythingButAlgo
         // Tests anything-but with overlapping prefix exclusions
