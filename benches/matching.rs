@@ -4,10 +4,18 @@
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use flate2::read::GzDecoder;
+use quamina::automaton::arena::{
+    traverse_arena_nfa, ArenaNfaBuffers, ArenaSmallTable, StateArena, StateId,
+    ARENA_VALUE_TERMINATOR,
+};
+use quamina::automaton::{
+    traverse_nfa, FaState, FieldMatcher, NfaBuffers, SmallTable, BYTE_CEILING, VALUE_TERMINATOR,
+};
 use quamina::flatten_json::FlattenJsonState;
 use quamina::segments_tree::SegmentsTree;
 use quamina::Quamina;
 use std::io::{BufRead, BufReader};
+use std::sync::Arc;
 
 // Status.json patterns (matching Go benchmarks)
 const PATTERN_CONTEXT: &str = r#"{ "context": { "user_id": [9034], "friends_count": [158] } }"#;
@@ -385,6 +393,256 @@ fn bench_numeric_range_multiple(c: &mut Criterion) {
     });
 }
 
+/// Regexp with + quantifier on short string
+fn bench_regexp_plus_short(c: &mut Criterion) {
+    let mut q = Quamina::new();
+    q.add_pattern("letters", r#"{"value": [{"regex": "[a-z]+"}]}"#)
+        .unwrap();
+
+    let event = r#"{"value": "hello"}"#.as_bytes();
+
+    c.bench_function("regexp_plus_short", |b| {
+        b.iter(|| q.matches_for_event(black_box(event)).unwrap())
+    });
+}
+
+/// Regexp with + quantifier on long string
+fn bench_regexp_plus_long(c: &mut Criterion) {
+    let mut q = Quamina::new();
+    q.add_pattern("letters", r#"{"value": [{"regex": "[a-z]+"}]}"#)
+        .unwrap();
+
+    // 100-character string
+    let long_value = "a".repeat(100);
+    let event = format!(r#"{{"value": "{}"}}"#, long_value).into_bytes();
+
+    c.bench_function("regexp_plus_long", |b| {
+        b.iter(|| q.matches_for_event(black_box(&event)).unwrap())
+    });
+}
+
+/// Regexp with * quantifier on empty string (should match)
+fn bench_regexp_star_empty(c: &mut Criterion) {
+    let mut q = Quamina::new();
+    q.add_pattern("maybe_letters", r#"{"value": [{"regex": "[a-z]*"}]}"#)
+        .unwrap();
+
+    let event = r#"{"value": ""}"#.as_bytes();
+
+    c.bench_function("regexp_star_empty", |b| {
+        b.iter(|| q.matches_for_event(black_box(event)).unwrap())
+    });
+}
+
+/// Regexp with * quantifier on long string
+fn bench_regexp_star_long(c: &mut Criterion) {
+    let mut q = Quamina::new();
+    q.add_pattern("maybe_letters", r#"{"value": [{"regex": "[a-z]*"}]}"#)
+        .unwrap();
+
+    // 100-character string
+    let long_value = "a".repeat(100);
+    let event = format!(r#"{{"value": "{}"}}"#, long_value).into_bytes();
+
+    c.bench_function("regexp_star_long", |b| {
+        b.iter(|| q.matches_for_event(black_box(&event)).unwrap())
+    });
+}
+
+/// Complex regexp with nested quantifiers (like Go's TestToxicStack)
+fn bench_regexp_complex(c: &mut Criterion) {
+    let mut q = Quamina::new();
+    // Pattern: [a-z]+ followed by optional digits
+    q.add_pattern("complex", r#"{"value": [{"regex": "[a-z]+[0-9]?"}]}"#)
+        .unwrap();
+
+    let event = r#"{"value": "hello5"}"#.as_bytes();
+
+    c.bench_function("regexp_complex", |b| {
+        b.iter(|| q.matches_for_event(black_box(event)).unwrap())
+    });
+}
+
+/// Regexp with dot-star pattern (match anything)
+fn bench_regexp_dot_star(c: &mut Criterion) {
+    let mut q = Quamina::new();
+    q.add_pattern("anything", r#"{"value": [{"regex": ".*"}]}"#)
+        .unwrap();
+
+    let event = r#"{"value": "hello world 123"}"#.as_bytes();
+
+    c.bench_function("regexp_dot_star", |b| {
+        b.iter(|| q.matches_for_event(black_box(event)).unwrap())
+    });
+}
+
+// === Arena vs Chain NFA comparison benchmarks ===
+
+/// Helper: Build chain-based NFA for [a-z]+ (current approach with 100 states)
+fn build_chain_nfa_plus() -> (SmallTable, Arc<FieldMatcher>) {
+    let field_matcher = Arc::new(FieldMatcher::new());
+    let depth = 100;
+
+    // Build trailer: match_state -> VALUE_TERMINATOR -> match
+    let match_state = Arc::new(FaState {
+        table: SmallTable::new(),
+        field_transitions: vec![field_matcher.clone()],
+    });
+    let exit_state = Arc::new(FaState::with_table(SmallTable::with_mappings(
+        None,
+        &[VALUE_TERMINATOR],
+        &[match_state],
+    )));
+
+    // Build chain from inside out (deepest level first)
+    let mut next_level: Option<Arc<FaState>> = None;
+
+    for _i in 0..depth {
+        // Loopback epsilons: always include exit, and include next_level if it exists
+        let mut loopback_epsilons = vec![exit_state.clone()];
+        if let Some(ref nl) = next_level {
+            loopback_epsilons.push(nl.clone());
+        }
+
+        let loopback = Arc::new(FaState::with_table(SmallTable {
+            ceilings: Vec::new(),
+            steps: Vec::new(),
+            epsilons: loopback_epsilons,
+            spinout: None,
+        }));
+
+        // Build transition table for 'a'-'z'
+        let mut unpacked: [Option<Arc<FaState>>; BYTE_CEILING] = std::array::from_fn(|_| None);
+        for b in b'a'..=b'z' {
+            unpacked[b as usize] = Some(loopback.clone());
+        }
+        let mut loop_table = SmallTable::new();
+        loop_table.pack(&unpacked);
+
+        // For +, no epsilon to exit from entry (must match at least once)
+        // but we don't need that for this benchmark since we're testing matching strings
+
+        next_level = Some(Arc::new(FaState::with_table(loop_table)));
+    }
+
+    let start_state = next_level.unwrap();
+    (start_state.table.clone(), field_matcher)
+}
+
+/// Helper: Build arena-based NFA for [a-z]+ (cyclic, ~4 states)
+fn build_arena_nfa_plus() -> (StateArena, StateId, Arc<FieldMatcher>) {
+    let mut arena = StateArena::new();
+    let field_matcher = Arc::new(FieldMatcher::new());
+
+    // final state with field_transitions
+    let final_state = arena.alloc();
+    arena[final_state]
+        .field_transitions
+        .push(field_matcher.clone());
+
+    // exit state: VALUE_TERMINATOR -> final_state
+    let exit_state = arena.alloc_with_table(ArenaSmallTable::with_mappings(
+        StateId::NONE,
+        &[ARENA_VALUE_TERMINATOR],
+        &[final_state],
+    ));
+
+    // loopback state (placeholder)
+    let loopback = arena.alloc();
+
+    // start state: 'a'-'z' -> loopback
+    let mut bytes = Vec::new();
+    let mut targets = Vec::new();
+    for b in b'a'..=b'z' {
+        bytes.push(b);
+        targets.push(loopback);
+    }
+    let start = arena.alloc_with_table(ArenaSmallTable::with_mappings(
+        StateId::NONE,
+        &bytes,
+        &targets,
+    ));
+
+    // Set up loopback: epsilon to exit AND back to start (CYCLE!)
+    arena[loopback].table.epsilons = vec![exit_state, start];
+
+    (arena, start, field_matcher)
+}
+
+/// Benchmark: Chain-based NFA traversal for [a-z]+ pattern
+fn bench_chain_nfa_traversal(c: &mut Criterion) {
+    let (table, _field_matcher) = build_chain_nfa_plus();
+    let mut bufs = NfaBuffers::new();
+
+    // Test with 100-character string
+    let value: Vec<u8> = (0..100)
+        .map(|_| b'a')
+        .chain(std::iter::once(VALUE_TERMINATOR))
+        .collect();
+
+    c.bench_function("chain_nfa_100chars", |b| {
+        b.iter(|| {
+            bufs.clear();
+            traverse_nfa(&table, black_box(&value), &mut bufs);
+            black_box(bufs.transitions.len())
+        })
+    });
+}
+
+/// Benchmark: Arena-based NFA traversal for [a-z]+ pattern
+fn bench_arena_nfa_traversal(c: &mut Criterion) {
+    let (arena, start, _field_matcher) = build_arena_nfa_plus();
+    let mut bufs = ArenaNfaBuffers::with_capacity(arena.len());
+
+    // Test with 100-character string
+    let value: Vec<u8> = (0..100).map(|_| b'a').collect();
+
+    c.bench_function("arena_nfa_100chars", |b| {
+        b.iter(|| {
+            bufs.clear();
+            traverse_arena_nfa(&arena, start, black_box(&value), &mut bufs);
+            black_box(bufs.transitions.len())
+        })
+    });
+}
+
+/// Benchmark: Chain-based NFA traversal with short string
+fn bench_chain_nfa_short(c: &mut Criterion) {
+    let (table, _field_matcher) = build_chain_nfa_plus();
+    let mut bufs = NfaBuffers::new();
+
+    // Test with 5-character string
+    let value: Vec<u8> = (0..5)
+        .map(|_| b'a')
+        .chain(std::iter::once(VALUE_TERMINATOR))
+        .collect();
+
+    c.bench_function("chain_nfa_5chars", |b| {
+        b.iter(|| {
+            bufs.clear();
+            traverse_nfa(&table, black_box(&value), &mut bufs);
+            black_box(bufs.transitions.len())
+        })
+    });
+}
+
+/// Benchmark: Arena-based NFA traversal with short string
+fn bench_arena_nfa_short(c: &mut Criterion) {
+    let (arena, start, _field_matcher) = build_arena_nfa_plus();
+    let mut bufs = ArenaNfaBuffers::with_capacity(arena.len());
+
+    // Test with 5-character string
+    let value: Vec<u8> = (0..5).map(|_| b'a').collect();
+
+    c.bench_function("arena_nfa_5chars", |b| {
+        b.iter(|| {
+            bufs.clear();
+            traverse_arena_nfa(&arena, start, black_box(&value), &mut bufs);
+            black_box(bufs.transitions.len())
+        })
+    });
+}
+
 // === CityLots benchmarks (comparable to Go's citylots_bench_test.go) ===
 
 fn load_citylots_lines() -> Vec<Vec<u8>> {
@@ -458,6 +716,18 @@ criterion_group!(
     bench_numeric_range_single,
     bench_numeric_range_two_sided,
     bench_numeric_range_multiple,
+    // Regexp benchmarks (quantifier performance)
+    bench_regexp_plus_short,
+    bench_regexp_plus_long,
+    bench_regexp_star_empty,
+    bench_regexp_star_long,
+    bench_regexp_complex,
+    bench_regexp_dot_star,
+    // Arena vs Chain NFA comparison benchmarks
+    bench_chain_nfa_traversal,
+    bench_arena_nfa_traversal,
+    bench_chain_nfa_short,
+    bench_arena_nfa_short,
     // CityLots benchmark (comparable to Go)
     bench_citylots,
 );

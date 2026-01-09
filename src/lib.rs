@@ -3636,7 +3636,7 @@ mod tests {
             let mut q = Quamina::new();
             let full_pattern = format!(r#"{{"x": [{{"wildcard": "{}"}}]}}"#, pattern);
             q.add_pattern(pattern, &full_pattern)
-                .expect(&format!("Pattern should be valid: {}", pattern));
+                .unwrap_or_else(|_| panic!("Pattern should be valid: {}", pattern));
 
             for text in should_match {
                 let event = format!(r#"{{"x": "{}"}}"#, text);
@@ -3723,7 +3723,7 @@ mod tests {
             let mut q = Quamina::new();
             let full_pattern = format!(r#"{{"x": [{{"wildcard": "{}"}}]}}"#, pattern);
             q.add_pattern(pattern, &full_pattern)
-                .expect(&format!("Pattern should be valid: {}", pattern));
+                .unwrap_or_else(|_| panic!("Pattern should be valid: {}", pattern));
 
             for text in should_match {
                 let event = format!(r#"{{"x": "{}"}}"#, text);

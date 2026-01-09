@@ -17,11 +17,7 @@ fn test_small_table_with_mappings() {
         field_transitions: vec![next_field],
     });
 
-    let table = SmallTable::with_mappings(
-        None,
-        &[b'a', b'b'],
-        &[next_state.clone(), next_state.clone()],
-    );
+    let table = SmallTable::with_mappings(None, b"ab", &[next_state.clone(), next_state.clone()]);
 
     let (step_a, _) = table.step(b'a');
     assert!(step_a.is_some());

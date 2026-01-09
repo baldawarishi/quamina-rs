@@ -47,7 +47,7 @@ impl StateId {
 }
 
 /// A state in the arena-based finite automaton.
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct ArenaFaState {
     /// The transition table for this state
     pub table: ArenaSmallTable,
@@ -61,15 +61,6 @@ impl std::fmt::Debug for ArenaFaState {
             .field("table", &self.table)
             .field("field_transitions_count", &self.field_transitions.len())
             .finish()
-    }
-}
-
-impl Default for ArenaFaState {
-    fn default() -> Self {
-        Self {
-            table: ArenaSmallTable::new(),
-            field_transitions: Vec::new(),
-        }
     }
 }
 
@@ -523,7 +514,7 @@ mod tests {
 
         let start = arena.alloc_with_table(ArenaSmallTable::with_mappings(
             StateId::NONE,
-            &[b'a'],
+            b"a",
             &[match_state],
         ));
 
@@ -571,7 +562,7 @@ mod tests {
         // start state - matches 'a' or 'b' -> loopback
         let start = arena.alloc_with_table({
             let mut table =
-                ArenaSmallTable::with_mappings(StateId::NONE, &[b'a', b'b'], &[loopback, loopback]);
+                ArenaSmallTable::with_mappings(StateId::NONE, b"ab", &[loopback, loopback]);
             // For *, add epsilon to exit (can match zero times)
             table.epsilons.push(exit_state);
             table
@@ -648,7 +639,7 @@ mod tests {
         // NO epsilon to exit (must match at least once for +)
         let start = arena.alloc_with_table(ArenaSmallTable::with_mappings(
             StateId::NONE,
-            &[b'a', b'b'],
+            b"ab",
             &[loopback, loopback],
         ));
 
@@ -700,7 +691,7 @@ mod tests {
         let loopback = arena.alloc();
 
         let start = arena.alloc_with_table({
-            let mut table = ArenaSmallTable::with_mappings(StateId::NONE, &[b'a'], &[loopback]);
+            let mut table = ArenaSmallTable::with_mappings(StateId::NONE, b"a", &[loopback]);
             table.epsilons.push(exit_state);
             table
         });

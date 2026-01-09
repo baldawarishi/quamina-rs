@@ -130,7 +130,7 @@ src/
 - Task 23: Vec-based indexing regressed 5-8% (Arc deref cost). FxHashMap with Arc::as_ptr() is faster.
 - Task 27: Path cloning was citylots bottleneck. Go uses slice refs; now we use Arc<[u8]>.
 
-## Arena-Based NFA (WIP)
+## Arena-Based NFA
 
 New `automaton::arena` module enables true cyclic NFA structures:
 
@@ -140,14 +140,23 @@ New `automaton::arena` module enables true cyclic NFA structures:
 | `StateArena` | Allocates states, O(1) cycle creation |
 | `traverse_arena_nfa` | NFA traversal with cycles |
 
-**Benefits:** For `[a]*`, arena needs 4 states vs chain's 200+ states.
+**Benefits:** For `[a]*`, arena needs 4 states vs chain's 100+ states.
 
-**Next steps:** Integrate into regexp builder, benchmark vs chain approach.
+### Benchmark Results
+
+Direct comparison of chain-based vs arena-based NFA traversal for `[a-z]+`:
+
+| Benchmark | Chain (ns) | Arena (ns) | Arena Speedup |
+|-----------|------------|------------|---------------|
+| 100-char string | 8,757 | 3,420 | **2.56x faster** |
+| 5-char string | 592 | 267 | **2.22x faster** |
+
+**Integration status:** Arena module complete with tests. Benchmarks added. Integration into regexp builder requires adding arena-based storage to value matchers and modifying `add_regexp_transition` to use arena builder.
 
 ## Future Work
 
 **Regexp improvements:**
-- Integrate arena into regexp builder (in progress)
+- Integrate arena into value matcher (2.5x potential speedup demonstrated)
 - Optimize `[^]` negated class NFA construction (O(unicode_range))
 
 **General (diminishing returns):**

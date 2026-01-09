@@ -120,6 +120,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[allow(clippy::inconsistent_digit_grouping)]
     fn test_wildly_varying_numbers_are_comparable() {
         let data: Vec<f64> = vec![
             -5_000_000_000.0,
