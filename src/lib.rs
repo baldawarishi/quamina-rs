@@ -1881,7 +1881,8 @@ mod tests {
     fn test_regex_match() {
         let mut q = Quamina::new();
         // Pattern code like ABC-123
-        q.add_pattern("p1", r#"{"code": [{"regex": "^[A-Z]{3}-[0-9]{3}$"}]}"#)
+        // Note: I-Regexp patterns are anchored by default (no ^ or $ needed)
+        q.add_pattern("p1", r#"{"code": [{"regex": "[A-Z]{3}-[0-9]{3}"}]}"#)
             .unwrap();
 
         let matches = q

@@ -119,6 +119,7 @@ const IMPLEMENTED_FEATURES: &[RegexpFeature] = &[
     RegexpFeature::QuestionMark,
     RegexpFeature::Plus,
     RegexpFeature::Star,
+    RegexpFeature::Range,
 ];
 
 /// Parser state for regexp parsing.
@@ -1097,8 +1098,25 @@ fn make_one_regexp_branch_fa(
             table = make_atom_fa(qa, &current_next);
             current_next = Arc::new(FaState::with_table(table.clone()));
         } else {
-            // {lo,hi} quantifiers - not supported
-            panic!("{{lo,hi}} quantifiers not supported");
+            // General {n,m} quantifier - Thompson construction
+            // Build (m-n) optional copies first (back to front), then n required copies
+            let n = qa.quant_min as usize;
+            let m = qa.quant_max as usize;
+
+            // First, build the optional part (m-n copies, each with epsilon skip)
+            // Working back to front, so we build these first
+            for _ in n..m {
+                table = make_atom_fa(qa, &current_next);
+                // Add epsilon to skip this optional match
+                table.epsilons.push(current_next.clone());
+                current_next = Arc::new(FaState::with_table(table.clone()));
+            }
+
+            // Then, build the required part (n copies, no epsilon skip)
+            for _ in 0..n {
+                table = make_atom_fa(qa, &current_next);
+                current_next = Arc::new(FaState::with_table(table.clone()));
+            }
         }
     }
 
@@ -1584,6 +1602,242 @@ mod tests {
                 .iter()
                 .any(|m| Arc::ptr_eq(m, &field_matcher)),
             "Pattern [abc]* should match 'abc'"
+        );
+    }
+
+    #[test]
+    fn test_parse_range_quantifier() {
+        // Test {n} - exactly n times
+        let root = parse_regexp("a{3}").unwrap();
+        assert_eq!(root.len(), 1);
+        assert_eq!(root[0].len(), 1);
+        assert_eq!(root[0][0].quant_min, 3);
+        assert_eq!(root[0][0].quant_max, REGEXP_QUANTIFIER_MAX);
+
+        // Test {n,m} - between n and m times
+        let root = parse_regexp("a{2,5}").unwrap();
+        assert_eq!(root.len(), 1);
+        assert_eq!(root[0].len(), 1);
+        assert_eq!(root[0][0].quant_min, 2);
+        assert_eq!(root[0][0].quant_max, 5);
+
+        // Test {n,} - at least n times
+        let root = parse_regexp("a{2,}").unwrap();
+        assert_eq!(root.len(), 1);
+        assert_eq!(root[0].len(), 1);
+        assert_eq!(root[0][0].quant_min, 2);
+        assert_eq!(root[0][0].quant_max, REGEXP_QUANTIFIER_MAX);
+    }
+
+    #[test]
+    fn test_nfa_range_exact() {
+        use crate::automaton::{traverse_nfa, NfaBuffers, VALUE_TERMINATOR};
+
+        // Test a{3} - exactly 3 'a's (due to how {n} works, it's actually 3 or more)
+        // Note: {3} in I-Regexp means "at least 3" not "exactly 3"
+        let root = parse_regexp("a{3}").unwrap();
+        let (table, field_matcher) = make_regexp_nfa(root, false);
+        let mut bufs = NfaBuffers::new();
+
+        // Should NOT match "aa"
+        let value_aa = vec![b'a', b'a', VALUE_TERMINATOR];
+        bufs.clear();
+        traverse_nfa(&table, &value_aa, &mut bufs);
+        assert!(
+            !bufs
+                .transitions
+                .iter()
+                .any(|m| Arc::ptr_eq(m, &field_matcher)),
+            "Pattern a{{3}} should NOT match 'aa'"
+        );
+
+        // Should match "aaa"
+        let value_aaa = vec![b'a', b'a', b'a', VALUE_TERMINATOR];
+        bufs.clear();
+        traverse_nfa(&table, &value_aaa, &mut bufs);
+        assert!(
+            bufs.transitions
+                .iter()
+                .any(|m| Arc::ptr_eq(m, &field_matcher)),
+            "Pattern a{{3}} should match 'aaa'"
+        );
+    }
+
+    #[test]
+    fn test_nfa_range_bounded() {
+        use crate::automaton::{traverse_nfa, NfaBuffers, VALUE_TERMINATOR};
+
+        // Test a{2,4} - between 2 and 4 'a's
+        let root = parse_regexp("a{2,4}").unwrap();
+        let (table, field_matcher) = make_regexp_nfa(root, false);
+        let mut bufs = NfaBuffers::new();
+
+        // Should NOT match "a"
+        let value_a = vec![b'a', VALUE_TERMINATOR];
+        bufs.clear();
+        traverse_nfa(&table, &value_a, &mut bufs);
+        assert!(
+            !bufs
+                .transitions
+                .iter()
+                .any(|m| Arc::ptr_eq(m, &field_matcher)),
+            "Pattern a{{2,4}} should NOT match 'a'"
+        );
+
+        // Should match "aa"
+        let value_aa = vec![b'a', b'a', VALUE_TERMINATOR];
+        bufs.clear();
+        traverse_nfa(&table, &value_aa, &mut bufs);
+        assert!(
+            bufs.transitions
+                .iter()
+                .any(|m| Arc::ptr_eq(m, &field_matcher)),
+            "Pattern a{{2,4}} should match 'aa'"
+        );
+
+        // Should match "aaa"
+        let value_aaa = vec![b'a', b'a', b'a', VALUE_TERMINATOR];
+        bufs.clear();
+        traverse_nfa(&table, &value_aaa, &mut bufs);
+        assert!(
+            bufs.transitions
+                .iter()
+                .any(|m| Arc::ptr_eq(m, &field_matcher)),
+            "Pattern a{{2,4}} should match 'aaa'"
+        );
+
+        // Should match "aaaa"
+        let value_aaaa = vec![b'a', b'a', b'a', b'a', VALUE_TERMINATOR];
+        bufs.clear();
+        traverse_nfa(&table, &value_aaaa, &mut bufs);
+        assert!(
+            bufs.transitions
+                .iter()
+                .any(|m| Arc::ptr_eq(m, &field_matcher)),
+            "Pattern a{{2,4}} should match 'aaaa'"
+        );
+
+        // Should NOT match "aaaaa"
+        let value_5a = vec![b'a', b'a', b'a', b'a', b'a', VALUE_TERMINATOR];
+        bufs.clear();
+        traverse_nfa(&table, &value_5a, &mut bufs);
+        assert!(
+            !bufs
+                .transitions
+                .iter()
+                .any(|m| Arc::ptr_eq(m, &field_matcher)),
+            "Pattern a{{2,4}} should NOT match 'aaaaa'"
+        );
+    }
+
+    #[test]
+    fn test_nfa_range_with_class() {
+        use crate::automaton::{traverse_nfa, NfaBuffers, VALUE_TERMINATOR};
+
+        // Test [abc]{2,3}
+        let root = parse_regexp("[abc]{2,3}").unwrap();
+        let (table, field_matcher) = make_regexp_nfa(root, false);
+        let mut bufs = NfaBuffers::new();
+
+        // Should NOT match "a"
+        let value_a = vec![b'a', VALUE_TERMINATOR];
+        bufs.clear();
+        traverse_nfa(&table, &value_a, &mut bufs);
+        assert!(
+            !bufs
+                .transitions
+                .iter()
+                .any(|m| Arc::ptr_eq(m, &field_matcher)),
+            "Pattern [abc]{{2,3}} should NOT match 'a'"
+        );
+
+        // Should match "ab"
+        let value_ab = vec![b'a', b'b', VALUE_TERMINATOR];
+        bufs.clear();
+        traverse_nfa(&table, &value_ab, &mut bufs);
+        assert!(
+            bufs.transitions
+                .iter()
+                .any(|m| Arc::ptr_eq(m, &field_matcher)),
+            "Pattern [abc]{{2,3}} should match 'ab'"
+        );
+
+        // Should match "abc"
+        let value_abc = vec![b'a', b'b', b'c', VALUE_TERMINATOR];
+        bufs.clear();
+        traverse_nfa(&table, &value_abc, &mut bufs);
+        assert!(
+            bufs.transitions
+                .iter()
+                .any(|m| Arc::ptr_eq(m, &field_matcher)),
+            "Pattern [abc]{{2,3}} should match 'abc'"
+        );
+
+        // Should NOT match "abcd" (4 chars)
+        let value_abcd = vec![b'a', b'b', b'c', b'd', VALUE_TERMINATOR];
+        bufs.clear();
+        traverse_nfa(&table, &value_abcd, &mut bufs);
+        assert!(
+            !bufs
+                .transitions
+                .iter()
+                .any(|m| Arc::ptr_eq(m, &field_matcher)),
+            "Pattern [abc]{{2,3}} should NOT match 'abcd'"
+        );
+    }
+
+    #[test]
+    fn test_nfa_range_zero_min() {
+        use crate::automaton::{traverse_nfa, NfaBuffers, VALUE_TERMINATOR};
+
+        // Test a{0,2} - between 0 and 2 'a's
+        let root = parse_regexp("a{0,2}").unwrap();
+        let (table, field_matcher) = make_regexp_nfa(root, false);
+        let mut bufs = NfaBuffers::new();
+
+        // Should match empty string
+        let empty = vec![VALUE_TERMINATOR];
+        bufs.clear();
+        traverse_nfa(&table, &empty, &mut bufs);
+        assert!(
+            bufs.transitions
+                .iter()
+                .any(|m| Arc::ptr_eq(m, &field_matcher)),
+            "Pattern a{{0,2}} should match empty string"
+        );
+
+        // Should match "a"
+        let value_a = vec![b'a', VALUE_TERMINATOR];
+        bufs.clear();
+        traverse_nfa(&table, &value_a, &mut bufs);
+        assert!(
+            bufs.transitions
+                .iter()
+                .any(|m| Arc::ptr_eq(m, &field_matcher)),
+            "Pattern a{{0,2}} should match 'a'"
+        );
+
+        // Should match "aa"
+        let value_aa = vec![b'a', b'a', VALUE_TERMINATOR];
+        bufs.clear();
+        traverse_nfa(&table, &value_aa, &mut bufs);
+        assert!(
+            bufs.transitions
+                .iter()
+                .any(|m| Arc::ptr_eq(m, &field_matcher)),
+            "Pattern a{{0,2}} should match 'aa'"
+        );
+
+        // Should NOT match "aaa"
+        let value_aaa = vec![b'a', b'a', b'a', VALUE_TERMINATOR];
+        bufs.clear();
+        traverse_nfa(&table, &value_aaa, &mut bufs);
+        assert!(
+            !bufs
+                .transitions
+                .iter()
+                .any(|m| Arc::ptr_eq(m, &field_matcher)),
+            "Pattern a{{0,2}} should NOT match 'aaa'"
         );
     }
 }

@@ -4,7 +4,7 @@ Rust port of [quamina](https://github.com/timbray/quamina) - fast pattern-matchi
 
 ## Status
 
-**205 tests passing.** All core operators implemented. Full Go parity achieved. Rust outperforms Go on all benchmarks.
+**210 tests passing.** All core operators implemented. Full Go parity achieved plus `{n,m}` quantifiers. Rust outperforms Go on all benchmarks.
 
 | Benchmark | Go (ns) | Rust (ns) | Status |
 |-----------|---------|-----------|--------|
@@ -32,11 +32,11 @@ Rust port of [quamina](https://github.com/timbray/quamina) - fast pattern-matchi
 
 ### Known Issues
 
-1. **Regexp `{n,m}` quantifiers**: Not implemented. Use `?`, `+`, `*` instead.
-2. **Regexp performance**: Rust uses chain-based NFA (depth=100) vs Go's cyclic GC references. Complex patterns with nested `*`/`+` on long strings may be slower.
-3. **Regexp sample coverage**: 992 Go test samples ported; 67 fully tested, rest skipped due to performance constraints (patterns with multiple `*`/`+`, `[^]`, `{}`).
+1. **Regexp performance**: Rust uses chain-based NFA (depth=100) vs Go's cyclic GC references. Complex patterns with nested `*`/`+` on long strings may be slower.
+2. **Regexp sample coverage**: 992 Go test samples ported; 67 fully tested, rest skipped due to performance constraints (patterns with multiple `*`/`+`, `[^]`).
 
 ### Rust-only features (not in Go)
+- Regexp `{n,m}` quantifiers (Go parses but rejects as unimplemented)
 - `{"numeric": ["<", 100]}` - numeric range operators (automaton-integrated)
 - `{"suffix": ".jpg"}` - dedicated suffix operator (automaton-integrated)
 - `has_matches()`, `count_matches()` - optimized boolean/count queries
@@ -127,7 +127,6 @@ src/
 ## Future Work
 
 **Regexp improvements (optional):**
-- Implement `{n,m}` quantifiers
 - Optimize `[^]` negated class NFA construction (currently O(unicode_range))
 - Consider true cyclic NFA with `unsafe` or `Rc<RefCell>` for better * performance
 
@@ -151,7 +150,7 @@ src/
 ## Commands
 
 ```bash
-cargo test                    # 205 tests
+cargo test                    # 210 tests
 cargo bench status            # status_* benchmarks
 cargo bench citylots          # citylots benchmark
 cargo bench numeric_range     # numeric range benchmarks
