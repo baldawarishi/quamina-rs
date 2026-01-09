@@ -4,7 +4,7 @@ Rust port of [quamina](https://github.com/timbray/quamina) - fast pattern-matchi
 
 ## Status
 
-**217 tests passing.** All core operators implemented. Full Go parity achieved plus Rust-only features. Rust outperforms Go on all benchmarks.
+**219 tests passing.** All core operators implemented. Full Go parity achieved plus Rust-only features. Rust outperforms Go on all benchmarks. Synced with Go commit fc60906 (Jan 2026).
 
 | Benchmark | Go (ns) | Rust (ns) | Status |
 |-----------|---------|-----------|--------|
@@ -33,7 +33,8 @@ Rust port of [quamina](https://github.com/timbray/quamina) - fast pattern-matchi
 ### Known Issues
 
 1. **Regexp performance**: Rust uses chain-based NFA (depth=100) vs Go's cyclic GC references. Complex patterns with nested `*`/`+` on long strings may be slower.
-2. **Regexp sample coverage**: 992 Go test samples ported; 67 fully tested, rest skipped due to performance constraints (patterns with multiple `*`/`+`, `[^]`).
+2. **Negated character class performance**: `[^...]` produces O(unicode_range) NFA construction since we enumerate all ~1.1M code points not in the class. Go has the same algorithmic complexity but faster runtime.
+3. **Regexp sample coverage**: 992 Go test samples ported; 67 fully tested, rest skipped due to performance constraints (patterns with multiple `*`/`+`, `[^]`).
 
 ### Rust-only features (not in Go)
 - Generalized `anything-but` (Go Issue #328):
@@ -154,7 +155,7 @@ src/
 ## Commands
 
 ```bash
-cargo test                    # 210 tests
+cargo test                    # 219 tests
 cargo bench status            # status_* benchmarks
 cargo bench citylots          # citylots benchmark
 cargo bench numeric_range     # numeric range benchmarks

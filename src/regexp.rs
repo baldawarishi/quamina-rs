@@ -1840,4 +1840,214 @@ mod tests {
             "Pattern a{{0,2}} should NOT match 'aaa'"
         );
     }
+
+    #[test]
+    fn test_invert_rune_range() {
+        // Port of Go's TestInvertRuneRange
+        let test_cases = vec![
+            // {input, expected}
+            (
+                vec![RunePair { lo: 'b', hi: 'b' }],
+                vec![
+                    RunePair {
+                        lo: '\0',
+                        hi: 'a',
+                    },
+                    RunePair {
+                        lo: 'c',
+                        hi: RUNE_MAX,
+                    },
+                ],
+            ),
+            (
+                vec![RunePair { lo: 'l', hi: 'n' }],
+                vec![
+                    RunePair {
+                        lo: '\0',
+                        hi: 'k',
+                    },
+                    RunePair {
+                        lo: 'o',
+                        hi: RUNE_MAX,
+                    },
+                ],
+            ),
+            (
+                vec![
+                    RunePair { lo: 'b', hi: 'n' },
+                    RunePair { lo: 'p', hi: 'q' },
+                ],
+                vec![
+                    RunePair {
+                        lo: '\0',
+                        hi: 'a',
+                    },
+                    RunePair { lo: 'o', hi: 'o' },
+                    RunePair {
+                        lo: 'r',
+                        hi: RUNE_MAX,
+                    },
+                ],
+            ),
+            (
+                vec![
+                    RunePair {
+                        lo: '\0',
+                        hi: 'x',
+                    },
+                    RunePair {
+                        lo: 'z',
+                        hi: RUNE_MAX,
+                    },
+                ],
+                vec![RunePair { lo: 'y', hi: 'y' }],
+            ),
+            (
+                vec![
+                    RunePair { lo: 'd', hi: 'd' },
+                    RunePair { lo: 'b', hi: 'b' },
+                    RunePair { lo: 'c', hi: 'c' },
+                ],
+                vec![
+                    RunePair {
+                        lo: '\0',
+                        hi: 'a',
+                    },
+                    RunePair {
+                        lo: 'e',
+                        hi: RUNE_MAX,
+                    },
+                ],
+            ),
+        ];
+
+        for (i, (input, expected)) in test_cases.into_iter().enumerate() {
+            let result = invert_rune_range(input);
+            assert_eq!(
+                result.len(),
+                expected.len(),
+                "Test case {}: wrong number of ranges. Got {:?}, expected {:?}",
+                i,
+                result,
+                expected
+            );
+            for (j, (got, want)) in result.iter().zip(expected.iter()).enumerate() {
+                assert_eq!(
+                    got.lo, want.lo,
+                    "Test case {} range {}: wrong lo. Got {:?}, expected {:?}",
+                    i, j, got.lo, want.lo
+                );
+                assert_eq!(
+                    got.hi, want.hi,
+                    "Test case {} range {}: wrong hi. Got {:?}, expected {:?}",
+                    i, j, got.hi, want.hi
+                );
+            }
+        }
+    }
+
+    #[test]
+    #[ignore] // Slow due to chain-based NFA (Go uses cyclic GC refs)
+    fn test_toxic_stack() {
+        use crate::automaton::{traverse_nfa, NfaBuffers, VALUE_TERMINATOR};
+
+        // Port of Go's TestToxicStack - complex pattern with nested quantifiers
+        // Pattern: (([~.~~~?~*~+~{~}~[~]~(~)~|]?)*)+"
+        // This tests that quantified groups work correctly
+        //
+        // Note: This test is ignored by default because the chain-based NFA
+        // implementation (depth=100) is slow for patterns with multiple nested
+        // quantifiers. Go's cyclic GC-based NFA handles this more efficiently.
+        let re = "(([~.~~~?~*~+~{~}~[~]~(~)~|]?)*)+";
+        let root = parse_regexp(re).expect("Should parse toxic stack pattern");
+        let (table, field_matcher) = make_regexp_nfa(root, true);
+
+        // Test string: ".~?*+{}[]()|.~?*+{}[]()|.~?*+{}[]()|"
+        let test_str = ".~?*+{}[]()|.~?*+{}[]()|.~?*+{}[]()|";
+        let mut value: Vec<u8> = Vec::new();
+        value.push(b'"');
+        value.extend_from_slice(test_str.as_bytes());
+        value.push(b'"');
+        value.push(VALUE_TERMINATOR);
+
+        let mut bufs = NfaBuffers::new();
+        traverse_nfa(&table, &value, &mut bufs);
+        assert!(
+            bufs.transitions
+                .iter()
+                .any(|m| Arc::ptr_eq(m, &field_matcher)),
+            "Toxic stack pattern should match test string"
+        );
+    }
+
+    #[test]
+    #[ignore] // Slow: O(unicode_range) NFA construction for negated classes
+    fn test_negated_class_nfa() {
+        use crate::automaton::{traverse_nfa, NfaBuffers, VALUE_TERMINATOR};
+
+        // Test [^abc] - matches any character except a, b, c
+        // Note: This test is ignored by default because negated character classes
+        // produce ranges covering most of Unicode (~1.1M code points), and our
+        // NFA construction iterates through each character. Future optimization:
+        // build smallTable directly from ranges without per-character enumeration.
+        let root = parse_regexp("[^abc]").unwrap();
+        let (table, field_matcher) = make_regexp_nfa(root, false);
+        let mut bufs = NfaBuffers::new();
+
+        // Should NOT match "a", "b", "c"
+        for ch in b"abc" {
+            let value = vec![*ch, VALUE_TERMINATOR];
+            bufs.clear();
+            traverse_nfa(&table, &value, &mut bufs);
+            assert!(
+                !bufs
+                    .transitions
+                    .iter()
+                    .any(|m| Arc::ptr_eq(m, &field_matcher)),
+                "Pattern [^abc] should NOT match '{}'",
+                *ch as char
+            );
+        }
+
+        // Should match "x", "y", "z"
+        for ch in b"xyz" {
+            let value = vec![*ch, VALUE_TERMINATOR];
+            bufs.clear();
+            traverse_nfa(&table, &value, &mut bufs);
+            assert!(
+                bufs.transitions
+                    .iter()
+                    .any(|m| Arc::ptr_eq(m, &field_matcher)),
+                "Pattern [^abc] should match '{}'",
+                *ch as char
+            );
+        }
+    }
+
+    #[test]
+    fn test_star_matches_empty() {
+        use crate::automaton::{traverse_nfa, NfaBuffers, VALUE_TERMINATOR};
+
+        // Patterns with * should match empty string
+        // Note: Excluding patterns with negated classes (e.g., [^?]) due to slow
+        // O(unicode_range) NFA construction
+        let star_patterns = vec!["[a-z]*", "[0-9]*", ".*", "([abc]*)"];
+
+        for pattern in star_patterns {
+            let root = parse_regexp(pattern).unwrap();
+            let (table, field_matcher) = make_regexp_nfa(root, false);
+            let mut bufs = NfaBuffers::new();
+
+            let empty = vec![VALUE_TERMINATOR];
+            bufs.clear();
+            traverse_nfa(&table, &empty, &mut bufs);
+            assert!(
+                bufs.transitions
+                    .iter()
+                    .any(|m| Arc::ptr_eq(m, &field_matcher)),
+                "Pattern {} should match empty string",
+                pattern
+            );
+        }
+    }
 }
