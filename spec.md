@@ -4,7 +4,7 @@ Rust port of [quamina](https://github.com/timbray/quamina) - fast pattern-matchi
 
 ## Status
 
-**219 tests passing.** All core operators implemented. Full Go parity achieved plus Rust-only features. Rust outperforms Go on all benchmarks. Synced with Go commit fc60906 (Jan 2026).
+**227 tests passing.** All core operators implemented. Full Go parity achieved plus Rust-only features. Rust outperforms Go on all benchmarks. Synced with Go commit fc60906 (Jan 2026).
 
 | Benchmark | Go (ns) | Rust (ns) | Status |
 |-----------|---------|-----------|--------|
@@ -129,15 +129,28 @@ src/
 - Task 23: Vec-based indexing regressed 5-8% (Arc deref cost). FxHashMap with Arc::as_ptr() is faster.
 - Task 27: Path cloning was citylots bottleneck. Go uses slice refs; now we use Arc<[u8]>.
 
+## Arena-Based NFA (WIP)
+
+New `automaton::arena` module enables true cyclic NFA structures:
+
+| Type | Purpose |
+|------|---------|
+| `StateId` | Copy index into arena (allows cycles) |
+| `StateArena` | Allocates states, O(1) cycle creation |
+| `traverse_arena_nfa` | NFA traversal with cycles |
+
+**Benefits:** For `[a]*`, arena needs 4 states vs chain's 200+ states.
+
+**Next steps:** Integrate into regexp builder, benchmark vs chain approach.
+
 ## Future Work
 
-**Regexp improvements (optional):**
-- Optimize `[^]` negated class NFA construction (currently O(unicode_range))
-- Consider true cyclic NFA with `unsafe` or `Rc<RefCell>` for better * performance
+**Regexp improvements:**
+- Integrate arena into regexp builder (in progress)
+- Optimize `[^]` negated class NFA construction (O(unicode_range))
 
 **General (diminishing returns):**
 - SIMD for SmallTable.step() ceiling search
-- Pool allocations for transition_on result vectors
 - Property-based fuzzing (proptest/quickcheck)
 
 ## Go Reference
@@ -155,7 +168,7 @@ src/
 ## Commands
 
 ```bash
-cargo test                    # 219 tests
+cargo test                    # 227 tests
 cargo bench status            # status_* benchmarks
 cargo bench citylots          # citylots benchmark
 cargo bench numeric_range     # numeric range benchmarks
