@@ -244,6 +244,14 @@ pub fn parse_regexp(re: &str) -> Result<RegexpRoot, RegexpError> {
     let mut parse = RegexpParse::new(re);
     read_branches(&mut parse)?;
 
+    // Check for unclosed parentheses
+    if parse.is_nested() {
+        return Err(RegexpError {
+            message: "unclosed '('".into(),
+            offset: parse.index,
+        });
+    }
+
     let unimplemented = parse.found_unimplemented();
     if !unimplemented.is_empty() {
         return Err(RegexpError {
@@ -474,6 +482,14 @@ fn read_atom(parse: &mut RegexpParse) -> Result<QuantifiedAtom, RegexpError> {
 
 /// Read a character class expression [...]
 fn read_char_class_expr(parse: &mut RegexpParse) -> Result<RuneRange, RegexpError> {
+    // Check for unclosed bracket (EOF immediately after '[')
+    if parse.is_empty() {
+        return Err(RegexpError {
+            message: "unclosed character class".into(),
+            offset: parse.index,
+        });
+    }
+
     // Check for negation
     let is_negated = parse.bypass_optional('^')?;
     if is_negated {
@@ -962,20 +978,17 @@ fn make_nfa_from_branches(
     fa
 }
 
-/// Build an FA for empty regexp that matches any input.
-/// Creates a match state with default transition to itself (like empty prefix).
+/// Build an FA for empty regexp that matches only empty string.
 fn make_empty_regexp_fa(next_field: &Arc<FieldMatcher>) -> SmallTable {
-    // For empty regexp, we want to match any string.
-    // Create a match state that has field_transitions and a default transition to itself.
-    // This is identical to how prefix_fa handles empty prefix.
+    // Empty regexp matches only empty string.
+    // Create a match state and transition only on VALUE_TERMINATOR (end of value).
     let match_state = Arc::new(FaState {
         table: SmallTable::new(),
         field_transitions: vec![next_field.clone()],
     });
 
-    // Return a table with default transition to match_state
-    // On any byte (including VALUE_TERMINATOR), we match
-    SmallTable::with_mappings(Some(match_state), &[], &[])
+    // Only match on VALUE_TERMINATOR -> matches empty string only
+    SmallTable::with_mappings(None, &[VALUE_TERMINATOR], &[match_state])
 }
 
 /// Build the FA for a single quantified atom.
@@ -1419,7 +1432,7 @@ mod tests {
     fn test_nfa_empty_pattern() {
         use crate::automaton::{traverse_dfa, VALUE_TERMINATOR};
 
-        // Test that empty regexp NFA matches empty and non-empty strings
+        // Test that empty regexp NFA matches ONLY empty string
         let root = parse_regexp("").unwrap();
         let (table, field_matcher) = make_regexp_nfa(root, false);
 
@@ -1436,13 +1449,13 @@ mod tests {
             "Should transition to field_matcher"
         );
 
-        // Test with non-empty value
+        // Test with non-empty value - should NOT match
         let non_empty_value = vec![b'h', b'i', VALUE_TERMINATOR];
         let mut matches2 = Vec::new();
         traverse_dfa(&table, &non_empty_value, &mut matches2);
         assert!(
-            !matches2.is_empty(),
-            "Empty regexp should match non-empty string"
+            matches2.is_empty(),
+            "Empty regexp should NOT match non-empty string"
         );
     }
 

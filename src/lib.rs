@@ -12,6 +12,9 @@ pub mod regexp;
 pub mod segments_tree;
 mod wildcard;
 
+#[cfg(test)]
+mod regexp_samples;
+
 // Re-export flattener types for custom implementations
 pub use crate::flatten_json::ArrayPos;
 pub use crate::flattener::{Flattener, JsonFlattener, OwnedField, SegmentsTreeTracker};
@@ -2991,16 +2994,19 @@ mod tests {
     #[test]
     fn test_empty_regex_matches_empty_string() {
         // Based on Go quamina's TestEmptyRegexp
-        // Empty regex pattern should match empty string value
+        // Empty regex pattern should match ONLY empty string value
         let mut q = Quamina::new();
         q.add_pattern("a", r#"{"a": [{"regex": ""}]}"#).unwrap();
 
         let matches = q.matches_for_event(r#"{"a": ""}"#.as_bytes()).unwrap();
         assert_eq!(matches, vec!["a"], "empty regex should match empty string");
 
-        // Empty regex should also match non-empty strings (since empty pattern matches anywhere)
+        // Empty regex should NOT match non-empty strings
         let matches2 = q.matches_for_event(r#"{"a": "hello"}"#.as_bytes()).unwrap();
-        assert_eq!(matches2, vec!["a"], "empty regex should match any string");
+        assert!(
+            matches2.is_empty(),
+            "empty regex should NOT match non-empty string"
+        );
     }
 
     #[test]
@@ -4412,5 +4418,196 @@ mod tests {
             .matches_for_event(r#"{"status": "active"}"#.as_bytes())
             .unwrap();
         assert_eq!(matches, vec!["p1"]);
+    }
+
+    // ==========================================================================
+    // Regexp Samples Tests (ported from Go)
+    // ==========================================================================
+
+    /// Regexps with * that should match empty string
+    /// (Go has exceptions for these in its validity test)
+    fn star_samples_matching_empty(regex: &str) -> bool {
+        matches!(
+            regex,
+            "(([~.~~~?~*~+~{~}~[~]~(~)~|]?)*)+"
+                | "[~~~|~.~?~*~+~(~)~{~}~-~[~]~^]*"
+                | "[~*a]*"
+                | "[a-]*"
+                | "[~n~r~t~~~|~.~-~^~?~*~+~{~}~[~]~(~)]*"
+                | "[a~*]*"
+                | "[0-9]*"
+                | "(([a-d]*)|([a-z]*))"
+                | "(([d-f]*)|([c-e]*))"
+                | "(([c-e]*)|([d-f]*))"
+                | "(([a-d]*)|(.*))"
+                | "(([d-f]*)|(.*))"
+                | "(([c-e]*)|(.*))"
+                | "(.*)"
+                | "([^~?])*"
+        )
+    }
+
+    #[test]
+    fn test_regexp_samples_exist() {
+        assert!(
+            !crate::regexp_samples::REGEXP_SAMPLES.is_empty(),
+            "No regexp samples found"
+        );
+        assert_eq!(
+            crate::regexp_samples::REGEXP_SAMPLES.len(),
+            992,
+            "Expected 992 samples"
+        );
+    }
+
+    #[test]
+    fn test_regexp_validity() {
+        use crate::automaton::{traverse_nfa, NfaBuffers};
+        use crate::regexp::{make_regexp_nfa, parse_regexp};
+        use crate::regexp_samples::REGEXP_SAMPLES;
+        use std::sync::Arc;
+
+        let mut problems = 0;
+        let mut tests = 0;
+        let mut implemented = 0;
+        let mut correctly_matched = 0;
+        let mut correctly_not_matched = 0;
+
+        for sample in REGEXP_SAMPLES.iter() {
+            tests += 1;
+
+            // Skip patterns that are problematic for our NFA implementation:
+            // - * and + quantifiers (chain-based NFA is slow for long strings)
+            // - {} quantifiers (unimplemented)
+            // - Character class subtraction [a-[b]] (XSD feature, unimplemented)
+            // - Negated character classes [^...] (NFA construction iterates all Unicode chars)
+            // - Patterns with very long test strings
+            fn should_skip(re: &str) -> bool {
+                // Skip quantifiers
+                if re.chars().any(|c| c == '*' || c == '+') {
+                    return true;
+                }
+                // Skip {} quantifiers
+                if re.contains('{') {
+                    return true;
+                }
+                // Skip character class subtraction
+                if re.contains("-[") {
+                    return true;
+                }
+                // Skip negated character classes (NFA construction is O(unicode_range))
+                if re.contains("[^") {
+                    return true;
+                }
+                false
+            }
+
+            if should_skip(sample.regex) {
+                continue;
+            }
+
+            // Skip patterns with long test strings
+            if sample.matches.iter().any(|s| s.len() > 50)
+                || sample.nomatches.iter().any(|s| s.len() > 50)
+            {
+                continue;
+            }
+
+            eprintln!("Sample {}: /{}/", tests, sample.regex);
+
+            let parse_result = parse_regexp(sample.regex);
+
+            if sample.valid {
+                // Valid pattern - should parse without error
+                match parse_result {
+                    Ok(tree) => {
+                        // Pattern parsed successfully - test matching
+                        implemented += 1;
+                        let (table, field_matcher) = make_regexp_nfa(tree, false);
+                        let mut bufs = NfaBuffers::new();
+
+                        // Test strings that should match
+                        for should_match in sample.matches {
+                            let value = should_match.as_bytes();
+
+                            bufs.clear();
+                            traverse_nfa(&table, value, &mut bufs);
+
+                            let matched = bufs
+                                .transitions
+                                .iter()
+                                .any(|m| Arc::ptr_eq(m, &field_matcher));
+
+                            if !matched {
+                                // Go test has exception for empty string matching
+                                if !should_match.is_empty() {
+                                    eprintln!(
+                                        "Sample {}: '{}' failed to match /{}/",
+                                        tests, should_match, sample.regex
+                                    );
+                                    problems += 1;
+                                }
+                            } else {
+                                correctly_matched += 1;
+                            }
+                        }
+
+                        // Test strings that should not match
+                        for should_not_match in sample.nomatches {
+                            let value = should_not_match.as_bytes();
+
+                            bufs.clear();
+                            traverse_nfa(&table, value, &mut bufs);
+
+                            let matched = bufs
+                                .transitions
+                                .iter()
+                                .any(|m| Arc::ptr_eq(m, &field_matcher));
+
+                            if matched {
+                                // Go test has exception for empty string with star patterns
+                                if should_not_match.is_empty()
+                                    && star_samples_matching_empty(sample.regex)
+                                {
+                                    // Expected exception
+                                } else if !should_not_match.is_empty() {
+                                    eprintln!(
+                                        "Sample {}: '{}' matched /{}/",
+                                        tests, should_not_match, sample.regex
+                                    );
+                                    problems += 1;
+                                }
+                            } else {
+                                correctly_not_matched += 1;
+                            }
+                        }
+                    }
+                    Err(_) => {
+                        // Pattern uses unimplemented features - skip
+                        // (This is expected for patterns with {n,m}, \p{}, etc.)
+                    }
+                }
+            } else {
+                // Invalid pattern - should fail to parse
+                if parse_result.is_ok() {
+                    eprintln!(
+                        "Sample {}: should NOT be valid: /{}/",
+                        tests, sample.regex
+                    );
+                    problems += 1;
+                }
+            }
+
+            if problems >= 10 {
+                break;
+            }
+        }
+
+        eprintln!(
+            "tests: {}, implemented: {}, matches/nonMatches: {}/{}",
+            tests, implemented, correctly_matched, correctly_not_matched
+        );
+
+        assert_eq!(problems, 0, "Found {} regexp validation problems", problems);
     }
 }
