@@ -53,7 +53,6 @@ impl FaState {
     }
 }
 
-
 /// A compact lookup table encoding byte value ranges to state transitions.
 ///
 /// The table uses a ceilings/steps representation where each ceiling marks the

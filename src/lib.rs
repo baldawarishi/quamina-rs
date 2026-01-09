@@ -4590,10 +4590,7 @@ mod tests {
             } else {
                 // Invalid pattern - should fail to parse
                 if parse_result.is_ok() {
-                    eprintln!(
-                        "Sample {}: should NOT be valid: /{}/",
-                        tests, sample.regex
-                    );
+                    eprintln!("Sample {}: should NOT be valid: /{}/", tests, sample.regex);
                     problems += 1;
                 }
             }

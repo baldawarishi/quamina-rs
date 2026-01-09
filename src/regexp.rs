@@ -1397,7 +1397,10 @@ mod tests {
         let root = parse_regexp("[a-z]+").unwrap();
         assert_eq!(root.len(), 1);
         assert_eq!(root[0].len(), 1);
-        assert!(root[0][0].is_plus(), "Should be recognized as plus quantifier");
+        assert!(
+            root[0][0].is_plus(),
+            "Should be recognized as plus quantifier"
+        );
     }
 
     #[test]
@@ -1405,7 +1408,10 @@ mod tests {
         let root = parse_regexp("[a-z]*").unwrap();
         assert_eq!(root.len(), 1);
         assert_eq!(root[0].len(), 1);
-        assert!(root[0][0].is_star(), "Should be recognized as star quantifier");
+        assert!(
+            root[0][0].is_star(),
+            "Should be recognized as star quantifier"
+        );
     }
 
     #[test]
@@ -1415,7 +1421,10 @@ mod tests {
         assert_eq!(root[0].len(), 1);
         // The range should be inverted (everything except a, b, c)
         // a=97, b=98, c=99 -> inverted should start at 0 and have gaps
-        assert!(root[0][0].runes.len() > 1, "Negated class should produce multiple ranges");
+        assert!(
+            root[0][0].runes.len() > 1,
+            "Negated class should produce multiple ranges"
+        );
     }
 
     #[test]
@@ -1472,7 +1481,9 @@ mod tests {
         bufs.clear();
         traverse_nfa(&table, &value_a, &mut bufs);
         assert!(
-            bufs.transitions.iter().any(|m| Arc::ptr_eq(m, &field_matcher)),
+            bufs.transitions
+                .iter()
+                .any(|m| Arc::ptr_eq(m, &field_matcher)),
             "Pattern [abc] should match 'a'"
         );
     }
@@ -1491,7 +1502,9 @@ mod tests {
         bufs.clear();
         traverse_nfa(&table, &value_a, &mut bufs);
         assert!(
-            bufs.transitions.iter().any(|m| Arc::ptr_eq(m, &field_matcher)),
+            bufs.transitions
+                .iter()
+                .any(|m| Arc::ptr_eq(m, &field_matcher)),
             "Pattern [abc]+ should match 'a'"
         );
 
@@ -1500,7 +1513,9 @@ mod tests {
         bufs.clear();
         traverse_nfa(&table, &value_abc, &mut bufs);
         assert!(
-            bufs.transitions.iter().any(|m| Arc::ptr_eq(m, &field_matcher)),
+            bufs.transitions
+                .iter()
+                .any(|m| Arc::ptr_eq(m, &field_matcher)),
             "Pattern [abc]+ should match 'abc'"
         );
 
@@ -1509,7 +1524,10 @@ mod tests {
         bufs.clear();
         traverse_nfa(&table, &empty, &mut bufs);
         assert!(
-            !bufs.transitions.iter().any(|m| Arc::ptr_eq(m, &field_matcher)),
+            !bufs
+                .transitions
+                .iter()
+                .any(|m| Arc::ptr_eq(m, &field_matcher)),
             "Pattern [abc]+ should NOT match empty string"
         );
 
@@ -1518,7 +1536,10 @@ mod tests {
         bufs.clear();
         traverse_nfa(&table, &value_x, &mut bufs);
         assert!(
-            !bufs.transitions.iter().any(|m| Arc::ptr_eq(m, &field_matcher)),
+            !bufs
+                .transitions
+                .iter()
+                .any(|m| Arc::ptr_eq(m, &field_matcher)),
             "Pattern [abc]+ should NOT match 'x'"
         );
     }
@@ -1537,7 +1558,9 @@ mod tests {
         bufs.clear();
         traverse_nfa(&table, &empty, &mut bufs);
         assert!(
-            bufs.transitions.iter().any(|m| Arc::ptr_eq(m, &field_matcher)),
+            bufs.transitions
+                .iter()
+                .any(|m| Arc::ptr_eq(m, &field_matcher)),
             "Pattern [abc]* should match empty string"
         );
 
@@ -1546,7 +1569,9 @@ mod tests {
         bufs.clear();
         traverse_nfa(&table, &value_a, &mut bufs);
         assert!(
-            bufs.transitions.iter().any(|m| Arc::ptr_eq(m, &field_matcher)),
+            bufs.transitions
+                .iter()
+                .any(|m| Arc::ptr_eq(m, &field_matcher)),
             "Pattern [abc]* should match 'a'"
         );
 
@@ -1555,7 +1580,9 @@ mod tests {
         bufs.clear();
         traverse_nfa(&table, &value_abc, &mut bufs);
         assert!(
-            bufs.transitions.iter().any(|m| Arc::ptr_eq(m, &field_matcher)),
+            bufs.transitions
+                .iter()
+                .any(|m| Arc::ptr_eq(m, &field_matcher)),
             "Pattern [abc]* should match 'abc'"
         );
     }
