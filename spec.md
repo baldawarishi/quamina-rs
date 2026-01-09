@@ -103,6 +103,7 @@ src/
 │   ├── small_table.rs  # SmallTable (byte transition table), FaState, NfaBuffers
 │   ├── fa_builders.rs  # make_string_fa, make_prefix_fa, merge_fas
 │   ├── nfa.rs          # traverse_dfa, traverse_nfa
+│   ├── arena.rs        # StateArena, StateId for cyclic NFA (WIP)
 │   ├── thread_safe.rs  # FrozenFieldMatcher/ValueMatcher (immutable, for matching)
 │   ├── mutable_matcher.rs  # MutableFieldMatcher/ValueMatcher (for building)
 │   └── wildcard.rs     # Shellstyle/wildcard patterns
