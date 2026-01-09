@@ -4,7 +4,7 @@ Rust port of [quamina](https://github.com/timbray/quamina) - fast pattern-matchi
 
 ## Status
 
-**213 tests passing.** All core operators implemented. Full Go parity achieved plus `{n,m}` quantifiers. Rust outperforms Go on all benchmarks.
+**217 tests passing.** All core operators implemented. Full Go parity achieved plus Rust-only features. Rust outperforms Go on all benchmarks.
 
 | Benchmark | Go (ns) | Rust (ns) | Status |
 |-----------|---------|-----------|--------|
@@ -36,6 +36,10 @@ Rust port of [quamina](https://github.com/timbray/quamina) - fast pattern-matchi
 2. **Regexp sample coverage**: 992 Go test samples ported; 67 fully tested, rest skipped due to performance constraints (patterns with multiple `*`/`+`, `[^]`).
 
 ### Rust-only features (not in Go)
+- Generalized `anything-but` (Go Issue #328):
+  - Single string: `{"anything-but": "foo"}`
+  - Single number: `{"anything-but": 404}`
+  - Array of numbers: `{"anything-but": [400, 404, 500]}`
 - Regexp `{n,m}` quantifiers (Go parses but rejects as unimplemented)
 - `{"numeric": ["<", 100]}` - numeric range operators (automaton-integrated)
 - `{"suffix": ".jpg"}` - dedicated suffix operator (automaton-integrated)

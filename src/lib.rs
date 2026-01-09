@@ -869,6 +869,15 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
             Matcher::Wildcard(pattern) => wildcard_match(pattern, value),
             Matcher::Shellstyle(pattern) => shellstyle_match(pattern, value),
             Matcher::AnythingBut(excluded) => !excluded.iter().any(|e| e == value),
+            Matcher::AnythingButNumeric(excluded) => {
+                // Parse value as number, then check if NOT in excluded list
+                if let Ok(num) = value.parse::<f64>() {
+                    !excluded.iter().any(|&e| (e - num).abs() < f64::EPSILON)
+                } else {
+                    // Non-numeric value: doesn't match any excluded numbers, so passes
+                    true
+                }
+            }
             Matcher::EqualsIgnoreCase(expected) => value.to_lowercase() == expected.to_lowercase(),
             Matcher::Numeric(cmp) => value.parse::<f64>().ok().is_some_and(|num| {
                 let lower_ok = match cmp.lower {
@@ -1294,13 +1303,107 @@ mod tests {
             "Empty anything-but array should be rejected"
         );
 
-        // Non-string values in anything-but should return error
+        // Non-string/non-number values in anything-but should return error
         let mut q2 = Quamina::new();
-        let result2 = q2.add_pattern("p2", r#"{"x": [{"anything-but": [1, true, null]}]}"#);
+        let result2 = q2.add_pattern("p2", r#"{"x": [{"anything-but": [true, null]}]}"#);
         assert!(
             result2.is_err(),
-            "anything-but with only non-strings should be rejected"
+            "anything-but with only booleans/nulls should be rejected"
         );
+
+        // Mixed strings and numbers should return error
+        let mut q3 = Quamina::new();
+        let result3 = q3.add_pattern("p3", r#"{"x": [{"anything-but": ["a", 1]}]}"#);
+        assert!(
+            result3.is_err(),
+            "anything-but with mixed strings and numbers should be rejected"
+        );
+    }
+
+    #[test]
+    fn test_anything_but_single_string() {
+        // Test single string: {"anything-but": "foo"} (EventBridge/Ruler compatibility)
+        let mut q = Quamina::new();
+        q.add_pattern("p1", r#"{"status": [{"anything-but": "deleted"}]}"#)
+            .unwrap();
+
+        // Should match non-excluded values
+        let m1 = q
+            .matches_for_event(r#"{"status": "active"}"#.as_bytes())
+            .unwrap();
+        assert_eq!(m1, vec!["p1"], "Single anything-but should match non-excluded");
+
+        let m2 = q
+            .matches_for_event(r#"{"status": "deleted"}"#.as_bytes())
+            .unwrap();
+        assert!(m2.is_empty(), "Single anything-but should not match excluded");
+    }
+
+    #[test]
+    fn test_anything_but_numeric_single() {
+        // Test single number: {"anything-but": 123}
+        let mut q = Quamina::new();
+        q.add_pattern("p1", r#"{"code": [{"anything-but": 404}]}"#)
+            .unwrap();
+
+        // Should match non-excluded numbers
+        let m1 = q
+            .matches_for_event(r#"{"code": 200}"#.as_bytes())
+            .unwrap();
+        assert_eq!(m1, vec!["p1"], "Should match non-excluded number");
+
+        let m2 = q
+            .matches_for_event(r#"{"code": 404}"#.as_bytes())
+            .unwrap();
+        assert!(m2.is_empty(), "Should not match excluded number");
+
+        // Non-numeric string doesn't match excluded number, so passes
+        let m3 = q
+            .matches_for_event(r#"{"code": "not-a-number"}"#.as_bytes())
+            .unwrap();
+        assert_eq!(m3, vec!["p1"], "Non-numeric value passes numeric anything-but");
+    }
+
+    #[test]
+    fn test_anything_but_numeric_array() {
+        // Test array of numbers: {"anything-but": [100, 200, 300]}
+        let mut q = Quamina::new();
+        q.add_pattern("p1", r#"{"code": [{"anything-but": [400, 404, 500]}]}"#)
+            .unwrap();
+
+        // Should match non-excluded numbers
+        let m1 = q
+            .matches_for_event(r#"{"code": 200}"#.as_bytes())
+            .unwrap();
+        assert_eq!(m1, vec!["p1"], "Should match non-excluded number");
+
+        let m2 = q
+            .matches_for_event(r#"{"code": 404}"#.as_bytes())
+            .unwrap();
+        assert!(m2.is_empty(), "Should not match excluded number");
+
+        let m3 = q
+            .matches_for_event(r#"{"code": 500}"#.as_bytes())
+            .unwrap();
+        assert!(m3.is_empty(), "Should not match another excluded number");
+    }
+
+    #[test]
+    fn test_anything_but_numeric_float() {
+        // Test with floating point numbers
+        let mut q = Quamina::new();
+        q.add_pattern("p1", r#"{"price": [{"anything-but": [9.99, 19.99]}]}"#)
+            .unwrap();
+
+        let m1 = q
+            .matches_for_event(r#"{"price": 14.99}"#.as_bytes())
+            .unwrap();
+        assert_eq!(m1, vec!["p1"], "Should match non-excluded float");
+
+        let m2 = q
+            .matches_for_event(r#"{"price": 9.99}"#.as_bytes())
+            .unwrap();
+        assert!(m2.is_empty(), "Should not match excluded float");
     }
 
     #[test]

@@ -36,6 +36,7 @@ pub enum Matcher {
     Wildcard(String),
     Shellstyle(String), // Simpler wildcard without escape support
     AnythingBut(Vec<String>),
+    AnythingButNumeric(Vec<f64>),
     EqualsIgnoreCase(String),
     Numeric(NumericComparison),
     /// Regex pattern parsed into our custom NFA (automaton-compatible)
@@ -67,6 +68,8 @@ impl Matcher {
             Matcher::Shellstyle(_) => true,
             Matcher::Wildcard(_) => true,
             Matcher::AnythingBut(_) => true,
+            // AnythingButNumeric: needs runtime comparison of Q-numbers
+            Matcher::AnythingButNumeric(_) => false,
             // EqualsIgnoreCase: automaton supports full Unicode case folding
             Matcher::EqualsIgnoreCase(_) => true,
             // ParsedRegexp: uses our custom NFA integrated into automaton
@@ -256,31 +259,59 @@ fn value_to_matcher(value: &Value) -> Result<Matcher, QuaminaError> {
                         ));
                     }
                     "anything-but" => {
+                        // Handle single string: {"anything-but": "foo"}
+                        if let Value::String(s) = val {
+                            return Ok(Matcher::AnythingBut(vec![s.clone()]));
+                        }
+                        // Handle single number: {"anything-but": 123}
+                        if let Value::Number(n) = val {
+                            if let Ok(f) = n.parse::<f64>() {
+                                return Ok(Matcher::AnythingButNumeric(vec![f]));
+                            }
+                            return Err(QuaminaError::InvalidPattern(
+                                "anything-but numeric value is not a valid number".into(),
+                            ));
+                        }
+                        // Handle array: {"anything-but": ["a", "b"]} or {"anything-but": [1, 2]}
                         if let Value::Array(arr) = val {
-                            // Reject empty array (matches Go behavior)
                             if arr.is_empty() {
                                 return Err(QuaminaError::InvalidPattern(
                                     "anything-but array cannot be empty".into(),
                                 ));
                             }
-                            // Only accept strings in anything-but array
-                            let excluded: Vec<String> = arr
+                            // Check if array contains strings or numbers
+                            let strings: Vec<String> = arr
                                 .iter()
                                 .filter_map(|v| match v {
                                     Value::String(s) => Some(s.clone()),
                                     _ => None,
                                 })
                                 .collect();
-                            // If no valid strings, treat as invalid
-                            if excluded.is_empty() {
+                            let numbers: Vec<f64> = arr
+                                .iter()
+                                .filter_map(|v| match v {
+                                    Value::Number(n) => n.parse::<f64>().ok(),
+                                    _ => None,
+                                })
+                                .collect();
+                            // Arrays must be homogeneous (all strings or all numbers)
+                            if !strings.is_empty() && !numbers.is_empty() {
                                 return Err(QuaminaError::InvalidPattern(
-                                    "anything-but array must contain strings".into(),
+                                    "anything-but array must contain only strings or only numbers".into(),
                                 ));
                             }
-                            return Ok(Matcher::AnythingBut(excluded));
+                            if !strings.is_empty() {
+                                return Ok(Matcher::AnythingBut(strings));
+                            }
+                            if !numbers.is_empty() {
+                                return Ok(Matcher::AnythingButNumeric(numbers));
+                            }
+                            return Err(QuaminaError::InvalidPattern(
+                                "anything-but array must contain strings or numbers".into(),
+                            ));
                         }
                         return Err(QuaminaError::InvalidPattern(
-                            "anything-but value must be an array".into(),
+                            "anything-but value must be a string, number, or array".into(),
                         ));
                     }
                     "equals-ignore-case" => {
