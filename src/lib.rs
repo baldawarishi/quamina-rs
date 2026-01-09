@@ -3218,11 +3218,7 @@ mod tests {
         );
 
         for (_, name) in &patterns {
-            assert!(
-                matches.contains(name),
-                "Pattern {} should match",
-                name
-            );
+            assert!(matches.contains(name), "Pattern {} should match", name);
         }
     }
 
