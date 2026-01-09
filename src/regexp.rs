@@ -1849,10 +1849,7 @@ mod tests {
             (
                 vec![RunePair { lo: 'b', hi: 'b' }],
                 vec![
-                    RunePair {
-                        lo: '\0',
-                        hi: 'a',
-                    },
+                    RunePair { lo: '\0', hi: 'a' },
                     RunePair {
                         lo: 'c',
                         hi: RUNE_MAX,
@@ -1862,10 +1859,7 @@ mod tests {
             (
                 vec![RunePair { lo: 'l', hi: 'n' }],
                 vec![
-                    RunePair {
-                        lo: '\0',
-                        hi: 'k',
-                    },
+                    RunePair { lo: '\0', hi: 'k' },
                     RunePair {
                         lo: 'o',
                         hi: RUNE_MAX,
@@ -1873,15 +1867,9 @@ mod tests {
                 ],
             ),
             (
+                vec![RunePair { lo: 'b', hi: 'n' }, RunePair { lo: 'p', hi: 'q' }],
                 vec![
-                    RunePair { lo: 'b', hi: 'n' },
-                    RunePair { lo: 'p', hi: 'q' },
-                ],
-                vec![
-                    RunePair {
-                        lo: '\0',
-                        hi: 'a',
-                    },
+                    RunePair { lo: '\0', hi: 'a' },
                     RunePair { lo: 'o', hi: 'o' },
                     RunePair {
                         lo: 'r',
@@ -1891,10 +1879,7 @@ mod tests {
             ),
             (
                 vec![
-                    RunePair {
-                        lo: '\0',
-                        hi: 'x',
-                    },
+                    RunePair { lo: '\0', hi: 'x' },
                     RunePair {
                         lo: 'z',
                         hi: RUNE_MAX,
@@ -1909,10 +1894,7 @@ mod tests {
                     RunePair { lo: 'c', hi: 'c' },
                 ],
                 vec![
-                    RunePair {
-                        lo: '\0',
-                        hi: 'a',
-                    },
+                    RunePair { lo: '\0', hi: 'a' },
                     RunePair {
                         lo: 'e',
                         hi: RUNE_MAX,

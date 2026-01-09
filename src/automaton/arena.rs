@@ -511,7 +511,9 @@ mod tests {
         // Create states:
         // start --(a)--> match_state --(VT)--> final
         let final_state = arena.alloc();
-        arena[final_state].field_transitions.push(field_matcher.clone());
+        arena[final_state]
+            .field_transitions
+            .push(field_matcher.clone());
 
         let match_state = arena.alloc_with_table(ArenaSmallTable::with_mappings(
             StateId::NONE,
@@ -553,7 +555,9 @@ mod tests {
 
         // exit state (has VALUE_TERMINATOR transition to final)
         let final_state = arena.alloc();
-        arena[final_state].field_transitions.push(field_matcher.clone());
+        arena[final_state]
+            .field_transitions
+            .push(field_matcher.clone());
 
         let exit_state = arena.alloc_with_table(ArenaSmallTable::with_mappings(
             StateId::NONE,
@@ -566,11 +570,8 @@ mod tests {
 
         // start state - matches 'a' or 'b' -> loopback
         let start = arena.alloc_with_table({
-            let mut table = ArenaSmallTable::with_mappings(
-                StateId::NONE,
-                &[b'a', b'b'],
-                &[loopback, loopback],
-            );
+            let mut table =
+                ArenaSmallTable::with_mappings(StateId::NONE, &[b'a', b'b'], &[loopback, loopback]);
             // For *, add epsilon to exit (can match zero times)
             table.epsilons.push(exit_state);
             table
@@ -583,11 +584,7 @@ mod tests {
 
         // Should match empty string (zero times)
         traverse_arena_nfa(&arena, start, b"", &mut bufs);
-        assert_eq!(
-            bufs.transitions.len(),
-            1,
-            "[ab]* should match empty string"
-        );
+        assert_eq!(bufs.transitions.len(), 1, "[ab]* should match empty string");
 
         // Should match "a"
         bufs.clear();
@@ -613,11 +610,7 @@ mod tests {
         bufs.clear();
         let long_value = "ab".repeat(100);
         traverse_arena_nfa(&arena, start, long_value.as_bytes(), &mut bufs);
-        assert_eq!(
-            bufs.transitions.len(),
-            1,
-            "[ab]* should match long string"
-        );
+        assert_eq!(bufs.transitions.len(), 1, "[ab]* should match long string");
 
         // Should NOT match "c" (not in [ab])
         bufs.clear();
@@ -638,7 +631,9 @@ mod tests {
 
         // exit state
         let final_state = arena.alloc();
-        arena[final_state].field_transitions.push(field_matcher.clone());
+        arena[final_state]
+            .field_transitions
+            .push(field_matcher.clone());
 
         let exit_state = arena.alloc_with_table(ArenaSmallTable::with_mappings(
             StateId::NONE,
@@ -683,11 +678,7 @@ mod tests {
         bufs.clear();
         let long_value = "ab".repeat(100);
         traverse_arena_nfa(&arena, start, long_value.as_bytes(), &mut bufs);
-        assert_eq!(
-            bufs.transitions.len(),
-            1,
-            "[ab]+ should match long string"
-        );
+        assert_eq!(bufs.transitions.len(), 1, "[ab]+ should match long string");
     }
 
     #[test]
