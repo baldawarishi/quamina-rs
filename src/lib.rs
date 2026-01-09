@@ -1331,12 +1331,19 @@ mod tests {
         let m1 = q
             .matches_for_event(r#"{"status": "active"}"#.as_bytes())
             .unwrap();
-        assert_eq!(m1, vec!["p1"], "Single anything-but should match non-excluded");
+        assert_eq!(
+            m1,
+            vec!["p1"],
+            "Single anything-but should match non-excluded"
+        );
 
         let m2 = q
             .matches_for_event(r#"{"status": "deleted"}"#.as_bytes())
             .unwrap();
-        assert!(m2.is_empty(), "Single anything-but should not match excluded");
+        assert!(
+            m2.is_empty(),
+            "Single anything-but should not match excluded"
+        );
     }
 
     #[test]
@@ -1347,21 +1354,21 @@ mod tests {
             .unwrap();
 
         // Should match non-excluded numbers
-        let m1 = q
-            .matches_for_event(r#"{"code": 200}"#.as_bytes())
-            .unwrap();
+        let m1 = q.matches_for_event(r#"{"code": 200}"#.as_bytes()).unwrap();
         assert_eq!(m1, vec!["p1"], "Should match non-excluded number");
 
-        let m2 = q
-            .matches_for_event(r#"{"code": 404}"#.as_bytes())
-            .unwrap();
+        let m2 = q.matches_for_event(r#"{"code": 404}"#.as_bytes()).unwrap();
         assert!(m2.is_empty(), "Should not match excluded number");
 
         // Non-numeric string doesn't match excluded number, so passes
         let m3 = q
             .matches_for_event(r#"{"code": "not-a-number"}"#.as_bytes())
             .unwrap();
-        assert_eq!(m3, vec!["p1"], "Non-numeric value passes numeric anything-but");
+        assert_eq!(
+            m3,
+            vec!["p1"],
+            "Non-numeric value passes numeric anything-but"
+        );
     }
 
     #[test]
@@ -1372,19 +1379,13 @@ mod tests {
             .unwrap();
 
         // Should match non-excluded numbers
-        let m1 = q
-            .matches_for_event(r#"{"code": 200}"#.as_bytes())
-            .unwrap();
+        let m1 = q.matches_for_event(r#"{"code": 200}"#.as_bytes()).unwrap();
         assert_eq!(m1, vec!["p1"], "Should match non-excluded number");
 
-        let m2 = q
-            .matches_for_event(r#"{"code": 404}"#.as_bytes())
-            .unwrap();
+        let m2 = q.matches_for_event(r#"{"code": 404}"#.as_bytes()).unwrap();
         assert!(m2.is_empty(), "Should not match excluded number");
 
-        let m3 = q
-            .matches_for_event(r#"{"code": 500}"#.as_bytes())
-            .unwrap();
+        let m3 = q.matches_for_event(r#"{"code": 500}"#.as_bytes()).unwrap();
         assert!(m3.is_empty(), "Should not match another excluded number");
     }
 

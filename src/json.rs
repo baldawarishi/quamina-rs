@@ -297,7 +297,8 @@ fn value_to_matcher(value: &Value) -> Result<Matcher, QuaminaError> {
                             // Arrays must be homogeneous (all strings or all numbers)
                             if !strings.is_empty() && !numbers.is_empty() {
                                 return Err(QuaminaError::InvalidPattern(
-                                    "anything-but array must contain only strings or only numbers".into(),
+                                    "anything-but array must contain only strings or only numbers"
+                                        .into(),
                                 ));
                             }
                             if !strings.is_empty() {
