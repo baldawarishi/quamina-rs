@@ -16,34 +16,18 @@ Rust port of [quamina](https://github.com/timbray/quamina) - fast pattern-matchi
 | numeric_range_two_sided | - | 144 | Rust-only (automaton) |
 | numeric_range_10_patterns | - | 176 | Rust-only (automaton) |
 
-## Recent: Automaton-Based Numeric Ranges (Completed)
+## Parity Status
 
-Successfully moved `{"numeric": ["<", 100]}` from fallback to automaton-based matching.
+**Full Go parity achieved.** All Go pattern types and features implemented.
 
-**Implementation:**
-- `make_numeric_less_fa()` - FA for `<` and `<=` operators
-- `make_numeric_greater_fa()` - FA for `>` and `>=` operators
-- `make_numeric_range_fa()` - Combined FA for two-sided ranges (e.g., `>= 0, < 100`)
-- Q-numbers preserve lexicographic ordering, enabling byte-by-byte comparison
-
-## Parity Gaps
-
-### Functional
-| Gap | Notes |
-|-----|-------|
-| ~~Config options~~ | ✓ Added QuaminaBuilder with with_media_type(), with_auto_rebuild() |
-| ~~Custom Flattener~~ | ✓ Added Flattener trait, SegmentsTreeTracker trait, with_flattener() |
-
-**All functional parity gaps closed.**
-
-### Test Coverage Gaps
-| Category | Priority | Notes |
-|----------|----------|-------|
-| ~~Large-scale stress tests~~ | ~~HIGH~~ | ✓ Ported: 10K string/number fuzz, citylots2 213K events |
-| ~~Race condition tests~~ | ~~HIGH~~ | ✓ Ported: test_concurrent_update_during_matching |
-| ~~Fuzzing~~ | ~~HIGH~~ | ✓ Ported: test_stress_fuzz_strings, test_stress_fuzz_numbers |
-| ~~Pruner edge cases~~ | ~~MEDIUM~~ | ✓ Ported: multiple patterns same ID, bad pattern/event handling, rebuild edge cases |
-| ~~Concurrent update stress~~ | ~~MEDIUM~~ | ✓ Ported: test_concurrent_update_during_matching (852 patterns added during matching) |
+| Go Feature | Rust Status |
+|------------|-------------|
+| Exact/Prefix/Wildcard/Shellstyle | ✓ Automaton-based |
+| Anything-but/Exists | ✓ Automaton-based |
+| Equals-ignore-case | ✓ Automaton-based |
+| Regexp (I-Regexp subset: `.`, `\|`, `[]`, `()`, `?`) | ✓ NFA-based |
+| Custom Flattener | ✓ `Flattener` trait |
+| Config options | ✓ `QuaminaBuilder` |
 
 ### Known Issues
 None currently.
@@ -135,30 +119,11 @@ src/
 - Task 23: Vec-based indexing regressed 5-8% (Arc deref cost). FxHashMap with Arc::as_ptr() is faster.
 - Task 27: Path cloning was citylots bottleneck. Go uses slice refs; now we use Arc<[u8]>.
 
-## Future Work
+## Future Work (Diminishing Returns)
 
-### Completed: Automaton-Based Numeric Ranges
-
-~~**Goal:** Move `{"numeric": ["<", 100]}` from fallback to automaton.~~
-
-**Status: COMPLETED.** Numeric ranges now use automaton-based matching with ~142ns latency.
-
-**Implementation details:**
-- Single-sided ranges (`< 100`, `>= 50`): Direct FA construction via `make_numeric_less_fa`/`make_numeric_greater_fa`
-- Two-sided ranges (`>= 0, < 100`): Combined FA via `make_numeric_range_fa` (not intersection-based)
-- Q-numbers preserve lexicographic ordering, enabling byte-by-byte comparison
-- FA handles variable-length Q-numbers (1-10 bytes) correctly
-
----
-
-**Performance (diminishing returns):**
 - SIMD for SmallTable.step() ceiling search
 - Pool allocations for transition_on result vectors
-
-**Test coverage:**
-- Add large-scale stress tests (1000+ patterns)
-- Add property-based fuzzing (proptest/quickcheck)
-- Add concurrent update stress tests
+- Property-based fuzzing (proptest/quickcheck)
 
 ## Go Reference
 
