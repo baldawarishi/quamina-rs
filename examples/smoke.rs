@@ -195,7 +195,8 @@ fn test_numeric() {
 
 fn test_regex() {
     let mut q = Quamina::new();
-    q.add_pattern("p1", r#"{"code": [{"regex": "^[A-Z]{3}-[0-9]+$"}]}"#)
+    // I-Regexp patterns are implicitly anchored (match full string), no ^ or $ needed
+    q.add_pattern("p1", r#"{"code": [{"regex": "[A-Z]{3}-[0-9]+"}]}"#)
         .unwrap();
 
     let m1 = q
