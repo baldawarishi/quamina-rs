@@ -2007,9 +2007,7 @@ mod tests {
             .unwrap();
 
         // Should match "ab" (a matched, b matched)
-        let matches = q
-            .matches_for_event(r#"{"a": "ab"}"#.as_bytes())
-            .unwrap();
+        let matches = q.matches_for_event(r#"{"a": "ab"}"#.as_bytes()).unwrap();
         assert!(
             matches.contains(&"test"),
             "'a?b' should match 'ab': {:?}",
@@ -2025,9 +2023,7 @@ mod tests {
         );
 
         // Should NOT match "aab"
-        let matches = q
-            .matches_for_event(r#"{"a": "aab"}"#.as_bytes())
-            .unwrap();
+        let matches = q.matches_for_event(r#"{"a": "aab"}"#.as_bytes()).unwrap();
         assert!(
             matches.is_empty(),
             "'a?b' should NOT match 'aab': {:?}",
