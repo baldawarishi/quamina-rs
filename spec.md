@@ -4,7 +4,7 @@ Rust port of [quamina](https://github.com/timbray/quamina) - fast pattern-matchi
 
 ## Status
 
-**203 tests passing.** All core operators implemented. Full Go parity achieved. Rust outperforms Go on all benchmarks.
+**205 tests passing.** All core operators implemented. Full Go parity achieved. Rust outperforms Go on all benchmarks.
 
 | Benchmark | Go (ns) | Rust (ns) | Status |
 |-----------|---------|-----------|--------|
@@ -25,12 +25,16 @@ Rust port of [quamina](https://github.com/timbray/quamina) - fast pattern-matchi
 | Exact/Prefix/Wildcard/Shellstyle | ✓ Automaton-based |
 | Anything-but/Exists | ✓ Automaton-based |
 | Equals-ignore-case | ✓ Automaton-based |
-| Regexp (I-Regexp subset: `.`, `\|`, `[]`, `[^]`, `()`, `?`, `+`, `*`) | ✓ NFA-based |
+| Regexp (I-Regexp subset) | ✓ NFA-based (see Known Issues) |
 | Custom Flattener | ✓ `Flattener` trait |
 | Config options | ✓ `QuaminaBuilder` |
+| Copy/Clone | ✓ `impl Clone for Quamina` |
 
 ### Known Issues
-None currently.
+
+1. **Regexp `{n,m}` quantifiers**: Not implemented. Use `?`, `+`, `*` instead.
+2. **Regexp performance**: Rust uses chain-based NFA (depth=100) vs Go's cyclic GC references. Complex patterns with nested `*`/`+` on long strings may be slower.
+3. **Regexp sample coverage**: 992 Go test samples ported; 67 fully tested, rest skipped due to performance constraints (patterns with multiple `*`/`+`, `[^]`, `{}`).
 
 ### Rust-only features (not in Go)
 - `{"numeric": ["<", 100]}` - numeric range operators (automaton-integrated)
@@ -89,6 +93,7 @@ src/
 ├── segments_tree.rs    # Field path tracking for skip optimization
 ├── numbits.rs          # Q-number encoding for numeric comparisons
 ├── regexp.rs           # I-Regexp parser and NFA builder
+├── regexp_samples.rs   # 992 test samples from Go (test-only)
 ├── automaton/
 │   ├── small_table.rs  # SmallTable (byte transition table), FaState, NfaBuffers
 │   ├── fa_builders.rs  # make_string_fa, make_prefix_fa, merge_fas
@@ -119,8 +124,14 @@ src/
 - Task 23: Vec-based indexing regressed 5-8% (Arc deref cost). FxHashMap with Arc::as_ptr() is faster.
 - Task 27: Path cloning was citylots bottleneck. Go uses slice refs; now we use Arc<[u8]>.
 
-## Future Work (Diminishing Returns)
+## Future Work
 
+**Regexp improvements (optional):**
+- Implement `{n,m}` quantifiers
+- Optimize `[^]` negated class NFA construction (currently O(unicode_range))
+- Consider true cyclic NFA with `unsafe` or `Rc<RefCell>` for better * performance
+
+**General (diminishing returns):**
 - SIMD for SmallTable.step() ceiling search
 - Pool allocations for transition_on result vectors
 - Property-based fuzzing (proptest/quickcheck)
@@ -135,11 +146,12 @@ src/
 | Pruner | `pruner.go` | rebuildRatio=0.2, deletePatterns |
 | Regex | `regexp_nfa.go` | Custom NFA (I-Regexp subset) |
 | Bench | `benchmarks_test.go` | Status patterns, citylots |
+| Tests | `regexp_validity_test.go` | 992 samples, TestToxicStack |
 
 ## Commands
 
 ```bash
-cargo test                    # 197 tests
+cargo test                    # 205 tests
 cargo bench status            # status_* benchmarks
 cargo bench citylots          # citylots benchmark
 cargo bench numeric_range     # numeric range benchmarks
