@@ -4,7 +4,7 @@ Rust port of [quamina](https://github.com/timbray/quamina) - fast pattern-matchi
 
 ## Status
 
-**197 tests passing.** All core operators implemented. Full Go parity achieved. Rust outperforms Go on all benchmarks.
+**203 tests passing.** All core operators implemented. Full Go parity achieved. Rust outperforms Go on all benchmarks.
 
 | Benchmark | Go (ns) | Rust (ns) | Status |
 |-----------|---------|-----------|--------|
@@ -25,7 +25,7 @@ Rust port of [quamina](https://github.com/timbray/quamina) - fast pattern-matchi
 | Exact/Prefix/Wildcard/Shellstyle | ✓ Automaton-based |
 | Anything-but/Exists | ✓ Automaton-based |
 | Equals-ignore-case | ✓ Automaton-based |
-| Regexp (I-Regexp subset: `.`, `\|`, `[]`, `()`, `?`) | ✓ NFA-based |
+| Regexp (I-Regexp subset: `.`, `\|`, `[]`, `[^]`, `()`, `?`, `+`, `*`) | ✓ NFA-based |
 | Custom Flattener | ✓ `Flattener` trait |
 | Config options | ✓ `QuaminaBuilder` |
 

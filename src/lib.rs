@@ -1895,8 +1895,9 @@ mod tests {
     #[test]
     fn test_regex_with_escape() {
         let mut q = Quamina::new();
-        // Email pattern with escaped dot
-        q.add_pattern("p1", r#"{"email": [{"regex": "^[a-z]+@example\\.com$"}]}"#)
+        // Email pattern with escaped dot - I-Regexp uses ~ as escape, not \
+        // Also I-Regexp regexps are anchored by default, no ^ or $
+        q.add_pattern("p1", r#"{"email": [{"regex": "[a-z]+@example~.com"}]}"#)
             .unwrap();
 
         let matches = q

@@ -4,9 +4,12 @@
 //! It supports a subset of I-Regexp:
 //! - `.` matches any character
 //! - `[...]` character classes with ranges
+//! - `[^...]` negated character classes
 //! - `|` alternation
 //! - `(...)` grouping
 //! - `?` optional quantifier
+//! - `+` one-or-more quantifier
+//! - `*` zero-or-more quantifier
 //!
 //! The escape character is `~` (not `\`) to avoid JSON escaping issues.
 
@@ -59,6 +62,32 @@ impl Default for QuantifiedAtom {
     }
 }
 
+impl QuantifiedAtom {
+    /// Returns true if this atom matches exactly once (no quantifier).
+    #[inline]
+    fn is_singleton(&self) -> bool {
+        self.quant_min == 1 && self.quant_max == 1
+    }
+
+    /// Returns true if this atom is optional (?).
+    #[inline]
+    fn is_qm(&self) -> bool {
+        self.quant_min == 0 && self.quant_max == 1
+    }
+
+    /// Returns true if this atom uses + (one or more).
+    #[inline]
+    fn is_plus(&self) -> bool {
+        self.quant_min == 1 && self.quant_max == REGEXP_QUANTIFIER_MAX
+    }
+
+    /// Returns true if this atom uses * (zero or more).
+    #[inline]
+    fn is_star(&self) -> bool {
+        self.quant_min == 0 && self.quant_max == REGEXP_QUANTIFIER_MAX
+    }
+}
+
 /// A branch in the regexp (sequence of atoms).
 pub type RegexpBranch = Vec<QuantifiedAtom>;
 
@@ -84,9 +113,12 @@ pub enum RegexpFeature {
 const IMPLEMENTED_FEATURES: &[RegexpFeature] = &[
     RegexpFeature::Dot,
     RegexpFeature::Class,
+    RegexpFeature::NegatedClass,
     RegexpFeature::OrBar,
     RegexpFeature::ParenGroup,
     RegexpFeature::QuestionMark,
+    RegexpFeature::Plus,
+    RegexpFeature::Star,
 ];
 
 /// Parser state for regexp parsing.
@@ -443,8 +475,8 @@ fn read_atom(parse: &mut RegexpParse) -> Result<QuantifiedAtom, RegexpError> {
 /// Read a character class expression [...]
 fn read_char_class_expr(parse: &mut RegexpParse) -> Result<RuneRange, RegexpError> {
     // Check for negation
-    let bypassed = parse.bypass_optional('^')?;
-    if bypassed {
+    let is_negated = parse.bypass_optional('^')?;
+    if is_negated {
         parse.record_feature(RegexpFeature::NegatedClass);
     }
 
@@ -456,6 +488,12 @@ fn read_char_class_expr(parse: &mut RegexpParse) -> Result<RuneRange, RegexpErro
     }
 
     parse.require(']')?;
+
+    // Apply negation if needed
+    if is_negated {
+        rr = invert_rune_range(rr);
+    }
+
     Ok(rr)
 }
 
@@ -616,6 +654,39 @@ fn simplify_rune_range(mut rranges: RuneRange) -> RuneRange {
     }
     out.push(current);
     out
+}
+
+/// Maximum Unicode code point value.
+const RUNE_MAX: char = '\u{10FFFF}';
+
+/// Invert a rune range (for negated character classes).
+/// Returns a range that matches everything NOT in the input range.
+fn invert_rune_range(mut rr: RuneRange) -> RuneRange {
+    rr.sort_by_key(|rp| rp.lo);
+
+    let mut inverted = Vec::new();
+    let mut point: u32 = 0;
+
+    for pair in &rr {
+        let lo = pair.lo as u32;
+        if lo > point {
+            if let (Some(start), Some(end)) = (char::from_u32(point), char::from_u32(lo - 1)) {
+                inverted.push(RunePair { lo: start, hi: end });
+            }
+        }
+        point = pair.hi as u32 + 1;
+    }
+
+    if point < RUNE_MAX as u32 {
+        if let Some(start) = char::from_u32(point) {
+            inverted.push(RunePair {
+                lo: start,
+                hi: RUNE_MAX,
+            });
+        }
+    }
+
+    inverted
 }
 
 /// Read a Unicode category ~p{...} or ~P{...}
@@ -907,7 +978,78 @@ fn make_empty_regexp_fa(next_field: &Arc<FieldMatcher>) -> SmallTable {
     SmallTable::with_mappings(Some(match_state), &[], &[])
 }
 
+/// Build the FA for a single quantified atom.
+/// Returns the SmallTable for matching this atom (pointing to next_step on match).
+fn make_atom_fa(qa: &QuantifiedAtom, next_step: &Arc<FaState>) -> SmallTable {
+    if qa.is_dot {
+        make_dot_fa(next_step)
+    } else if let Some(ref subtree) = qa.subtree {
+        make_nfa_from_branches(subtree, next_step, false)
+    } else {
+        make_rune_range_nfa(&qa.runes, next_step)
+    }
+}
+
+/// Create the cyclic NFA structure for + and * quantifiers.
+///
+/// This uses `std::sync::OnceLock` to break the chicken-and-egg problem
+/// of creating mutually-referencing Arc structures.
+///
+/// Structure for [abc]+:
+/// - loop_state.table: on 'a'/'b'/'c' -> loopback
+/// - loopback.epsilons: [exit_state, loop_state]
+///
+/// Structure for [abc]*:
+/// - Same as above, plus loop_state.table.epsilons includes exit_state
+fn create_plus_star_loop(
+    qa: &QuantifiedAtom,
+    exit_state: &Arc<FaState>,
+    is_star: bool,
+) -> Arc<FaState> {
+    // Create a chain of states to support up to REGEXP_QUANTIFIER_MAX iterations.
+    // Each level: loop_table -> loopback -> (exit OR next level)
+    //
+    // For +: Must match at least once, so no epsilon to exit from entry
+    // For *: Can match zero times, so entry has epsilon to exit
+    //
+    // Structure per level:
+    // - loop_table: matches atom, transitions to loopback
+    // - loopback: epsilon to exit_state AND epsilon to previous level (or exit for last)
+
+    let depth = REGEXP_QUANTIFIER_MAX as usize;
+    let mut next_level: Option<Arc<FaState>> = None;
+
+    // Build from inside out (deepest level first)
+    for i in 0..depth {
+        // Loopback epsilons: always include exit, and include next_level if it exists
+        let mut loopback_epsilons = vec![exit_state.clone()];
+        if let Some(ref nl) = next_level {
+            loopback_epsilons.push(nl.clone());
+        }
+
+        let loopback = Arc::new(FaState::with_table(SmallTable {
+            ceilings: Vec::new(),
+            steps: Vec::new(),
+            epsilons: loopback_epsilons,
+            spinout: None,
+        }));
+
+        let mut loop_table = make_atom_fa(qa, &loopback);
+
+        // For *, add epsilon to exit (can skip this level entirely)
+        if is_star && i == depth - 1 {
+            // Only the outermost (returned) level needs the skip epsilon
+            loop_table.epsilons.push(exit_state.clone());
+        }
+
+        next_level = Some(Arc::new(FaState::with_table(loop_table)));
+    }
+
+    next_level.unwrap()
+}
+
 /// Build NFA for one branch (sequence of atoms).
+/// Implements Thompson construction for quantifiers.
 fn make_one_regexp_branch_fa(
     branch: &RegexpBranch,
     next_step: &Arc<FaState>,
@@ -916,39 +1058,34 @@ fn make_one_regexp_branch_fa(
     let mut current_next = next_step.clone();
     let mut table = SmallTable::new();
 
-    // Process atoms back to front
-    // Like Go, at the start of each iteration, current_next is "where to go after matching this atom"
+    // Process atoms back to front, like Go.
+    // At the start of each iteration, current_next is "where to go after matching this atom".
     for qa in branch.iter().rev() {
-        // Save the destination for both matching and epsilon transitions
-        let next_after_this = current_next.clone();
+        // The state we want to reach after this atom (before any quantifier modifications)
+        let original_next = current_next.clone();
 
-        if qa.is_dot {
-            table = make_dot_fa(&current_next);
+        if qa.is_plus() || qa.is_star() {
+            // Thompson construction for + (one or more) and * (zero or more).
+            // Uses a helper function that creates a chain of states to simulate
+            // the loop (since Rust's Arc doesn't allow true cycles without interior mutability).
+            let exit_state = original_next.clone();
+            let is_star = qa.is_star();
+            let final_loop_state = create_plus_star_loop(qa, &exit_state, is_star);
+            table = final_loop_state.table.clone();
+            current_next = final_loop_state;
+        } else if qa.is_qm() {
+            // Thompson construction for ? (optional):
+            // Build FA with epsilon to skip
+            table = make_atom_fa(qa, &current_next);
+            table.epsilons.push(original_next);
             current_next = Arc::new(FaState::with_table(table.clone()));
-        } else if let Some(ref subtree) = qa.subtree {
-            table = make_nfa_from_branches(subtree, &current_next, false);
+        } else if qa.is_singleton() {
+            // No quantifier - simple FA
+            table = make_atom_fa(qa, &current_next);
             current_next = Arc::new(FaState::with_table(table.clone()));
         } else {
-            // Match a rune range
-            table = make_rune_range_nfa(&qa.runes, &current_next);
-
-            if qa.quant_max == REGEXP_QUANTIFIER_MAX {
-                // + and * not supported yet
-                panic!("+ and * in regexp not supported");
-            }
-            if qa.quant_max > 1 {
-                panic!("{{lo,hi}} quantifiers not supported");
-            }
-
-            current_next = Arc::new(FaState::with_table(table.clone()));
-        }
-
-        // Handle ? (optional)
-        if qa.quant_min == 0 {
-            // Add epsilon to skip this atom - epsilon goes to same place as match
-            // Modify table directly (like Go) so the returned table has epsilons
-            table.epsilons.push(next_after_this);
-            current_next = Arc::new(FaState::with_table(table.clone()));
+            // {lo,hi} quantifiers - not supported
+            panic!("{{lo,hi}} quantifiers not supported");
         }
     }
 
@@ -1243,6 +1380,32 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_plus() {
+        let root = parse_regexp("[a-z]+").unwrap();
+        assert_eq!(root.len(), 1);
+        assert_eq!(root[0].len(), 1);
+        assert!(root[0][0].is_plus(), "Should be recognized as plus quantifier");
+    }
+
+    #[test]
+    fn test_parse_star() {
+        let root = parse_regexp("[a-z]*").unwrap();
+        assert_eq!(root.len(), 1);
+        assert_eq!(root[0].len(), 1);
+        assert!(root[0][0].is_star(), "Should be recognized as star quantifier");
+    }
+
+    #[test]
+    fn test_parse_negated_class() {
+        let root = parse_regexp("[^abc]").unwrap();
+        assert_eq!(root.len(), 1);
+        assert_eq!(root[0].len(), 1);
+        // The range should be inverted (everything except a, b, c)
+        // a=97, b=98, c=99 -> inverted should start at 0 and have gaps
+        assert!(root[0][0].runes.len() > 1, "Negated class should produce multiple ranges");
+    }
+
+    #[test]
     fn test_parse_empty() {
         // Empty pattern should succeed
         let result = parse_regexp("");
@@ -1280,6 +1443,107 @@ mod tests {
         assert!(
             !matches2.is_empty(),
             "Empty regexp should match non-empty string"
+        );
+    }
+
+    #[test]
+    fn test_nfa_simple_singleton() {
+        use crate::automaton::{traverse_nfa, NfaBuffers, VALUE_TERMINATOR};
+
+        // First verify basic non-quantified matching works
+        let root = parse_regexp("[abc]").unwrap();
+        let (table, field_matcher) = make_regexp_nfa(root, false);
+        let mut bufs = NfaBuffers::new();
+
+        let value_a = vec![b'a', VALUE_TERMINATOR];
+        bufs.clear();
+        traverse_nfa(&table, &value_a, &mut bufs);
+        assert!(
+            bufs.transitions.iter().any(|m| Arc::ptr_eq(m, &field_matcher)),
+            "Pattern [abc] should match 'a'"
+        );
+    }
+
+    #[test]
+    fn test_nfa_plus_quantifier() {
+        use crate::automaton::{traverse_nfa, NfaBuffers, VALUE_TERMINATOR};
+
+        // Test that [abc]+ matches one or more of a, b, c
+        let root = parse_regexp("[abc]+").unwrap();
+        let (table, field_matcher) = make_regexp_nfa(root, false);
+        let mut bufs = NfaBuffers::new();
+
+        // Should match "a"
+        let value_a = vec![b'a', VALUE_TERMINATOR];
+        bufs.clear();
+        traverse_nfa(&table, &value_a, &mut bufs);
+        assert!(
+            bufs.transitions.iter().any(|m| Arc::ptr_eq(m, &field_matcher)),
+            "Pattern [abc]+ should match 'a'"
+        );
+
+        // Should match "abc"
+        let value_abc = vec![b'a', b'b', b'c', VALUE_TERMINATOR];
+        bufs.clear();
+        traverse_nfa(&table, &value_abc, &mut bufs);
+        assert!(
+            bufs.transitions.iter().any(|m| Arc::ptr_eq(m, &field_matcher)),
+            "Pattern [abc]+ should match 'abc'"
+        );
+
+        // Should NOT match empty string
+        let empty = vec![VALUE_TERMINATOR];
+        bufs.clear();
+        traverse_nfa(&table, &empty, &mut bufs);
+        assert!(
+            !bufs.transitions.iter().any(|m| Arc::ptr_eq(m, &field_matcher)),
+            "Pattern [abc]+ should NOT match empty string"
+        );
+
+        // Should NOT match "x"
+        let value_x = vec![b'x', VALUE_TERMINATOR];
+        bufs.clear();
+        traverse_nfa(&table, &value_x, &mut bufs);
+        assert!(
+            !bufs.transitions.iter().any(|m| Arc::ptr_eq(m, &field_matcher)),
+            "Pattern [abc]+ should NOT match 'x'"
+        );
+    }
+
+    #[test]
+    fn test_nfa_star_quantifier() {
+        use crate::automaton::{traverse_nfa, NfaBuffers, VALUE_TERMINATOR};
+
+        // Test that [abc]* matches zero or more of a, b, c
+        let root = parse_regexp("[abc]*").unwrap();
+        let (table, field_matcher) = make_regexp_nfa(root, false);
+        let mut bufs = NfaBuffers::new();
+
+        // Should match empty string (zero times)
+        let empty = vec![VALUE_TERMINATOR];
+        bufs.clear();
+        traverse_nfa(&table, &empty, &mut bufs);
+        assert!(
+            bufs.transitions.iter().any(|m| Arc::ptr_eq(m, &field_matcher)),
+            "Pattern [abc]* should match empty string"
+        );
+
+        // Should match "a"
+        let value_a = vec![b'a', VALUE_TERMINATOR];
+        bufs.clear();
+        traverse_nfa(&table, &value_a, &mut bufs);
+        assert!(
+            bufs.transitions.iter().any(|m| Arc::ptr_eq(m, &field_matcher)),
+            "Pattern [abc]* should match 'a'"
+        );
+
+        // Should match "abc"
+        let value_abc = vec![b'a', b'b', b'c', VALUE_TERMINATOR];
+        bufs.clear();
+        traverse_nfa(&table, &value_abc, &mut bufs);
+        assert!(
+            bufs.transitions.iter().any(|m| Arc::ptr_eq(m, &field_matcher)),
+            "Pattern [abc]* should match 'abc'"
         );
     }
 }
