@@ -8,10 +8,10 @@ Rust port of [quamina](https://github.com/timbray/quamina) - fast pattern-matchi
 
 | Benchmark | Go (ns) | Rust (ns) | Status |
 |-----------|---------|-----------|--------|
-| status_context_fields | 442 | 408 | **Rust 8% faster** |
-| status_middle_nested | 7,700 | 4,866 | **Rust 1.58x faster** |
-| status_last_field | 8,100 | 5,139 | **Rust 1.58x faster** |
-| citylots | 3,570 | 2,105 | **Rust 1.70x faster** |
+| status_context_fields | 398 | 363 | **Rust 10% faster** |
+| status_middle_nested | 7,437 | 5,038 | **Rust 1.48x faster** |
+| status_last_field | 7,937 | 5,367 | **Rust 1.48x faster** |
+| citylots | 3,971 | 2,122 | **Rust 1.87x faster** |
 | numeric_range_single | - | 145 | Rust-only (automaton) |
 | numeric_range_two_sided | - | 144 | Rust-only (automaton) |
 | numeric_range_10_patterns | - | 176 | Rust-only (automaton) |
