@@ -15,7 +15,9 @@
 //! - `fa_builders`: FA construction functions (make_*_fa, merge_fas)
 //! - `mutable_matcher`: Single-threaded mutable matchers (CoreMatcher)
 //! - `thread_safe`: Thread-safe matchers (ThreadSafeCoreMatcher)
+//! - `arena`: Arena-based state allocation for cyclic NFA structures
 
+pub mod arena;
 mod fa_builders;
 mod mutable_matcher;
 mod nfa;
