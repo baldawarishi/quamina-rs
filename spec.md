@@ -4,7 +4,7 @@ Rust port of [quamina](https://github.com/timbray/quamina) - fast pattern-matchi
 
 ## Status
 
-**195 tests passing.** All core operators implemented. Full Go parity achieved. Rust outperforms Go on all benchmarks.
+**197 tests passing.** All core operators implemented. Full Go parity achieved. Rust outperforms Go on all benchmarks.
 
 | Benchmark | Go (ns) | Rust (ns) | Status |
 |-----------|---------|-----------|--------|
@@ -174,7 +174,7 @@ src/
 ## Commands
 
 ```bash
-cargo test                    # 195 tests
+cargo test                    # 197 tests
 cargo bench status            # status_* benchmarks
 cargo bench citylots          # citylots benchmark
 cargo bench numeric_range     # numeric range benchmarks

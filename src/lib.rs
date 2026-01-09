@@ -2000,6 +2000,197 @@ mod tests {
     }
 
     #[test]
+    fn test_regexp_simple_optional() {
+        // Test simple optional quantifier first
+        let mut q = Quamina::new();
+        q.add_pattern("test", r#"{"a": [{"regexp": "a?b"}]}"#)
+            .unwrap();
+
+        // Should match "ab" (a matched, b matched)
+        let matches = q
+            .matches_for_event(r#"{"a": "ab"}"#.as_bytes())
+            .unwrap();
+        assert!(
+            matches.contains(&"test"),
+            "'a?b' should match 'ab': {:?}",
+            matches
+        );
+
+        // Should match "b" (a skipped, b matched)
+        let matches = q.matches_for_event(r#"{"a": "b"}"#.as_bytes()).unwrap();
+        assert!(
+            matches.contains(&"test"),
+            "'a?b' should match 'b': {:?}",
+            matches
+        );
+
+        // Should NOT match "aab"
+        let matches = q
+            .matches_for_event(r#"{"a": "aab"}"#.as_bytes())
+            .unwrap();
+        assert!(
+            matches.is_empty(),
+            "'a?b' should NOT match 'aab': {:?}",
+            matches
+        );
+    }
+
+    #[test]
+    fn test_regexp_end2end() {
+        // Comprehensive regexp tests ported from Go's TestRegexpEnd2End
+        struct RegexpSample {
+            regex: &'static str,
+            matches: &'static [&'static str],
+            nomatches: &'static [&'static str],
+        }
+
+        let tests = [
+            RegexpSample {
+                regex: "(xyz)?a?b",
+                matches: &["xyzb", "xyzab", "ab", "b"],
+                nomatches: &["xyzc", "c", "xyza"],
+            },
+            RegexpSample {
+                regex: "a|b",
+                matches: &["a", "b"],
+                nomatches: &["x"],
+            },
+            RegexpSample {
+                regex: "a",
+                matches: &["a"],
+                nomatches: &["b", ""],
+            },
+            RegexpSample {
+                regex: "a.b",
+                matches: &["axb", "a.b"],
+                nomatches: &["ab", "axxb"],
+            },
+            RegexpSample {
+                regex: "abc|def",
+                matches: &["abc", "def"],
+                nomatches: &["x"],
+            },
+            RegexpSample {
+                regex: "[hij]",
+                matches: &["h", "i", "j"],
+                nomatches: &["x"],
+            },
+            RegexpSample {
+                regex: "a[e-g]x",
+                matches: &["aex", "afx", "agx"],
+                nomatches: &["ax", "axx"],
+            },
+            RegexpSample {
+                regex: "[ae-gx]",
+                matches: &["a", "e", "f", "g", "x"],
+                nomatches: &["b"],
+            },
+            RegexpSample {
+                regex: "[-ab]",
+                matches: &["-", "a", "b"],
+                nomatches: &["c"],
+            },
+            RegexpSample {
+                regex: "[ab-]",
+                matches: &["-", "a", "b"],
+                nomatches: &["c"],
+            },
+            RegexpSample {
+                regex: "[~[~]]",
+                matches: &["[", "]"],
+                nomatches: &["a"],
+            },
+            // Note: Go tests [~r~t~n] matching \r, \t, \n literal bytes
+            // In JSON these would be escaped, so we test differently
+            RegexpSample {
+                regex: "[a-c]|[xz]",
+                matches: &["a", "b", "c", "x", "z"],
+                nomatches: &["w"],
+            },
+            RegexpSample {
+                regex: "[ac-e]h|p[xy]",
+                matches: &["ah", "ch", "dh", "eh", "px", "py"],
+                nomatches: &["xp"],
+            },
+            RegexpSample {
+                regex: "[0-9][0-9][rtn][dh]",
+                matches: &["11th", "23rd", "22nd"],
+                nomatches: &["first", "9th"],
+            },
+            RegexpSample {
+                regex: "a(h|i)z",
+                matches: &["ahz", "aiz"],
+                nomatches: &["a.z"],
+            },
+            RegexpSample {
+                regex: "a([1-3]|ac)z",
+                matches: &["a1z", "a2z", "a3z", "aacz"],
+                nomatches: &["a.z", "a0z"],
+            },
+            RegexpSample {
+                regex: "a(h|([x-z]|(1|2)))z",
+                matches: &["ahz", "axz", "a1z", "a2z"],
+                nomatches: &["a.z"],
+            },
+        ];
+
+        // Test each pattern individually
+        for test in &tests {
+            let mut q = Quamina::new();
+            let pattern = format!(r#"{{"a": [{{"regexp": "{}"}}]}}"#, test.regex);
+            if let Err(e) = q.add_pattern("test", &pattern) {
+                panic!("Failed to add pattern '{}': {}", test.regex, e);
+            }
+
+            for m in test.matches {
+                let event = format!(r#"{{"a": "{}"}}"#, m);
+                let matches = q.matches_for_event(event.as_bytes()).unwrap();
+                assert!(
+                    matches.contains(&"test"),
+                    "Pattern '{}' should match '{}', but didn't",
+                    test.regex,
+                    m
+                );
+            }
+
+            for m in test.nomatches {
+                let event = format!(r#"{{"a": "{}"}}"#, m);
+                let matches = q.matches_for_event(event.as_bytes()).unwrap();
+                assert!(
+                    matches.is_empty(),
+                    "Pattern '{}' should NOT match '{}', but did",
+                    test.regex,
+                    m
+                );
+            }
+        }
+
+        // Test merged FA (all patterns together) - like Go does
+        let mut all_patterns = Quamina::new();
+        for (i, test) in tests.iter().enumerate() {
+            let pattern = format!(r#"{{"a": [{{"regexp": "{}"}}]}}"#, test.regex);
+            let name = format!("p{}", i);
+            if let Err(e) = all_patterns.add_pattern(name, &pattern) {
+                panic!("Failed to add pattern '{}': {}", test.regex, e);
+            }
+        }
+
+        for (i, test) in tests.iter().enumerate() {
+            let expected_name = format!("p{}", i);
+            for m in test.matches {
+                let event = format!(r#"{{"a": "{}"}}"#, m);
+                let matches = all_patterns.matches_for_event(event.as_bytes()).unwrap();
+                assert!(
+                    matches.contains(&expected_name),
+                    "Merged FA: Pattern '{}' should match '{}', but didn't",
+                    test.regex,
+                    m
+                );
+            }
+        }
+    }
+
+    #[test]
     fn test_clone_for_snapshot() {
         let mut q = Quamina::new();
         q.add_pattern("p1", r#"{"status": ["active"]}"#).unwrap();

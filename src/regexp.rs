@@ -917,7 +917,11 @@ fn make_one_regexp_branch_fa(
     let mut table = SmallTable::new();
 
     // Process atoms back to front
+    // Like Go, at the start of each iteration, current_next is "where to go after matching this atom"
     for qa in branch.iter().rev() {
+        // Save the destination for both matching and epsilon transitions
+        let next_after_this = current_next.clone();
+
         if qa.is_dot {
             table = make_dot_fa(&current_next);
             current_next = Arc::new(FaState::with_table(table.clone()));
@@ -941,10 +945,10 @@ fn make_one_regexp_branch_fa(
 
         // Handle ? (optional)
         if qa.quant_min == 0 {
-            // Add epsilon to skip this atom - rebuild with epsilons
-            let mut new_table = table.clone();
-            new_table.epsilons.push(next_step.clone());
-            current_next = Arc::new(FaState::with_table(new_table));
+            // Add epsilon to skip this atom - epsilon goes to same place as match
+            // Modify table directly (like Go) so the returned table has epsilons
+            table.epsilons.push(next_after_this);
+            current_next = Arc::new(FaState::with_table(table.clone()));
         }
     }
 
