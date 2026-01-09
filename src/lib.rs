@@ -3145,6 +3145,88 @@ mod tests {
     }
 
     #[test]
+    fn test_shellstyle_suffix_merged_bug() {
+        // Based on Go quamina's TestSuffixBug
+        // Tests that multiple merged suffix patterns all match properly
+        let j = r#"{"Url": "xy9"}"#;
+        let patterns = [
+            (r#"{"Url": [{"shellstyle": "*9"}]}"#, "p0"),
+            (r#"{"Url": [{"shellstyle": "x*9"}]}"#, "p1"),
+        ];
+
+        // Verify each pattern works individually
+        for (pattern, name) in &patterns {
+            let mut q = Quamina::new();
+            q.add_pattern(*name, pattern).unwrap();
+            let matches = q.matches_for_event(j.as_bytes()).unwrap();
+            assert_eq!(
+                matches.len(),
+                1,
+                "Pattern {} should match individually",
+                name
+            );
+            assert!(matches.contains(name));
+        }
+
+        // Verify both patterns work when merged
+        let mut q = Quamina::new();
+        for (pattern, name) in &patterns {
+            q.add_pattern(*name, pattern).unwrap();
+        }
+        let matches = q.matches_for_event(j.as_bytes()).unwrap();
+        assert_eq!(
+            matches.len(),
+            2,
+            "Both patterns should match when merged, got {:?}",
+            matches
+        );
+        assert!(matches.contains(&"p0"));
+        assert!(matches.contains(&"p1"));
+    }
+
+    #[test]
+    fn test_field_name_ordering_with_exists() {
+        // Based on Go quamina's TestFieldNameOrdering
+        // Tests patterns with exists:false against a simple event with field "b"
+        // All patterns should match because the absent fields (a, c) don't exist
+        let event = r#"{"b": 1}"#;
+
+        let patterns = [
+            // b=1 AND a doesn't exist (true - a is absent)
+            (r#"{"b": [1], "a": [{"exists": false}]}"#, "p0"),
+            // b=1 AND c doesn't exist (true - c is absent)
+            (r#"{"b": [1], "c": [{"exists": false}]}"#, "p1"),
+            // b=1 (true)
+            (r#"{"b": [1]}"#, "p2"),
+            // a doesn't exist (true - a is absent)
+            (r#"{"a": [{"exists": false}]}"#, "p3"),
+        ];
+
+        // Add all patterns and verify all match
+        let mut q = Quamina::new();
+        for (pattern, name) in &patterns {
+            q.add_pattern(*name, pattern).unwrap();
+        }
+
+        let matches = q.matches_for_event(event.as_bytes()).unwrap();
+        assert_eq!(
+            matches.len(),
+            patterns.len(),
+            "All {} patterns should match, got {:?}",
+            patterns.len(),
+            matches
+        );
+
+        for (_, name) in &patterns {
+            assert!(
+                matches.contains(name),
+                "Pattern {} should match",
+                name
+            );
+        }
+    }
+
+    #[test]
     fn test_shellstyle_complex_wildcards() {
         // Based on Go quamina's TestMakeShellStyleFA
         // Tests shellstyle patterns with multiple wildcards in complex positions

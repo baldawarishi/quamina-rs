@@ -4,7 +4,7 @@ Rust port of [quamina](https://github.com/timbray/quamina) - fast pattern-matchi
 
 ## Status
 
-**211 tests passing.** All core operators implemented. Full Go parity achieved plus `{n,m}` quantifiers. Rust outperforms Go on all benchmarks.
+**213 tests passing.** All core operators implemented. Full Go parity achieved plus `{n,m}` quantifiers. Rust outperforms Go on all benchmarks.
 
 | Benchmark | Go (ns) | Rust (ns) | Status |
 |-----------|---------|-----------|--------|
