@@ -4,7 +4,7 @@ Rust port of [quamina](https://github.com/timbray/quamina) - fast pattern-matchi
 
 ## Status
 
-**234 tests passing.** All core operators implemented. Full Go parity achieved plus Rust-only features. Rust outperforms Go on all benchmarks. Arena-based NFA now used for ALL regexp patterns (2.25-2.5x faster). Synced with Go commit c443b44 (Jan 2026).
+**234 tests passing.** All core operators implemented. Full Go parity achieved plus Rust-only features. Rust outperforms Go on most benchmarks (shellstyle is a known regression). Arena-based NFA now used for ALL regexp patterns (2.25-2.5x faster). Synced with Go commit c443b44 (Jan 2026).
 
 | Benchmark | Go (ns) | Rust (ns) | Status |
 |-----------|---------|-----------|--------|
@@ -12,6 +12,7 @@ Rust port of [quamina](https://github.com/timbray/quamina) - fast pattern-matchi
 | status_middle_nested | 7,437 | 4,784 | **Rust 1.55x faster** |
 | status_last_field | 7,937 | 5,091 | **Rust 1.56x faster** |
 | citylots | 3,971 | 2,083 | **Rust 1.91x faster** |
+| shellstyle_26_patterns | 731 | 1,305 | **Go 1.8x faster** (see Future Work) |
 | numeric_range_single | - | 145 | Rust-only (automaton) |
 | numeric_range_two_sided | - | 144 | Rust-only (automaton) |
 | numeric_range_10_patterns | - | 176 | Rust-only (automaton) |
@@ -158,6 +159,12 @@ Direct comparison of chain-based vs arena-based NFA traversal for `[a-z]+`:
 **Integration status:** Fully integrated. All regexp patterns use arena-based NFA for consistent 2.25-2.5x speedup.
 
 ## Future Work
+
+**Shellstyle arena migration (high priority):**
+- Current shellstyle is 1.8x slower than Go (1,305 ns vs 731 ns)
+- Root cause: spinout mechanism allocates `Arc<FaState>` on every byte during traversal
+- Solution: Use arena-based NFA with true cycle (same approach as regexp)
+- Expected improvement: Match or beat Go performance
 
 **Regexp improvements:**
 - Optimize `[^]` negated class NFA construction (O(unicode_range))
