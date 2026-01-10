@@ -4,15 +4,15 @@ Rust port of [quamina](https://github.com/timbray/quamina) - fast pattern-matchi
 
 ## Status
 
-**234 tests passing.** All core operators implemented. Full Go parity achieved plus Rust-only features. Rust outperforms Go on most benchmarks. Arena-based NFA used for ALL regexp patterns (2.25-2.5x faster). Shellstyle spinout optimized (28% improvement). Synced with Go commit c443b44 (Jan 2026).
+**234 tests passing.** All core operators implemented. Full Go parity achieved plus Rust-only features. Rust outperforms Go on all benchmarks. Arena-based NFA used for ALL regexp patterns (2.25-2.5x faster). NFA traversal optimized with buffer reuse (55% shellstyle improvement). Synced with Go commit c443b44 (Jan 2026).
 
 | Benchmark | Go (ns) | Rust (ns) | Status |
 |-----------|---------|-----------|--------|
-| status_context_fields | 398 | 363 | **Rust 10% faster** |
-| status_middle_nested | 7,437 | 4,784 | **Rust 1.55x faster** |
-| status_last_field | 7,937 | 5,091 | **Rust 1.56x faster** |
-| citylots | 3,971 | 2,083 | **Rust 1.91x faster** |
-| shellstyle_26_patterns | 731 | 1,128 | Go 1.54x faster (improved from 1.8x) |
+| status_context_fields | 398 | 362 | **Rust 10% faster** |
+| status_middle_nested | 7,437 | 4,912 | **Rust 1.51x faster** |
+| status_last_field | 7,937 | 5,215 | **Rust 1.52x faster** |
+| citylots | 3,971 | 2,117 | **Rust 1.88x faster** |
+| shellstyle_26_patterns | 731 | 405 | **Rust 1.81x faster** |
 | numeric_range_single | - | 145 | Rust-only (automaton) |
 | numeric_range_two_sided | - | 144 | Rust-only (automaton) |
 | numeric_range_10_patterns | - | 176 | Rust-only (automaton) |
@@ -120,7 +120,7 @@ src/
    - Chain NFA traversal (for non-deterministic patterns like shellstyle)
    - Arena NFA traversal (for ALL regexp patterns - 2.25-2.5x faster)
 
-## Optimizations Applied (Tasks 1-27)
+## Optimizations Applied (Tasks 1-28)
 
 | Optimization | Impact | Notes |
 |-------------|--------|-------|
@@ -130,10 +130,12 @@ src/
 | Direct Field matching | ~3% | Removed EventFieldRef indirection |
 | SmallVec array_trail | minor | Inline storage for shallow nesting |
 | #[inline] hot paths | varies | dstep, step, traverse_*, transition_on |
+| NFA epsilon closure buffers | **shellstyle -55%** | Eliminated per-byte allocation in traverse_nfa |
 
 **Key learnings:**
 - Task 23: Vec-based indexing regressed 5-8% (Arc deref cost). FxHashMap with Arc::as_ptr() is faster.
 - Task 27: Path cloning was citylots bottleneck. Go uses slice refs; now we use Arc<[u8]>.
+- Task 28: Epsilon closure computed fresh each byte was main shellstyle bottleneck. Buffer reuse + sorted vec dedup made Rust 1.81x faster than Go.
 
 ## Arena-Based NFA
 
@@ -159,14 +161,6 @@ Direct comparison of chain-based vs arena-based NFA traversal for `[a-z]+`:
 **Integration status:** Fully integrated. All regexp patterns use arena-based NFA for consistent 2.25-2.5x speedup.
 
 ## Future Work
-
-**Shellstyle performance (remaining gap 1.54x vs Go):**
-- Spinout Arc reuse optimization applied (28% improvement: 1,305ns -> 1,128ns)
-- Remaining gap due to Go's "spinner" optimization in merge:
-  - Go builds spinners with all bytes transitioning to self, merged efficiently
-  - Rust uses spinout marker + epsilon, requires epsilon closure on each byte
-- Further improvement would require Go-style spinner merging (complex)
-- Arena-based NFA not suitable: multiple patterns merged into one automaton is faster than N separate arena traversals
 
 **Regexp improvements:**
 - Optimize `[^]` negated class NFA construction (O(unicode_range))

@@ -298,6 +298,12 @@ pub struct NfaBuffers {
     pub next_states: Vec<Arc<FaState>>,
     /// Reusable buffer for collecting field transitions
     pub transitions: Vec<Arc<FieldMatcher>>,
+    /// Reusable buffer for epsilon closure computation
+    pub epsilon_closure: Vec<Arc<FaState>>,
+    /// Reusable stack for epsilon closure DFS
+    pub epsilon_stack: Vec<Arc<FaState>>,
+    /// Sorted vec of seen transition pointers (as usize) for deduplication
+    pub seen_transitions: Vec<usize>,
 }
 
 impl NfaBuffers {
@@ -306,6 +312,9 @@ impl NfaBuffers {
             current_states: Vec::with_capacity(16),
             next_states: Vec::with_capacity(16),
             transitions: Vec::with_capacity(8),
+            epsilon_closure: Vec::with_capacity(8),
+            epsilon_stack: Vec::with_capacity(8),
+            seen_transitions: Vec::with_capacity(16),
         }
     }
 

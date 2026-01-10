@@ -4,7 +4,6 @@
 //! - `traverse_dfa`: Deterministic traversal for simple patterns
 //! - `traverse_nfa`: Non-deterministic traversal for complex patterns (wildcards, etc.)
 
-use std::collections::HashSet;
 use std::sync::Arc;
 
 use super::small_table::{FaState, FieldMatcher, NfaBuffers, SmallTable, VALUE_TERMINATOR};
@@ -43,12 +42,11 @@ pub fn traverse_nfa(table: &SmallTable, val: &[u8], bufs: &mut NfaBuffers) {
     // Clear state buffers but NOT transitions (caller manages that)
     bufs.current_states.clear();
     bufs.next_states.clear();
+    bufs.seen_transitions.clear();
 
     // Start with initial state
     let initial = Arc::new(FaState::with_table(table.clone()));
     bufs.current_states.push(initial);
-
-    let mut seen_transitions: HashSet<*const FieldMatcher> = HashSet::new();
 
     for i in 0..=val.len() {
         if bufs.current_states.is_empty() {
@@ -61,16 +59,38 @@ pub fn traverse_nfa(table: &SmallTable, val: &[u8], bufs: &mut NfaBuffers) {
             VALUE_TERMINATOR
         };
 
-        for state in bufs.current_states.clone() {
-            // Get epsilon closure
-            let closure = get_epsilon_closure(&state);
+        // Process each current state - avoid clone by iterating with index
+        let num_current = bufs.current_states.len();
+        for state_idx in 0..num_current {
+            let state = bufs.current_states[state_idx].clone();
 
-            for ec_state in &closure {
-                // Collect field transitions (deduplicated)
+            // Compute epsilon closure inline using buffers
+            bufs.epsilon_closure.clear();
+            bufs.epsilon_stack.clear();
+            bufs.epsilon_closure.push(state.clone());
+            bufs.epsilon_stack.push(state);
+
+            while let Some(current) = bufs.epsilon_stack.pop() {
+                for eps in &current.table.epsilons {
+                    if !bufs.epsilon_closure.iter().any(|s| Arc::ptr_eq(s, eps)) {
+                        bufs.epsilon_closure.push(eps.clone());
+                        bufs.epsilon_stack.push(eps.clone());
+                    }
+                }
+            }
+
+            // Process each state in the epsilon closure
+            for ec_state in &bufs.epsilon_closure {
+                // Collect field transitions (deduplicated using sorted vec)
                 for ft in &ec_state.field_transitions {
-                    let ptr = Arc::as_ptr(ft);
-                    if seen_transitions.insert(ptr) {
-                        bufs.transitions.push(ft.clone());
+                    let ptr = Arc::as_ptr(ft) as usize;
+                    // Binary search for insertion point
+                    match bufs.seen_transitions.binary_search(&ptr) {
+                        Ok(_) => {} // Already seen
+                        Err(pos) => {
+                            bufs.seen_transitions.insert(pos, ptr);
+                            bufs.transitions.push(ft.clone());
+                        }
                     }
                 }
 
@@ -95,34 +115,34 @@ pub fn traverse_nfa(table: &SmallTable, val: &[u8], bufs: &mut NfaBuffers) {
     }
 
     // Check final states for matches
-    for state in &bufs.current_states {
-        let closure = get_epsilon_closure(state);
-        for ec_state in closure {
+    let final_states = std::mem::take(&mut bufs.current_states);
+    for state in &final_states {
+        bufs.epsilon_closure.clear();
+        bufs.epsilon_stack.clear();
+        bufs.epsilon_closure.push(state.clone());
+        bufs.epsilon_stack.push(state.clone());
+
+        while let Some(current) = bufs.epsilon_stack.pop() {
+            for eps in &current.table.epsilons {
+                if !bufs.epsilon_closure.iter().any(|s| Arc::ptr_eq(s, eps)) {
+                    bufs.epsilon_closure.push(eps.clone());
+                    bufs.epsilon_stack.push(eps.clone());
+                }
+            }
+        }
+
+        for ec_state in &bufs.epsilon_closure {
             for ft in &ec_state.field_transitions {
-                let ptr = Arc::as_ptr(ft);
-                if seen_transitions.insert(ptr) {
-                    bufs.transitions.push(ft.clone());
+                let ptr = Arc::as_ptr(ft) as usize;
+                match bufs.seen_transitions.binary_search(&ptr) {
+                    Ok(_) => {}
+                    Err(pos) => {
+                        bufs.seen_transitions.insert(pos, ptr);
+                        bufs.transitions.push(ft.clone());
+                    }
                 }
             }
         }
     }
-}
-
-/// Compute the epsilon closure of a state.
-///
-/// The epsilon closure is the set of states reachable via epsilon transitions.
-fn get_epsilon_closure(state: &Arc<FaState>) -> Vec<Arc<FaState>> {
-    let mut closure = vec![state.clone()];
-    let mut stack = vec![state.clone()];
-
-    while let Some(current) = stack.pop() {
-        for eps in &current.table.epsilons {
-            if !closure.iter().any(|s| Arc::ptr_eq(s, eps)) {
-                closure.push(eps.clone());
-                stack.push(eps.clone());
-            }
-        }
-    }
-
-    closure
+    bufs.current_states = final_states;
 }
