@@ -1362,7 +1362,9 @@ pub fn make_regexp_nfa_arena(
 
         // Create match state
         let match_state = arena.alloc();
-        arena[match_state].field_transitions.push(next_field.clone());
+        arena[match_state]
+            .field_transitions
+            .push(next_field.clone());
 
         // Create start state that transitions to match on VALUE_TERMINATOR
         let start = arena.alloc_with_table(ArenaSmallTable::with_mappings(
@@ -1379,7 +1381,9 @@ pub fn make_regexp_nfa_arena(
 
     // Create match state (reached at end of value)
     let match_state = arena.alloc();
-    arena[match_state].field_transitions.push(next_field.clone());
+    arena[match_state]
+        .field_transitions
+        .push(next_field.clone());
 
     // Create VALUE_TERMINATOR transition state
     let vt_state = arena.alloc_with_table(ArenaSmallTable::with_mappings(
@@ -1390,12 +1394,11 @@ pub fn make_regexp_nfa_arena(
 
     // If for_field, add trailing quote handling
     let next_step = if for_field {
-        let quote_state = arena.alloc_with_table(ArenaSmallTable::with_mappings(
+        arena.alloc_with_table(ArenaSmallTable::with_mappings(
             StateId::NONE,
             b"\"",
             &[vt_state],
-        ));
-        quote_state
+        ))
     } else {
         vt_state
     };
@@ -1440,12 +1443,11 @@ fn make_arena_nfa_from_branches(
 
     if for_field {
         // Wrap with leading quote
-        let quote_start = arena.alloc_with_table(ArenaSmallTable::with_mappings(
+        arena.alloc_with_table(ArenaSmallTable::with_mappings(
             StateId::NONE,
             b"\"",
             &[start],
-        ));
-        quote_start
+        ))
     } else {
         start
     }
@@ -1496,12 +1498,11 @@ fn make_one_arena_branch_fa(
 
     if for_field {
         // Wrap with leading quote
-        let quote_start = arena.alloc_with_table(ArenaSmallTable::with_mappings(
+        arena.alloc_with_table(ArenaSmallTable::with_mappings(
             StateId::NONE,
             b"\"",
             &[current_next],
-        ));
-        quote_start
+        ))
     } else {
         current_next
     }
@@ -1511,7 +1512,7 @@ fn make_one_arena_branch_fa(
 ///
 /// Structure for [abc]+:
 /// - start --(abc)--> loopback --epsilon--> start (cycle!)
-///                            --epsilon--> exit
+///   --epsilon--> exit
 ///
 /// Structure for [abc]*:
 /// - Same as above, plus start has epsilon to exit (can match zero times)
@@ -1563,9 +1564,7 @@ fn make_arena_dot_fa(arena: &mut StateArena, dest: StateId) -> StateId {
     let s_last = arena.alloc_with_table({
         let mut table = ArenaSmallTable::new();
         let mut unpacked = [StateId::NONE; BYTE_CEILING];
-        for i in 0x80..0xC0 {
-            unpacked[i] = dest;
-        }
+        unpacked[0x80..0xC0].fill(dest);
         table.pack(&unpacked);
         table
     });
@@ -1573,9 +1572,7 @@ fn make_arena_dot_fa(arena: &mut StateArena, dest: StateId) -> StateId {
     let s_last_inter = arena.alloc_with_table({
         let mut table = ArenaSmallTable::new();
         let mut unpacked = [StateId::NONE; BYTE_CEILING];
-        for i in 0x80..0xC0 {
-            unpacked[i] = s_last;
-        }
+        unpacked[0x80..0xC0].fill(s_last);
         table.pack(&unpacked);
         table
     });
@@ -1583,9 +1580,7 @@ fn make_arena_dot_fa(arena: &mut StateArena, dest: StateId) -> StateId {
     let s_first_inter = arena.alloc_with_table({
         let mut table = ArenaSmallTable::new();
         let mut unpacked = [StateId::NONE; BYTE_CEILING];
-        for i in 0x80..0xC0 {
-            unpacked[i] = s_last_inter;
-        }
+        unpacked[0x80..0xC0].fill(s_last_inter);
         table.pack(&unpacked);
         table
     });
@@ -1594,9 +1589,7 @@ fn make_arena_dot_fa(arena: &mut StateArena, dest: StateId) -> StateId {
     let target_e0 = arena.alloc_with_table({
         let mut table = ArenaSmallTable::new();
         let mut unpacked = [StateId::NONE; BYTE_CEILING];
-        for i in 0xA0..0xC0 {
-            unpacked[i] = s_last;
-        }
+        unpacked[0xA0..0xC0].fill(s_last);
         table.pack(&unpacked);
         table
     });
@@ -1604,9 +1597,7 @@ fn make_arena_dot_fa(arena: &mut StateArena, dest: StateId) -> StateId {
     let target_ed = arena.alloc_with_table({
         let mut table = ArenaSmallTable::new();
         let mut unpacked = [StateId::NONE; BYTE_CEILING];
-        for i in 0x80..0xA0 {
-            unpacked[i] = s_last;
-        }
+        unpacked[0x80..0xA0].fill(s_last);
         table.pack(&unpacked);
         table
     });
@@ -1614,9 +1605,7 @@ fn make_arena_dot_fa(arena: &mut StateArena, dest: StateId) -> StateId {
     let target_f0 = arena.alloc_with_table({
         let mut table = ArenaSmallTable::new();
         let mut unpacked = [StateId::NONE; BYTE_CEILING];
-        for i in 0x90..0xC0 {
-            unpacked[i] = s_last_inter;
-        }
+        unpacked[0x90..0xC0].fill(s_last_inter);
         table.pack(&unpacked);
         table
     });
@@ -1624,50 +1613,38 @@ fn make_arena_dot_fa(arena: &mut StateArena, dest: StateId) -> StateId {
     let target_f4 = arena.alloc_with_table({
         let mut table = ArenaSmallTable::new();
         let mut unpacked = [StateId::NONE; BYTE_CEILING];
-        for i in 0x80..0x90 {
-            unpacked[i] = s_last_inter;
-        }
+        unpacked[0x80..0x90].fill(s_last_inter);
         table.pack(&unpacked);
         table
     });
 
     // Main state with all lead byte transitions
-    let start = arena.alloc_with_table({
+    arena.alloc_with_table({
         let mut unpacked = [StateId::NONE; BYTE_CEILING];
 
         // ASCII (0x00-0x7F) -> dest directly
-        for i in 0x00..0x80 {
-            unpacked[i] = dest;
-        }
+        unpacked[..0x80].fill(dest);
 
         // 2-byte sequences (0xC2-0xDF)
-        for i in 0xC2..0xE0 {
-            unpacked[i] = s_last;
-        }
+        unpacked[0xC2..0xE0].fill(s_last);
 
         // E0
         unpacked[0xE0] = target_e0;
 
         // E1-EC
-        for i in 0xE1..0xED {
-            unpacked[i] = s_last_inter;
-        }
+        unpacked[0xE1..0xED].fill(s_last_inter);
 
         // ED
         unpacked[0xED] = target_ed;
 
         // EE-EF
-        for i in 0xEE..0xF0 {
-            unpacked[i] = s_last_inter;
-        }
+        unpacked[0xEE..0xF0].fill(s_last_inter);
 
         // F0
         unpacked[0xF0] = target_f0;
 
         // F1-F3
-        for i in 0xF1..0xF4 {
-            unpacked[i] = s_first_inter;
-        }
+        unpacked[0xF1..0xF4].fill(s_first_inter);
 
         // F4
         unpacked[0xF4] = target_f4;
@@ -1675,9 +1652,7 @@ fn make_arena_dot_fa(arena: &mut StateArena, dest: StateId) -> StateId {
         let mut table = ArenaSmallTable::new();
         table.pack(&unpacked);
         table
-    });
-
-    start
+    })
 }
 
 /// Arena version of the rune tree entry
@@ -2413,7 +2388,9 @@ mod tests {
 
     #[test]
     fn test_toxic_stack_arena() {
-        use crate::automaton::arena::{traverse_arena_nfa, ArenaNfaBuffers, ARENA_VALUE_TERMINATOR};
+        use crate::automaton::arena::{
+            traverse_arena_nfa, ArenaNfaBuffers, ARENA_VALUE_TERMINATOR,
+        };
 
         // Port of Go's TestToxicStack using arena-based NFA
         // Pattern: (([~.~~~?~*~+~{~}~[~]~(~)~|]?)*)+"
@@ -2517,7 +2494,9 @@ mod tests {
 
     #[test]
     fn test_arena_nfa_email_pattern() {
-        use crate::automaton::arena::{traverse_arena_nfa, ArenaNfaBuffers, ARENA_VALUE_TERMINATOR};
+        use crate::automaton::arena::{
+            traverse_arena_nfa, ArenaNfaBuffers, ARENA_VALUE_TERMINATOR,
+        };
 
         // Test the pattern from the failing test
         let pattern = "[a-z]+@example~.com";
@@ -2550,7 +2529,9 @@ mod tests {
 
     #[test]
     fn test_arena_nfa_plus_simple() {
-        use crate::automaton::arena::{traverse_arena_nfa, ArenaNfaBuffers, ARENA_VALUE_TERMINATOR};
+        use crate::automaton::arena::{
+            traverse_arena_nfa, ArenaNfaBuffers, ARENA_VALUE_TERMINATOR,
+        };
 
         // Test simple [a-z]+ pattern with arena
         let pattern = "[a-z]+";

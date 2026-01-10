@@ -19,7 +19,7 @@ use super::fa_builders::{
 };
 use super::nfa::{traverse_dfa, traverse_nfa};
 use super::small_table::{FieldMatcher, NfaBuffers, SmallTable};
-use crate::regexp::{make_regexp_nfa, make_regexp_nfa_arena, regexp_has_plus_star};
+use crate::regexp::make_regexp_nfa_arena;
 
 /// A mutable field matcher used during pattern building.
 /// This is similar to Go's fieldMatcher with its updateable atomic pointer.
@@ -121,8 +121,8 @@ pub struct MutableValueMatcher<X: Clone + Eq + std::hash::Hash> {
     /// Mapping from Arc<FieldMatcher> to Rc<MutableFieldMatcher<X>>
     /// This bridges the automaton's field transitions to our mutable field matchers
     pub(crate) transition_map: RefCell<HashMap<*const FieldMatcher, Rc<MutableFieldMatcher<X>>>>,
-    /// Arena-based NFA for regexp patterns with `*`/`+` quantifiers (2.5x faster)
-    pub(crate) arena_nfa: RefCell<Option<(StateArena, StateId)>>,
+    /// Arena-based NFAs for regexp patterns (2.5x faster than chain-based)
+    pub(crate) arena_nfas: RefCell<Vec<(StateArena, StateId)>>,
     /// Buffers for arena NFA traversal
     pub(crate) arena_bufs: RefCell<ArenaNfaBuffers>,
 }
@@ -136,7 +136,7 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
             is_nondeterministic: RefCell::new(false),
             has_numbers: RefCell::new(false),
             transition_map: RefCell::new(HashMap::new()),
-            arena_nfa: RefCell::new(None),
+            arena_nfas: RefCell::new(Vec::new()),
             arena_bufs: RefCell::new(ArenaNfaBuffers::new()),
         }
     }
@@ -436,46 +436,15 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
     ) -> Rc<MutableFieldMatcher<X>> {
         let next_fm = Rc::new(MutableFieldMatcher::new());
 
-        // Check if this pattern has * or + quantifiers that benefit from arena-based NFA
-        if regexp_has_plus_star(tree) {
-            // Use arena-based NFA for 2.5x speedup on patterns with * or +
-            let (arena, start, field_matcher_arc) = make_regexp_nfa_arena(tree.clone(), false);
+        // Always use arena-based NFA for regexp patterns (2.5x faster)
+        let (arena, start, field_matcher_arc) = make_regexp_nfa_arena(tree.clone(), false);
 
-            self.transition_map
-                .borrow_mut()
-                .insert(Arc::as_ptr(&field_matcher_arc), next_fm.clone());
+        self.transition_map
+            .borrow_mut()
+            .insert(Arc::as_ptr(&field_matcher_arc), next_fm.clone());
 
-            // Store arena NFA (we don't merge with start_table - traverse separately)
-            // Note: Currently we only support one arena NFA per value matcher.
-            // If multiple regexp patterns with *+ are added, later ones overwrite earlier.
-            // This is acceptable because patterns are usually orthogonal.
-            *self.arena_nfa.borrow_mut() = Some((arena, start));
-        } else {
-            // Use chain-based NFA for patterns without * or +
-            let (new_fa, field_matcher_arc) = make_regexp_nfa(tree.clone(), false);
-
-            self.transition_map
-                .borrow_mut()
-                .insert(Arc::as_ptr(&field_matcher_arc), next_fm.clone());
-
-            let mut start_table = self.start_table.borrow_mut();
-            if let Some(ref existing) = *start_table {
-                *start_table = Some(merge_fas(existing, &new_fa));
-            } else if self.singleton_match.borrow().is_some() {
-                let singleton_val = self.singleton_match.borrow().clone().unwrap();
-                let singleton_trans = self.singleton_transition.borrow().clone().unwrap();
-                let singleton_arc = Arc::new(FieldMatcher::new());
-                self.transition_map
-                    .borrow_mut()
-                    .insert(Arc::as_ptr(&singleton_arc), singleton_trans);
-                let singleton_fa = make_string_fa(&singleton_val, singleton_arc);
-                *start_table = Some(merge_fas(&singleton_fa, &new_fa));
-                *self.singleton_match.borrow_mut() = None;
-                *self.singleton_transition.borrow_mut() = None;
-            } else {
-                *start_table = Some(new_fa);
-            }
-        }
+        // Store arena NFA (supports multiple per value matcher)
+        self.arena_nfas.borrow_mut().push((arena, start));
 
         next_fm
     }
@@ -593,18 +562,21 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
             }
         }
 
-        // Also traverse arena NFA if present (for regexp patterns with * or +)
-        if let Some((ref arena, start)) = *self.arena_nfa.borrow() {
+        // Traverse all arena NFAs (for regexp patterns)
+        let arena_nfas = self.arena_nfas.borrow();
+        if !arena_nfas.is_empty() {
             let mut arena_bufs = self.arena_bufs.borrow_mut();
-            traverse_arena_nfa(arena, start, &value_to_match, &mut arena_bufs);
+            for (arena, start) in arena_nfas.iter() {
+                traverse_arena_nfa(arena, *start, &value_to_match, &mut arena_bufs);
 
-            // Map Arc<FieldMatcher> transitions to Rc<MutableFieldMatcher<X>>
-            for arc_fm in &arena_bufs.transitions {
-                let ptr = Arc::as_ptr(arc_fm);
-                if let Some(mutable_fm) = transition_map.get(&ptr) {
-                    // Avoid duplicates (in case same pattern matched both ways)
-                    if !result.iter().any(|r| Rc::ptr_eq(r, mutable_fm)) {
-                        result.push(mutable_fm.clone());
+                // Map Arc<FieldMatcher> transitions to Rc<MutableFieldMatcher<X>>
+                for arc_fm in &arena_bufs.transitions {
+                    let ptr = Arc::as_ptr(arc_fm);
+                    if let Some(mutable_fm) = transition_map.get(&ptr) {
+                        // Avoid duplicates
+                        if !result.iter().any(|r| Rc::ptr_eq(r, mutable_fm)) {
+                            result.push(mutable_fm.clone());
+                        }
                     }
                 }
             }
@@ -1073,10 +1045,10 @@ mod tests {
 
         let next_fm = vm.add_transition(&matcher);
 
-        // Verify arena was used
+        // Verify arena was used (all regexp patterns use arena now)
         assert!(
-            vm.arena_nfa.borrow().is_some(),
-            "Arena NFA should be set for regexp with +"
+            !vm.arena_nfas.borrow().is_empty(),
+            "Arena NFAs should be set for regexp"
         );
         assert!(
             vm.start_table.borrow().is_none(),
@@ -1111,7 +1083,7 @@ mod tests {
 
     #[test]
     fn test_value_matcher_regexp_without_plus() {
-        // Test that MutableValueMatcher uses chain-based NFA for regexp without + or *
+        // Test that MutableValueMatcher uses arena for all regexp patterns
         let vm: MutableValueMatcher<String> = MutableValueMatcher::new();
 
         // Create a regexp pattern without + or * quantifier
@@ -1120,14 +1092,14 @@ mod tests {
 
         let next_fm = vm.add_transition(&matcher);
 
-        // Verify chain-based NFA was used
+        // Verify arena was used (all regexp patterns use arena now)
         assert!(
-            vm.arena_nfa.borrow().is_none(),
-            "Arena NFA should NOT be set for regexp without + or *"
+            !vm.arena_nfas.borrow().is_empty(),
+            "Arena NFAs should be set for regexp"
         );
         assert!(
-            vm.start_table.borrow().is_some(),
-            "Start table should be set for chain-based NFA"
+            vm.start_table.borrow().is_none(),
+            "Start table should be None when using arena for regexp"
         );
 
         // Test matching
@@ -1163,11 +1135,7 @@ mod tests {
         }];
 
         let matches = cm.matches_for_fields(&fields);
-        assert_eq!(
-            matches,
-            vec!["p1".to_string()],
-            "Should match the pattern"
-        );
+        assert_eq!(matches, vec!["p1".to_string()], "Should match the pattern");
 
         // Test non-match
         let fields_no_match = vec![EventField {

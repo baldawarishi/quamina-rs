@@ -114,8 +114,8 @@ pub struct FrozenValueMatcher<X: Clone + Eq + Hash> {
     /// Mapping from FieldMatcher pointer (as usize) to FrozenFieldMatcher
     /// Uses FxHashMap for fast integer key lookup
     transition_map: FxHashMap<usize, Arc<FrozenFieldMatcher<X>>>,
-    /// Arena-based NFA for regexp patterns with + or * quantifiers
-    arena_nfa: Option<(StateArena, StateId)>,
+    /// Arena-based NFAs for regexp patterns (2.5x faster than chain-based)
+    arena_nfas: Vec<(StateArena, StateId)>,
 }
 
 // Safety: FrozenValueMatcher only contains Arc, FxHashMap, Option, and primitives
@@ -131,7 +131,7 @@ impl<X: Clone + Eq + Hash> FrozenValueMatcher<X> {
             is_nondeterministic: false,
             has_numbers: false,
             transition_map: FxHashMap::default(),
-            arena_nfa: None,
+            arena_nfas: Vec::new(),
         }
     }
 
@@ -192,18 +192,20 @@ impl<X: Clone + Eq + Hash> FrozenValueMatcher<X> {
             }
         }
 
-        // Also traverse arena NFA if present (for regexp patterns with * or +)
-        if let Some((ref arena, start)) = self.arena_nfa {
+        // Traverse all arena NFAs (for regexp patterns)
+        if !self.arena_nfas.is_empty() {
             let mut arena_bufs = ArenaNfaBuffers::new();
-            traverse_arena_nfa(arena, start, &value_to_match, &mut arena_bufs);
+            for (arena, start) in self.arena_nfas.iter() {
+                traverse_arena_nfa(arena, *start, &value_to_match, &mut arena_bufs);
 
-            // Map Arc<FieldMatcher> transitions to FrozenFieldMatcher using pointer address
-            for arc_fm in &arena_bufs.transitions {
-                let ptr = Arc::as_ptr(arc_fm) as usize;
-                if let Some(frozen_fm) = self.transition_map.get(&ptr) {
-                    // Avoid duplicates
-                    if !result.iter().any(|r| Arc::ptr_eq(r, frozen_fm)) {
-                        result.push(frozen_fm.clone());
+                // Map Arc<FieldMatcher> transitions to FrozenFieldMatcher using pointer address
+                for arc_fm in &arena_bufs.transitions {
+                    let ptr = Arc::as_ptr(arc_fm) as usize;
+                    if let Some(frozen_fm) = self.transition_map.get(&ptr) {
+                        // Avoid duplicates
+                        if !result.iter().any(|r| Arc::ptr_eq(r, frozen_fm)) {
+                            result.push(frozen_fm.clone());
+                        }
                     }
                 }
             }
@@ -410,8 +412,8 @@ impl<X: Clone + Eq + Hash + Send + Sync> ThreadSafeCoreMatcher<X> {
             transition_map.insert(*ptr as usize, Arc::new(frozen_fm));
         }
 
-        // Copy the arena NFA if present
-        let arena_nfa = mutable.arena_nfa.borrow().clone();
+        // Copy the arena NFAs
+        let arena_nfas = mutable.arena_nfas.borrow().clone();
 
         FrozenValueMatcher {
             start_table: mutable.start_table.borrow().clone(),
@@ -420,7 +422,7 @@ impl<X: Clone + Eq + Hash + Send + Sync> ThreadSafeCoreMatcher<X> {
             is_nondeterministic: *mutable.is_nondeterministic.borrow(),
             has_numbers: *mutable.has_numbers.borrow(),
             transition_map,
-            arena_nfa,
+            arena_nfas,
         }
     }
 

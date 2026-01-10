@@ -4,18 +4,18 @@ Rust port of [quamina](https://github.com/timbray/quamina) - fast pattern-matchi
 
 ## Status
 
-**235 tests passing.** All core operators implemented. Full Go parity achieved plus Rust-only features. Rust outperforms Go on all benchmarks. Arena-based NFA integrated for 2.5x speedup on regexp patterns with `*`/`+`. Synced with Go commit fc60906 (Jan 2026).
+**234 tests passing.** All core operators implemented. Full Go parity achieved plus Rust-only features. Rust outperforms Go on all benchmarks. Arena-based NFA now used for ALL regexp patterns (2.25-2.5x faster). Synced with Go commit c443b44 (Jan 2026).
 
 | Benchmark | Go (ns) | Rust (ns) | Status |
 |-----------|---------|-----------|--------|
 | status_context_fields | 398 | 363 | **Rust 10% faster** |
-| status_middle_nested | 7,437 | 5,038 | **Rust 1.48x faster** |
-| status_last_field | 7,937 | 5,367 | **Rust 1.48x faster** |
-| citylots | 3,971 | 2,122 | **Rust 1.87x faster** |
+| status_middle_nested | 7,437 | 4,784 | **Rust 1.55x faster** |
+| status_last_field | 7,937 | 5,091 | **Rust 1.56x faster** |
+| citylots | 3,971 | 2,083 | **Rust 1.91x faster** |
 | numeric_range_single | - | 145 | Rust-only (automaton) |
 | numeric_range_two_sided | - | 144 | Rust-only (automaton) |
 | numeric_range_10_patterns | - | 176 | Rust-only (automaton) |
-| arena_nfa_100chars | - | 3,500 | **2.5x faster** than chain NFA |
+| arena_nfa_100chars | - | 3,409 | **2.5x faster** than chain NFA |
 | arena_nfa_5chars | - | 264 | **2.25x faster** than chain NFA |
 
 ## Parity Status
@@ -34,13 +34,8 @@ Rust port of [quamina](https://github.com/timbray/quamina) - fast pattern-matchi
 
 ### Known Issues
 
-1. **Regexp with `*`/`+` quantifiers**: Now uses arena-based NFA for 2.5x speedup. The arena module (`src/automaton/arena.rs`) provides true cyclic state references using indices instead of Arc pointers, achieving Go-like performance.
-2. **Negated character class performance**: `[^...]` produces O(unicode_range) NFA construction since we enumerate all ~1.1M code points not in the class. Go has the same algorithmic complexity but faster runtime.
-3. **Regexp sample coverage**: 992 Go test samples ported; 67 fully tested, rest skipped due to performance constraints (patterns with `[^]`).
-
-### Future Work
-
-1. **Use arena for ALL regexp patterns**: Benchmarks show arena is 2.25-2.5x faster even for patterns without `*`/`+`. Experiment with removing chain-based NFA for regexp entirely and using arena for all regexp patterns. Initial attempt broke some tests - needs investigation of edge cases.
+1. **Negated character class performance**: `[^...]` produces O(unicode_range) NFA construction since we enumerate all ~1.1M code points not in the class. Go has the same algorithmic complexity but faster runtime.
+2. **Regexp sample coverage**: 992 Go test samples ported; 67 fully tested, rest skipped due to performance constraints (patterns with `[^]`).
 
 ### Rust-only features (not in Go)
 - Generalized `anything-but` (Go Issue #328):
@@ -120,9 +115,9 @@ src/
 1. `flatten()` JSON -> sorted `Vec<Field>` (path as Arc, value, array_trail)
 2. `matches_for_fields_direct()` traverses automaton from root
 3. For each field, `transition_on()` matches value via:
-   - DFA traversal (for simple patterns)
-   - Chain NFA traversal (for patterns without `*`/`+`)
-   - Arena NFA traversal (for regexp patterns with `*`/`+` - 2.5x faster)
+   - DFA traversal (for simple patterns like exact match, prefix)
+   - Chain NFA traversal (for non-deterministic patterns like shellstyle)
+   - Arena NFA traversal (for ALL regexp patterns - 2.25-2.5x faster)
 
 ## Optimizations Applied (Tasks 1-27)
 
@@ -141,7 +136,7 @@ src/
 
 ## Arena-Based NFA
 
-New `automaton::arena` module enables true cyclic NFA structures:
+The `automaton::arena` module enables true cyclic NFA structures, now used for ALL regexp patterns:
 
 | Type | Purpose |
 |------|---------|
@@ -149,7 +144,7 @@ New `automaton::arena` module enables true cyclic NFA structures:
 | `StateArena` | Allocates states, O(1) cycle creation |
 | `traverse_arena_nfa` | NFA traversal with cycles |
 
-**Benefits:** For `[a]*`, arena needs 4 states vs chain's 100+ states.
+**Benefits:** For `[a]*`, arena needs 4 states vs chain's 100+ states. Multiple arena NFAs per value matcher support multiple regexp patterns on the same field.
 
 ### Benchmark Results
 
@@ -157,15 +152,14 @@ Direct comparison of chain-based vs arena-based NFA traversal for `[a-z]+`:
 
 | Benchmark | Chain (ns) | Arena (ns) | Arena Speedup |
 |-----------|------------|------------|---------------|
-| 100-char string | 8,757 | 3,420 | **2.56x faster** |
-| 5-char string | 592 | 267 | **2.22x faster** |
+| 100-char string | 8,757 | 3,409 | **2.57x faster** |
+| 5-char string | 592 | 264 | **2.24x faster** |
 
-**Integration status:** Arena module complete with tests. Benchmarks added. Integration into regexp builder requires adding arena-based storage to value matchers and modifying `add_regexp_transition` to use arena builder.
+**Integration status:** Fully integrated. All regexp patterns use arena-based NFA for consistent 2.25-2.5x speedup.
 
 ## Future Work
 
 **Regexp improvements:**
-- Integrate arena into value matcher (2.5x potential speedup demonstrated)
 - Optimize `[^]` negated class NFA construction (O(unicode_range))
 
 **General (diminishing returns):**
