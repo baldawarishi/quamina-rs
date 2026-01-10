@@ -38,6 +38,10 @@ Rust port of [quamina](https://github.com/timbray/quamina) - fast pattern-matchi
 2. **Negated character class performance**: `[^...]` produces O(unicode_range) NFA construction since we enumerate all ~1.1M code points not in the class. Go has the same algorithmic complexity but faster runtime.
 3. **Regexp sample coverage**: 992 Go test samples ported; 67 fully tested, rest skipped due to performance constraints (patterns with `[^]`).
 
+### Future Work
+
+1. **Use arena for ALL regexp patterns**: Benchmarks show arena is 2.25-2.5x faster even for patterns without `*`/`+`. Experiment with removing chain-based NFA for regexp entirely and using arena for all regexp patterns. Initial attempt broke some tests - needs investigation of edge cases.
+
 ### Rust-only features (not in Go)
 - Generalized `anything-but` (Go Issue #328):
   - Single string: `{"anything-but": "foo"}`

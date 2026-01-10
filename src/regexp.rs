@@ -2377,7 +2377,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // Slow due to chain-based NFA (Go uses cyclic GC refs)
+    #[ignore] // Slow due to chain-based NFA (Go uses cyclic GC refs) - use test_toxic_stack_arena instead
     fn test_toxic_stack() {
         use crate::automaton::{traverse_nfa, NfaBuffers, VALUE_TERMINATOR};
 
@@ -2388,6 +2388,7 @@ mod tests {
         // Note: This test is ignored by default because the chain-based NFA
         // implementation (depth=100) is slow for patterns with multiple nested
         // quantifiers. Go's cyclic GC-based NFA handles this more efficiently.
+        // See test_toxic_stack_arena for the arena-based version.
         let re = "(([~.~~~?~*~+~{~}~[~]~(~)~|]?)*)+";
         let root = parse_regexp(re).expect("Should parse toxic stack pattern");
         let (table, field_matcher) = make_regexp_nfa(root, true);
@@ -2407,6 +2408,39 @@ mod tests {
                 .iter()
                 .any(|m| Arc::ptr_eq(m, &field_matcher)),
             "Toxic stack pattern should match test string"
+        );
+    }
+
+    #[test]
+    fn test_toxic_stack_arena() {
+        use crate::automaton::arena::{traverse_arena_nfa, ArenaNfaBuffers, ARENA_VALUE_TERMINATOR};
+
+        // Port of Go's TestToxicStack using arena-based NFA
+        // Pattern: (([~.~~~?~*~+~{~}~[~]~(~)~|]?)*)+"
+        // This tests that quantified groups work correctly with cyclic arena NFA
+        let re = "(([~.~~~?~*~+~{~}~[~]~(~)~|]?)*)+";
+        let root = parse_regexp(re).expect("Should parse toxic stack pattern");
+
+        // Verify pattern has + or * (should use arena)
+        assert!(regexp_has_plus_star(&root), "Toxic pattern should have +/*");
+
+        let (arena, start, field_matcher) = make_regexp_nfa_arena(root, true);
+
+        // Test string: ".~?*+{}[]()|.~?*+{}[]()|.~?*+{}[]()|"
+        let test_str = ".~?*+{}[]()|.~?*+{}[]()|.~?*+{}[]()|";
+        let mut value: Vec<u8> = Vec::new();
+        value.push(b'"');
+        value.extend_from_slice(test_str.as_bytes());
+        value.push(b'"');
+        value.push(ARENA_VALUE_TERMINATOR);
+
+        let mut bufs = ArenaNfaBuffers::new();
+        traverse_arena_nfa(&arena, start, &value, &mut bufs);
+        assert!(
+            bufs.transitions
+                .iter()
+                .any(|m| Arc::ptr_eq(m, &field_matcher)),
+            "Toxic stack pattern should match test string via arena NFA"
         );
     }
 
