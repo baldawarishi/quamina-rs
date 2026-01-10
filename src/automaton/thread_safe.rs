@@ -17,6 +17,7 @@ use rustc_hash::FxHashMap;
 use arc_swap::ArcSwap;
 use parking_lot::Mutex;
 
+use super::arena::{traverse_arena_nfa, ArenaNfaBuffers, StateArena, StateId};
 use super::fa_builders::{make_prefix_fa, make_shellstyle_fa, make_string_fa, merge_fas};
 use super::mutable_matcher::{EventField, EventFieldRef, MutableFieldMatcher, MutableValueMatcher};
 use super::nfa::{traverse_dfa, traverse_nfa};
@@ -113,6 +114,8 @@ pub struct FrozenValueMatcher<X: Clone + Eq + Hash> {
     /// Mapping from FieldMatcher pointer (as usize) to FrozenFieldMatcher
     /// Uses FxHashMap for fast integer key lookup
     transition_map: FxHashMap<usize, Arc<FrozenFieldMatcher<X>>>,
+    /// Arena-based NFA for regexp patterns with + or * quantifiers
+    arena_nfa: Option<(StateArena, StateId)>,
 }
 
 // Safety: FrozenValueMatcher only contains Arc, FxHashMap, Option, and primitives
@@ -128,6 +131,7 @@ impl<X: Clone + Eq + Hash> FrozenValueMatcher<X> {
             is_nondeterministic: false,
             has_numbers: false,
             transition_map: FxHashMap::default(),
+            arena_nfa: None,
         }
     }
 
@@ -149,25 +153,27 @@ impl<X: Clone + Eq + Hash> FrozenValueMatcher<X> {
             return vec![];
         }
 
-        // Use automaton
-        if let Some(ref table) = self.start_table {
-            // Try with Q-number conversion if this matcher has numbers and value is numeric
-            // Use Cow to avoid allocation when not converting to Q-number
-            let value_to_match: Cow<'_, [u8]> = if self.has_numbers && is_number {
-                // Try to parse as f64 and convert to Q-number
-                if let Ok(s) = std::str::from_utf8(value) {
-                    if let Ok(n) = s.parse::<f64>() {
-                        Cow::Owned(crate::numbits::q_num_from_f64(n))
-                    } else {
-                        Cow::Borrowed(value)
-                    }
+        let mut result = Vec::new();
+
+        // Try with Q-number conversion if this matcher has numbers and value is numeric
+        // Use Cow to avoid allocation when not converting to Q-number
+        let value_to_match: Cow<'_, [u8]> = if self.has_numbers && is_number {
+            // Try to parse as f64 and convert to Q-number
+            if let Ok(s) = std::str::from_utf8(value) {
+                if let Ok(n) = s.parse::<f64>() {
+                    Cow::Owned(crate::numbits::q_num_from_f64(n))
                 } else {
                     Cow::Borrowed(value)
                 }
             } else {
                 Cow::Borrowed(value)
-            };
+            }
+        } else {
+            Cow::Borrowed(value)
+        };
 
+        // Use chain-based automaton if present
+        if let Some(ref table) = self.start_table {
             // Clear and reuse the transitions buffer
             bufs.transitions.clear();
 
@@ -178,17 +184,32 @@ impl<X: Clone + Eq + Hash> FrozenValueMatcher<X> {
             }
 
             // Map FieldMatcher transitions to FrozenFieldMatcher using pointer address
-            let mut result = Vec::with_capacity(bufs.transitions.len());
             for arc_fm in &bufs.transitions {
                 let ptr = Arc::as_ptr(arc_fm) as usize;
                 if let Some(frozen_fm) = self.transition_map.get(&ptr) {
                     result.push(frozen_fm.clone());
                 }
             }
-            result
-        } else {
-            vec![]
         }
+
+        // Also traverse arena NFA if present (for regexp patterns with * or +)
+        if let Some((ref arena, start)) = self.arena_nfa {
+            let mut arena_bufs = ArenaNfaBuffers::new();
+            traverse_arena_nfa(arena, start, &value_to_match, &mut arena_bufs);
+
+            // Map Arc<FieldMatcher> transitions to FrozenFieldMatcher using pointer address
+            for arc_fm in &arena_bufs.transitions {
+                let ptr = Arc::as_ptr(arc_fm) as usize;
+                if let Some(frozen_fm) = self.transition_map.get(&ptr) {
+                    // Avoid duplicates
+                    if !result.iter().any(|r| Arc::ptr_eq(r, frozen_fm)) {
+                        result.push(frozen_fm.clone());
+                    }
+                }
+            }
+        }
+
+        result
     }
 }
 
@@ -389,6 +410,9 @@ impl<X: Clone + Eq + Hash + Send + Sync> ThreadSafeCoreMatcher<X> {
             transition_map.insert(*ptr as usize, Arc::new(frozen_fm));
         }
 
+        // Copy the arena NFA if present
+        let arena_nfa = mutable.arena_nfa.borrow().clone();
+
         FrozenValueMatcher {
             start_table: mutable.start_table.borrow().clone(),
             singleton_match,
@@ -396,6 +420,7 @@ impl<X: Clone + Eq + Hash + Send + Sync> ThreadSafeCoreMatcher<X> {
             is_nondeterministic: *mutable.is_nondeterministic.borrow(),
             has_numbers: *mutable.has_numbers.borrow(),
             transition_map,
+            arena_nfa,
         }
     }
 

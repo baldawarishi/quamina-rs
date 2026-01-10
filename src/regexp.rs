@@ -16,6 +16,7 @@
 use std::sync::Arc;
 
 use crate::automaton::{
+    arena::{ArenaSmallTable, StateArena, StateId, ARENA_VALUE_TERMINATOR},
     merge_fas, FaState, FieldMatcher, SmallTable, BYTE_CEILING, VALUE_TERMINATOR,
 };
 
@@ -1319,6 +1320,453 @@ pub fn make_dot_fa(dest: &Arc<FaState>) -> SmallTable {
     }
 }
 
+/// Check if a regexp tree has any `+` or `*` quantifiers that would benefit from arena-based NFA.
+pub fn regexp_has_plus_star(root: &RegexpRoot) -> bool {
+    for branch in root {
+        for qa in branch {
+            if qa.is_plus() || qa.is_star() {
+                return true;
+            }
+            // Recursively check subtrees (parenthesized groups)
+            if let Some(ref subtree) = qa.subtree {
+                if regexp_has_plus_star(subtree) {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+/// Build an arena-based regexp NFA from a parsed tree.
+///
+/// This is more efficient than the chain-based approach for patterns with `*` and `+`
+/// quantifiers because it uses true cyclic structures (4 states) instead of chained
+/// states (100+ states).
+///
+/// # Arguments
+/// * `root` - The parsed regexp tree
+/// * `for_field` - If true, add " matching at start/end for field values
+///
+/// # Returns
+/// A tuple of (StateArena, start_state_id, FieldMatcher)
+pub fn make_regexp_nfa_arena(
+    root: RegexpRoot,
+    for_field: bool,
+) -> (StateArena, StateId, Arc<FieldMatcher>) {
+    let next_field = Arc::new(FieldMatcher::new());
+
+    // Handle empty regexp specially - it matches any string
+    if root.is_empty() {
+        let mut arena = StateArena::with_capacity(2);
+
+        // Create match state
+        let match_state = arena.alloc();
+        arena[match_state].field_transitions.push(next_field.clone());
+
+        // Create start state that transitions to match on VALUE_TERMINATOR
+        let start = arena.alloc_with_table(ArenaSmallTable::with_mappings(
+            StateId::NONE,
+            &[ARENA_VALUE_TERMINATOR],
+            &[match_state],
+        ));
+
+        return (arena, start, next_field);
+    }
+
+    // Build the arena NFA
+    let mut arena = StateArena::with_capacity(16);
+
+    // Create match state (reached at end of value)
+    let match_state = arena.alloc();
+    arena[match_state].field_transitions.push(next_field.clone());
+
+    // Create VALUE_TERMINATOR transition state
+    let vt_state = arena.alloc_with_table(ArenaSmallTable::with_mappings(
+        StateId::NONE,
+        &[ARENA_VALUE_TERMINATOR],
+        &[match_state],
+    ));
+
+    // If for_field, add trailing quote handling
+    let next_step = if for_field {
+        let quote_state = arena.alloc_with_table(ArenaSmallTable::with_mappings(
+            StateId::NONE,
+            b"\"",
+            &[vt_state],
+        ));
+        quote_state
+    } else {
+        vt_state
+    };
+
+    // Build the NFA from branches
+    let start = make_arena_nfa_from_branches(&root, &mut arena, next_step, for_field);
+
+    (arena, start, next_field)
+}
+
+/// Build arena NFA from branches (alternatives).
+fn make_arena_nfa_from_branches(
+    root: &RegexpRoot,
+    arena: &mut StateArena,
+    next_step: StateId,
+    for_field: bool,
+) -> StateId {
+    if root.is_empty() {
+        return next_step;
+    }
+
+    if root.len() == 1 {
+        // Single branch - no alternation needed
+        return make_one_arena_branch_fa(&root[0], arena, next_step, for_field);
+    }
+
+    // Multiple branches - create a start state with epsilons to each branch
+    let mut branch_starts = Vec::with_capacity(root.len());
+    for branch in root {
+        if branch.is_empty() {
+            // Empty branch means we can skip directly to next_step
+            branch_starts.push(next_step);
+        } else {
+            let branch_start = make_one_arena_branch_fa(branch, arena, next_step, false);
+            branch_starts.push(branch_start);
+        }
+    }
+
+    // Create a start state that has epsilons to all branch starts
+    let start = arena.alloc();
+    arena[start].table.epsilons = branch_starts;
+
+    if for_field {
+        // Wrap with leading quote
+        let quote_start = arena.alloc_with_table(ArenaSmallTable::with_mappings(
+            StateId::NONE,
+            b"\"",
+            &[start],
+        ));
+        quote_start
+    } else {
+        start
+    }
+}
+
+/// Build arena NFA for one branch (sequence of atoms).
+fn make_one_arena_branch_fa(
+    branch: &RegexpBranch,
+    arena: &mut StateArena,
+    next_step: StateId,
+    for_field: bool,
+) -> StateId {
+    let mut current_next = next_step;
+
+    // Process atoms back to front
+    for qa in branch.iter().rev() {
+        let original_next = current_next;
+
+        if qa.is_plus() || qa.is_star() {
+            // Arena-based cyclic NFA for + and *
+            current_next = create_arena_plus_star_loop(qa, arena, original_next, qa.is_star());
+        } else if qa.is_qm() {
+            // Optional: build atom FA with epsilon to skip
+            let atom_state = make_arena_atom_fa(qa, arena, current_next);
+            arena[atom_state].table.epsilons.push(original_next);
+            current_next = atom_state;
+        } else if qa.is_singleton() {
+            // No quantifier - simple FA
+            current_next = make_arena_atom_fa(qa, arena, current_next);
+        } else {
+            // General {n,m} quantifier
+            let n = qa.quant_min as usize;
+            let m = qa.quant_max as usize;
+
+            // First, build the optional part (m-n copies, each with epsilon skip)
+            for _ in n..m {
+                let atom_state = make_arena_atom_fa(qa, arena, current_next);
+                arena[atom_state].table.epsilons.push(current_next);
+                current_next = atom_state;
+            }
+
+            // Then, build the required part (n copies, no epsilon skip)
+            for _ in 0..n {
+                current_next = make_arena_atom_fa(qa, arena, current_next);
+            }
+        }
+    }
+
+    if for_field {
+        // Wrap with leading quote
+        let quote_start = arena.alloc_with_table(ArenaSmallTable::with_mappings(
+            StateId::NONE,
+            b"\"",
+            &[current_next],
+        ));
+        quote_start
+    } else {
+        current_next
+    }
+}
+
+/// Create a cyclic arena NFA structure for + and * quantifiers.
+///
+/// Structure for [abc]+:
+/// - start --(abc)--> loopback --epsilon--> start (cycle!)
+///                            --epsilon--> exit
+///
+/// Structure for [abc]*:
+/// - Same as above, plus start has epsilon to exit (can match zero times)
+fn create_arena_plus_star_loop(
+    qa: &QuantifiedAtom,
+    arena: &mut StateArena,
+    exit_state: StateId,
+    is_star: bool,
+) -> StateId {
+    // Loopback state - will have epsilons to exit and back to start
+    let loopback = arena.alloc();
+
+    // Start state - matches the atom, transitions to loopback
+    let start = make_arena_atom_fa_to(qa, arena, loopback);
+
+    // Set up loopback's epsilons: to exit AND back to start (CYCLE!)
+    arena[loopback].table.epsilons = vec![exit_state, start];
+
+    // For *, add epsilon from start to exit (can skip entirely)
+    if is_star {
+        arena[start].table.epsilons.push(exit_state);
+    }
+
+    start
+}
+
+/// Build arena FA for a single quantified atom.
+fn make_arena_atom_fa(qa: &QuantifiedAtom, arena: &mut StateArena, next_step: StateId) -> StateId {
+    make_arena_atom_fa_to(qa, arena, next_step)
+}
+
+/// Build arena FA for a single atom, transitioning to a specific target state.
+fn make_arena_atom_fa_to(qa: &QuantifiedAtom, arena: &mut StateArena, next: StateId) -> StateId {
+    if qa.is_dot {
+        make_arena_dot_fa(arena, next)
+    } else if let Some(ref subtree) = qa.subtree {
+        make_arena_nfa_from_branches(subtree, arena, next, false)
+    } else {
+        make_arena_rune_range_fa(&qa.runes, arena, next)
+    }
+}
+
+/// Build arena FA for a dot (any character).
+fn make_arena_dot_fa(arena: &mut StateArena, dest: StateId) -> StateId {
+    // For simplicity, use the same structure as SmallTable's dot FA
+    // but with arena states. This matches any valid UTF-8 character.
+
+    // Build continuation byte states (for multi-byte UTF-8)
+    let s_last = arena.alloc_with_table({
+        let mut table = ArenaSmallTable::new();
+        let mut unpacked = [StateId::NONE; BYTE_CEILING];
+        for i in 0x80..0xC0 {
+            unpacked[i] = dest;
+        }
+        table.pack(&unpacked);
+        table
+    });
+
+    let s_last_inter = arena.alloc_with_table({
+        let mut table = ArenaSmallTable::new();
+        let mut unpacked = [StateId::NONE; BYTE_CEILING];
+        for i in 0x80..0xC0 {
+            unpacked[i] = s_last;
+        }
+        table.pack(&unpacked);
+        table
+    });
+
+    let s_first_inter = arena.alloc_with_table({
+        let mut table = ArenaSmallTable::new();
+        let mut unpacked = [StateId::NONE; BYTE_CEILING];
+        for i in 0x80..0xC0 {
+            unpacked[i] = s_last_inter;
+        }
+        table.pack(&unpacked);
+        table
+    });
+
+    // Special states for specific lead bytes
+    let target_e0 = arena.alloc_with_table({
+        let mut table = ArenaSmallTable::new();
+        let mut unpacked = [StateId::NONE; BYTE_CEILING];
+        for i in 0xA0..0xC0 {
+            unpacked[i] = s_last;
+        }
+        table.pack(&unpacked);
+        table
+    });
+
+    let target_ed = arena.alloc_with_table({
+        let mut table = ArenaSmallTable::new();
+        let mut unpacked = [StateId::NONE; BYTE_CEILING];
+        for i in 0x80..0xA0 {
+            unpacked[i] = s_last;
+        }
+        table.pack(&unpacked);
+        table
+    });
+
+    let target_f0 = arena.alloc_with_table({
+        let mut table = ArenaSmallTable::new();
+        let mut unpacked = [StateId::NONE; BYTE_CEILING];
+        for i in 0x90..0xC0 {
+            unpacked[i] = s_last_inter;
+        }
+        table.pack(&unpacked);
+        table
+    });
+
+    let target_f4 = arena.alloc_with_table({
+        let mut table = ArenaSmallTable::new();
+        let mut unpacked = [StateId::NONE; BYTE_CEILING];
+        for i in 0x80..0x90 {
+            unpacked[i] = s_last_inter;
+        }
+        table.pack(&unpacked);
+        table
+    });
+
+    // Main state with all lead byte transitions
+    let start = arena.alloc_with_table({
+        let mut unpacked = [StateId::NONE; BYTE_CEILING];
+
+        // ASCII (0x00-0x7F) -> dest directly
+        for i in 0x00..0x80 {
+            unpacked[i] = dest;
+        }
+
+        // 2-byte sequences (0xC2-0xDF)
+        for i in 0xC2..0xE0 {
+            unpacked[i] = s_last;
+        }
+
+        // E0
+        unpacked[0xE0] = target_e0;
+
+        // E1-EC
+        for i in 0xE1..0xED {
+            unpacked[i] = s_last_inter;
+        }
+
+        // ED
+        unpacked[0xED] = target_ed;
+
+        // EE-EF
+        for i in 0xEE..0xF0 {
+            unpacked[i] = s_last_inter;
+        }
+
+        // F0
+        unpacked[0xF0] = target_f0;
+
+        // F1-F3
+        for i in 0xF1..0xF4 {
+            unpacked[i] = s_first_inter;
+        }
+
+        // F4
+        unpacked[0xF4] = target_f4;
+
+        let mut table = ArenaSmallTable::new();
+        table.pack(&unpacked);
+        table
+    });
+
+    start
+}
+
+/// Arena version of the rune tree entry
+struct ArenaRuneTreeEntry {
+    next: Option<StateId>,
+    child: Option<ArenaRuneTreeNode>,
+}
+
+type ArenaRuneTreeNode = Vec<Option<ArenaRuneTreeEntry>>;
+
+fn new_arena_rune_tree_node() -> ArenaRuneTreeNode {
+    (0..BYTE_CEILING).map(|_| None).collect()
+}
+
+fn add_arena_rune_tree_entry(root: &mut ArenaRuneTreeNode, r: char, dest: StateId) {
+    let bytes = rune_to_utf8(r);
+    add_arena_rune_tree_entry_recursive(root, &bytes, 0, dest);
+}
+
+fn add_arena_rune_tree_entry_recursive(
+    node: &mut ArenaRuneTreeNode,
+    bytes: &[u8],
+    index: usize,
+    dest: StateId,
+) {
+    if index >= bytes.len() {
+        return;
+    }
+
+    let idx = bytes[index] as usize;
+    if idx >= BYTE_CEILING {
+        return;
+    }
+
+    if node[idx].is_none() {
+        node[idx] = Some(ArenaRuneTreeEntry {
+            next: None,
+            child: None,
+        });
+    }
+
+    let entry = node[idx].as_mut().unwrap();
+
+    if index == bytes.len() - 1 {
+        entry.next = Some(dest);
+    } else {
+        if entry.child.is_none() {
+            entry.child = Some(new_arena_rune_tree_node());
+        }
+        add_arena_rune_tree_entry_recursive(entry.child.as_mut().unwrap(), bytes, index + 1, dest);
+    }
+}
+
+fn arena_nfa_from_rune_tree(arena: &mut StateArena, root: &ArenaRuneTreeNode) -> StateId {
+    arena_table_from_rune_tree_node(arena, root)
+}
+
+fn arena_table_from_rune_tree_node(arena: &mut StateArena, node: &ArenaRuneTreeNode) -> StateId {
+    let mut unpacked: [StateId; BYTE_CEILING] = [StateId::NONE; BYTE_CEILING];
+
+    for (b, entry_opt) in node.iter().enumerate() {
+        if let Some(entry) = entry_opt {
+            if let Some(next) = entry.next {
+                unpacked[b] = next;
+            } else if let Some(ref child) = entry.child {
+                let child_state = arena_table_from_rune_tree_node(arena, child);
+                unpacked[b] = child_state;
+            }
+        }
+    }
+
+    let mut table = ArenaSmallTable::new();
+    table.pack(&unpacked);
+    arena.alloc_with_table(table)
+}
+
+/// Build arena NFA for a rune range.
+fn make_arena_rune_range_fa(rr: &RuneRange, arena: &mut StateArena, next: StateId) -> StateId {
+    let mut root = new_arena_rune_tree_node();
+
+    if let Some(mut iter) = RuneRangeIterator::new(rr.clone()) {
+        while let Some(r) = iter.next_rune() {
+            add_arena_rune_tree_entry(&mut root, r, next);
+        }
+    }
+
+    arena_nfa_from_rune_tree(arena, &root)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2031,5 +2479,63 @@ mod tests {
                 pattern
             );
         }
+    }
+
+    #[test]
+    fn test_arena_nfa_email_pattern() {
+        use crate::automaton::arena::{traverse_arena_nfa, ArenaNfaBuffers, ARENA_VALUE_TERMINATOR};
+
+        // Test the pattern from the failing test
+        let pattern = "[a-z]+@example~.com";
+        let root = parse_regexp(pattern).unwrap();
+
+        // Verify it has plus quantifier
+        assert!(
+            regexp_has_plus_star(&root),
+            "Pattern should be detected as having + quantifier"
+        );
+
+        // Build arena NFA
+        let (arena, start, field_matcher) = make_regexp_nfa_arena(root, false);
+
+        let mut bufs = ArenaNfaBuffers::with_capacity(arena.len());
+
+        // Test: "alice@example.com" should match
+        let mut value = b"alice@example.com".to_vec();
+        value.push(ARENA_VALUE_TERMINATOR);
+        traverse_arena_nfa(&arena, start, &value, &mut bufs);
+
+        assert!(
+            bufs.transitions
+                .iter()
+                .any(|m| Arc::ptr_eq(m, &field_matcher)),
+            "Pattern {} should match 'alice@example.com'",
+            pattern
+        );
+    }
+
+    #[test]
+    fn test_arena_nfa_plus_simple() {
+        use crate::automaton::arena::{traverse_arena_nfa, ArenaNfaBuffers, ARENA_VALUE_TERMINATOR};
+
+        // Test simple [a-z]+ pattern with arena
+        let pattern = "[a-z]+";
+        let root = parse_regexp(pattern).unwrap();
+        let (arena, start, field_matcher) = make_regexp_nfa_arena(root, false);
+
+        let mut bufs = ArenaNfaBuffers::with_capacity(arena.len());
+
+        // Test: "abc" should match
+        let mut value = b"abc".to_vec();
+        value.push(ARENA_VALUE_TERMINATOR);
+        traverse_arena_nfa(&arena, start, &value, &mut bufs);
+
+        assert!(
+            bufs.transitions
+                .iter()
+                .any(|m| Arc::ptr_eq(m, &field_matcher)),
+            "Pattern {} should match 'abc'",
+            pattern
+        );
     }
 }
