@@ -4,7 +4,7 @@ Rust port of [quamina](https://github.com/timbray/quamina) - fast pattern-matchi
 
 ## Status
 
-**234 tests passing.** All core operators implemented. Full Go parity achieved plus Rust-only features. Rust outperforms Go on most benchmarks (shellstyle is a known regression). Arena-based NFA now used for ALL regexp patterns (2.25-2.5x faster). Synced with Go commit c443b44 (Jan 2026).
+**234 tests passing.** All core operators implemented. Full Go parity achieved plus Rust-only features. Rust outperforms Go on most benchmarks. Arena-based NFA used for ALL regexp patterns (2.25-2.5x faster). Shellstyle spinout optimized (28% improvement). Synced with Go commit c443b44 (Jan 2026).
 
 | Benchmark | Go (ns) | Rust (ns) | Status |
 |-----------|---------|-----------|--------|
@@ -12,7 +12,7 @@ Rust port of [quamina](https://github.com/timbray/quamina) - fast pattern-matchi
 | status_middle_nested | 7,437 | 4,784 | **Rust 1.55x faster** |
 | status_last_field | 7,937 | 5,091 | **Rust 1.56x faster** |
 | citylots | 3,971 | 2,083 | **Rust 1.91x faster** |
-| shellstyle_26_patterns | 731 | 1,305 | **Go 1.8x faster** (see Future Work) |
+| shellstyle_26_patterns | 731 | 1,128 | Go 1.54x faster (improved from 1.8x) |
 | numeric_range_single | - | 145 | Rust-only (automaton) |
 | numeric_range_two_sided | - | 144 | Rust-only (automaton) |
 | numeric_range_10_patterns | - | 176 | Rust-only (automaton) |
@@ -160,11 +160,13 @@ Direct comparison of chain-based vs arena-based NFA traversal for `[a-z]+`:
 
 ## Future Work
 
-**Shellstyle arena migration (high priority):**
-- Current shellstyle is 1.8x slower than Go (1,305 ns vs 731 ns)
-- Root cause: spinout mechanism allocates `Arc<FaState>` on every byte during traversal
-- Solution: Use arena-based NFA with true cycle (same approach as regexp)
-- Expected improvement: Match or beat Go performance
+**Shellstyle performance (remaining gap 1.54x vs Go):**
+- Spinout Arc reuse optimization applied (28% improvement: 1,305ns -> 1,128ns)
+- Remaining gap due to Go's "spinner" optimization in merge:
+  - Go builds spinners with all bytes transitioning to self, merged efficiently
+  - Rust uses spinout marker + epsilon, requires epsilon closure on each byte
+- Further improvement would require Go-style spinner merging (complex)
+- Arena-based NFA not suitable: multiple patterns merged into one automaton is faster than N separate arena traversals
 
 **Regexp improvements:**
 - Optimize `[^]` negated class NFA construction (O(unicode_range))
@@ -188,9 +190,10 @@ Direct comparison of chain-based vs arena-based NFA traversal for `[a-z]+`:
 ## Commands
 
 ```bash
-cargo test                    # 227 tests
+cargo test                    # 234 tests
 cargo bench status            # status_* benchmarks
 cargo bench citylots          # citylots benchmark
+cargo bench shellstyle        # shellstyle benchmark
 cargo bench numeric_range     # numeric range benchmarks
 cargo clippy -- -D warnings   # CI runs this
 ```

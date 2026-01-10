@@ -77,9 +77,8 @@ pub fn traverse_nfa(table: &SmallTable, val: &[u8], bufs: &mut NfaBuffers) {
                 // Check if this is a spinout state (wildcard)
                 if ec_state.table.spinout.is_some() && byte != VALUE_TERMINATOR {
                     // Spinout: on any non-terminator byte, stay in spinout
-                    // This creates a new state with the same table
-                    let spinout_state = Arc::new(FaState::with_table(ec_state.table.clone()));
-                    bufs.next_states.push(spinout_state);
+                    // Reuse the existing Arc instead of allocating a new one
+                    bufs.next_states.push(ec_state.clone());
                 }
 
                 // Take step on current byte
