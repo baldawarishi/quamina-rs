@@ -2352,41 +2352,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore] // Slow due to chain-based NFA (Go uses cyclic GC refs) - use test_toxic_stack_arena instead
-    fn test_toxic_stack() {
-        use crate::automaton::{traverse_nfa, NfaBuffers, VALUE_TERMINATOR};
-
-        // Port of Go's TestToxicStack - complex pattern with nested quantifiers
-        // Pattern: (([~.~~~?~*~+~{~}~[~]~(~)~|]?)*)+"
-        // This tests that quantified groups work correctly
-        //
-        // Note: This test is ignored by default because the chain-based NFA
-        // implementation (depth=100) is slow for patterns with multiple nested
-        // quantifiers. Go's cyclic GC-based NFA handles this more efficiently.
-        // See test_toxic_stack_arena for the arena-based version.
-        let re = "(([~.~~~?~*~+~{~}~[~]~(~)~|]?)*)+";
-        let root = parse_regexp(re).expect("Should parse toxic stack pattern");
-        let (table, field_matcher) = make_regexp_nfa(root, true);
-
-        // Test string: ".~?*+{}[]()|.~?*+{}[]()|.~?*+{}[]()|"
-        let test_str = ".~?*+{}[]()|.~?*+{}[]()|.~?*+{}[]()|";
-        let mut value: Vec<u8> = Vec::new();
-        value.push(b'"');
-        value.extend_from_slice(test_str.as_bytes());
-        value.push(b'"');
-        value.push(VALUE_TERMINATOR);
-
-        let mut bufs = NfaBuffers::new();
-        traverse_nfa(&table, &value, &mut bufs);
-        assert!(
-            bufs.transitions
-                .iter()
-                .any(|m| Arc::ptr_eq(m, &field_matcher)),
-            "Toxic stack pattern should match test string"
-        );
-    }
-
-    #[test]
     fn test_toxic_stack_arena() {
         use crate::automaton::arena::{
             traverse_arena_nfa, ArenaNfaBuffers, ARENA_VALUE_TERMINATOR,

@@ -145,20 +145,6 @@ impl SegmentsTree {
     pub fn fields_count(&self) -> usize {
         self.fields.len()
     }
-
-    /// Create a deep copy of this tree
-    #[allow(dead_code)]
-    pub fn deep_copy(&self) -> Self {
-        Self {
-            is_root: self.is_root,
-            nodes: self
-                .nodes
-                .iter()
-                .map(|(k, v)| (k.clone(), v.deep_copy()))
-                .collect(),
-            fields: self.fields.clone(),
-        }
-    }
 }
 
 #[cfg(test)]

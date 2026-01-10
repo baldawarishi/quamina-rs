@@ -35,7 +35,7 @@ Rust port of [quamina](https://github.com/timbray/quamina) - fast pattern-matchi
 
 ### Known Issues
 
-1. **Negated character class performance**: `[^...]` produces O(unicode_range) NFA construction since we enumerate all ~1.1M code points not in the class. Go has the same algorithmic complexity but faster runtime.
+1. **Negated character class performance**: `[^...]` produces O(unicode_range) NFA construction since we enumerate all ~1.1M code points not in the class. Go has the same algorithmic complexity but faster runtime. One test (`test_negated_class_nfa`) is ignored pending optimization.
 2. **Regexp sample coverage**: 992 Go test samples ported; 67 fully tested, rest skipped due to performance constraints (patterns with `[^]`).
 
 ### Rust-only features (not in Go)
@@ -162,8 +162,25 @@ Direct comparison of chain-based vs arena-based NFA traversal for `[a-z]+`:
 
 ## Future Work
 
-**Regexp improvements:**
-- Optimize `[^]` negated class NFA construction (O(unicode_range))
+**Regexp improvements - Negated Character Class Optimization:**
+
+The main remaining optimization is in `src/regexp.rs`. Currently `[^...]` patterns are slow because:
+
+1. `invert_rune_range()` (line ~682) inverts `[abc]` to produce ranges covering ~1.1M Unicode code points
+2. `make_rune_range_nfa()` (line ~1212) and `make_arena_rune_range_fa()` (line ~1733) iterate through every rune via `RuneRangeIterator::next_rune()`
+3. For each rune, we convert to UTF-8 bytes and build a tree structure
+
+**Optimization approach:** Build SmallTables directly from UTF-8 byte ranges without per-character enumeration:
+- UTF-8 has predictable byte patterns for code point ranges
+- Instead of iterating 1.1M chars, compute the byte-level transitions directly from RunePair ranges
+- Example: `[^a]` could directly encode "match 0x00-0x60 or 0x62-0x7F (ASCII) plus all valid multi-byte sequences"
+- Key insight: A RunePair `(lo, hi)` maps to contiguous UTF-8 byte sequences that can be computed mathematically
+
+**Files to modify:**
+- `src/regexp.rs`: `make_rune_range_nfa()`, `make_arena_rune_range_fa()`, possibly add `make_rune_range_direct()`
+- Consider Go's approach in `regexp_nfa.go:makeRuneRangeNFA()` - it has the same O(n) complexity but may have insights
+
+**Test:** The ignored `test_negated_class_nfa` test will pass once optimized. Also enables running all 992 regexp samples.
 
 **General (diminishing returns):**
 - SIMD for SmallTable.step() ceiling search
@@ -184,7 +201,7 @@ Direct comparison of chain-based vs arena-based NFA traversal for `[a-z]+`:
 ## Commands
 
 ```bash
-cargo test                    # 234 tests
+cargo test                    # 234 tests (1 ignored)
 cargo bench status            # status_* benchmarks
 cargo bench citylots          # citylots benchmark
 cargo bench shellstyle        # shellstyle benchmark
