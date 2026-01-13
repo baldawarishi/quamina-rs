@@ -43,6 +43,8 @@ pub enum Matcher {
     ParsedRegexp(RegexpRoot),
     /// Regex pattern using the regex crate (fallback for unsupported features)
     Regex(regex::Regex),
+    /// CIDR pattern for IP address matching
+    Cidr(CidrPattern),
 }
 
 /// Numeric comparison operators
@@ -50,6 +52,177 @@ pub enum Matcher {
 pub struct NumericComparison {
     pub lower: Option<(bool, f64)>, // (inclusive, value)
     pub upper: Option<(bool, f64)>, // (inclusive, value)
+}
+
+/// Parsed CIDR notation for IP matching
+#[derive(Debug, Clone, PartialEq)]
+pub enum CidrPattern {
+    V4 {
+        network: [u8; 4],
+        prefix_len: u8,
+    },
+    V6 {
+        network: [u8; 16],
+        prefix_len: u8,
+    },
+}
+
+impl CidrPattern {
+    /// Parse a CIDR notation string (e.g., "10.0.0.0/24" or "2001:db8::/32")
+    pub fn parse(s: &str) -> Option<Self> {
+        let (addr_str, prefix_str) = s.split_once('/')?;
+        let prefix_len: u8 = prefix_str.parse().ok()?;
+
+        // Try IPv4 first
+        if let Some(addr) = Self::parse_ipv4(addr_str) {
+            if prefix_len > 32 {
+                return None;
+            }
+            // Apply mask to get network address
+            let mask = if prefix_len == 0 {
+                0u32
+            } else {
+                !0u32 << (32 - prefix_len)
+            };
+            let network_bits = u32::from_be_bytes(addr) & mask;
+            return Some(CidrPattern::V4 {
+                network: network_bits.to_be_bytes(),
+                prefix_len,
+            });
+        }
+
+        // Try IPv6
+        if let Some(addr) = Self::parse_ipv6(addr_str) {
+            if prefix_len > 128 {
+                return None;
+            }
+            // Apply mask to get network address
+            let network = Self::apply_ipv6_mask(&addr, prefix_len);
+            return Some(CidrPattern::V6 {
+                network,
+                prefix_len,
+            });
+        }
+
+        None
+    }
+
+    /// Parse an IPv4 address string
+    fn parse_ipv4(s: &str) -> Option<[u8; 4]> {
+        let parts: Vec<&str> = s.split('.').collect();
+        if parts.len() != 4 {
+            return None;
+        }
+        let mut addr = [0u8; 4];
+        for (i, part) in parts.iter().enumerate() {
+            addr[i] = part.parse().ok()?;
+        }
+        Some(addr)
+    }
+
+    /// Parse an IPv6 address string (supports :: shorthand)
+    fn parse_ipv6(s: &str) -> Option<[u8; 16]> {
+        let mut addr = [0u8; 16];
+
+        // Handle :: shorthand
+        if s.contains("::") {
+            let parts: Vec<&str> = s.split("::").collect();
+            if parts.len() > 2 {
+                return None; // Invalid: more than one ::
+            }
+
+            let left: Vec<&str> = if parts[0].is_empty() {
+                vec![]
+            } else {
+                parts[0].split(':').collect()
+            };
+            let right: Vec<&str> = if parts.len() > 1 && !parts[1].is_empty() {
+                parts[1].split(':').collect()
+            } else {
+                vec![]
+            };
+
+            if left.len() + right.len() > 8 {
+                return None;
+            }
+
+            // Fill left part
+            for (i, part) in left.iter().enumerate() {
+                let val = u16::from_str_radix(part, 16).ok()?;
+                addr[i * 2] = (val >> 8) as u8;
+                addr[i * 2 + 1] = val as u8;
+            }
+
+            // Fill right part (from the end)
+            let right_start = 8 - right.len();
+            for (i, part) in right.iter().enumerate() {
+                let val = u16::from_str_radix(part, 16).ok()?;
+                addr[(right_start + i) * 2] = (val >> 8) as u8;
+                addr[(right_start + i) * 2 + 1] = val as u8;
+            }
+        } else {
+            // Full address
+            let parts: Vec<&str> = s.split(':').collect();
+            if parts.len() != 8 {
+                return None;
+            }
+            for (i, part) in parts.iter().enumerate() {
+                let val = u16::from_str_radix(part, 16).ok()?;
+                addr[i * 2] = (val >> 8) as u8;
+                addr[i * 2 + 1] = val as u8;
+            }
+        }
+
+        Some(addr)
+    }
+
+    /// Apply a prefix mask to an IPv6 address
+    fn apply_ipv6_mask(addr: &[u8; 16], prefix_len: u8) -> [u8; 16] {
+        let mut result = *addr;
+        let full_bytes = (prefix_len / 8) as usize;
+        let remaining_bits = prefix_len % 8;
+
+        // Zero out bytes after the prefix
+        for byte in result.iter_mut().skip(full_bytes + if remaining_bits > 0 { 1 } else { 0 }) {
+            *byte = 0;
+        }
+
+        // Apply partial mask to the boundary byte
+        if remaining_bits > 0 && full_bytes < 16 {
+            let mask = !0u8 << (8 - remaining_bits);
+            result[full_bytes] &= mask;
+        }
+
+        result
+    }
+
+    /// Check if an IP address matches this CIDR pattern
+    pub fn matches(&self, ip_str: &str) -> bool {
+        match self {
+            CidrPattern::V4 { network, prefix_len } => {
+                if let Some(ip) = Self::parse_ipv4(ip_str) {
+                    let mask = if *prefix_len == 0 {
+                        0u32
+                    } else {
+                        !0u32 << (32 - prefix_len)
+                    };
+                    let ip_bits = u32::from_be_bytes(ip) & mask;
+                    let network_bits = u32::from_be_bytes(*network);
+                    ip_bits == network_bits
+                } else {
+                    false
+                }
+            }
+            CidrPattern::V6 { network, prefix_len } => {
+                if let Some(ip) = Self::parse_ipv6(ip_str) {
+                    let masked_ip = Self::apply_ipv6_mask(&ip, *prefix_len);
+                    masked_ip == *network
+                } else {
+                    false
+                }
+            }
+        }
+    }
 }
 
 impl Matcher {
@@ -81,6 +254,8 @@ impl Matcher {
             // Numeric ranges use Q-number ordering in automaton
             Matcher::Numeric(_) => true,
             Matcher::Regex(_) => false,
+            // CIDR requires runtime IP parsing (not automaton compatible)
+            Matcher::Cidr(_) => false,
         }
     }
 }
@@ -295,6 +470,20 @@ fn value_to_matcher(value: &Value) -> Result<Matcher, QuaminaError> {
                         }
                         return Err(QuaminaError::InvalidPattern(
                             "regex value must be a string".into(),
+                        ));
+                    }
+                    "cidr" => {
+                        if let Value::String(s) = val {
+                            if let Some(cidr) = CidrPattern::parse(s) {
+                                return Ok(Matcher::Cidr(cidr));
+                            }
+                            return Err(QuaminaError::InvalidPattern(format!(
+                                "invalid CIDR notation: {}",
+                                s
+                            )));
+                        }
+                        return Err(QuaminaError::InvalidPattern(
+                            "cidr value must be a string".into(),
                         ));
                     }
                     _ => {

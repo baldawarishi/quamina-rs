@@ -4,7 +4,7 @@ Rust port of [quamina](https://github.com/timbray/quamina) - fast pattern-matchi
 
 ## Status
 
-**234 tests passing.** All core operators implemented. Full Go parity achieved plus Rust-only features. Rust outperforms Go on all benchmarks. Arena-based NFA used for ALL regexp patterns (2.25-2.5x faster). NFA traversal optimized with buffer reuse (55% shellstyle improvement). Negated character classes optimized with range-based UTF-8 NFA construction. Synced with Go commit c443b44 (Jan 2026).
+**242 tests passing.** All core operators implemented. Full Go parity achieved plus Rust-only features. Rust outperforms Go on all benchmarks. Arena-based NFA used for ALL regexp patterns (2.25-2.5x faster). NFA traversal optimized with buffer reuse (55% shellstyle improvement). Negated character classes optimized with range-based UTF-8 NFA construction. Synced with Go commit c443b44 (Jan 2026).
 
 | Benchmark | Go (ns) | Rust (ns) | Status |
 |-----------|---------|-----------|--------|
@@ -45,6 +45,9 @@ Rust port of [quamina](https://github.com/timbray/quamina) - fast pattern-matchi
 - Regexp `{n,m}` quantifiers (Go parses but rejects as unimplemented)
 - `{"numeric": ["<", 100]}` - numeric range operators (automaton-integrated)
 - `{"suffix": ".jpg"}` - dedicated suffix operator (automaton-integrated)
+- `{"cidr": "10.0.0.0/24"}` - CIDR IP address matching (Go Issue #187):
+  - IPv4: `{"cidr": "192.168.0.0/16"}`
+  - IPv6: `{"cidr": "2001:db8::/32"}`
 - `has_matches()`, `count_matches()` - optimized boolean/count queries
 - `pattern_count()`, `is_empty()`, `clear()` - inventory management
 - `pruner_stats()`, `set_auto_rebuild()` - explicit rebuild control
@@ -194,7 +197,7 @@ The `[^...]` patterns now use range-based UTF-8 NFA construction instead of per-
 ## Commands
 
 ```bash
-cargo test                    # 235 tests
+cargo test                    # 242 tests
 cargo bench status            # status_* benchmarks
 cargo bench citylots          # citylots benchmark
 cargo bench shellstyle        # shellstyle benchmark

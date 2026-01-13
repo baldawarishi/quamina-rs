@@ -900,6 +900,7 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
                 // Convert back to a simple regex - this is a fallback that shouldn't be hit
                 false
             }
+            Matcher::Cidr(cidr) => cidr.matches(value),
         }
     }
 
@@ -4840,5 +4841,238 @@ mod tests {
         );
 
         assert_eq!(problems, 0, "Found {} regexp validation problems", problems);
+    }
+
+    // ============= CIDR Matching Tests =============
+
+    #[test]
+    fn test_cidr_ipv4_basic() {
+        // Test basic IPv4 CIDR matching
+        let mut q = Quamina::new();
+        q.add_pattern("p1", r#"{"sourceIP": [{"cidr": "10.0.0.0/24"}]}"#)
+            .unwrap();
+
+        // IPs in range should match
+        let m1 = q
+            .matches_for_event(r#"{"sourceIP": "10.0.0.1"}"#.as_bytes())
+            .unwrap();
+        assert_eq!(m1, vec!["p1"], "10.0.0.1 should match 10.0.0.0/24");
+
+        let m2 = q
+            .matches_for_event(r#"{"sourceIP": "10.0.0.255"}"#.as_bytes())
+            .unwrap();
+        assert_eq!(m2, vec!["p1"], "10.0.0.255 should match 10.0.0.0/24");
+
+        // IPs outside range should not match
+        let m3 = q
+            .matches_for_event(r#"{"sourceIP": "10.0.1.1"}"#.as_bytes())
+            .unwrap();
+        assert!(m3.is_empty(), "10.0.1.1 should not match 10.0.0.0/24");
+
+        let m4 = q
+            .matches_for_event(r#"{"sourceIP": "192.168.1.1"}"#.as_bytes())
+            .unwrap();
+        assert!(m4.is_empty(), "192.168.1.1 should not match 10.0.0.0/24");
+    }
+
+    #[test]
+    fn test_cidr_ipv4_various_prefixes() {
+        // Test different prefix lengths
+        let mut q = Quamina::new();
+
+        // /32 - exact IP
+        q.add_pattern("exact", r#"{"ip": [{"cidr": "192.168.1.100/32"}]}"#)
+            .unwrap();
+
+        // /16 - class B
+        q.add_pattern("classB", r#"{"ip": [{"cidr": "172.16.0.0/16"}]}"#)
+            .unwrap();
+
+        // /8 - class A
+        q.add_pattern("classA", r#"{"ip": [{"cidr": "10.0.0.0/8"}]}"#)
+            .unwrap();
+
+        // /0 - all IPs
+        q.add_pattern("all", r#"{"ip": [{"cidr": "0.0.0.0/0"}]}"#)
+            .unwrap();
+
+        // Test /32
+        let m1 = q
+            .matches_for_event(r#"{"ip": "192.168.1.100"}"#.as_bytes())
+            .unwrap();
+        assert!(m1.contains(&"exact"), "Should match /32 exact IP");
+
+        let m2 = q
+            .matches_for_event(r#"{"ip": "192.168.1.101"}"#.as_bytes())
+            .unwrap();
+        assert!(!m2.contains(&"exact"), "Should not match /32 with different IP");
+
+        // Test /16
+        let m3 = q
+            .matches_for_event(r#"{"ip": "172.16.5.5"}"#.as_bytes())
+            .unwrap();
+        assert!(m3.contains(&"classB"), "Should match /16");
+
+        let m4 = q
+            .matches_for_event(r#"{"ip": "172.17.0.1"}"#.as_bytes())
+            .unwrap();
+        assert!(
+            !m4.contains(&"classB"),
+            "Should not match different /16 network"
+        );
+
+        // Test /8
+        let m5 = q
+            .matches_for_event(r#"{"ip": "10.255.255.255"}"#.as_bytes())
+            .unwrap();
+        assert!(m5.contains(&"classA"), "Should match /8");
+
+        // Test /0 matches anything
+        let m6 = q
+            .matches_for_event(r#"{"ip": "8.8.8.8"}"#.as_bytes())
+            .unwrap();
+        assert!(m6.contains(&"all"), "/0 should match any IP");
+    }
+
+    #[test]
+    fn test_cidr_ipv6_basic() {
+        // Test basic IPv6 CIDR matching
+        let mut q = Quamina::new();
+        q.add_pattern("p1", r#"{"sourceIP": [{"cidr": "2001:db8::/32"}]}"#)
+            .unwrap();
+
+        // IPs in range should match
+        let m1 = q
+            .matches_for_event(r#"{"sourceIP": "2001:db8:0:0:0:0:0:1"}"#.as_bytes())
+            .unwrap();
+        assert_eq!(m1, vec!["p1"], "IPv6 in range should match");
+
+        let m2 = q
+            .matches_for_event(r#"{"sourceIP": "2001:db8:ffff:ffff:ffff:ffff:ffff:ffff"}"#.as_bytes())
+            .unwrap();
+        assert_eq!(m2, vec!["p1"], "IPv6 at end of range should match");
+
+        // IPs outside range should not match
+        let m3 = q
+            .matches_for_event(r#"{"sourceIP": "2001:db9:0:0:0:0:0:1"}"#.as_bytes())
+            .unwrap();
+        assert!(m3.is_empty(), "IPv6 outside range should not match");
+    }
+
+    #[test]
+    fn test_cidr_ipv6_shorthand() {
+        // Test IPv6 :: shorthand parsing
+        let mut q = Quamina::new();
+        q.add_pattern("loopback", r#"{"ip": [{"cidr": "::1/128"}]}"#)
+            .unwrap();
+
+        // Loopback should match
+        let m1 = q
+            .matches_for_event(r#"{"ip": "0:0:0:0:0:0:0:1"}"#.as_bytes())
+            .unwrap();
+        assert_eq!(m1, vec!["loopback"], "Loopback should match");
+
+        // Different IP should not match
+        let m2 = q
+            .matches_for_event(r#"{"ip": "0:0:0:0:0:0:0:2"}"#.as_bytes())
+            .unwrap();
+        assert!(m2.is_empty(), "Non-loopback should not match /128");
+    }
+
+    #[test]
+    fn test_cidr_non_ip_values() {
+        // Non-IP values should not match CIDR patterns
+        let mut q = Quamina::new();
+        q.add_pattern("p1", r#"{"ip": [{"cidr": "10.0.0.0/24"}]}"#)
+            .unwrap();
+
+        let m1 = q
+            .matches_for_event(r#"{"ip": "not-an-ip"}"#.as_bytes())
+            .unwrap();
+        assert!(m1.is_empty(), "Non-IP string should not match");
+
+        let m2 = q
+            .matches_for_event(r#"{"ip": "10.0.0"}"#.as_bytes())
+            .unwrap();
+        assert!(m2.is_empty(), "Invalid IP (missing octet) should not match");
+
+        let m3 = q
+            .matches_for_event(r#"{"ip": "256.0.0.1"}"#.as_bytes())
+            .unwrap();
+        assert!(m3.is_empty(), "Invalid IP (octet > 255) should not match");
+    }
+
+    #[test]
+    fn test_cidr_invalid_patterns() {
+        // Test invalid CIDR patterns are rejected at parse time
+        let mut q = Quamina::new();
+
+        // Invalid prefix length for IPv4
+        let r1 = q.add_pattern("bad1", r#"{"ip": [{"cidr": "10.0.0.0/33"}]}"#);
+        assert!(r1.is_err(), "Prefix > 32 for IPv4 should fail");
+
+        // Invalid prefix length for IPv6
+        let r2 = q.add_pattern("bad2", r#"{"ip": [{"cidr": "2001:db8::/129"}]}"#);
+        assert!(r2.is_err(), "Prefix > 128 for IPv6 should fail");
+
+        // Missing prefix
+        let r3 = q.add_pattern("bad3", r#"{"ip": [{"cidr": "10.0.0.0"}]}"#);
+        assert!(r3.is_err(), "Missing /prefix should fail");
+
+        // Invalid IP format
+        let r4 = q.add_pattern("bad4", r#"{"ip": [{"cidr": "not.an.ip/24"}]}"#);
+        assert!(r4.is_err(), "Invalid IP should fail");
+    }
+
+    #[test]
+    fn test_cidr_with_other_matchers() {
+        // CIDR can be combined with other matchers on the same field
+        let mut q = Quamina::new();
+        q.add_pattern(
+            "local",
+            r#"{"network": [{"cidr": "192.168.0.0/16"}, {"cidr": "10.0.0.0/8"}]}"#,
+        )
+        .unwrap();
+
+        // Should match either CIDR
+        let m1 = q
+            .matches_for_event(r#"{"network": "192.168.1.1"}"#.as_bytes())
+            .unwrap();
+        assert_eq!(m1, vec!["local"], "Should match first CIDR");
+
+        let m2 = q
+            .matches_for_event(r#"{"network": "10.50.50.50"}"#.as_bytes())
+            .unwrap();
+        assert_eq!(m2, vec!["local"], "Should match second CIDR");
+
+        let m3 = q
+            .matches_for_event(r#"{"network": "8.8.8.8"}"#.as_bytes())
+            .unwrap();
+        assert!(m3.is_empty(), "Public IP should not match");
+    }
+
+    #[test]
+    fn test_cidr_pattern_parsing() {
+        // Test CidrPattern parsing directly
+        use crate::json::CidrPattern;
+
+        // IPv4
+        let cidr = CidrPattern::parse("10.0.0.0/24").unwrap();
+        assert!(cidr.matches("10.0.0.50"));
+        assert!(!cidr.matches("10.0.1.50"));
+
+        // IPv6
+        let cidr6 = CidrPattern::parse("2001:db8::/32").unwrap();
+        assert!(cidr6.matches("2001:db8:1:2:3:4:5:6"));
+        assert!(!cidr6.matches("2001:db9:1:2:3:4:5:6"));
+
+        // Edge cases
+        let cidr_zero = CidrPattern::parse("0.0.0.0/0").unwrap();
+        assert!(cidr_zero.matches("1.2.3.4"));
+        assert!(cidr_zero.matches("255.255.255.255"));
+
+        let cidr_single = CidrPattern::parse("192.168.1.1/32").unwrap();
+        assert!(cidr_single.matches("192.168.1.1"));
+        assert!(!cidr_single.matches("192.168.1.2"));
     }
 }
