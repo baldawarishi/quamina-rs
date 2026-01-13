@@ -4,183 +4,85 @@ Rust port of [quamina](https://github.com/timbray/quamina) - fast pattern-matchi
 
 ## Status
 
-**242 tests passing.** All core operators implemented. Full Go parity achieved plus Rust-only features. Rust outperforms Go on all benchmarks. Arena-based NFA used for ALL regexp patterns (2.25-2.5x faster). NFA traversal optimized with buffer reuse (55% shellstyle improvement). Negated character classes optimized with range-based UTF-8 NFA construction. Synced with Go commit c443b44 (Jan 2026).
+**242 tests passing.** Full Go parity + Rust-only features. Rust 1.5-2x faster on all benchmarks. Synced with Go commit c443b44 (Jan 2026).
 
-| Benchmark | Go (ns) | Rust (ns) | Status |
-|-----------|---------|-----------|--------|
-| status_context_fields | 398 | 362 | **Rust 10% faster** |
-| status_middle_nested | 7,437 | 4,912 | **Rust 1.51x faster** |
-| status_last_field | 7,937 | 5,215 | **Rust 1.52x faster** |
-| citylots | 3,971 | 2,117 | **Rust 1.88x faster** |
-| shellstyle_26_patterns | 731 | 405 | **Rust 1.81x faster** |
-| numeric_range_single | - | 145 | Rust-only (automaton) |
-| numeric_range_two_sided | - | 144 | Rust-only (automaton) |
-| numeric_range_10_patterns | - | 176 | Rust-only (automaton) |
-| arena_nfa_100chars | - | 3,409 | **2.5x faster** than chain NFA |
-| arena_nfa_5chars | - | 264 | **2.25x faster** than chain NFA |
+| Benchmark | Go (ns) | Rust (ns) | Speedup |
+|-----------|---------|-----------|---------|
+| status_context_fields | 398 | 362 | 1.1x |
+| status_middle_nested | 7,437 | 4,912 | 1.5x |
+| citylots | 3,971 | 2,117 | 1.9x |
+| shellstyle_26_patterns | 731 | 405 | 1.8x |
 
-## Parity Status
+## Pattern Types
 
-**Full Go parity achieved.** All Go pattern types and features implemented.
+**Go parity (all automaton-based):**
+- `"value"` - exact match
+- `{"prefix": "foo"}` - prefix match
+- `{"suffix": ".jpg"}` - suffix match (Rust-only dedicated operator)
+- `{"wildcard": "a*b"}` - wildcard with escape support
+- `{"shellstyle": "a*b"}` - simple wildcard (no escapes)
+- `{"exists": true/false}` - field presence
+- `{"anything-but": ["a", "b"]}` - exclusion list
+- `{"equals-ignore-case": "FOO"}` - case-insensitive
+- `{"regexp": "[a-z]+"}` - I-Regexp subset via NFA
 
-| Go Feature | Rust Status |
-|------------|-------------|
-| Exact/Prefix/Wildcard/Shellstyle | ✓ Automaton-based |
-| Anything-but/Exists | ✓ Automaton-based |
-| Equals-ignore-case | ✓ Automaton-based |
-| Regexp (I-Regexp subset) | ✓ NFA-based (see Known Issues) |
-| Custom Flattener | ✓ `Flattener` trait |
-| Config options | ✓ `QuaminaBuilder` |
-| Copy/Clone | ✓ `impl Clone for Quamina` |
-
-### Known Issues
-
-1. **Regexp sample coverage**: 992 Go test samples ported; 67 fully tested (those using I-Regexp features we support). Remaining samples use features outside I-Regexp subset (lookahead, conditionals, backreferences).
-
-### Rust-only features (not in Go)
-- Generalized `anything-but` (Go Issue #328):
-  - Single string: `{"anything-but": "foo"}`
-  - Single number: `{"anything-but": 404}`
-  - Array of numbers: `{"anything-but": [400, 404, 500]}`
-- Regexp `{n,m}` quantifiers (Go parses but rejects as unimplemented)
-- `{"numeric": ["<", 100]}` - numeric range operators (automaton-integrated)
-- `{"suffix": ".jpg"}` - dedicated suffix operator (automaton-integrated)
-- `{"cidr": "10.0.0.0/24"}` - CIDR IP address matching (Go Issue #187):
-  - IPv4: `{"cidr": "192.168.0.0/16"}`
-  - IPv6: `{"cidr": "2001:db8::/32"}`
-- `has_matches()`, `count_matches()` - optimized boolean/count queries
-- `pattern_count()`, `is_empty()`, `clear()` - inventory management
-- `pruner_stats()`, `set_auto_rebuild()` - explicit rebuild control
-- Better number parsing: Rust accepts `1e0`, Go rejects (Go bug)
-
-## Custom Flattener API
-
-The `Flattener` trait allows custom event parsers for non-JSON formats:
-
-```rust
-use quamina::{Flattener, SegmentsTreeTracker, OwnedField, QuaminaError};
-
-struct MyFlattener;
-
-impl Flattener for MyFlattener {
-    fn flatten(
-        &mut self,
-        event: &[u8],
-        tracker: &dyn SegmentsTreeTracker,
-    ) -> Result<Vec<OwnedField>, QuaminaError> {
-        // Custom parsing logic - use tracker to skip unused fields
-        Ok(vec![])
-    }
-
-    fn copy(&self) -> Box<dyn Flattener> {
-        Box::new(MyFlattener)
-    }
-}
-
-// Usage:
-let q = QuaminaBuilder::<String>::new()
-    .with_flattener(Box::new(MyFlattener))
-    .unwrap()
-    .build()
-    .unwrap();
-```
-
-Key types:
-- `Flattener` - Trait for event parsers
-- `SegmentsTreeTracker` - Trait for field path tracking (enables skip optimization)
-- `OwnedField` - Returned by custom flatteners (path, value, array_trail, is_number)
-- `JsonFlattener` - Default JSON implementation (also usable through trait)
+**Rust-only features:**
+- `{"anything-but": 404}` / `{"anything-but": [400, 404]}` - numeric exclusion (Go #328)
+- `{"numeric": [">=", 0, "<", 100]}` - range operators
+- `{"cidr": "10.0.0.0/24"}` - IPv4/IPv6 CIDR matching (Go #187)
+- `{"regexp": "a{2,5}"}` - quantifier support
+- `has_matches()`, `count_matches()`, `pattern_count()`, `clear()`
 
 ## Architecture
 
 ```
 src/
-├── lib.rs              # Public API (Quamina struct, QuaminaBuilder)
-├── json.rs             # Pattern parsing, Matcher enum
-├── flatten_json.rs     # Streaming JSON flattener (internal)
-├── flattener.rs        # Flattener/SegmentsTreeTracker traits, JsonFlattener
-├── segments_tree.rs    # Field path tracking for skip optimization
+├── lib.rs              # Public API: Quamina, QuaminaBuilder
+├── json.rs             # Pattern parsing, Matcher enum, CidrPattern
+├── flatten_json.rs     # Streaming JSON flattener
+├── flattener.rs        # Flattener trait for custom parsers
+├── segments_tree.rs    # Field path tracking (skip optimization)
 ├── numbits.rs          # Q-number encoding for numeric comparisons
-├── regexp.rs           # I-Regexp parser and NFA builder
-├── regexp_samples.rs   # 992 test samples from Go (test-only)
+├── regexp.rs           # I-Regexp parser and arena NFA builder
 ├── automaton/
-│   ├── small_table.rs  # SmallTable (byte transition table), FaState, NfaBuffers
+│   ├── small_table.rs  # SmallTable (byte transitions), FaState
 │   ├── fa_builders.rs  # make_string_fa, make_prefix_fa, merge_fas
 │   ├── nfa.rs          # traverse_dfa, traverse_nfa
-│   ├── arena.rs        # StateArena, StateId for cyclic NFA (integrated)
-│   ├── thread_safe.rs  # FrozenFieldMatcher/ValueMatcher (immutable, for matching)
-│   ├── mutable_matcher.rs  # MutableFieldMatcher/ValueMatcher (for building)
-│   └── wildcard.rs     # Shellstyle/wildcard patterns
-└── fallback/           # Suffix, numeric ranges (non-automaton path)
+│   ├── arena.rs        # StateArena for cyclic NFA (regexp)
+│   ├── thread_safe.rs  # FrozenFieldMatcher (immutable, for matching)
+│   └── mutable_matcher.rs  # MutableFieldMatcher (for building)
+└── wildcard.rs         # Shellstyle/wildcard matching
 ```
 
 **Matching flow:**
-1. `flatten()` JSON -> sorted `Vec<Field>` (path as Arc, value, array_trail)
+1. `flatten()` JSON → sorted `Vec<Field>` (path as Arc, value, array_trail)
 2. `matches_for_fields_direct()` traverses automaton from root
-3. For each field, `transition_on()` matches value via:
-   - DFA traversal (for simple patterns like exact match, prefix)
-   - Chain NFA traversal (for non-deterministic patterns like shellstyle)
-   - Arena NFA traversal (for ALL regexp patterns - 2.25-2.5x faster)
+3. `transition_on()` matches via DFA (simple) or NFA (wildcard/regexp)
 
-## Optimizations Applied (Tasks 1-28)
+**Key design decisions:**
+- Arc<[u8]> for paths (O(1) cloning, 20% citylots improvement)
+- FxHashMap with Arc::as_ptr() keys (5% faster than std HashMap)
+- Arena-based NFA for regexp (2.5x faster than chain NFA)
+- Buffer reuse in NFA traversal (55% shellstyle improvement)
 
-| Optimization | Impact | Notes |
-|-------------|--------|-------|
-| Arc<[u8]> for paths | citylots -20% | O(1) cloning from SegmentsTree |
-| FxHashMap transitions | ~5% | Faster than std HashMap for ptr keys |
-| NfaBuffers reuse | ~8% | Vec reuse in traverse_dfa/traverse_nfa |
-| Direct Field matching | ~3% | Removed EventFieldRef indirection |
-| SmallVec array_trail | minor | Inline storage for shallow nesting |
-| #[inline] hot paths | varies | dstep, step, traverse_*, transition_on |
-| NFA epsilon closure buffers | **shellstyle -55%** | Eliminated per-byte allocation in traverse_nfa |
-| Range-based NFA construction | **[^] O(ranges) vs O(codepoints)** | UTF-8 byte range analysis, not per-char iteration |
+## Custom Flattener
 
-**Key learnings:**
-- Task 23: Vec-based indexing regressed 5-8% (Arc deref cost). FxHashMap with Arc::as_ptr() is faster.
-- Task 27: Path cloning was citylots bottleneck. Go uses slice refs; now we use Arc<[u8]>.
-- Task 28: Epsilon closure computed fresh each byte was main shellstyle bottleneck. Buffer reuse + sorted vec dedup made Rust 1.81x faster than Go.
+```rust
+use quamina::{Flattener, SegmentsTreeTracker, OwnedField, QuaminaError};
 
-## Arena-Based NFA
+impl Flattener for MyFlattener {
+    fn flatten(&mut self, event: &[u8], tracker: &dyn SegmentsTreeTracker)
+        -> Result<Vec<OwnedField>, QuaminaError> {
+        // Custom parsing - use tracker.is_prefix_used() to skip unused fields
+        Ok(vec![])
+    }
+    fn copy(&self) -> Box<dyn Flattener> { Box::new(MyFlattener) }
+}
 
-The `automaton::arena` module enables true cyclic NFA structures, now used for ALL regexp patterns:
-
-| Type | Purpose |
-|------|---------|
-| `StateId` | Copy index into arena (allows cycles) |
-| `StateArena` | Allocates states, O(1) cycle creation |
-| `traverse_arena_nfa` | NFA traversal with cycles |
-
-**Benefits:** For `[a]*`, arena needs 4 states vs chain's 100+ states. Multiple arena NFAs per value matcher support multiple regexp patterns on the same field.
-
-### Benchmark Results
-
-Direct comparison of chain-based vs arena-based NFA traversal for `[a-z]+`:
-
-| Benchmark | Chain (ns) | Arena (ns) | Arena Speedup |
-|-----------|------------|------------|---------------|
-| 100-char string | 8,757 | 3,409 | **2.57x faster** |
-| 5-char string | 592 | 264 | **2.24x faster** |
-
-**Integration status:** Fully integrated. All regexp patterns use arena-based NFA for consistent 2.25-2.5x speedup.
-
-## Future Work
-
-**General (diminishing returns):**
-- SIMD for SmallTable.step() ceiling search
-- Property-based fuzzing (proptest/quickcheck)
-
-## Completed Optimizations
-
-**Negated Character Class Optimization (Task 29):**
-
-The `[^...]` patterns now use range-based UTF-8 NFA construction instead of per-character iteration:
-
-- `add_rune_pair_tree_entry()` splits ranges by UTF-8 encoding boundaries (1-byte, 2-byte, 3-byte, 4-byte)
-- `add_byte_range_recursive()` builds SmallTables directly from byte ranges
-- Handles surrogate range (U+D800-U+DFFF) exclusion automatically
-- Complexity: O(number of UTF-8 boundary crossings) instead of O(number of code points)
-
-**Impact:** `test_negated_class_nfa` now runs in ~0.24s (previously too slow to run). All 234 tests pass with 0 ignored.
+let q = QuaminaBuilder::<String>::new()
+    .with_flattener(Box::new(MyFlattener)).unwrap()
+    .build().unwrap();
+```
 
 ## Go Reference
 
@@ -191,8 +93,6 @@ The `[^...]` patterns now use range-based UTF-8 NFA construction instead of per-
 | Flatten | `flatten_json.go` | segmentsTree, Flatten |
 | Pruner | `pruner.go` | rebuildRatio=0.2, deletePatterns |
 | Regex | `regexp_nfa.go` | Custom NFA (I-Regexp subset) |
-| Bench | `benchmarks_test.go` | Status patterns, citylots |
-| Tests | `regexp_validity_test.go` | 992 samples, TestToxicStack |
 
 ## Commands
 
@@ -201,14 +101,20 @@ cargo test                    # 242 tests
 cargo bench status            # status_* benchmarks
 cargo bench citylots          # citylots benchmark
 cargo bench shellstyle        # shellstyle benchmark
-cargo bench numeric_range     # numeric range benchmarks
 cargo clippy -- -D warnings   # CI runs this
 ```
 
 ## Session Notes
 
-When continuing work:
+**When continuing work:**
 1. Read this spec for context
 2. For Go behavior, read Go source directly (don't trust past interpretations)
 3. Run benchmarks before/after changes: `cargo bench <name>`
 4. Push often and check CI (`gh run list`)
+
+**Known issues:**
+- Regexp: 992 Go samples ported, 67 fully tested. Others use features outside I-Regexp (lookahead, backrefs)
+
+**Open Go issues worth tracking:**
+- #363: addPatterns slowdown with many values (trie-based bulk add proposed)
+- #437: Modern code analysis improvements
