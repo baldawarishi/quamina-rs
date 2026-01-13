@@ -4905,7 +4905,10 @@ mod tests {
         let m2 = q
             .matches_for_event(r#"{"ip": "192.168.1.101"}"#.as_bytes())
             .unwrap();
-        assert!(!m2.contains(&"exact"), "Should not match /32 with different IP");
+        assert!(
+            !m2.contains(&"exact"),
+            "Should not match /32 with different IP"
+        );
 
         // Test /16
         let m3 = q
@@ -4948,7 +4951,9 @@ mod tests {
         assert_eq!(m1, vec!["p1"], "IPv6 in range should match");
 
         let m2 = q
-            .matches_for_event(r#"{"sourceIP": "2001:db8:ffff:ffff:ffff:ffff:ffff:ffff"}"#.as_bytes())
+            .matches_for_event(
+                r#"{"sourceIP": "2001:db8:ffff:ffff:ffff:ffff:ffff:ffff"}"#.as_bytes(),
+            )
             .unwrap();
         assert_eq!(m2, vec!["p1"], "IPv6 at end of range should match");
 

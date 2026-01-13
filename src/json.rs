@@ -57,14 +57,8 @@ pub struct NumericComparison {
 /// Parsed CIDR notation for IP matching
 #[derive(Debug, Clone, PartialEq)]
 pub enum CidrPattern {
-    V4 {
-        network: [u8; 4],
-        prefix_len: u8,
-    },
-    V6 {
-        network: [u8; 16],
-        prefix_len: u8,
-    },
+    V4 { network: [u8; 4], prefix_len: u8 },
+    V6 { network: [u8; 16], prefix_len: u8 },
 }
 
 impl CidrPattern {
@@ -183,7 +177,10 @@ impl CidrPattern {
         let remaining_bits = prefix_len % 8;
 
         // Zero out bytes after the prefix
-        for byte in result.iter_mut().skip(full_bytes + if remaining_bits > 0 { 1 } else { 0 }) {
+        for byte in result
+            .iter_mut()
+            .skip(full_bytes + if remaining_bits > 0 { 1 } else { 0 })
+        {
             *byte = 0;
         }
 
@@ -199,7 +196,10 @@ impl CidrPattern {
     /// Check if an IP address matches this CIDR pattern
     pub fn matches(&self, ip_str: &str) -> bool {
         match self {
-            CidrPattern::V4 { network, prefix_len } => {
+            CidrPattern::V4 {
+                network,
+                prefix_len,
+            } => {
                 if let Some(ip) = Self::parse_ipv4(ip_str) {
                     let mask = if *prefix_len == 0 {
                         0u32
@@ -213,7 +213,10 @@ impl CidrPattern {
                     false
                 }
             }
-            CidrPattern::V6 { network, prefix_len } => {
+            CidrPattern::V6 {
+                network,
+                prefix_len,
+            } => {
                 if let Some(ip) = Self::parse_ipv6(ip_str) {
                     let masked_ip = Self::apply_ipv6_mask(&ip, *prefix_len);
                     masked_ip == *network
