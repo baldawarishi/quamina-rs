@@ -1243,7 +1243,13 @@ fn add_byte_range_recursive(
             if entry.child.is_none() {
                 entry.child = Some(new_rune_tree_node());
             }
-            add_byte_range_recursive(entry.child.as_mut().unwrap(), lo_bytes, hi_bytes, idx + 1, dest);
+            add_byte_range_recursive(
+                entry.child.as_mut().unwrap(),
+                lo_bytes,
+                hi_bytes,
+                idx + 1,
+                dest,
+            );
         }
     } else {
         // Different bytes - split into three parts:
@@ -1256,7 +1262,13 @@ fn add_byte_range_recursive(
 
         // Part 2: Middle range with full continuation bytes
         if hi_byte > lo_byte + 1 {
-            add_middle_range_to_tree(node, lo_byte + 1, hi_byte - 1, lo_bytes.len() - idx - 1, dest);
+            add_middle_range_to_tree(
+                node,
+                lo_byte + 1,
+                hi_byte - 1,
+                lo_bytes.len() - idx - 1,
+                dest,
+            );
         }
 
         // Part 3: hi_byte with min continuation bytes to hi_bytes
@@ -1265,12 +1277,7 @@ fn add_byte_range_recursive(
 }
 
 /// Add the lower bound part: lo_bytes[idx] with remaining bytes going up to max continuation.
-fn add_lo_range_to_tree(
-    node: &mut RuneTreeNode,
-    lo_bytes: &[u8],
-    idx: usize,
-    dest: &Arc<FaState>,
-) {
+fn add_lo_range_to_tree(node: &mut RuneTreeNode, lo_bytes: &[u8], idx: usize, dest: &Arc<FaState>) {
     let lo_byte = lo_bytes[idx];
     let is_last = idx == lo_bytes.len() - 1;
 
@@ -1297,12 +1304,7 @@ fn add_lo_range_to_tree(
 }
 
 /// Add the upper bound part: hi_bytes[idx] with min continuation bytes to hi_bytes.
-fn add_hi_range_to_tree(
-    node: &mut RuneTreeNode,
-    hi_bytes: &[u8],
-    idx: usize,
-    dest: &Arc<FaState>,
-) {
+fn add_hi_range_to_tree(node: &mut RuneTreeNode, hi_bytes: &[u8], idx: usize, dest: &Arc<FaState>) {
     let hi_byte = hi_bytes[idx];
     let is_last = idx == hi_bytes.len() - 1;
 
@@ -1852,12 +1854,7 @@ fn make_arena_rune_range_fa(rr: &RuneRange, arena: &mut StateArena, next: StateI
 }
 
 /// Add a range of runes [lo, hi] to the arena tree without iterating through each code point.
-fn add_arena_rune_pair_tree_entry(
-    root: &mut ArenaRuneTreeNode,
-    lo: char,
-    hi: char,
-    dest: StateId,
-) {
+fn add_arena_rune_pair_tree_entry(root: &mut ArenaRuneTreeNode, lo: char, hi: char, dest: StateId) {
     let lo_u32 = lo as u32;
     let hi_u32 = hi as u32;
 
@@ -1902,12 +1899,7 @@ fn add_arena_rune_pair_tree_entry(
     }
 }
 
-fn add_arena_utf8_range_to_tree(
-    root: &mut ArenaRuneTreeNode,
-    lo: char,
-    hi: char,
-    dest: StateId,
-) {
+fn add_arena_utf8_range_to_tree(root: &mut ArenaRuneTreeNode, lo: char, hi: char, dest: StateId) {
     let lo_bytes = rune_to_utf8(lo);
     let hi_bytes = rune_to_utf8(hi);
 
@@ -1953,7 +1945,13 @@ fn add_arena_byte_range_recursive(
         add_arena_lo_range_to_tree(node, lo_bytes, idx, dest);
 
         if hi_byte > lo_byte + 1 {
-            add_arena_middle_range_to_tree(node, lo_byte + 1, hi_byte - 1, lo_bytes.len() - idx - 1, dest);
+            add_arena_middle_range_to_tree(
+                node,
+                lo_byte + 1,
+                hi_byte - 1,
+                lo_bytes.len() - idx - 1,
+                dest,
+            );
         }
 
         add_arena_hi_range_to_tree(node, hi_bytes, idx, dest);
@@ -1984,7 +1982,13 @@ fn add_arena_lo_range_to_tree(
         add_arena_lo_range_to_tree(child, lo_bytes, idx + 1, dest);
 
         if next_byte < 0xBF {
-            add_arena_middle_range_to_tree(child, next_byte + 1, 0xBF, lo_bytes.len() - idx - 2, dest);
+            add_arena_middle_range_to_tree(
+                child,
+                next_byte + 1,
+                0xBF,
+                lo_bytes.len() - idx - 2,
+                dest,
+            );
         }
     }
 }
@@ -2011,7 +2015,13 @@ fn add_arena_hi_range_to_tree(
         let next_byte = hi_bytes[idx + 1];
 
         if next_byte > 0x80 {
-            add_arena_middle_range_to_tree(child, 0x80, next_byte - 1, hi_bytes.len() - idx - 2, dest);
+            add_arena_middle_range_to_tree(
+                child,
+                0x80,
+                next_byte - 1,
+                hi_bytes.len() - idx - 2,
+                dest,
+            );
         }
 
         add_arena_hi_range_to_tree(child, hi_bytes, idx + 1, dest);
@@ -2037,7 +2047,13 @@ fn add_arena_middle_range_to_tree(
             if entry.child.is_none() {
                 entry.child = Some(new_arena_rune_tree_node());
             }
-            add_arena_middle_range_to_tree(entry.child.as_mut().unwrap(), 0x80, 0xBF, depth - 1, dest);
+            add_arena_middle_range_to_tree(
+                entry.child.as_mut().unwrap(),
+                0x80,
+                0xBF,
+                depth - 1,
+                dest,
+            );
         }
     }
 }
