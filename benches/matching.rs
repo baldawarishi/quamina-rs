@@ -643,6 +643,63 @@ fn bench_arena_nfa_short(c: &mut Criterion) {
     });
 }
 
+// === Bulk Pattern Add benchmarks (for optimization work) ===
+
+/// Benchmark for bulk pattern adding (100 patterns × 10 values each)
+/// This measures the O(n²) problem from repeated merge_fas calls
+fn bench_bulk_100x10(c: &mut Criterion) {
+    c.bench_function("bulk_100x10", |b| {
+        b.iter(|| {
+            let mut q = Quamina::<usize>::new();
+            for i in 0..100 {
+                let values: String = (0..10)
+                    .map(|j| format!("\"value_{}_{}\"", i, j))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let pattern = format!(r#"{{"field": [{}]}}"#, values);
+                q.add_pattern(i, &pattern).unwrap();
+            }
+        })
+    });
+}
+
+/// Smaller bulk benchmark (100 patterns × 100 values) for faster iteration
+fn bench_bulk_100x100(c: &mut Criterion) {
+    c.bench_function("bulk_100x100", |b| {
+        b.iter(|| {
+            let mut q = Quamina::<usize>::new();
+            for i in 0..100 {
+                let values: String = (0..100)
+                    .map(|j| format!("\"value_{}_{}\"", i, j))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let pattern = format!(r#"{{"field": [{}]}}"#, values);
+                q.add_pattern(i, &pattern).unwrap();
+            }
+        })
+    });
+}
+
+/// Bulk benchmark with multiple fields per pattern
+fn bench_bulk_100x10_multifield(c: &mut Criterion) {
+    c.bench_function("bulk_100x10_multifield", |b| {
+        b.iter(|| {
+            let mut q = Quamina::<usize>::new();
+            for i in 0..100 {
+                let values: String = (0..10)
+                    .map(|j| format!("\"value_{}_{}\"", i, j))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let pattern = format!(
+                    r#"{{"field1": [{}], "field2": [{}], "field3": [{}]}}"#,
+                    values, values, values
+                );
+                q.add_pattern(i, &pattern).unwrap();
+            }
+        })
+    });
+}
+
 // === CityLots benchmarks (comparable to Go's citylots_bench_test.go) ===
 
 fn load_citylots_lines() -> Vec<Vec<u8>> {
@@ -685,6 +742,19 @@ fn bench_citylots(c: &mut Criterion) {
             q.matches_for_event(black_box(&lines[line_index])).unwrap()
         })
     });
+}
+
+// Configure longer benchmarks with reduced sample count
+fn configure_bulk_benchmarks() -> Criterion {
+    Criterion::default()
+        .sample_size(20)
+        .measurement_time(std::time::Duration::from_secs(10))
+}
+
+criterion_group! {
+    name = bulk_benches;
+    config = configure_bulk_benchmarks();
+    targets = bench_bulk_100x10, bench_bulk_100x100, bench_bulk_100x10_multifield
 }
 
 criterion_group!(
@@ -731,4 +801,4 @@ criterion_group!(
     // CityLots benchmark (comparable to Go)
     bench_citylots,
 );
-criterion_main!(benches);
+criterion_main!(benches, bulk_benches);

@@ -5080,4 +5080,44 @@ mod tests {
         assert!(cidr_single.matches("192.168.1.1"));
         assert!(!cidr_single.matches("192.168.1.2"));
     }
+
+    #[test]
+    fn test_bulk_add_correctness() {
+        // Verify that bulk pattern adding works correctly
+        // This is the logic used in bulk benchmarks
+        let mut q = Quamina::<usize>::new();
+
+        // Add 10 patterns with 5 values each
+        for i in 0..10 {
+            let values: String = (0..5)
+                .map(|j| format!("\"value_{}_{}\"", i, j))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let pattern = format!(r#"{{"field": [{}]}}"#, values);
+            q.add_pattern(i, &pattern).unwrap();
+        }
+
+        // Verify pattern count
+        assert_eq!(q.pattern_count(), 10);
+
+        // Test matching - pattern 3 should match value_3_2
+        let matches = q
+            .matches_for_event(r#"{"field": "value_3_2"}"#.as_bytes())
+            .unwrap();
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0], 3);
+
+        // Test matching - pattern 7 should match value_7_4
+        let matches = q
+            .matches_for_event(r#"{"field": "value_7_4"}"#.as_bytes())
+            .unwrap();
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0], 7);
+
+        // Test no match for non-existent value
+        let matches = q
+            .matches_for_event(r#"{"field": "value_99_0"}"#.as_bytes())
+            .unwrap();
+        assert!(matches.is_empty());
+    }
 }
