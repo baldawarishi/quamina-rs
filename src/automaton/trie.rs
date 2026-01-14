@@ -417,7 +417,12 @@ impl DirectBuilder {
     }
 
     /// Compute hash for a group of values for deduplication.
-    fn compute_group_hash(&self, values: &[&[u8]], depth: usize, fm_ptr: *const FieldMatcher) -> u64 {
+    fn compute_group_hash(
+        &self,
+        values: &[&[u8]],
+        depth: usize,
+        fm_ptr: *const FieldMatcher,
+    ) -> u64 {
         let mut hash: u64 = 5381;
 
         // Hash the suffix content
