@@ -104,7 +104,9 @@ impl TrieNode {
         let end_node = self.get_or_create_child(node, VALUE_TERMINATOR);
 
         // Add field transition (may have multiple patterns ending here)
-        self.nodes[end_node.get()].field_transitions.push(next_field);
+        self.nodes[end_node.get()]
+            .field_transitions
+            .push(next_field);
     }
 
     /// Insert multiple string values that share the same field matcher.
@@ -214,11 +216,7 @@ impl TrieNode {
     }
 
     /// Build an FaState for a child node.
-    fn build_child_state(
-        &self,
-        idx: TrieIdx,
-        cache: &mut FxHashMap<u64, Arc<FaState>>,
-    ) -> FaState {
+    fn build_child_state(&self, idx: TrieIdx, cache: &mut FxHashMap<u64, Arc<FaState>>) -> FaState {
         let child_table = self.build_small_table(idx, cache);
         let node = &self.nodes[idx.get()];
 
