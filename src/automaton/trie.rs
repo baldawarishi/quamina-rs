@@ -95,9 +95,7 @@ impl TrieNode {
 
         // Hash field transitions by their pointer addresses
         for fm in &self.field_transitions {
-            hash = hash
-                .wrapping_mul(33)
-                .wrapping_add(Arc::as_ptr(fm) as u64);
+            hash = hash.wrapping_mul(33).wrapping_add(Arc::as_ptr(fm) as u64);
         }
 
         self.hash = hash;
@@ -156,7 +154,11 @@ impl TrieNode {
     }
 
     /// Build an FaState for a child node.
-    fn build_child_state(&self, child: &TrieNode, cache: &mut HashMap<u64, Arc<FaState>>) -> FaState {
+    fn build_child_state(
+        &self,
+        child: &TrieNode,
+        cache: &mut HashMap<u64, Arc<FaState>>,
+    ) -> FaState {
         let child_table = child.build_small_table(cache);
 
         FaState {
