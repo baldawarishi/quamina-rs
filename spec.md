@@ -49,6 +49,7 @@ src/
 │   ├── fa_builders.rs  # make_string_fa, make_prefix_fa, merge_fas
 │   ├── nfa.rs          # traverse_dfa, traverse_nfa
 │   ├── arena.rs        # StateArena for cyclic NFA (regexp)
+│   ├── trie.rs         # ValueTrie for O(n) bulk string construction
 │   ├── thread_safe.rs  # FrozenFieldMatcher (immutable, for matching)
 │   └── mutable_matcher.rs  # MutableFieldMatcher (for building)
 └── wildcard.rs         # Shellstyle/wildcard matching
@@ -97,7 +98,7 @@ let q = QuaminaBuilder::<String>::new()
 ## Commands
 
 ```bash
-cargo test                    # 242 tests
+cargo test                    # 248 tests
 cargo bench status            # status_* benchmarks
 cargo bench citylots          # citylots benchmark
 cargo bench shellstyle        # shellstyle benchmark
