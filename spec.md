@@ -130,16 +130,17 @@ cargo clippy -- -D warnings   # CI runs this
 
 **Performance improvements (vs naive O(n²)):**
 
-| Benchmark | Naive | Hierarchical | Trie v1 | Trie v2 (Arena) | Total Speedup |
-|-----------|-------|--------------|---------|-----------------|---------------|
-| bulk_100x10 | 16ms | 11ms | 2.2ms | **1.8ms** | 9x |
-| bulk_1000x10 | ~5s | 182ms | 75ms | **70ms** | ~71x |
-| bulk_100x100 | 181ms | 119ms | 6.6ms | **3.9ms** | 46x |
-| bulk_100x10_multifield | 2.5s | 36ms | 6.2ms | **5.1ms** | 490x |
+| Benchmark | Naive | Hierarchical | Trie v1 | Trie v2 (Arena) | Packed Merge | Total Speedup |
+|-----------|-------|--------------|---------|-----------------|--------------|---------------|
+| bulk_100x10 | 16ms | 11ms | 2.2ms | 1.8ms | **1.1ms** | 15x |
+| bulk_1000x10 | ~5s | 182ms | 75ms | 70ms | **62ms** | ~81x |
+| bulk_100x100 | 181ms | 119ms | 6.6ms | 3.9ms | **3.1ms** | 58x |
+| bulk_100x10_multifield | 2.5s | 36ms | 6.2ms | 5.1ms | **4.3ms** | 581x |
 
 **Key files:**
-- `src/automaton/trie.rs`: Arena-based ValueTrie with hash deduplication
+- `src/automaton/trie.rs`: Arena-based ValueTrie with hash deduplication, DirectBuilder alternative
 - `src/automaton/mutable_matcher.rs`: `add_string_transitions_bulk()` uses trie
+- `src/automaton/fa_builders.rs`: `merge_tables_packed()` for efficient table merging
 - `benches/matching.rs`: Bulk benchmark suite
 
 **Approaches tried:**
@@ -147,6 +148,7 @@ cargo clippy -- -D warnings   # CI runs this
 2. ⚡ Hierarchical merge: O(n log n), good but not optimal
 3. ✅ Trie-based construction: O(n), optimal for string building
 4. ✅ Arena allocation + SmallVec: 17-41% faster than Box-per-node
+5. ✅ Packed merge: Avoids 256-element array allocation, 12-40% faster
 
 **Future optimization opportunities (for follow-up sessions):**
 - Parallel trie building with rayon for very large value sets
@@ -155,7 +157,7 @@ cargo clippy -- -D warnings   # CI runs this
 
 **Benchmarks to verify:**
 ```bash
-cargo bench bulk_100x10   # ~1.8ms
-cargo bench bulk_1000x10  # ~70ms
-cargo bench bulk_100x100  # ~3.9ms
+cargo bench bulk_100x10   # ~1.1ms
+cargo bench bulk_1000x10  # ~62ms
+cargo bench bulk_100x100  # ~3.1ms
 ```
