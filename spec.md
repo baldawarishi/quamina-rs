@@ -138,7 +138,7 @@ cargo clippy -- -D warnings   # CI runs this
 | bulk_100x10_multifield | 2.5s | 36ms | 6.2ms | 5.1ms | **4.3ms** | 581x |
 
 **Key files:**
-- `src/automaton/trie.rs`: Arena-based ValueTrie with hash deduplication, DirectBuilder alternative
+- `src/automaton/trie.rs`: Arena-based ValueTrie with hash deduplication
 - `src/automaton/mutable_matcher.rs`: `add_string_transitions_bulk()` uses trie
 - `src/automaton/fa_builders.rs`: `merge_tables_packed()` for efficient table merging
 - `benches/matching.rs`: Bulk benchmark suite
