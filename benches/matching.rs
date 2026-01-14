@@ -663,6 +663,23 @@ fn bench_bulk_100x10(c: &mut Criterion) {
     });
 }
 
+/// Larger bulk benchmark (1000 patterns × 10 values)
+fn bench_bulk_1000x10(c: &mut Criterion) {
+    c.bench_function("bulk_1000x10", |b| {
+        b.iter(|| {
+            let mut q = Quamina::<usize>::new();
+            for i in 0..1000 {
+                let values: String = (0..10)
+                    .map(|j| format!("\"value_{}_{}\"", i, j))
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let pattern = format!(r#"{{"field": [{}]}}"#, values);
+                q.add_pattern(i, &pattern).unwrap();
+            }
+        })
+    });
+}
+
 /// Smaller bulk benchmark (100 patterns × 100 values) for faster iteration
 fn bench_bulk_100x100(c: &mut Criterion) {
     c.bench_function("bulk_100x100", |b| {
@@ -754,7 +771,7 @@ fn configure_bulk_benchmarks() -> Criterion {
 criterion_group! {
     name = bulk_benches;
     config = configure_bulk_benchmarks();
-    targets = bench_bulk_100x10, bench_bulk_100x100, bench_bulk_100x10_multifield
+    targets = bench_bulk_100x10, bench_bulk_1000x10, bench_bulk_100x100, bench_bulk_100x10_multifield
 }
 
 criterion_group!(
