@@ -894,43 +894,6 @@ fn make_greater_fa_step(
     table
 }
 
-/// Merge multiple finite automata into one using hierarchical (tree) merging.
-///
-/// This is much more efficient than sequential merging when there are many FAs:
-/// - Sequential: O(n²) for n patterns
-/// - Hierarchical: O(n log n) for n patterns
-///
-/// The algorithm merges pairs in parallel-like fashion (though single-threaded),
-/// reducing the total number of merge operations.
-pub fn merge_fas_hierarchical(tables: Vec<SmallTable>) -> Option<SmallTable> {
-    if tables.is_empty() {
-        return None;
-    }
-
-    let mut current = tables;
-
-    // Keep merging pairs until we have a single table
-    while current.len() > 1 {
-        let mut next = Vec::with_capacity(current.len().div_ceil(2));
-
-        // Merge pairs
-        let mut i = 0;
-        while i + 1 < current.len() {
-            next.push(merge_fas(&current[i], &current[i + 1]));
-            i += 2;
-        }
-
-        // Handle odd element (carry over without merging)
-        if i < current.len() {
-            next.push(current[i].clone());
-        }
-
-        current = next;
-    }
-
-    current.into_iter().next()
-}
-
 /// Merge two finite automata into one that matches either pattern.
 ///
 /// This computes the union of two automata by merging their transition tables.

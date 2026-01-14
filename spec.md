@@ -4,7 +4,7 @@ Rust port of [quamina](https://github.com/timbray/quamina) - fast pattern-matchi
 
 ## Status
 
-**242 tests passing.** Full Go parity + Rust-only features. Rust 1.5-2x faster on all benchmarks. Synced with Go commit c443b44 (Jan 2026).
+**248 tests passing.** Full Go parity + Rust-only features. Rust 1.5-2x faster on all benchmarks. Synced with Go commit c443b44 (Jan 2026).
 
 | Benchmark | Go (ns) | Rust (ns) | Speedup |
 |-----------|---------|-----------|---------|
@@ -119,36 +119,39 @@ cargo clippy -- -D warnings   # CI runs this
 
 **Problem solved**: Adding many patterns with many values was O(n²) due to repeated `merge_fas` calls.
 
-**Solution**: Hierarchical merge for patterns with multiple exact string values.
-- `merge_fas_hierarchical()` does tree-reduce merging: O(n log n) instead of O(n²)
-- `add_string_transitions_bulk()` batches FA creation when all matchers are Exact strings
-- Automatically detects bulk cases in `MutableFieldMatcher.add_transition()`
+**Solution**: Trie-based bulk construction for patterns with multiple exact string values.
+- `ValueTrie` builds all strings into a trie with shared prefixes: O(n) construction
+- `add_string_transitions_bulk()` uses trie instead of hierarchical merge
+- Hash-based deduplication of identical end states
+- Single-pass conversion from trie to SmallTable
 
-**Performance improvements (100 patterns):**
+**Performance improvements (vs naive O(n²)):**
 
-| Benchmark | Before | After | Improvement |
-|-----------|--------|-------|-------------|
-| bulk_100x10 | 16ms | 11ms | 31% faster |
-| bulk_100x100 | 181ms | 119ms | 34% faster |
-| bulk_100x10_multifield | 2.5s | 36ms | **70x faster** |
+| Benchmark | Naive | Hierarchical | Trie | Speedup |
+|-----------|-------|--------------|------|---------|
+| bulk_100x10 | 16ms | 11ms | **2.2ms** | 7x |
+| bulk_1000x10 | ~5s | 182ms | **75ms** | ~66x |
+| bulk_100x100 | 181ms | 119ms | **6.6ms** | 27x |
+| bulk_100x10_multifield | 2.5s | 36ms | **6.2ms** | 400x |
 
-**Key files changed:**
-- `src/automaton/fa_builders.rs`: Added `merge_fas_hierarchical()`
-- `src/automaton/mutable_matcher.rs`: Added `add_string_transitions_bulk()` and bulk detection
-- `benches/matching.rs`: Added bulk benchmark suite
+**Key files:**
+- `src/automaton/trie.rs`: ValueTrie with hash-based deduplication
+- `src/automaton/mutable_matcher.rs`: `add_string_transitions_bulk()` uses trie
+- `benches/matching.rs`: Bulk benchmark suite
 
 **Approaches tried:**
-1. ❌ Hash-consed states: Overhead outweighed benefits, states with unique values don't share
-2. ✅ Hierarchical merge: Simple, effective, no dependencies needed
+1. ❌ Hash-consed states alone: Overhead outweighed benefits
+2. ⚡ Hierarchical merge: O(n log n), good but not optimal
+3. ✅ Trie-based construction: O(n), optimal for string building
 
 **Future optimization opportunities (for follow-up sessions):**
-- Trie-based bulk construction: Could provide 2-5x more speedup (proven in Go fork)
-- Parallel merge with rayon: Would help with multi-core systems
-- Current solution handles most real-world cases well
+- Parallel trie building with rayon for very large value sets
+- Extended trie support for prefix/monocase patterns (as in Go fork)
+- Incremental trie updates for addPattern() use case
 
 **Benchmarks to verify:**
 ```bash
-cargo bench bulk_100x10   # ~11ms (was 16ms)
-cargo bench bulk_1000x10  # ~182ms
-cargo bench bulk_100x100  # ~119ms (was 181ms)
+cargo bench bulk_100x10   # ~2.2ms
+cargo bench bulk_1000x10  # ~75ms
+cargo bench bulk_100x100  # ~6.6ms
 ```

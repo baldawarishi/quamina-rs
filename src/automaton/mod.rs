@@ -23,6 +23,7 @@ mod mutable_matcher;
 mod nfa;
 mod small_table;
 mod thread_safe;
+pub mod trie;
 
 // Re-export from small_table
 pub use small_table::{

@@ -15,10 +15,11 @@ use super::arena::{traverse_arena_nfa, ArenaNfaBuffers, StateArena, StateId};
 use super::fa_builders::{
     make_anything_but_fa, make_monocase_fa, make_numeric_greater_fa, make_numeric_less_fa,
     make_numeric_range_fa, make_prefix_fa, make_shellstyle_fa, make_string_fa, make_wildcard_fa,
-    merge_fas, merge_fas_hierarchical,
+    merge_fas,
 };
 use super::nfa::{traverse_dfa, traverse_nfa};
 use super::small_table::{FieldMatcher, NfaBuffers, SmallTable};
+use super::trie::ValueTrie;
 use crate::regexp::make_regexp_nfa_arena;
 
 /// A mutable field matcher used during pattern building.
@@ -202,32 +203,33 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
         }
     }
 
-    /// Add multiple string transitions efficiently using hierarchical merge.
-    /// This is O(n log n) instead of O(n²) for n values.
+    /// Add multiple string transitions efficiently using trie-based construction.
+    /// This is O(n) instead of O(n²) for n values.
+    ///
+    /// Uses a trie to naturally share common prefixes and convert to SmallTable
+    /// in a single pass, avoiding repeated merge operations.
     fn add_string_transitions_bulk(&self, values: &[&[u8]]) -> Rc<MutableFieldMatcher<X>> {
         if values.is_empty() {
             return Rc::new(MutableFieldMatcher::new());
         }
 
-        // If only one value, use the normal path
+        // If only one value, use the normal path (singleton optimization)
         if values.len() == 1 {
             return self.add_string_transition(values[0]);
         }
 
-        // Create a shared next state for all values
+        // Create a shared next state for all new values
         let next_fm = Rc::new(MutableFieldMatcher::new());
         let next_arc = Arc::new(FieldMatcher::new());
         self.transition_map
             .borrow_mut()
             .insert(Arc::as_ptr(&next_arc), next_fm.clone());
 
-        // Build all FAs
-        let mut fas: Vec<SmallTable> = values
-            .iter()
-            .map(|val| make_string_fa(val, next_arc.clone()))
-            .collect();
+        // Build trie from all new values
+        let mut trie = ValueTrie::new();
+        trie.insert_all(values, next_arc);
 
-        // Include singleton if present
+        // Include singleton in trie if present
         if self.singleton_match.borrow().is_some() {
             let singleton_val = self.singleton_match.borrow().clone().unwrap();
             let singleton_trans = self.singleton_transition.borrow().clone().unwrap();
@@ -235,19 +237,20 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
             self.transition_map
                 .borrow_mut()
                 .insert(Arc::as_ptr(&singleton_arc), singleton_trans);
-            fas.push(make_string_fa(&singleton_val, singleton_arc));
+            trie.insert(&singleton_val, singleton_arc);
             *self.singleton_match.borrow_mut() = None;
             *self.singleton_transition.borrow_mut() = None;
         }
 
-        // Include existing start_table if present
-        if let Some(existing) = self.start_table.borrow().clone() {
-            fas.push(existing);
-        }
+        // Convert trie to SmallTable
+        let trie_table = trie.to_small_table();
 
-        // Hierarchical merge
-        if let Some(merged) = merge_fas_hierarchical(fas) {
-            *self.start_table.borrow_mut() = Some(merged);
+        // Merge with existing start_table if present (single merge operation)
+        let mut start_table = self.start_table.borrow_mut();
+        if let Some(ref existing) = *start_table {
+            *start_table = Some(merge_fas(existing, &trie_table));
+        } else {
+            *start_table = Some(trie_table);
         }
 
         next_fm
