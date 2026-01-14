@@ -998,29 +998,96 @@ fn merge_fa_states(
 }
 
 /// Merge two tables byte-by-byte, recursively merging overlapping transitions.
+/// Uses packed representation directly for efficiency.
+#[inline(never)]
 fn merge_tables_bytewise(
     table1: &SmallTable,
     table2: &SmallTable,
     memo: &mut HashMap<MergeKey, Arc<FaState>>,
 ) -> SmallTable {
-    let unpacked1 = table1.unpack();
-    let unpacked2 = table2.unpack();
+    // Fast path: if one table is empty/default-only, use the other
+    let t1_is_default = table1.ceilings.len() == 1 && table1.steps[0].is_none();
+    let t2_is_default = table2.ceilings.len() == 1 && table2.steps[0].is_none();
 
-    let mut merged: [Option<Arc<FaState>>; BYTE_CEILING] = std::array::from_fn(|_| None);
-    for i in 0..BYTE_CEILING {
-        merged[i] = match (&unpacked1[i], &unpacked2[i]) {
-            (None, None) => None,
-            (Some(s), None) | (None, Some(s)) => Some(s.clone()),
-            (Some(s1), Some(s2)) => {
-                // Recursively merge the states
-                Some(merge_fa_states(s1, s2, memo))
-            }
-        };
+    if t1_is_default && t2_is_default {
+        return SmallTable::new();
+    }
+    if t1_is_default {
+        return table2.clone();
+    }
+    if t2_is_default {
+        return table1.clone();
     }
 
-    let mut result = SmallTable::new();
-    result.pack(&merged);
-    result
+    // Use packed merge for better performance
+    merge_tables_packed(table1, table2, memo)
+}
+
+/// Merge two SmallTables directly in packed form without unpacking to 256 elements.
+#[inline(never)]
+fn merge_tables_packed(
+    table1: &SmallTable,
+    table2: &SmallTable,
+    memo: &mut HashMap<MergeKey, Arc<FaState>>,
+) -> SmallTable {
+    let mut ceilings = Vec::with_capacity(table1.ceilings.len() + table2.ceilings.len());
+    let mut steps = Vec::with_capacity(table1.steps.len() + table2.steps.len());
+
+    let mut i1 = 0usize;
+    let mut i2 = 0usize;
+    let mut pos = 0u8; // Current byte position
+
+    while pos < BYTE_CEILING as u8 {
+        let c1 = table1.ceilings[i1];
+        let c2 = table2.ceilings[i2];
+        let s1 = &table1.steps[i1];
+        let s2 = &table2.steps[i2];
+
+        // Next boundary is the minimum of both ceilings
+        let next_ceiling = c1.min(c2);
+
+        // Merge the states for this range
+        let merged_state = match (s1, s2) {
+            (None, None) => None,
+            (Some(s), None) | (None, Some(s)) => Some(s.clone()),
+            (Some(st1), Some(st2)) => Some(merge_fa_states(st1, st2, memo)),
+        };
+
+        // Only add a new entry if it differs from the previous one
+        if steps.is_empty() || !arc_option_eq(&merged_state, steps.last().unwrap()) {
+            ceilings.push(next_ceiling);
+            steps.push(merged_state);
+        } else if let Some(last_ceil) = ceilings.last_mut() {
+            // Extend the previous range
+            *last_ceil = next_ceiling;
+        }
+
+        // Advance past this boundary
+        if c1 == next_ceiling {
+            i1 += 1;
+        }
+        if c2 == next_ceiling {
+            i2 += 1;
+        }
+        pos = next_ceiling;
+    }
+
+    SmallTable {
+        ceilings,
+        steps,
+        epsilons: Vec::new(),
+        spinout: None,
+    }
+}
+
+/// Compare two Option<Arc<FaState>> by pointer equality.
+#[inline]
+fn arc_option_eq(a: &Option<Arc<FaState>>, b: &Option<Arc<FaState>>) -> bool {
+    match (a, b) {
+        (None, None) => true,
+        (Some(x), Some(y)) => Arc::ptr_eq(x, y),
+        _ => false,
+    }
 }
 
 #[cfg(test)]
