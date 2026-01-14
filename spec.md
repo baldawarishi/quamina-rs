@@ -121,22 +121,24 @@ cargo clippy -- -D warnings   # CI runs this
 **Problem solved**: Adding many patterns with many values was O(n²) due to repeated `merge_fas` calls.
 
 **Solution**: Trie-based bulk construction for patterns with multiple exact string values.
-- `ValueTrie` builds all strings into a trie with shared prefixes: O(n) construction
-- `add_string_transitions_bulk()` uses trie instead of hierarchical merge
-- Hash-based deduplication of identical end states
+- Arena-based trie: all nodes in contiguous Vec, referenced by index (fewer heap allocs)
+- SmallVec for children (most nodes have 1-4 children)
+- Binary search for sorted children (consistent hashing, no sort needed)
+- FxHashMap for state deduplication cache
+- Iterative hash generation (avoids recursion overhead and SmallVec clones)
 - Single-pass conversion from trie to SmallTable
 
 **Performance improvements (vs naive O(n²)):**
 
-| Benchmark | Naive | Hierarchical | Trie | Speedup |
-|-----------|-------|--------------|------|---------|
-| bulk_100x10 | 16ms | 11ms | **2.2ms** | 7x |
-| bulk_1000x10 | ~5s | 182ms | **75ms** | ~66x |
-| bulk_100x100 | 181ms | 119ms | **6.6ms** | 27x |
-| bulk_100x10_multifield | 2.5s | 36ms | **6.2ms** | 400x |
+| Benchmark | Naive | Hierarchical | Trie v1 | Trie v2 (Arena) | Total Speedup |
+|-----------|-------|--------------|---------|-----------------|---------------|
+| bulk_100x10 | 16ms | 11ms | 2.2ms | **1.8ms** | 9x |
+| bulk_1000x10 | ~5s | 182ms | 75ms | **70ms** | ~71x |
+| bulk_100x100 | 181ms | 119ms | 6.6ms | **3.9ms** | 46x |
+| bulk_100x10_multifield | 2.5s | 36ms | 6.2ms | **5.1ms** | 490x |
 
 **Key files:**
-- `src/automaton/trie.rs`: ValueTrie with hash-based deduplication
+- `src/automaton/trie.rs`: Arena-based ValueTrie with hash deduplication
 - `src/automaton/mutable_matcher.rs`: `add_string_transitions_bulk()` uses trie
 - `benches/matching.rs`: Bulk benchmark suite
 
@@ -144,6 +146,7 @@ cargo clippy -- -D warnings   # CI runs this
 1. ❌ Hash-consed states alone: Overhead outweighed benefits
 2. ⚡ Hierarchical merge: O(n log n), good but not optimal
 3. ✅ Trie-based construction: O(n), optimal for string building
+4. ✅ Arena allocation + SmallVec: 17-41% faster than Box-per-node
 
 **Future optimization opportunities (for follow-up sessions):**
 - Parallel trie building with rayon for very large value sets
@@ -152,7 +155,7 @@ cargo clippy -- -D warnings   # CI runs this
 
 **Benchmarks to verify:**
 ```bash
-cargo bench bulk_100x10   # ~2.2ms
-cargo bench bulk_1000x10  # ~75ms
-cargo bench bulk_100x100  # ~6.6ms
+cargo bench bulk_100x10   # ~1.8ms
+cargo bench bulk_1000x10  # ~70ms
+cargo bench bulk_100x100  # ~3.9ms
 ```

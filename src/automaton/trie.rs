@@ -7,33 +7,84 @@
 //! Based on the approach from https://github.com/DigitalPath-Inc/quamina
 //!
 //! ## Key optimizations:
+//! - Arena allocation: all trie nodes stored in a Vec, referenced by index
 //! - Shared prefixes are naturally deduplicated by the trie structure
 //! - Hash-based deduplication of end states avoids creating duplicate FaStates
 //! - Single-pass conversion avoids the unpack/repack overhead of merge_fas
 
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
+use smallvec::SmallVec;
 use std::sync::Arc;
 
 use super::small_table::{FaState, FieldMatcher, SmallTable, VALUE_TERMINATOR};
 
-/// A node in the value trie.
+/// Index into the trie arena.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+struct TrieIdx(u32);
+
+impl TrieIdx {
+    fn get(self) -> usize {
+        self.0 as usize
+    }
+}
+
+/// A node in the value trie, stored in an arena.
 ///
-/// Each node has byte-indexed children and may mark the end of one or more values.
+/// Uses SmallVec for children since most nodes have few children.
 #[derive(Default)]
-pub struct TrieNode {
-    /// Children indexed by byte value
-    children: HashMap<u8, Box<TrieNode>>,
+struct ArenaTrieNode {
+    /// Children as (byte, index) pairs, kept sorted by byte for consistent hashing
+    children: SmallVec<[(u8, TrieIdx); 4]>,
     /// If this is an end node, the field matchers to transition to
-    /// Multiple values can share the same end state
-    field_transitions: Vec<Arc<FieldMatcher>>,
+    field_transitions: SmallVec<[Arc<FieldMatcher>; 1]>,
     /// Cached hash for deduplication
     hash: u64,
+}
+
+/// Arena-based trie for bulk string construction.
+///
+/// All nodes are stored in a contiguous Vec, reducing heap allocations.
+pub struct TrieNode {
+    nodes: Vec<ArenaTrieNode>,
+    root: TrieIdx,
+}
+
+impl Default for TrieNode {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl TrieNode {
     /// Create a new empty trie node.
     pub fn new() -> Self {
-        Self::default()
+        let mut nodes = Vec::with_capacity(64);
+        nodes.push(ArenaTrieNode::default());
+        Self {
+            nodes,
+            root: TrieIdx(0),
+        }
+    }
+
+    /// Allocate a new node in the arena.
+    fn alloc(&mut self) -> TrieIdx {
+        let idx = self.nodes.len();
+        self.nodes.push(ArenaTrieNode::default());
+        TrieIdx(idx as u32)
+    }
+
+    /// Find or create a child for the given byte.
+    fn get_or_create_child(&mut self, parent: TrieIdx, byte: u8) -> TrieIdx {
+        // Binary search for the byte
+        let children = &self.nodes[parent.get()].children;
+        match children.binary_search_by_key(&byte, |&(b, _)| b) {
+            Ok(pos) => children[pos].1,
+            Err(pos) => {
+                let child = self.alloc();
+                self.nodes[parent.get()].children.insert(pos, (byte, child));
+                child
+            }
+        }
     }
 
     /// Insert a string value into the trie.
@@ -42,24 +93,18 @@ impl TrieNode {
     /// * `value` - The byte sequence to insert
     /// * `next_field` - The field matcher to transition to when this value matches
     pub fn insert(&mut self, value: &[u8], next_field: Arc<FieldMatcher>) {
-        let mut node = self;
+        let mut node = self.root;
 
         // Walk/create path for each byte
         for &byte in value {
-            node = node
-                .children
-                .entry(byte)
-                .or_insert_with(|| Box::new(TrieNode::new()));
+            node = self.get_or_create_child(node, byte);
         }
 
         // Mark end state - add transition on VALUE_TERMINATOR
-        let end_node = node
-            .children
-            .entry(VALUE_TERMINATOR)
-            .or_insert_with(|| Box::new(TrieNode::new()));
+        let end_node = self.get_or_create_child(node, VALUE_TERMINATOR);
 
         // Add field transition (may have multiple patterns ending here)
-        end_node.field_transitions.push(next_field);
+        self.nodes[end_node.get()].field_transitions.push(next_field);
     }
 
     /// Insert multiple string values that share the same field matcher.
@@ -72,34 +117,48 @@ impl TrieNode {
         }
     }
 
-    /// Generate a hash for this node (for deduplication).
+    /// Generate hashes for all nodes (for deduplication).
     ///
-    /// Uses DJB2 hash algorithm, recursively hashing children and field transitions.
-    fn generate_hash(&mut self) -> u64 {
-        if self.hash != 0 {
-            return self.hash;
+    /// Uses DJB2 hash algorithm iteratively using post-order traversal.
+    fn generate_all_hashes(&mut self) {
+        // Post-order traversal: process children before parents
+        // Stack holds (node_idx, next_child_to_process)
+        let mut stack: Vec<(TrieIdx, usize)> = vec![(self.root, 0)];
+
+        while let Some((idx, child_pos)) = stack.pop() {
+            let node = &self.nodes[idx.get()];
+
+            // Already computed?
+            if node.hash != 0 {
+                continue;
+            }
+
+            // Check if all children have been processed
+            if child_pos < node.children.len() {
+                // Push self back with incremented position
+                stack.push((idx, child_pos + 1));
+                // Push child to be processed first
+                let child_idx = node.children[child_pos].1;
+                stack.push((child_idx, 0));
+            } else {
+                // All children processed, compute this node's hash
+                let mut hash: u64 = 5381; // DJB2 initial value
+
+                // Children are already sorted, hash them in order
+                for &(byte, child_idx) in &self.nodes[idx.get()].children {
+                    let child_hash = self.nodes[child_idx.get()].hash;
+                    hash = hash.wrapping_mul(33).wrapping_add(byte as u64);
+                    hash = hash.wrapping_mul(33).wrapping_add(child_hash);
+                }
+
+                // Hash field transitions by their pointer addresses
+                for fm in &self.nodes[idx.get()].field_transitions {
+                    hash = hash.wrapping_mul(33).wrapping_add(Arc::as_ptr(fm) as u64);
+                }
+
+                self.nodes[idx.get()].hash = hash;
+            }
         }
-
-        let mut hash: u64 = 5381; // DJB2 initial value
-
-        // Hash children in sorted order for consistency
-        let mut child_keys: Vec<u8> = self.children.keys().copied().collect();
-        child_keys.sort_unstable();
-
-        for key in child_keys {
-            let child = self.children.get_mut(&key).unwrap();
-            let child_hash = child.generate_hash();
-            hash = hash.wrapping_mul(33).wrapping_add(key as u64);
-            hash = hash.wrapping_mul(33).wrapping_add(child_hash);
-        }
-
-        // Hash field transitions by their pointer addresses
-        for fm in &self.field_transitions {
-            hash = hash.wrapping_mul(33).wrapping_add(Arc::as_ptr(fm) as u64);
-        }
-
-        self.hash = hash;
-        hash
     }
 
     /// Convert the trie to a SmallTable in a single pass.
@@ -107,43 +166,44 @@ impl TrieNode {
     /// Uses hash-based deduplication to reuse identical FaStates.
     pub fn to_small_table(&mut self) -> SmallTable {
         // Generate hashes for deduplication
-        self.generate_hash();
+        self.generate_all_hashes();
 
         // Cache for deduplicated states
-        let mut state_cache: HashMap<u64, Arc<FaState>> = HashMap::new();
+        let mut state_cache: FxHashMap<u64, Arc<FaState>> = FxHashMap::default();
 
-        self.build_small_table(&mut state_cache)
+        self.build_small_table(self.root, &mut state_cache)
     }
 
     /// Build SmallTable recursively with state caching.
-    fn build_small_table(&self, cache: &mut HashMap<u64, Arc<FaState>>) -> SmallTable {
-        if self.children.is_empty() {
+    fn build_small_table(
+        &self,
+        idx: TrieIdx,
+        cache: &mut FxHashMap<u64, Arc<FaState>>,
+    ) -> SmallTable {
+        let node = &self.nodes[idx.get()];
+        if node.children.is_empty() {
             // Leaf node - create final state with field transitions
             return SmallTable::new();
         }
 
-        // Collect children sorted by byte
-        let mut child_bytes: Vec<u8> = self.children.keys().copied().collect();
-        child_bytes.sort_unstable();
+        // Build states for each child (children are already sorted)
+        let mut indices = Vec::with_capacity(node.children.len());
+        let mut steps = Vec::with_capacity(node.children.len());
 
-        // Build states for each child
-        let mut indices = Vec::with_capacity(child_bytes.len());
-        let mut steps = Vec::with_capacity(child_bytes.len());
-
-        for byte in child_bytes {
-            let child = self.children.get(&byte).unwrap();
+        for &(byte, child_idx) in &node.children {
+            let child = &self.nodes[child_idx.get()];
 
             // Check cache first
             let state = if child.hash != 0 {
                 if let Some(cached) = cache.get(&child.hash) {
                     cached.clone()
                 } else {
-                    let state = Arc::new(self.build_child_state(child, cache));
+                    let state = Arc::new(self.build_child_state(child_idx, cache));
                     cache.insert(child.hash, state.clone());
                     state
                 }
             } else {
-                Arc::new(self.build_child_state(child, cache))
+                Arc::new(self.build_child_state(child_idx, cache))
             };
 
             indices.push(byte);
@@ -156,14 +216,15 @@ impl TrieNode {
     /// Build an FaState for a child node.
     fn build_child_state(
         &self,
-        child: &TrieNode,
-        cache: &mut HashMap<u64, Arc<FaState>>,
+        idx: TrieIdx,
+        cache: &mut FxHashMap<u64, Arc<FaState>>,
     ) -> FaState {
-        let child_table = child.build_small_table(cache);
+        let child_table = self.build_small_table(idx, cache);
+        let node = &self.nodes[idx.get()];
 
         FaState {
             table: child_table,
-            field_transitions: child.field_transitions.clone(),
+            field_transitions: node.field_transitions.to_vec(),
         }
     }
 }
@@ -202,7 +263,7 @@ impl ValueTrie {
 
     /// Check if the trie is empty.
     pub fn is_empty(&self) -> bool {
-        self.root.children.is_empty()
+        self.root.nodes[0].children.is_empty()
     }
 }
 
