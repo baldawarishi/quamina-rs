@@ -239,28 +239,7 @@ impl<X: Clone + Eq + Hash> BuildState<X> {
 /// This matcher is `Send + Sync`, allowing concurrent access from multiple threads.
 /// Pattern addition is serialized via a mutex, while matching is lock-free.
 ///
-/// # Example
-/// ```ignore
-/// use quamina::automaton::ThreadSafeCoreMatcher;
-/// use quamina::automaton::EventField;
-/// use quamina::json::Matcher;  // Internal module
-///
-/// let matcher: ThreadSafeCoreMatcher<String> = ThreadSafeCoreMatcher::new();
-///
-/// // Add patterns (thread-safe, serialized)
-/// matcher.add_pattern("p1".to_string(), &[
-///     ("status".to_string(), vec![Matcher::Exact("active".to_string())])
-/// ]);
-///
-/// // Match events (thread-safe, concurrent)
-/// let fields = vec![EventField {
-///     path: "status".to_string(),
-///     value: "active".to_string(),
-///     array_trail: vec![],
-///     is_number: false,
-/// }];
-/// let matches = matcher.matches_for_fields(&fields);
-/// ```
+/// See `tests::test_thread_safe_core_matcher_basic` for usage example.
 pub struct ThreadSafeCoreMatcher<X: Clone + Eq + Hash + Send + Sync> {
     /// The frozen root - atomically swappable, lock-free reads
     root: ArcSwap<FrozenFieldMatcher<X>>,
@@ -848,5 +827,33 @@ impl<X: Clone + Eq + std::hash::Hash> AutomatonValueMatcher<X> {
         }
 
         matches
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::json::Matcher;
+
+    #[test]
+    fn test_thread_safe_core_matcher_basic() {
+        let matcher: ThreadSafeCoreMatcher<String> = ThreadSafeCoreMatcher::new();
+
+        // Add patterns (thread-safe, serialized)
+        matcher.add_pattern(
+            "p1".to_string(),
+            &[("status".to_string(), vec![Matcher::Exact("active".to_string())])],
+        );
+
+        // Match events (thread-safe, concurrent)
+        let fields = vec![EventField {
+            path: "status".to_string(),
+            value: "active".to_string(),
+            array_trail: vec![],
+            is_number: false,
+        }];
+        let matches = matcher.matches_for_fields(&fields);
+
+        assert_eq!(matches, vec!["p1".to_string()]);
     }
 }
