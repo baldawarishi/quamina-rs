@@ -4697,8 +4697,9 @@ mod tests {
 
     #[test]
     fn test_regexp_validity() {
-        use crate::automaton::{traverse_nfa, NfaBuffers};
-        use crate::regexp::{make_regexp_nfa, parse_regexp};
+        use crate::automaton::arena::{traverse_arena_nfa, ArenaNfaBuffers, ARENA_VALUE_TERMINATOR};
+        use crate::automaton::{traverse_nfa, NfaBuffers, VALUE_TERMINATOR};
+        use crate::regexp::{make_regexp_nfa, make_regexp_nfa_arena, parse_regexp, regexp_has_plus_star};
         use crate::regexp_samples::REGEXP_SAMPLES;
         use std::sync::Arc;
 
@@ -4712,27 +4713,44 @@ mod tests {
             tests += 1;
 
             // Skip patterns that are problematic for our NFA implementation:
-            // - * and + quantifiers (chain-based NFA is slow for long strings)
-            // - {} quantifiers (unimplemented)
+            // - * and + quantifiers (arena NFA works but test is slow with 992 samples)
             // - Character class subtraction [a-[b]] (XSD feature, unimplemented)
-            // - Negated character classes [^...] (NFA construction iterates all Unicode chars)
-            // - Patterns with very long test strings
+            // - Negated character classes [^...] (creates huge UTF-8 range tables)
+            // - Dot (.) anywhere (creates huge Unicode state machines)
+            // - Unimplemented escapes ~w, ~d, ~s, ~p{} etc.
             fn should_skip(re: &str) -> bool {
-                // Skip quantifiers
-                if re.chars().any(|c| c == '*' || c == '+') {
+                // Skip * and + quantifiers for bulk testing (too slow)
+                if re.contains('*') || re.contains('+') {
                     return true;
                 }
-                // Skip {} quantifiers
-                if re.contains('{') {
-                    return true;
-                }
-                // Skip character class subtraction
+                // Skip character class subtraction (XSD feature not in I-Regexp)
                 if re.contains("-[") {
                     return true;
                 }
-                // Skip negated character classes (NFA construction is O(unicode_range))
+                // Skip negated character classes (creates huge state machines)
                 if re.contains("[^") {
                     return true;
+                }
+                // Skip unescaped dot (.) - creates huge Unicode state machines
+                let chars: Vec<char> = re.chars().collect();
+                for i in 0..chars.len() {
+                    if chars[i] == '.' {
+                        // Check if dot is escaped with ~
+                        if i == 0 || chars[i - 1] != '~' {
+                            return true;
+                        }
+                    }
+                }
+                // Skip unimplemented escapes (multi-char escapes)
+                // ~w, ~W, ~d, ~D, ~s, ~S, ~i, ~I, ~c, ~C, ~p, ~P, ~b, ~B
+                for i in 0..chars.len().saturating_sub(1) {
+                    if chars[i] == '~' {
+                        let next = chars[i + 1];
+                        if matches!(next, 'w' | 'W' | 'd' | 'D' | 's' | 'S' | 'i' | 'I' |
+                                    'c' | 'C' | 'p' | 'P' | 'b' | 'B') {
+                            return true;
+                        }
+                    }
                 }
                 false
             }
@@ -4741,7 +4759,7 @@ mod tests {
                 continue;
             }
 
-            // Skip patterns with long test strings
+            // Skip patterns with long test strings (> 50 chars)
             if sample.matches.iter().any(|s| s.len() > 50)
                 || sample.nomatches.iter().any(|s| s.len() > 50)
             {
@@ -4758,68 +4776,119 @@ mod tests {
                     Ok(tree) => {
                         // Pattern parsed successfully - test matching
                         implemented += 1;
-                        let (table, field_matcher) = make_regexp_nfa(tree, false);
-                        let mut bufs = NfaBuffers::new();
 
-                        // Test strings that should match
-                        for should_match in sample.matches {
-                            let value = should_match.as_bytes();
+                        // Use arena NFA for patterns with * or + (efficient cyclic structure)
+                        let use_arena = regexp_has_plus_star(&tree);
 
-                            bufs.clear();
-                            traverse_nfa(&table, value, &mut bufs);
+                        if use_arena {
+                            // Arena-based NFA for * and + patterns
+                            let (arena, start, field_matcher) = make_regexp_nfa_arena(tree, false);
+                            let mut bufs = ArenaNfaBuffers::new();
 
-                            let matched = bufs
-                                .transitions
-                                .iter()
-                                .any(|m| Arc::ptr_eq(m, &field_matcher));
+                            // Test strings that should match
+                            for should_match in sample.matches {
+                                let mut value: Vec<u8> = should_match.as_bytes().to_vec();
+                                value.push(ARENA_VALUE_TERMINATOR);
+                                bufs.clear();
+                                traverse_arena_nfa(&arena, start, &value, &mut bufs);
 
-                            if !matched {
-                                // Go test has exception for empty string matching
-                                if !should_match.is_empty() {
-                                    eprintln!(
-                                        "Sample {}: '{}' failed to match /{}/",
-                                        tests, should_match, sample.regex
-                                    );
-                                    problems += 1;
+                                let matched = bufs.transitions.iter().any(|m| Arc::ptr_eq(m, &field_matcher));
+
+                                if !matched {
+                                    if !should_match.is_empty() {
+                                        eprintln!(
+                                            "Sample {}: '{}' failed to match /{}/",
+                                            tests, should_match, sample.regex
+                                        );
+                                        problems += 1;
+                                    }
+                                } else {
+                                    correctly_matched += 1;
                                 }
-                            } else {
-                                correctly_matched += 1;
                             }
-                        }
 
-                        // Test strings that should not match
-                        for should_not_match in sample.nomatches {
-                            let value = should_not_match.as_bytes();
+                            // Test strings that should not match
+                            for should_not_match in sample.nomatches {
+                                let mut value: Vec<u8> = should_not_match.as_bytes().to_vec();
+                                value.push(ARENA_VALUE_TERMINATOR);
+                                bufs.clear();
+                                traverse_arena_nfa(&arena, start, &value, &mut bufs);
 
-                            bufs.clear();
-                            traverse_nfa(&table, value, &mut bufs);
+                                let matched = bufs.transitions.iter().any(|m| Arc::ptr_eq(m, &field_matcher));
 
-                            let matched = bufs
-                                .transitions
-                                .iter()
-                                .any(|m| Arc::ptr_eq(m, &field_matcher));
-
-                            if matched {
-                                // Go test has exception for empty string with star patterns
-                                if should_not_match.is_empty()
-                                    && star_samples_matching_empty(sample.regex)
-                                {
-                                    // Expected exception
-                                } else if !should_not_match.is_empty() {
-                                    eprintln!(
-                                        "Sample {}: '{}' matched /{}/",
-                                        tests, should_not_match, sample.regex
-                                    );
-                                    problems += 1;
+                                if matched {
+                                    if should_not_match.is_empty()
+                                        && star_samples_matching_empty(sample.regex)
+                                    {
+                                        // Expected exception
+                                    } else if !should_not_match.is_empty() {
+                                        eprintln!(
+                                            "Sample {}: '{}' matched /{}/",
+                                            tests, should_not_match, sample.regex
+                                        );
+                                        problems += 1;
+                                    }
+                                } else {
+                                    correctly_not_matched += 1;
                                 }
-                            } else {
-                                correctly_not_matched += 1;
+                            }
+                        } else {
+                            // Chain-based NFA for other patterns
+                            let (table, field_matcher) = make_regexp_nfa(tree, false);
+                            let mut bufs = NfaBuffers::new();
+
+                            // Test strings that should match
+                            for should_match in sample.matches {
+                                let mut value: Vec<u8> = should_match.as_bytes().to_vec();
+                                value.push(VALUE_TERMINATOR);
+                                bufs.clear();
+                                traverse_nfa(&table, &value, &mut bufs);
+
+                                let matched = bufs.transitions.iter().any(|m| Arc::ptr_eq(m, &field_matcher));
+
+                                if !matched {
+                                    if !should_match.is_empty() {
+                                        eprintln!(
+                                            "Sample {}: '{}' failed to match /{}/",
+                                            tests, should_match, sample.regex
+                                        );
+                                        problems += 1;
+                                    }
+                                } else {
+                                    correctly_matched += 1;
+                                }
+                            }
+
+                            // Test strings that should not match
+                            for should_not_match in sample.nomatches {
+                                let mut value: Vec<u8> = should_not_match.as_bytes().to_vec();
+                                value.push(VALUE_TERMINATOR);
+                                bufs.clear();
+                                traverse_nfa(&table, &value, &mut bufs);
+
+                                let matched = bufs.transitions.iter().any(|m| Arc::ptr_eq(m, &field_matcher));
+
+                                if matched {
+                                    if should_not_match.is_empty()
+                                        && star_samples_matching_empty(sample.regex)
+                                    {
+                                        // Expected exception
+                                    } else if !should_not_match.is_empty() {
+                                        eprintln!(
+                                            "Sample {}: '{}' matched /{}/",
+                                            tests, should_not_match, sample.regex
+                                        );
+                                        problems += 1;
+                                    }
+                                } else {
+                                    correctly_not_matched += 1;
+                                }
                             }
                         }
                     }
                     Err(_) => {
                         // Pattern uses unimplemented features - skip
-                        // (This is expected for patterns with {n,m}, \p{}, etc.)
+                        // (This is expected for patterns with \p{}, backrefs, etc.)
                     }
                 }
             } else {

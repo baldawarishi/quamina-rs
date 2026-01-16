@@ -830,11 +830,18 @@ fn read_range_quantifier(
                 offset: parse.last_index,
             })?;
             qa.quant_min = lo;
-            qa.quant_max = REGEXP_QUANTIFIER_MAX;
+            // Default to exact match; will be updated if comma is present
+            qa.quant_max = lo;
 
             match b {
+                // {n} means exactly n times
                 '}' => return Ok(()),
-                ',' => break,
+                // {n,} or {n,m} - will parse upper bound below
+                ',' => {
+                    // Set to unbounded initially for {n,} case
+                    qa.quant_max = REGEXP_QUANTIFIER_MAX;
+                    break;
+                }
                 _ => {
                     return Err(RegexpError {
                         message: format!("unexpected character '{}' in quantifier", b),
@@ -2381,7 +2388,7 @@ mod tests {
         assert_eq!(root.len(), 1);
         assert_eq!(root[0].len(), 1);
         assert_eq!(root[0][0].quant_min, 3);
-        assert_eq!(root[0][0].quant_max, REGEXP_QUANTIFIER_MAX);
+        assert_eq!(root[0][0].quant_max, 3); // {n} means exactly n times
 
         // Test {n,m} - between n and m times
         let root = parse_regexp("a{2,5}").unwrap();
@@ -2402,8 +2409,7 @@ mod tests {
     fn test_nfa_range_exact() {
         use crate::automaton::{traverse_nfa, NfaBuffers, VALUE_TERMINATOR};
 
-        // Test a{3} - exactly 3 'a's (due to how {n} works, it's actually 3 or more)
-        // Note: {3} in I-Regexp means "at least 3" not "exactly 3"
+        // Test a{3} - exactly 3 'a's (I-Regexp semantics: {n} means exactly n)
         let root = parse_regexp("a{3}").unwrap();
         let (table, field_matcher) = make_regexp_nfa(root, false);
         let mut bufs = NfaBuffers::new();
@@ -2429,6 +2435,18 @@ mod tests {
                 .iter()
                 .any(|m| Arc::ptr_eq(m, &field_matcher)),
             "Pattern a{{3}} should match 'aaa'"
+        );
+
+        // Should NOT match "aaaa" ({n} means exactly n)
+        let value_aaaa = vec![b'a', b'a', b'a', b'a', VALUE_TERMINATOR];
+        bufs.clear();
+        traverse_nfa(&table, &value_aaaa, &mut bufs);
+        assert!(
+            !bufs
+                .transitions
+                .iter()
+                .any(|m| Arc::ptr_eq(m, &field_matcher)),
+            "Pattern a{{3}} should NOT match 'aaaa'"
         );
     }
 
@@ -3024,7 +3042,7 @@ mod tests {
     fn test_range_quantifier_exact_one() {
         use crate::automaton::{traverse_nfa, NfaBuffers, VALUE_TERMINATOR};
 
-        // a{1} should match 1 or more 'a's (I-Regexp semantics: {n} means at least n)
+        // a{1} means exactly 1 'a' (I-Regexp semantics: {n} means exactly n)
         let root = parse_regexp("a{1}").unwrap();
         let (table, field_matcher) = make_regexp_nfa(root, false);
         let mut bufs = NfaBuffers::new();
@@ -3032,7 +3050,7 @@ mod tests {
         let test_cases = vec![
             (vec![VALUE_TERMINATOR], false, "empty"),
             (vec![b'a', VALUE_TERMINATOR], true, "a"),
-            (vec![b'a', b'a', VALUE_TERMINATOR], true, "aa"),
+            (vec![b'a', b'a', VALUE_TERMINATOR], false, "aa"), // {1} means exactly 1
         ];
 
         for (value, should_match, desc) in test_cases {

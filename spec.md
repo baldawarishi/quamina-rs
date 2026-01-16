@@ -4,7 +4,7 @@ Rust port of [quamina](https://github.com/timbray/quamina) - fast pattern-matchi
 
 ## Status
 
-**258 tests passing.** Full Go parity + Rust-only features. Rust 1.5-2x faster on all benchmarks. Synced with Go commit c443b44 (Jan 2026).
+**258 tests passing.** Full Go parity + Rust-only features. Fixed `{n}` quantifier to mean exactly n times. Rust 1.5-2x faster on all benchmarks. Synced with Go commit c443b44 (Jan 2026).
 
 | Benchmark | Go (ns) | Rust (ns) | Speedup |
 |-----------|---------|-----------|---------|
@@ -164,13 +164,15 @@ cargo bench bulk_100x100  # ~3.1ms
 
 ## Future Work
 
-**Range quantifier tests added (Jan 2026):**
-- Error parsing tests (`a{2,`, `a{5,2}`, etc.)
-- Equivalence tests (`{0,1}`=`?`, `{1,}`=`+`, `{0,}`=`*`)
-- Edge cases: `{0,0}` (epsilon), `.{2,4}`, `(ab){2,3}`, `a{5,10}`
+**Regexp sample testing expanded (Jan 2026):**
+- 992 samples ported, 77 now fully tested (up from 67)
+- Fixed `{n}` quantifier bug: now correctly means "exactly n" times (not "at least n")
+- Go marks `{n,m}` range quantifiers as unimplemented; Rust fully implements them
+- Error parsing tests, equivalence tests, edge cases all working
 
 **Pending tasks for next session:**
-1. **Expand regexp sample testing** - 992 samples ported, ~67 fully tested. Update `test_regexp_validity` to enable `*`, `+`, `[^...]` patterns (now implemented). Use arena NFA for + and * patterns.
+1. **Enable `*` and `+` patterns in bulk testing** - Arena NFA handles these efficiently but sample testing is slow. Consider selective testing or performance optimization.
 2. **Pattern retrieval API (Go #73)** - Add `get_patterns()` and `list_pattern_ids()` methods to retrieve registered patterns.
 3. **Parallel trie building** - Use rayon for very large value sets.
 4. **Unicode property matchers** - `~p{Lu}`, `~P{Ll}` not yet in Go or Rust.
+5. **Character class escapes** - `~w`, `~d`, `~s`, `~W`, `~D`, `~S` not yet implemented (large Unicode ranges).
