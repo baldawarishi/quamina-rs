@@ -842,7 +842,10 @@ mod tests {
         // Add patterns (thread-safe, serialized)
         matcher.add_pattern(
             "p1".to_string(),
-            &[("status".to_string(), vec![Matcher::Exact("active".to_string())])],
+            &[(
+                "status".to_string(),
+                vec![Matcher::Exact("active".to_string())],
+            )],
         );
 
         // Match events (thread-safe, concurrent)

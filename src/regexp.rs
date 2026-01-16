@@ -2924,7 +2924,8 @@ mod tests {
                 desc, range_matched, qm_matched
             );
             assert_eq!(
-                range_matched, should_match,
+                range_matched,
+                should_match,
                 "Pattern should {} match '{}'",
                 if should_match { "" } else { "NOT" },
                 desc
@@ -2967,7 +2968,8 @@ mod tests {
                 desc, range_matched, plus_matched
             );
             assert_eq!(
-                range_matched, should_match,
+                range_matched,
+                should_match,
                 "Pattern should {} match '{}'",
                 if should_match { "" } else { "NOT" },
                 desc
@@ -3009,7 +3011,8 @@ mod tests {
                 desc, range_matched, star_matched
             );
             assert_eq!(
-                range_matched, should_match,
+                range_matched,
+                should_match,
                 "Pattern should {} match '{}'",
                 if should_match { "" } else { "NOT" },
                 desc
@@ -3040,7 +3043,8 @@ mod tests {
                 .iter()
                 .any(|m| Arc::ptr_eq(m, &field_matcher));
             assert_eq!(
-                matched, should_match,
+                matched,
+                should_match,
                 "a{{1}} should {} match '{}'",
                 if should_match { "" } else { "NOT" },
                 desc
@@ -3071,7 +3075,8 @@ mod tests {
                 .iter()
                 .any(|m| Arc::ptr_eq(m, &field_matcher));
             assert_eq!(
-                matched, should_match,
+                matched,
+                should_match,
                 "a{{0,0}} should {} match '{}'",
                 if should_match { "" } else { "NOT" },
                 desc
@@ -3093,11 +3098,7 @@ mod tests {
             (vec![b'x', VALUE_TERMINATOR], false, "x"),
             (vec![b'x', b'y', VALUE_TERMINATOR], true, "xy"),
             (vec![b'a', b'b', b'c', VALUE_TERMINATOR], true, "abc"),
-            (
-                vec![b'a', b'b', b'c', b'd', VALUE_TERMINATOR],
-                true,
-                "abcd",
-            ),
+            (vec![b'a', b'b', b'c', b'd', VALUE_TERMINATOR], true, "abcd"),
             (
                 vec![b'a', b'b', b'c', b'd', b'e', VALUE_TERMINATOR],
                 false,
@@ -3113,7 +3114,8 @@ mod tests {
                 .iter()
                 .any(|m| Arc::ptr_eq(m, &field_matcher));
             assert_eq!(
-                matched, should_match,
+                matched,
+                should_match,
                 ".{{2,4}} should {} match '{}'",
                 if should_match { "" } else { "NOT" },
                 desc
@@ -3140,7 +3142,17 @@ mod tests {
                 "ababab",
             ),
             (
-                vec![b'a', b'b', b'a', b'b', b'a', b'b', b'a', b'b', VALUE_TERMINATOR],
+                vec![
+                    b'a',
+                    b'b',
+                    b'a',
+                    b'b',
+                    b'a',
+                    b'b',
+                    b'a',
+                    b'b',
+                    VALUE_TERMINATOR,
+                ],
                 false,
                 "abababab",
             ),
@@ -3154,7 +3166,8 @@ mod tests {
                 .iter()
                 .any(|m| Arc::ptr_eq(m, &field_matcher));
             assert_eq!(
-                matched, should_match,
+                matched,
+                should_match,
                 "(ab){{2,3}} should {} match '{}'",
                 if should_match { "" } else { "NOT" },
                 desc
@@ -3191,7 +3204,8 @@ mod tests {
                 .iter()
                 .any(|m| Arc::ptr_eq(m, &field_matcher));
             assert_eq!(
-                matched, should_match,
+                matched,
+                should_match,
                 "a{{5,10}} should {} match {} 'a's",
                 if should_match { "" } else { "NOT" },
                 count
