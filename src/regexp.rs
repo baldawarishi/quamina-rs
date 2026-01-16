@@ -797,10 +797,24 @@ fn read_range_quantifier(
     parse: &mut RegexpParse,
     qa: &mut QuantifiedAtom,
 ) -> Result<(), RegexpError> {
+    // Helper to convert EOF to a more specific error
+    let next_or_eof = |p: &mut RegexpParse| -> Result<char, RegexpError> {
+        p.next_rune().map_err(|e| {
+            if e.message == "end of string" {
+                RegexpError {
+                    message: "unexpected end of string in quantifier".into(),
+                    offset: e.offset,
+                }
+            } else {
+                e
+            }
+        })
+    };
+
     let mut lo_digits = String::new();
 
     loop {
-        let b = parse.next_rune()?;
+        let b = next_or_eof(parse)?;
         if b.is_ascii_digit() {
             lo_digits.push(b);
         } else {
@@ -832,7 +846,7 @@ fn read_range_quantifier(
     }
 
     // After comma
-    let b = parse.next_rune()?;
+    let b = next_or_eof(parse)?;
     if b == '}' {
         return Ok(());
     }
@@ -849,7 +863,7 @@ fn read_range_quantifier(
 
     let mut hi_digits = String::from(b);
     loop {
-        let b = parse.next_rune()?;
+        let b = next_or_eof(parse)?;
         if b.is_ascii_digit() {
             hi_digits.push(b);
         } else if b == '}' {
@@ -1063,6 +1077,15 @@ fn make_one_regexp_branch_fa(
             // Build (m-n) optional copies first (back to front), then n required copies
             let n = qa.quant_min as usize;
             let m = qa.quant_max as usize;
+
+            // Special case: {0,0} means match zero times - pure epsilon transition
+            if n == 0 && m == 0 {
+                // No state changes needed - just epsilon to current_next
+                table = SmallTable::new();
+                table.epsilons.push(current_next.clone());
+                current_next = Arc::new(FaState::with_table(table.clone()));
+                continue;
+            }
 
             // First, build the optional part (m-n copies, each with epsilon skip)
             // Working back to front, so we build these first
@@ -1629,6 +1652,14 @@ fn make_one_arena_branch_fa(
             // General {n,m} quantifier
             let n = qa.quant_min as usize;
             let m = qa.quant_max as usize;
+
+            // Special case: {0,0} means match zero times - pure epsilon transition
+            if n == 0 && m == 0 {
+                let epsilon_state = arena.alloc();
+                arena[epsilon_state].table.epsilons.push(current_next);
+                current_next = epsilon_state;
+                continue;
+            }
 
             // First, build the optional part (m-n copies, each with epsilon skip)
             for _ in n..m {
@@ -2829,5 +2860,342 @@ mod tests {
             "Pattern {} should match 'abc'",
             pattern
         );
+    }
+
+    // ============= Range Quantifier Edge Case Tests =============
+
+    #[test]
+    fn test_range_quantifier_parse_errors() {
+        // Error cases from Go's TestRegexpErrors
+        let error_cases = vec![
+            ("a{9999999999998,9999999999999}", "overflow in lo"),
+            ("a{2x-3}", "invalid char after digits"),
+            ("a{2,", "incomplete - no closing brace"),
+            ("a{2,r}", "invalid char after comma"),
+            ("a{2,4x", "invalid after complete range"),
+            ("a{2,9999999999999}", "overflow in hi"),
+            ("a{5,2}", "min > max"),
+            ("a{,3}", "missing lo"),
+            ("a{}", "empty braces"),
+        ];
+
+        for (pattern, desc) in error_cases {
+            let result = parse_regexp(pattern);
+            assert!(
+                result.is_err(),
+                "Pattern '{}' should fail: {}",
+                pattern,
+                desc
+            );
+        }
+    }
+
+    #[test]
+    fn test_range_quantifier_equivalence_question() {
+        use crate::automaton::{traverse_nfa, NfaBuffers, VALUE_TERMINATOR};
+
+        // a{0,1} should be equivalent to a?
+        let root_range = parse_regexp("a{0,1}").unwrap();
+        let root_qm = parse_regexp("a?").unwrap();
+
+        let (table_range, fm_range) = make_regexp_nfa(root_range, false);
+        let (table_qm, fm_qm) = make_regexp_nfa(root_qm, false);
+
+        let mut bufs = NfaBuffers::new();
+        let test_cases = vec![
+            (vec![VALUE_TERMINATOR], true, "empty"),
+            (vec![b'a', VALUE_TERMINATOR], true, "a"),
+            (vec![b'a', b'a', VALUE_TERMINATOR], false, "aa"),
+            (vec![b'b', VALUE_TERMINATOR], false, "b"),
+        ];
+
+        for (value, should_match, desc) in test_cases {
+            bufs.clear();
+            traverse_nfa(&table_range, &value, &mut bufs);
+            let range_matched = bufs.transitions.iter().any(|m| Arc::ptr_eq(m, &fm_range));
+
+            bufs.clear();
+            traverse_nfa(&table_qm, &value, &mut bufs);
+            let qm_matched = bufs.transitions.iter().any(|m| Arc::ptr_eq(m, &fm_qm));
+
+            assert_eq!(
+                range_matched, qm_matched,
+                "a{{0,1}} and a? should agree on '{}': range={}, qm={}",
+                desc, range_matched, qm_matched
+            );
+            assert_eq!(
+                range_matched, should_match,
+                "Pattern should {} match '{}'",
+                if should_match { "" } else { "NOT" },
+                desc
+            );
+        }
+    }
+
+    #[test]
+    fn test_range_quantifier_equivalence_plus() {
+        use crate::automaton::{traverse_nfa, NfaBuffers, VALUE_TERMINATOR};
+
+        // a{1,} should be equivalent to a+ (but capped at REGEXP_QUANTIFIER_MAX)
+        let root_range = parse_regexp("a{1,}").unwrap();
+        let root_plus = parse_regexp("a+").unwrap();
+
+        let (table_range, fm_range) = make_regexp_nfa(root_range, false);
+        let (table_plus, fm_plus) = make_regexp_nfa(root_plus, false);
+
+        let mut bufs = NfaBuffers::new();
+        let test_cases = vec![
+            (vec![VALUE_TERMINATOR], false, "empty"),
+            (vec![b'a', VALUE_TERMINATOR], true, "a"),
+            (vec![b'a', b'a', VALUE_TERMINATOR], true, "aa"),
+            (vec![b'a', b'a', b'a', VALUE_TERMINATOR], true, "aaa"),
+            (vec![b'b', VALUE_TERMINATOR], false, "b"),
+        ];
+
+        for (value, should_match, desc) in test_cases {
+            bufs.clear();
+            traverse_nfa(&table_range, &value, &mut bufs);
+            let range_matched = bufs.transitions.iter().any(|m| Arc::ptr_eq(m, &fm_range));
+
+            bufs.clear();
+            traverse_nfa(&table_plus, &value, &mut bufs);
+            let plus_matched = bufs.transitions.iter().any(|m| Arc::ptr_eq(m, &fm_plus));
+
+            assert_eq!(
+                range_matched, plus_matched,
+                "a{{1,}} and a+ should agree on '{}': range={}, plus={}",
+                desc, range_matched, plus_matched
+            );
+            assert_eq!(
+                range_matched, should_match,
+                "Pattern should {} match '{}'",
+                if should_match { "" } else { "NOT" },
+                desc
+            );
+        }
+    }
+
+    #[test]
+    fn test_range_quantifier_equivalence_star() {
+        use crate::automaton::{traverse_nfa, NfaBuffers, VALUE_TERMINATOR};
+
+        // a{0,} should be equivalent to a* (but capped at REGEXP_QUANTIFIER_MAX)
+        let root_range = parse_regexp("a{0,}").unwrap();
+        let root_star = parse_regexp("a*").unwrap();
+
+        let (table_range, fm_range) = make_regexp_nfa(root_range, false);
+        let (table_star, fm_star) = make_regexp_nfa(root_star, false);
+
+        let mut bufs = NfaBuffers::new();
+        let test_cases = vec![
+            (vec![VALUE_TERMINATOR], true, "empty"),
+            (vec![b'a', VALUE_TERMINATOR], true, "a"),
+            (vec![b'a', b'a', VALUE_TERMINATOR], true, "aa"),
+            (vec![b'b', VALUE_TERMINATOR], false, "b"),
+        ];
+
+        for (value, should_match, desc) in test_cases {
+            bufs.clear();
+            traverse_nfa(&table_range, &value, &mut bufs);
+            let range_matched = bufs.transitions.iter().any(|m| Arc::ptr_eq(m, &fm_range));
+
+            bufs.clear();
+            traverse_nfa(&table_star, &value, &mut bufs);
+            let star_matched = bufs.transitions.iter().any(|m| Arc::ptr_eq(m, &fm_star));
+
+            assert_eq!(
+                range_matched, star_matched,
+                "a{{0,}} and a* should agree on '{}': range={}, star={}",
+                desc, range_matched, star_matched
+            );
+            assert_eq!(
+                range_matched, should_match,
+                "Pattern should {} match '{}'",
+                if should_match { "" } else { "NOT" },
+                desc
+            );
+        }
+    }
+
+    #[test]
+    fn test_range_quantifier_exact_one() {
+        use crate::automaton::{traverse_nfa, NfaBuffers, VALUE_TERMINATOR};
+
+        // a{1} should match 1 or more 'a's (I-Regexp semantics: {n} means at least n)
+        let root = parse_regexp("a{1}").unwrap();
+        let (table, field_matcher) = make_regexp_nfa(root, false);
+        let mut bufs = NfaBuffers::new();
+
+        let test_cases = vec![
+            (vec![VALUE_TERMINATOR], false, "empty"),
+            (vec![b'a', VALUE_TERMINATOR], true, "a"),
+            (vec![b'a', b'a', VALUE_TERMINATOR], true, "aa"),
+        ];
+
+        for (value, should_match, desc) in test_cases {
+            bufs.clear();
+            traverse_nfa(&table, &value, &mut bufs);
+            let matched = bufs
+                .transitions
+                .iter()
+                .any(|m| Arc::ptr_eq(m, &field_matcher));
+            assert_eq!(
+                matched, should_match,
+                "a{{1}} should {} match '{}'",
+                if should_match { "" } else { "NOT" },
+                desc
+            );
+        }
+    }
+
+    #[test]
+    fn test_range_quantifier_exact_zero() {
+        use crate::automaton::{traverse_nfa, NfaBuffers, VALUE_TERMINATOR};
+
+        // a{0,0} should only match empty string
+        let root = parse_regexp("a{0,0}").unwrap();
+        let (table, field_matcher) = make_regexp_nfa(root, false);
+        let mut bufs = NfaBuffers::new();
+
+        let test_cases = vec![
+            (vec![VALUE_TERMINATOR], true, "empty"),
+            (vec![b'a', VALUE_TERMINATOR], false, "a"),
+            (vec![b'a', b'a', VALUE_TERMINATOR], false, "aa"),
+        ];
+
+        for (value, should_match, desc) in test_cases {
+            bufs.clear();
+            traverse_nfa(&table, &value, &mut bufs);
+            let matched = bufs
+                .transitions
+                .iter()
+                .any(|m| Arc::ptr_eq(m, &field_matcher));
+            assert_eq!(
+                matched, should_match,
+                "a{{0,0}} should {} match '{}'",
+                if should_match { "" } else { "NOT" },
+                desc
+            );
+        }
+    }
+
+    #[test]
+    fn test_range_quantifier_with_dot() {
+        use crate::automaton::{traverse_nfa, NfaBuffers, VALUE_TERMINATOR};
+
+        // .{2,4} - any 2-4 characters
+        let root = parse_regexp(".{2,4}").unwrap();
+        let (table, field_matcher) = make_regexp_nfa(root, false);
+        let mut bufs = NfaBuffers::new();
+
+        let test_cases = vec![
+            (vec![VALUE_TERMINATOR], false, "empty"),
+            (vec![b'x', VALUE_TERMINATOR], false, "x"),
+            (vec![b'x', b'y', VALUE_TERMINATOR], true, "xy"),
+            (vec![b'a', b'b', b'c', VALUE_TERMINATOR], true, "abc"),
+            (
+                vec![b'a', b'b', b'c', b'd', VALUE_TERMINATOR],
+                true,
+                "abcd",
+            ),
+            (
+                vec![b'a', b'b', b'c', b'd', b'e', VALUE_TERMINATOR],
+                false,
+                "abcde",
+            ),
+        ];
+
+        for (value, should_match, desc) in test_cases {
+            bufs.clear();
+            traverse_nfa(&table, &value, &mut bufs);
+            let matched = bufs
+                .transitions
+                .iter()
+                .any(|m| Arc::ptr_eq(m, &field_matcher));
+            assert_eq!(
+                matched, should_match,
+                ".{{2,4}} should {} match '{}'",
+                if should_match { "" } else { "NOT" },
+                desc
+            );
+        }
+    }
+
+    #[test]
+    fn test_range_quantifier_with_group() {
+        use crate::automaton::{traverse_nfa, NfaBuffers, VALUE_TERMINATOR};
+
+        // (ab){2,3} - "ab" repeated 2-3 times
+        let root = parse_regexp("(ab){2,3}").unwrap();
+        let (table, field_matcher) = make_regexp_nfa(root, false);
+        let mut bufs = NfaBuffers::new();
+
+        let test_cases = vec![
+            (vec![VALUE_TERMINATOR], false, "empty"),
+            (vec![b'a', b'b', VALUE_TERMINATOR], false, "ab"),
+            (vec![b'a', b'b', b'a', b'b', VALUE_TERMINATOR], true, "abab"),
+            (
+                vec![b'a', b'b', b'a', b'b', b'a', b'b', VALUE_TERMINATOR],
+                true,
+                "ababab",
+            ),
+            (
+                vec![b'a', b'b', b'a', b'b', b'a', b'b', b'a', b'b', VALUE_TERMINATOR],
+                false,
+                "abababab",
+            ),
+        ];
+
+        for (value, should_match, desc) in test_cases {
+            bufs.clear();
+            traverse_nfa(&table, &value, &mut bufs);
+            let matched = bufs
+                .transitions
+                .iter()
+                .any(|m| Arc::ptr_eq(m, &field_matcher));
+            assert_eq!(
+                matched, should_match,
+                "(ab){{2,3}} should {} match '{}'",
+                if should_match { "" } else { "NOT" },
+                desc
+            );
+        }
+    }
+
+    #[test]
+    fn test_range_quantifier_larger_values() {
+        use crate::automaton::{traverse_nfa, NfaBuffers, VALUE_TERMINATOR};
+
+        // a{5,10} - between 5 and 10 'a's
+        let root = parse_regexp("a{5,10}").unwrap();
+        let (table, field_matcher) = make_regexp_nfa(root, false);
+        let mut bufs = NfaBuffers::new();
+
+        // Test boundary cases
+        let test_cases: Vec<(usize, bool)> = vec![
+            (4, false),  // too few
+            (5, true),   // exact min
+            (7, true),   // middle
+            (10, true),  // exact max
+            (11, false), // too many
+        ];
+
+        for (count, should_match) in test_cases {
+            let mut value: Vec<u8> = vec![b'a'; count];
+            value.push(VALUE_TERMINATOR);
+
+            bufs.clear();
+            traverse_nfa(&table, &value, &mut bufs);
+            let matched = bufs
+                .transitions
+                .iter()
+                .any(|m| Arc::ptr_eq(m, &field_matcher));
+            assert_eq!(
+                matched, should_match,
+                "a{{5,10}} should {} match {} 'a's",
+                if should_match { "" } else { "NOT" },
+                count
+            );
+        }
     }
 }
