@@ -4697,9 +4697,13 @@ mod tests {
 
     #[test]
     fn test_regexp_validity() {
-        use crate::automaton::arena::{traverse_arena_nfa, ArenaNfaBuffers, ARENA_VALUE_TERMINATOR};
+        use crate::automaton::arena::{
+            traverse_arena_nfa, ArenaNfaBuffers, ARENA_VALUE_TERMINATOR,
+        };
         use crate::automaton::{traverse_nfa, NfaBuffers, VALUE_TERMINATOR};
-        use crate::regexp::{make_regexp_nfa, make_regexp_nfa_arena, parse_regexp, regexp_has_plus_star};
+        use crate::regexp::{
+            make_regexp_nfa, make_regexp_nfa_arena, parse_regexp, regexp_has_plus_star,
+        };
         use crate::regexp_samples::REGEXP_SAMPLES;
         use std::sync::Arc;
 
@@ -4746,8 +4750,22 @@ mod tests {
                 for i in 0..chars.len().saturating_sub(1) {
                     if chars[i] == '~' {
                         let next = chars[i + 1];
-                        if matches!(next, 'w' | 'W' | 'd' | 'D' | 's' | 'S' | 'i' | 'I' |
-                                    'c' | 'C' | 'p' | 'P' | 'b' | 'B') {
+                        if matches!(
+                            next,
+                            'w' | 'W'
+                                | 'd'
+                                | 'D'
+                                | 's'
+                                | 'S'
+                                | 'i'
+                                | 'I'
+                                | 'c'
+                                | 'C'
+                                | 'p'
+                                | 'P'
+                                | 'b'
+                                | 'B'
+                        ) {
                             return true;
                         }
                     }
@@ -4792,7 +4810,10 @@ mod tests {
                                 bufs.clear();
                                 traverse_arena_nfa(&arena, start, &value, &mut bufs);
 
-                                let matched = bufs.transitions.iter().any(|m| Arc::ptr_eq(m, &field_matcher));
+                                let matched = bufs
+                                    .transitions
+                                    .iter()
+                                    .any(|m| Arc::ptr_eq(m, &field_matcher));
 
                                 if !matched {
                                     if !should_match.is_empty() {
@@ -4814,7 +4835,10 @@ mod tests {
                                 bufs.clear();
                                 traverse_arena_nfa(&arena, start, &value, &mut bufs);
 
-                                let matched = bufs.transitions.iter().any(|m| Arc::ptr_eq(m, &field_matcher));
+                                let matched = bufs
+                                    .transitions
+                                    .iter()
+                                    .any(|m| Arc::ptr_eq(m, &field_matcher));
 
                                 if matched {
                                     if should_not_match.is_empty()
@@ -4844,7 +4868,10 @@ mod tests {
                                 bufs.clear();
                                 traverse_nfa(&table, &value, &mut bufs);
 
-                                let matched = bufs.transitions.iter().any(|m| Arc::ptr_eq(m, &field_matcher));
+                                let matched = bufs
+                                    .transitions
+                                    .iter()
+                                    .any(|m| Arc::ptr_eq(m, &field_matcher));
 
                                 if !matched {
                                     if !should_match.is_empty() {
@@ -4866,7 +4893,10 @@ mod tests {
                                 bufs.clear();
                                 traverse_nfa(&table, &value, &mut bufs);
 
-                                let matched = bufs.transitions.iter().any(|m| Arc::ptr_eq(m, &field_matcher));
+                                let matched = bufs
+                                    .transitions
+                                    .iter()
+                                    .any(|m| Arc::ptr_eq(m, &field_matcher));
 
                                 if matched {
                                     if should_not_match.is_empty()
