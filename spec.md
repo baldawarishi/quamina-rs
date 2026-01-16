@@ -4,7 +4,7 @@ Rust port of [quamina](https://github.com/timbray/quamina) - fast pattern-matchi
 
 ## Status
 
-**258 tests passing.** Full Go parity + Rust-only features. Fixed `{n}` quantifier to mean exactly n times. Rust 1.5-2x faster on all benchmarks. Synced with Go commit c443b44 (Jan 2026).
+**258 tests passing.** Rust 1.5-2x faster. Synced with Go commit c443b44 (Jan 2026).
 
 | Benchmark | Go (ns) | Rust (ns) | Speedup |
 |-----------|---------|-----------|---------|
@@ -15,164 +15,126 @@ Rust port of [quamina](https://github.com/timbray/quamina) - fast pattern-matchi
 
 ## Pattern Types
 
-**Go parity (all automaton-based):**
-- `"value"` - exact match
-- `{"prefix": "foo"}` - prefix match
-- `{"suffix": ".jpg"}` - suffix match (Rust-only dedicated operator)
-- `{"wildcard": "a*b"}` - wildcard with escape support
-- `{"shellstyle": "a*b"}` - simple wildcard (no escapes)
-- `{"exists": true/false}` - field presence
-- `{"anything-but": ["a", "b"]}` - exclusion list
-- `{"equals-ignore-case": "FOO"}` - case-insensitive
-- `{"regexp": "[a-z]+"}` - I-Regexp subset via NFA
+**Go parity:** `"value"`, `{"prefix"}`, `{"suffix"}`, `{"wildcard"}`, `{"shellstyle"}`, `{"exists"}`, `{"anything-but"}`, `{"equals-ignore-case"}`, `{"regexp"}`
 
-**Rust-only features:**
-- `{"anything-but": 404}` / `{"anything-but": [400, 404]}` - numeric exclusion (Go #328)
-- `{"numeric": [">=", 0, "<", 100]}` - range operators
-- `{"cidr": "10.0.0.0/24"}` - IPv4/IPv6 CIDR matching (Go #187)
-- `{"regexp": "a{2,5}"}` - quantifier support
-- `has_matches()`, `count_matches()`, `pattern_count()`, `clear()`
+**Rust-only:** `{"anything-but": 404}` (numeric), `{"numeric": [">=", 0]}`, `{"cidr": "10.0.0.0/24"}`, `{"regexp": "a{2,5}"}` (range quantifiers)
 
 ## Architecture
 
 ```
 src/
 ├── lib.rs              # Public API: Quamina, QuaminaBuilder
-├── json.rs             # Pattern parsing, Matcher enum, CidrPattern
+├── json.rs             # Pattern parsing, Matcher enum
 ├── flatten_json.rs     # Streaming JSON flattener
-├── flattener.rs        # Flattener trait for custom parsers
-├── segments_tree.rs    # Field path tracking (skip optimization)
-├── numbits.rs          # Q-number encoding for numeric comparisons
-├── regexp.rs           # I-Regexp parser and arena NFA builder
+├── regexp.rs           # I-Regexp parser + arena NFA builder
 ├── automaton/
-│   ├── small_table.rs  # SmallTable (byte transitions), FaState
-│   ├── fa_builders.rs  # make_string_fa, make_prefix_fa, merge_fas
+│   ├── small_table.rs  # SmallTable (byte transitions)
 │   ├── nfa.rs          # traverse_dfa, traverse_nfa
-│   ├── arena.rs        # StateArena for cyclic NFA (regexp)
-│   ├── trie.rs         # ValueTrie for O(n) bulk string construction
-│   ├── thread_safe.rs  # FrozenFieldMatcher (immutable, for matching)
-│   └── mutable_matcher.rs  # MutableFieldMatcher (for building)
-└── wildcard.rs         # Shellstyle/wildcard matching
+│   ├── arena.rs        # StateArena for cyclic NFA (regexp *)
+│   ├── trie.rs         # ValueTrie for O(n) bulk construction
+│   └── mutable_matcher.rs  # Pattern building
+└── wildcard.rs         # Shellstyle matching
 ```
 
-**Matching flow:**
-1. `flatten()` JSON → sorted `Vec<Field>` (path as Arc, value, array_trail)
-2. `matches_for_fields_direct()` traverses automaton from root
-3. `transition_on()` matches via DFA (simple) or NFA (wildcard/regexp)
-
-**Key design decisions:**
-- Arc<[u8]> for paths (O(1) cloning, 20% citylots improvement)
-- FxHashMap with Arc::as_ptr() keys (5% faster than std HashMap)
-- Arena-based NFA for regexp (2.5x faster than chain NFA)
-- Buffer reuse in NFA traversal (55% shellstyle improvement)
-
-## Custom Flattener
-
-```rust
-use quamina::{Flattener, SegmentsTreeTracker, OwnedField, QuaminaError};
-
-impl Flattener for MyFlattener {
-    fn flatten(&mut self, event: &[u8], tracker: &dyn SegmentsTreeTracker)
-        -> Result<Vec<OwnedField>, QuaminaError> {
-        // Custom parsing - use tracker.is_prefix_used() to skip unused fields
-        Ok(vec![])
-    }
-    fn copy(&self) -> Box<dyn Flattener> { Box::new(MyFlattener) }
-}
-
-let q = QuaminaBuilder::<String>::new()
-    .with_flattener(Box::new(MyFlattener)).unwrap()
-    .build().unwrap();
-```
-
-## Go Reference
-
-| Feature | Go File | Key Functions |
-|---------|---------|---------------|
-| Matching | `core_matcher.go` | matchesForFields, tryToMatch |
-| Values | `value_matcher.go` | transitionOn, makeStringFA |
-| Flatten | `flatten_json.go` | segmentsTree, Flatten |
-| Pruner | `pruner.go` | rebuildRatio=0.2, deletePatterns |
-| Regex | `regexp_nfa.go` | Custom NFA (I-Regexp subset) |
+**Go reference:** `core_matcher.go` (matching), `value_matcher.go` (FA building), `regexp_nfa.go` (regexp)
 
 ## Commands
 
 ```bash
 cargo test                    # 258 tests
-cargo bench status            # status_* benchmarks
-cargo bench citylots          # citylots benchmark
-cargo bench shellstyle        # shellstyle benchmark
-cargo clippy -- -D warnings   # CI runs this
+cargo bench status            # benchmarks
+cargo clippy -- -D warnings   # CI check
+gh run list                   # check CI
 ```
+
+## Regexp Implementation
+
+**I-Regexp subset (RFC 9485):**
+- `.` any char, `[...]` classes, `|` alternation, `(...)` groups
+- `?` optional, `+` one-or-more, `*` zero-or-more
+- `{n}` exactly n, `{n,m}` between n and m, `{n,}` at least n
+- Escape char is `~` (not `\`) to avoid JSON escaping
+
+**Two NFA implementations:**
+1. **Chain NFA** (`make_regexp_nfa`): Simple patterns, no cycles
+2. **Arena NFA** (`make_regexp_nfa_arena`): Efficient for `*`/`+` with cyclic structures
+
+**Sample testing status (992 samples from Go):**
+- 77 samples fully tested (patterns without problematic features)
+- Skipped features in bulk testing:
+  - `.` (dot) - creates huge Unicode state machines
+  - `[^...]` negated classes - large UTF-8 range tables
+  - `~w`, `~d`, `~s`, `~p{}` - unimplemented character class escapes
+  - `-[` character class subtraction - XSD feature, not I-Regexp
+
+**Recent fix:** `{n}` now correctly means "exactly n" (was "at least n"). Go has same bug but skips all `{}` tests.
+
+## Bulk Pattern Optimization
+
+Trie-based O(n) construction for patterns with many string values. See `src/automaton/trie.rs`.
+
+```bash
+cargo bench bulk_100x10   # ~1.1ms (was 16ms naive)
+cargo bench bulk_1000x10  # ~62ms (was ~5s naive)
+```
+
+## Next Tasks
+
+### 1. Character Class Escapes (Medium)
+Implement `~w` (word), `~d` (digit), `~s` (space) and negated versions.
+
+**Files:** `src/regexp.rs`
+**Approach:** Add to `check_single_char_escape()` or create multi-char escape handler. Each maps to a `RuneRange`.
+
+```rust
+// ~d = [0-9]
+// ~w = [a-zA-Z0-9_]
+// ~s = [ \t\n\r]
+```
+
+**Challenge:** Large Unicode ranges for `~W`, `~D`, `~S` (negated) - use optimized range construction like `[^...]`.
+
+### 2. Enable `*`/`+` Sample Testing (Medium)
+Arena NFA handles `*`/`+` efficiently but sample testing is slow.
+
+**Options:**
+- Run subset of `*`/`+` samples (first 50?)
+- Add timeout per sample
+- Profile and optimize arena NFA traversal
+
+### 3. Pattern Retrieval API (Easy)
+Add methods to retrieve registered patterns (Go #73).
+
+**Files:** `src/lib.rs`
+```rust
+impl Quamina<X> {
+    pub fn get_patterns(&self) -> Vec<&X> { ... }
+    pub fn list_pattern_ids(&self) -> Vec<&X> { ... }
+}
+```
+
+### 4. Unicode Property Matchers (Hard)
+`~p{Lu}` (uppercase), `~P{Ll}` (not lowercase). Requires Unicode tables.
+
+**Files:** `src/regexp.rs`
+**Note:** Not implemented in Go either.
 
 ## Session Notes
 
-**When continuing work:**
+**When continuing:**
 1. Read this spec for context
-2. For Go behavior, read Go source directly (don't trust past interpretations)
-3. Run benchmarks before/after changes: `cargo bench <name>`
-4. Push often and check CI (`gh run list`)
+2. For Go behavior, read Go source directly - don't trust past interpretations
+3. Push often, check CI (`gh run list`)
+4. Run `cargo fmt` before commit
 
-**Known issues:**
-- Regexp: 992 Go samples ported, 67 fully tested. Others use features outside I-Regexp (lookahead, backrefs)
-
-## Completed: Bulk Pattern Add Optimization (Go #363)
-
-**Problem solved**: Adding many patterns with many values was O(n²) due to repeated `merge_fas` calls.
-
-**Solution**: Trie-based bulk construction for patterns with multiple exact string values.
-- Arena-based trie: all nodes in contiguous Vec, referenced by index (fewer heap allocs)
-- SmallVec for children (most nodes have 1-4 children)
-- Binary search for sorted children (consistent hashing, no sort needed)
-- FxHashMap for state deduplication cache
-- Iterative hash generation (avoids recursion overhead and SmallVec clones)
-- Single-pass conversion from trie to SmallTable
-
-**Performance improvements (vs naive O(n²)):**
-
-| Benchmark | Naive | Hierarchical | Trie v1 | Trie v2 (Arena) | Packed Merge | Total Speedup |
-|-----------|-------|--------------|---------|-----------------|--------------|---------------|
-| bulk_100x10 | 16ms | 11ms | 2.2ms | 1.8ms | **1.1ms** | 15x |
-| bulk_1000x10 | ~5s | 182ms | 75ms | 70ms | **62ms** | ~81x |
-| bulk_100x100 | 181ms | 119ms | 6.6ms | 3.9ms | **3.1ms** | 58x |
-| bulk_100x10_multifield | 2.5s | 36ms | 6.2ms | 5.1ms | **4.3ms** | 581x |
-
-**Key files:**
-- `src/automaton/trie.rs`: Arena-based ValueTrie with hash deduplication
-- `src/automaton/mutable_matcher.rs`: `add_string_transitions_bulk()` uses trie
-- `src/automaton/fa_builders.rs`: `merge_tables_packed()` for efficient table merging
-- `benches/matching.rs`: Bulk benchmark suite
-
-**Approaches tried:**
-1. ❌ Hash-consed states alone: Overhead outweighed benefits
-2. ⚡ Hierarchical merge: O(n log n), good but not optimal
-3. ✅ Trie-based construction: O(n), optimal for string building
-4. ✅ Arena allocation + SmallVec: 17-41% faster than Box-per-node
-5. ✅ Packed merge: Avoids 256-element array allocation, 12-40% faster
-
-**Future optimization opportunities (for follow-up sessions):**
-- Parallel trie building with rayon for very large value sets
-- Extended trie support for prefix/monocase patterns (as in Go fork)
-- Incremental trie updates for addPattern() use case
-
-**Benchmarks to verify:**
+**Test regexp changes:**
 ```bash
-cargo bench bulk_100x10   # ~1.1ms
-cargo bench bulk_1000x10  # ~62ms
-cargo bench bulk_100x100  # ~3.1ms
+cargo test test_regexp_validity -- --nocapture
+cargo test test_parse_range_quantifier
+cargo test test_nfa_range
 ```
 
-## Future Work
-
-**Regexp sample testing expanded (Jan 2026):**
-- 992 samples ported, 77 now fully tested (up from 67)
-- Fixed `{n}` quantifier bug: now correctly means "exactly n" times (not "at least n")
-- Go marks `{n,m}` range quantifiers as unimplemented; Rust fully implements them
-- Error parsing tests, equivalence tests, edge cases all working
-
-**Pending tasks for next session:**
-1. **Enable `*` and `+` patterns in bulk testing** - Arena NFA handles these efficiently but sample testing is slow. Consider selective testing or performance optimization.
-2. **Pattern retrieval API (Go #73)** - Add `get_patterns()` and `list_pattern_ids()` methods to retrieve registered patterns.
-3. **Parallel trie building** - Use rayon for very large value sets.
-4. **Unicode property matchers** - `~p{Lu}`, `~P{Ll}` not yet in Go or Rust.
-5. **Character class escapes** - `~w`, `~d`, `~s`, `~W`, `~D`, `~S` not yet implemented (large Unicode ranges).
+**Key test file locations:**
+- Regexp samples: `src/regexp_samples.rs` (992 samples)
+- Regexp tests: `src/regexp.rs` (bottom of file)
+- Validity test: `src/lib.rs` (`test_regexp_validity`)
