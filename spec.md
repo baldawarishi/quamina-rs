@@ -14,34 +14,19 @@ Rust port of [quamina](https://github.com/timbray/quamina) - fast pattern-matchi
 
 ## Completeness
 
-**Rust is fully I-Regexp (RFC 9485) compliant.** Go quamina is not yet fully compliant.
+**Rust is fully I-Regexp (RFC 9485) compliant.** Go lacks range quantifiers `{n,m}`.
 
-**Pattern matchers (Go parity):** `"value"`, `{"prefix"}`, `{"suffix"}`, `{"wildcard"}`, `{"shellstyle"}`, `{"exists"}`, `{"anything-but"}`, `{"equals-ignore-case"}`, `{"regexp"}`
+**Pattern matchers:** `"value"`, `{"prefix"}`, `{"suffix"}`, `{"wildcard"}`, `{"shellstyle"}`, `{"exists"}`, `{"anything-but"}`, `{"equals-ignore-case"}`, `{"regexp"}`
 
-**Rust-only pattern extensions:**
+**Rust-only extensions:**
 - `{"numeric": [">=", 0]}` - numeric comparisons
 - `{"cidr": "10.0.0.0/24"}` - IP range matching
 - `{"anything-but": 404}` - numeric anything-but
+- `{"regexp": "a{2,5}"}` - range quantifiers (Go lacks)
+- `~d`/`~w`/`~s` - character class escapes (not in I-Regexp)
+- `~p{IsBasicLatin}` - Unicode blocks (not in I-Regexp)
 
-**I-Regexp features (RFC 9485) - Rust has, Go lacks:**
-- `{"regexp": "a{2,5}"}` - range quantifiers `{n}`, `{n,m}`, `{n,}`
-
-**Rust extensions beyond I-Regexp:**
-- `~d`/`~w`/`~s`/`~D`/`~W`/`~S` - character class escapes (not in RFC 9485)
-- `~p{IsBasicLatin}` - Unicode block matchers (not in RFC 9485)
-
-**Regexp sample testing:** Rust tests 560 samples (Go implements 203 of 992)
-
-## Public API
-
-```rust
-q.add_pattern(id, pattern_json)?;
-q.delete_patterns(id)?;
-q.matches_for_event(event)?;
-q.list_pattern_ids() -> Vec<&X>
-q.contains_pattern(&id) -> bool
-q.pattern_count() -> usize
-```
+**Regexp samples:** Rust 560, Go 203 (of 992 total)
 
 ## Architecture
 
@@ -50,33 +35,49 @@ src/
 ├── lib.rs              # Public API: Quamina, QuaminaBuilder
 ├── json.rs             # Pattern parsing, Matcher enum
 ├── flatten_json.rs     # Streaming JSON flattener
-├── regexp.rs           # I-Regexp parser + NFA builder
-├── unicode_categories.rs # Unicode category/block data for ~p{}
+├── regexp.rs           # I-Regexp parser + NFA builder (3715 lines - needs split)
+├── unicode_categories.rs # Unicode category/block data
 ├── automaton/
 │   ├── small_table.rs  # SmallTable (byte transitions)
 │   ├── nfa.rs          # traverse_dfa, traverse_nfa
-│   ├── arena.rs        # StateArena for cyclic NFA (regexp *)
+│   ├── arena.rs        # StateArena for cyclic NFA
 │   └── trie.rs         # ValueTrie for O(n) bulk construction
 └── wildcard.rs         # Shellstyle matching
 ```
 
-## Regexp Features
+## Go vs Rust Implementation Comparison
 
-**I-Regexp (RFC 9485) - fully implemented:**
-- `.` any char, `[...]` classes, `[^...]` negated classes
-- `|` alternation, `(...)` groups
-- `?` optional, `+` one-or-more, `*` zero-or-more
-- `{n}`, `{n,m}`, `{n,}` range quantifiers
-- `~p{Lu}`, `~p{Ll}`, `~p{Nd}` - Unicode general categories
-- Escape char is `~` (not `\`) to avoid JSON escaping
+**Go wins:**
+- Shell caching for negated classes (major optimization we lack)
+- Better modularity (separate parser/NFA files)
+- GC enables clever caching patterns
 
-**Extensions beyond I-Regexp:**
-- `~d` digits, `~w` word, `~s` whitespace (+ negated `~D`/`~W`/`~S`)
-- `~p{IsBasicLatin}` - Unicode blocks
+**Rust wins:**
+- Structured errors with offset context
+- Unicode block support (`~p{IsBasicLatin}`)
+- Type safety, compile-time guarantees
 
-**Not in I-Regexp (not implemented):**
-- `~c` / `~i` - XML name char escapes (XSD only)
-- `[a-[b]]` - character class subtraction (XSD only)
+**Key Go optimization we should implement:**
+```go
+// Go builds FA once with placeholder, reuses for different next states
+cachedFaShells["L"] = makeRuneRangeFA(letterRunes, PlaceholderState)
+fa := faFromShell(cachedFaShells["L"], PlaceholderState, realNextState)
+```
+For `[^abc]` (~1.1M Unicode points): Go reuses cached shell instantly, Rust expands all points every time.
+
+## Improvement Opportunities
+
+**High impact:**
+1. **Shell caching** - Port Go's `cachedFaShells` pattern for negated classes
+2. **Split regexp.rs** - 3715 lines is too large; split into `regexp_parser.rs` + `regexp_nfa.rs`
+
+**Medium impact:**
+3. **Optimize quantifier chains** - Current 100-state chain for `+`/`*` is memory-heavy
+4. **Lazy negated categories** - Don't expand `[^abc]` eagerly
+
+**Low priority (not in I-Regexp):**
+5. XML escapes `~c`/`~i` - XSD only, +53 samples
+6. Character class subtraction `[a-[b]]` - XSD only, +74 samples
 
 ## Commands
 
@@ -88,35 +89,20 @@ gh run list                   # check CI
 cargo fmt && git push         # format and push
 ```
 
-## Session Notes
+## Session Checklist
 
-**When continuing:**
-1. Read this spec for context
-2. For Go behavior, read Go source directly - don't trust past interpretations
+1. Read this spec
+2. For Go behavior, read Go source directly
 3. Push often, check CI (`gh run list`)
-4. Use todos to manage context window
+4. Use todos to manage context
 
 **Key files:**
-- Regexp parser: `src/regexp.rs`
-- Unicode categories: `src/unicode_categories.rs`
-- Sample validity test: `src/lib.rs:test_regexp_validity()`
-- Go regexp samples: `src/regexp_samples.rs` (992 samples)
+- `src/regexp.rs` - parser + NFA (needs refactoring)
+- `src/unicode_categories.rs` - Unicode data
+- `src/lib.rs:test_regexp_validity()` - 560 samples tested
 
-**Test commands:**
-```bash
-cargo test test_regexp_validity -- --nocapture  # 560 samples
-cargo test test_multi_char_escapes              # ~d/~w/~s tests
-cargo test test_regexp_end2end                  # end-to-end regexp
-```
-
-**Go reference files:**
-- `regexp_reader.go` - parsing
-- `regexp_nfa.go` - NFA building
-- `regexp_samples_test.go` - 992 test samples
-- `case_folding.go` - 49KB generated Unicode data (case folding only)
-
-## Future Work
-
-1. **XML escapes** - Implement `~c` and `~i` for XML name characters (Go doesn't have these either)
-2. **Character class subtraction** - `[a-[b]]` XSD feature (low priority)
-3. **More Unicode categories** - Complete coverage for all Unicode general categories
+**Go reference:**
+- `regexp_reader.go` - parsing (765 lines, cleaner than ours)
+- `regexp_nfa.go` - NFA building with shell caching
+- `rune_range.go` - rune range utilities
+- `character_properties.go` - generated Unicode data
