@@ -77,15 +77,12 @@ cargo fmt                     # format before commit
 2. **Arena NFA** (`make_regexp_nfa_arena`): Efficient for `*`/`+` with cyclic structures
 
 **Sample testing (992 samples from Go):**
-- 77 samples fully tested
+- 173 samples fully tested (including `*`, `+`, `~d/~w/~s/~D/~W/~S`)
 - Skipped: `.` (huge Unicode machines), `[^...]` (large tables), `~c`/`~i`/`~p{}` (unimplemented)
 
 ## Next Tasks
 
-### 1. Enable `*`/`+` Sample Testing (Medium)
-Arena NFA handles `*`/`+` but sample testing is slow. Options: run subset, add timeout, profile traversal.
-
-### 2. Unicode Property Matchers (Hard)
+### 1. Unicode Property Matchers (Hard)
 `~p{Lu}` (uppercase), `~P{Ll}` (not lowercase). Requires Unicode tables. Not in Go either.
 
 ## Session Notes
