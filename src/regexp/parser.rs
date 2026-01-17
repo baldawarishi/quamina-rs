@@ -111,6 +111,8 @@ pub enum RegexpFeature {
     QuestionMark,
     Range,
     ParenGroup,
+    NonCapturingGroup,
+    LazyQuantifier,
     Property,
     Class,
     NegatedClass,
@@ -124,6 +126,8 @@ const IMPLEMENTED_FEATURES: &[RegexpFeature] = &[
     RegexpFeature::NegatedClass,
     RegexpFeature::OrBar,
     RegexpFeature::ParenGroup,
+    RegexpFeature::NonCapturingGroup,
+    RegexpFeature::LazyQuantifier,
     RegexpFeature::QuestionMark,
     RegexpFeature::Plus,
     RegexpFeature::Star,
@@ -532,7 +536,38 @@ fn read_atom(parse: &mut RegexpParse) -> Result<QuantifiedAtom, RegexpError> {
         }
         '(' => {
             parse.nest();
-            parse.record_feature(RegexpFeature::ParenGroup);
+            // Check for non-capturing group (?:...)
+            match parse.next_rune() {
+                Ok('?') => {
+                    match parse.next_rune() {
+                        Ok(':') => {
+                            parse.record_feature(RegexpFeature::NonCapturingGroup);
+                        }
+                        Ok(c) => {
+                            // Some other (? extension we don't support
+                            return Err(RegexpError {
+                                message: format!("unsupported group extension (?{}...)", c),
+                                offset: parse.last_index,
+                            });
+                        }
+                        Err(_) => {
+                            return Err(RegexpError {
+                                message: "unexpected end after (?".into(),
+                                offset: parse.last_index,
+                            });
+                        }
+                    }
+                }
+                Ok(c) => {
+                    // Regular capturing group - backup the character we peeked
+                    parse.record_feature(RegexpFeature::ParenGroup);
+                    parse.backup1(c);
+                }
+                Err(_) => {
+                    // Empty group or EOF - will fail on require(')') later
+                    parse.record_feature(RegexpFeature::ParenGroup);
+                }
+            }
             read_branches(parse)?;
             parse.require(')')?;
             let subtree = parse.unnest();
@@ -1030,7 +1065,7 @@ fn read_category(parse: &mut RegexpParse) -> Result<(RuneRange, Option<String>),
     }
 }
 
-/// Read a quantifier (?, *, +, {m,n})
+/// Read a quantifier (?, *, +, {m,n}) with optional lazy modifier (?)
 fn read_quantifier(parse: &mut RegexpParse, qa: &mut QuantifiedAtom) -> Result<(), RegexpError> {
     let b = match parse.next_rune() {
         Ok(c) => c,
@@ -1041,6 +1076,7 @@ fn read_quantifier(parse: &mut RegexpParse, qa: &mut QuantifiedAtom) -> Result<(
         }
     };
 
+    let mut is_quantifier = true;
     match b {
         '*' => {
             parse.record_feature(RegexpFeature::Star);
@@ -1065,6 +1101,26 @@ fn read_quantifier(parse: &mut RegexpParse, qa: &mut QuantifiedAtom) -> Result<(
             qa.quant_min = 1;
             qa.quant_max = 1;
             parse.backup1(b);
+            is_quantifier = false;
+        }
+    }
+
+    // Check for lazy quantifier modifier (e.g., *?, +?, {n,m}?)
+    // Since we're doing pattern matching (not extraction), lazy vs greedy
+    // makes no semantic difference - we just consume the optional '?'
+    if is_quantifier {
+        match parse.next_rune() {
+            Ok('?') => {
+                parse.record_feature(RegexpFeature::LazyQuantifier);
+                // Lazy quantifier - consumed but has no effect on matching
+            }
+            Ok(c) => {
+                // We consumed a char that wasn't '?', backup
+                parse.backup1(c);
+            }
+            Err(_) => {
+                // End of string - nothing to do
+            }
         }
     }
 

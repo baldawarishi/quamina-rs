@@ -4782,8 +4782,9 @@ mod tests {
             // that the original XSD samples marked as invalid)
             fn is_known_extension(re: &str) -> bool {
                 let chars: Vec<char> = re.chars().collect();
-                for i in 0..chars.len().saturating_sub(1) {
-                    if chars[i] == '~' {
+                for i in 0..chars.len() {
+                    // Check for tilde escapes
+                    if i + 1 < chars.len() && chars[i] == '~' {
                         let next = chars[i + 1];
                         // ~d, ~D, ~w, ~W, ~s, ~S, ~p, ~P, ~i, ~I, ~c, ~C are our implemented extensions
                         if matches!(
@@ -4792,6 +4793,21 @@ mod tests {
                         ) {
                             return true;
                         }
+                    }
+                    // Check for lazy quantifiers (*?, +?, ??, {n,m}?)
+                    if i + 1 < chars.len()
+                        && matches!(chars[i], '*' | '+' | '?' | '}')
+                        && chars[i + 1] == '?'
+                    {
+                        return true;
+                    }
+                    // Check for non-capturing groups (?:...)
+                    if i + 2 < chars.len()
+                        && chars[i] == '('
+                        && chars[i + 1] == '?'
+                        && chars[i + 2] == ':'
+                    {
+                        return true;
                     }
                 }
                 false

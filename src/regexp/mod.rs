@@ -141,6 +141,64 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_non_capturing_group() {
+        // Non-capturing group (?:...) should parse like a regular group
+        let root = parse_regexp("a(?:b|c)d").unwrap();
+        assert_eq!(root.len(), 1);
+        assert_eq!(root[0].len(), 3); // a, (?:...), d
+        assert!(
+            root[0][1].subtree.is_some(),
+            "Non-capturing group should have subtree"
+        );
+        let subtree = root[0][1].subtree.as_ref().unwrap();
+        assert_eq!(subtree.len(), 2); // b | c
+    }
+
+    #[test]
+    fn test_parse_non_capturing_nested() {
+        // Nested non-capturing groups
+        let root = parse_regexp("(?:(?:a))").unwrap();
+        assert_eq!(root.len(), 1);
+        assert!(root[0][0].subtree.is_some());
+        let inner = root[0][0].subtree.as_ref().unwrap();
+        assert!(inner[0][0].subtree.is_some());
+    }
+
+    #[test]
+    fn test_parse_lazy_quantifiers() {
+        // Lazy star
+        let root = parse_regexp("a*?").unwrap();
+        assert_eq!(root.len(), 1);
+        assert!(root[0][0].is_star(), "Should be star quantifier");
+
+        // Lazy plus
+        let root = parse_regexp("a+?").unwrap();
+        assert_eq!(root.len(), 1);
+        assert!(root[0][0].is_plus(), "Should be plus quantifier");
+
+        // Lazy range
+        let root = parse_regexp("a{2,5}?").unwrap();
+        assert_eq!(root.len(), 1);
+        assert_eq!(root[0][0].quant_min, 2);
+        assert_eq!(root[0][0].quant_max, 5);
+
+        // Lazy optional (??)
+        let root = parse_regexp("a??").unwrap();
+        assert_eq!(root.len(), 1);
+        assert!(root[0][0].is_qm(), "Should be optional quantifier");
+    }
+
+    #[test]
+    fn test_parse_unsupported_group_extension() {
+        // Lookahead (?=...) should fail
+        assert!(parse_regexp("a(?=b)").is_err());
+        // Negative lookahead (?!...) should fail
+        assert!(parse_regexp("a(?!b)").is_err());
+        // Atomic group (?>...) should fail
+        assert!(parse_regexp("(?>a)").is_err());
+    }
+
+    #[test]
     fn test_parse_empty() {
         // Empty pattern should succeed
         let result = parse_regexp("");
