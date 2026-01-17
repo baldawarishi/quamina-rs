@@ -14,20 +14,24 @@ Rust port of [quamina](https://github.com/timbray/quamina) - fast pattern-matchi
 
 ## Completeness
 
-**Rust is a superset of Go quamina.** All Go features plus Rust-only extensions.
+**Rust is fully I-Regexp (RFC 9485) compliant.** Go quamina is not yet fully compliant.
 
-**Go parity:** `"value"`, `{"prefix"}`, `{"suffix"}`, `{"wildcard"}`, `{"shellstyle"}`, `{"exists"}`, `{"anything-but"}`, `{"equals-ignore-case"}`, `{"regexp"}`
+**Pattern matchers (Go parity):** `"value"`, `{"prefix"}`, `{"suffix"}`, `{"wildcard"}`, `{"shellstyle"}`, `{"exists"}`, `{"anything-but"}`, `{"equals-ignore-case"}`, `{"regexp"}`
 
-**Rust-only extensions:**
+**Rust-only pattern extensions:**
 - `{"numeric": [">=", 0]}` - numeric comparisons
 - `{"cidr": "10.0.0.0/24"}` - IP range matching
 - `{"anything-but": 404}` - numeric anything-but
-- `{"regexp": "a{2,5}"}` - range quantifiers `{n}`, `{n,m}`, `{n,}`
-- `~d`/`~w`/`~s`/`~D`/`~W`/`~S` - character class escapes
-- `~p{Lu}`/`~p{Ll}`/`~p{Nd}` - Unicode general category matchers
-- `~p{IsBasicLatin}` - Unicode block matchers
 
-**Regexp sample testing:** Rust tests 560 samples (Go's test suite has 992 total samples)
+**I-Regexp features (RFC 9485) - Rust has, Go lacks:**
+- `{"regexp": "a{2,5}"}` - range quantifiers `{n}`, `{n,m}`, `{n,}`
+- `~p{Lu}`/`~p{Ll}`/`~p{Nd}` - Unicode general category matchers
+
+**Rust extensions beyond I-Regexp:**
+- `~d`/`~w`/`~s`/`~D`/`~W`/`~S` - character class escapes (not in RFC 9485)
+- `~p{IsBasicLatin}` - Unicode block matchers (not in RFC 9485)
+
+**Regexp sample testing:** Rust tests 560 samples (Go implements only 128 of 992)
 
 ## Public API
 
@@ -59,19 +63,21 @@ src/
 
 ## Regexp Features
 
-**Implemented (RFC 9485 I-Regexp subset):**
+**I-Regexp (RFC 9485) - fully implemented:**
 - `.` any char, `[...]` classes, `[^...]` negated classes
 - `|` alternation, `(...)` groups
 - `?` optional, `+` one-or-more, `*` zero-or-more
 - `{n}`, `{n,m}`, `{n,}` range quantifiers
-- `~d` digits, `~w` word, `~s` whitespace (+ negated `~D`/`~W`/`~S`)
 - `~p{Lu}`, `~p{Ll}`, `~p{Nd}` - Unicode general categories
-- `~p{IsBasicLatin}` - Unicode blocks
 - Escape char is `~` (not `\`) to avoid JSON escaping
 
-**Not yet implemented:**
-- `~c` / `~i` - XML name char escapes
-- `[a-[b]]` - character class subtraction (XSD feature)
+**Extensions beyond I-Regexp:**
+- `~d` digits, `~w` word, `~s` whitespace (+ negated `~D`/`~W`/`~S`)
+- `~p{IsBasicLatin}` - Unicode blocks
+
+**Not in I-Regexp (not implemented):**
+- `~c` / `~i` - XML name char escapes (XSD only)
+- `[a-[b]]` - character class subtraction (XSD only)
 
 ## Commands
 
