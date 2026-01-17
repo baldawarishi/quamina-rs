@@ -4,7 +4,7 @@ Rust port of [quamina](https://github.com/timbray/quamina) - fast pattern-matchi
 
 ## Status
 
-**268 tests passing.** Rust 1.5-2x faster. Synced with Go commit c443b44 (Jan 2026).
+**268 tests passing.** Rust 1.5-2x faster. Synced with Go commit 74475a4 (Jan 2026).
 
 | Benchmark | Go (ns) | Rust (ns) | Speedup |
 |-----------|---------|-----------|---------|
@@ -25,13 +25,12 @@ Rust port of [quamina](https://github.com/timbray/quamina) - fast pattern-matchi
 
 **I-Regexp features (RFC 9485) - Rust has, Go lacks:**
 - `{"regexp": "a{2,5}"}` - range quantifiers `{n}`, `{n,m}`, `{n,}`
-- `~p{Lu}`/`~p{Ll}`/`~p{Nd}` - Unicode general category matchers
 
 **Rust extensions beyond I-Regexp:**
 - `~d`/`~w`/`~s`/`~D`/`~W`/`~S` - character class escapes (not in RFC 9485)
 - `~p{IsBasicLatin}` - Unicode block matchers (not in RFC 9485)
 
-**Regexp sample testing:** Rust tests 560 samples (Go implements only 128 of 992)
+**Regexp sample testing:** Rust tests 560 samples (Go implements 203 of 992)
 
 ## Public API
 
