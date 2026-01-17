@@ -19,6 +19,21 @@ Rust port of [quamina](https://github.com/timbray/quamina) - fast pattern-matchi
 
 **Rust-only:** `{"anything-but": 404}` (numeric), `{"numeric": [">=", 0]}`, `{"cidr": "10.0.0.0/24"}`, `{"regexp": "a{2,5}"}` (range quantifiers), `~d`/`~w`/`~s`/`~D`/`~W`/`~S` (character class escapes)
 
+## Public API
+
+```rust
+// Core matching
+q.add_pattern(id, pattern_json)?;
+q.delete_patterns(id)?;
+q.matches_for_event(event)?;
+
+// Inspection (added Jan 2026)
+q.list_pattern_ids() -> Vec<&X>   // all active pattern IDs
+q.contains_pattern(&id) -> bool   // check if pattern exists
+q.pattern_count() -> usize        // count of active patterns
+q.is_empty() -> bool
+```
+
 ## Architecture
 
 ```
@@ -26,7 +41,7 @@ src/
 ├── lib.rs              # Public API: Quamina, QuaminaBuilder
 ├── json.rs             # Pattern parsing, Matcher enum
 ├── flatten_json.rs     # Streaming JSON flattener
-├── regexp.rs           # I-Regexp parser + arena NFA builder
+├── regexp.rs           # I-Regexp parser + NFA builder
 ├── automaton/
 │   ├── small_table.rs  # SmallTable (byte transitions)
 │   ├── nfa.rs          # traverse_dfa, traverse_nfa
@@ -41,10 +56,11 @@ src/
 ## Commands
 
 ```bash
-cargo test                    # 258 tests
+cargo test                    # 262 tests
 cargo bench status            # benchmarks
 cargo clippy -- -D warnings   # CI check
 gh run list                   # check CI
+cargo fmt                     # format before commit
 ```
 
 ## Regexp Implementation
@@ -60,40 +76,17 @@ gh run list                   # check CI
 1. **Chain NFA** (`make_regexp_nfa`): Simple patterns, no cycles
 2. **Arena NFA** (`make_regexp_nfa_arena`): Efficient for `*`/`+` with cyclic structures
 
-**Sample testing status (992 samples from Go):**
-- 77 samples fully tested (patterns without problematic features)
-- Skipped features in bulk testing:
-  - `.` (dot) - creates huge Unicode state machines
-  - `[^...]` negated classes - large UTF-8 range tables
-  - `~c`, `~i`, `~p{}` - XML name chars and Unicode property escapes (not implemented)
-  - `-[` character class subtraction - XSD feature, not I-Regexp
-
-**Recent fix:** `{n}` now correctly means "exactly n" (was "at least n"). Go has same bug but skips all `{}` tests.
-
-## Bulk Pattern Optimization
-
-Trie-based O(n) construction for patterns with many string values. See `src/automaton/trie.rs`.
-
-```bash
-cargo bench bulk_100x10   # ~1.1ms (was 16ms naive)
-cargo bench bulk_1000x10  # ~62ms (was ~5s naive)
-```
+**Sample testing (992 samples from Go):**
+- 77 samples fully tested
+- Skipped: `.` (huge Unicode machines), `[^...]` (large tables), `~c`/`~i`/`~p{}` (unimplemented)
 
 ## Next Tasks
 
 ### 1. Enable `*`/`+` Sample Testing (Medium)
-Arena NFA handles `*`/`+` efficiently but sample testing is slow.
-
-**Options:**
-- Run subset of `*`/`+` samples (first 50?)
-- Add timeout per sample
-- Profile and optimize arena NFA traversal
+Arena NFA handles `*`/`+` but sample testing is slow. Options: run subset, add timeout, profile traversal.
 
 ### 2. Unicode Property Matchers (Hard)
-`~p{Lu}` (uppercase), `~P{Ll}` (not lowercase). Requires Unicode tables.
-
-**Files:** `src/regexp.rs`
-**Note:** Not implemented in Go either.
+`~p{Lu}` (uppercase), `~P{Ll}` (not lowercase). Requires Unicode tables. Not in Go either.
 
 ## Session Notes
 
@@ -101,16 +94,15 @@ Arena NFA handles `*`/`+` efficiently but sample testing is slow.
 1. Read this spec for context
 2. For Go behavior, read Go source directly - don't trust past interpretations
 3. Push often, check CI (`gh run list`)
-4. Run `cargo fmt` before commit
 
 **Test regexp changes:**
 ```bash
 cargo test test_regexp_validity -- --nocapture
-cargo test test_parse_range_quantifier
+cargo test test_multi_char_escapes  # new: ~d/~w/~s tests
 cargo test test_nfa_range
 ```
 
-**Key test file locations:**
+**Key files:**
 - Regexp samples: `src/regexp_samples.rs` (992 samples)
 - Regexp tests: `src/regexp.rs` (bottom of file)
-- Validity test: `src/lib.rs` (`test_regexp_validity`)
+- Multi-char escapes: `src/regexp.rs:check_multi_char_escape()`
