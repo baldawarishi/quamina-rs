@@ -1284,6 +1284,141 @@ mod tests {
         // Test ~W and ~S parse without error
         assert!(parse_regexp("~W").is_ok());
         assert!(parse_regexp("~S").is_ok());
+
+        // Test XML character escapes
+
+        // ~i = XML NameStartChar (initial name char)
+        let root = parse_regexp("~i").unwrap();
+        assert_eq!(root.len(), 1);
+        assert_eq!(root[0].len(), 1);
+        // NameStartChar has 16 ranges: ':', 'A'-'Z', '_', 'a'-'z', plus Unicode ranges
+        assert_eq!(root[0][0].runes.len(), 16);
+
+        // ~c = XML NameChar (name char) - includes NameStartChar + extra chars
+        let root = parse_regexp("~c").unwrap();
+        assert_eq!(root.len(), 1);
+        assert_eq!(root[0].len(), 1);
+        // NameChar = NameStartChar (16) + 6 more ranges
+        assert_eq!(root[0][0].runes.len(), 22);
+
+        // Test ~I and ~C parse without error (inverted)
+        assert!(parse_regexp("~I").is_ok());
+        assert!(parse_regexp("~C").is_ok());
+    }
+
+    #[test]
+    fn test_xml_escapes_nfa() {
+        use crate::automaton::{traverse_nfa, NfaBuffers, VALUE_TERMINATOR};
+
+        // Test ~i matches initial name chars
+        let root = parse_regexp("~i").unwrap();
+        let (table, field_matcher) = make_regexp_nfa(root, false);
+        let mut bufs = NfaBuffers::new();
+
+        // Should match 'a' (letter)
+        let value = vec![b'a', VALUE_TERMINATOR];
+        traverse_nfa(&table, &value, &mut bufs);
+        assert!(
+            bufs.transitions
+                .iter()
+                .any(|m| Arc::ptr_eq(m, &field_matcher)),
+            "~i should match 'a'"
+        );
+
+        // Should match ':' (colon is valid NameStartChar)
+        bufs.clear();
+        let value = vec![b':', VALUE_TERMINATOR];
+        traverse_nfa(&table, &value, &mut bufs);
+        assert!(
+            bufs.transitions
+                .iter()
+                .any(|m| Arc::ptr_eq(m, &field_matcher)),
+            "~i should match ':'"
+        );
+
+        // Should match '_' (underscore is valid NameStartChar)
+        bufs.clear();
+        let value = vec![b'_', VALUE_TERMINATOR];
+        traverse_nfa(&table, &value, &mut bufs);
+        assert!(
+            bufs.transitions
+                .iter()
+                .any(|m| Arc::ptr_eq(m, &field_matcher)),
+            "~i should match '_'"
+        );
+
+        // Should NOT match '1' (digits not valid for NameStartChar)
+        bufs.clear();
+        let value = vec![b'1', VALUE_TERMINATOR];
+        traverse_nfa(&table, &value, &mut bufs);
+        assert!(
+            !bufs
+                .transitions
+                .iter()
+                .any(|m| Arc::ptr_eq(m, &field_matcher)),
+            "~i should NOT match '1'"
+        );
+
+        // Should NOT match '-' (hyphen not valid for NameStartChar)
+        bufs.clear();
+        let value = vec![b'-', VALUE_TERMINATOR];
+        traverse_nfa(&table, &value, &mut bufs);
+        assert!(
+            !bufs
+                .transitions
+                .iter()
+                .any(|m| Arc::ptr_eq(m, &field_matcher)),
+            "~i should NOT match '-'"
+        );
+
+        // Test ~c matches name chars (including digits, hyphen, dot)
+        let root = parse_regexp("~c").unwrap();
+        let (table, field_matcher) = make_regexp_nfa(root, false);
+
+        // Should match '1' (digits valid for NameChar)
+        bufs.clear();
+        let value = vec![b'1', VALUE_TERMINATOR];
+        traverse_nfa(&table, &value, &mut bufs);
+        assert!(
+            bufs.transitions
+                .iter()
+                .any(|m| Arc::ptr_eq(m, &field_matcher)),
+            "~c should match '1'"
+        );
+
+        // Should match '-' (hyphen valid for NameChar)
+        bufs.clear();
+        let value = vec![b'-', VALUE_TERMINATOR];
+        traverse_nfa(&table, &value, &mut bufs);
+        assert!(
+            bufs.transitions
+                .iter()
+                .any(|m| Arc::ptr_eq(m, &field_matcher)),
+            "~c should match '-'"
+        );
+
+        // Should match '.' (period valid for NameChar)
+        bufs.clear();
+        let value = vec![b'.', VALUE_TERMINATOR];
+        traverse_nfa(&table, &value, &mut bufs);
+        assert!(
+            bufs.transitions
+                .iter()
+                .any(|m| Arc::ptr_eq(m, &field_matcher)),
+            "~c should match '.'"
+        );
+
+        // Should NOT match ' ' (space not valid for NameChar)
+        bufs.clear();
+        let value = vec![b' ', VALUE_TERMINATOR];
+        traverse_nfa(&table, &value, &mut bufs);
+        assert!(
+            !bufs
+                .transitions
+                .iter()
+                .any(|m| Arc::ptr_eq(m, &field_matcher)),
+            "~c should NOT match ' '"
+        );
     }
 
     #[test]

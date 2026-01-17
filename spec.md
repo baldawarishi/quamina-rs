@@ -4,7 +4,7 @@ Rust port of [quamina](https://github.com/timbray/quamina) - fast pattern-matchi
 
 ## Status
 
-**270 tests passing.** Rust 1.5-2x faster. Synced with Go commit 74475a4 (Jan 2026).
+**271 tests passing.** Rust 1.5-2x faster. Synced with Go commit 74475a4 (Jan 2026).
 
 | Benchmark | Go (ns) | Rust (ns) | Speedup |
 |-----------|---------|-----------|---------|
@@ -24,9 +24,10 @@ Rust port of [quamina](https://github.com/timbray/quamina) - fast pattern-matchi
 - `{"anything-but": 404}` - numeric anything-but
 - `{"regexp": "a{2,5}"}` - range quantifiers (Go lacks)
 - `~d`/`~w`/`~s` - character class escapes (not in I-Regexp)
+- `~i`/`~c` - XML name character escapes (XSD compatibility)
 - `~p{IsBasicLatin}` - Unicode blocks (not in I-Regexp)
 
-**Regexp samples:** Rust 560, Go 203 (of 992 total)
+**Regexp samples:** Rust 593, Go 203 (of 992 total)
 
 ## Architecture
 
@@ -67,13 +68,12 @@ src/
 1. **Lazy negated categories** - Don't expand `[^abc]` eagerly
 
 **Low priority (not in I-Regexp):**
-2. XML escapes `~c`/`~i` - XSD only, +53 samples
-3. Character class subtraction `[a-[b]]` - XSD only, +74 samples
+2. Character class subtraction `[a-[b]]` - XSD only, +74 samples
 
 ## Commands
 
 ```bash
-cargo test                    # 270 tests
+cargo test                    # 271 tests
 cargo bench status            # benchmarks
 cargo clippy -- -D warnings   # CI check
 gh run list                   # check CI

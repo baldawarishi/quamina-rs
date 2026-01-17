@@ -379,6 +379,89 @@ fn check_single_char_escape(c: char) -> Option<char> {
     None
 }
 
+/// XML NameStartChar - characters that can start an XML name (XSD `\i`).
+/// From W3C XML spec: https://www.w3.org/TR/xml/#NT-NameStartChar
+fn xml_name_start_char() -> RuneRange {
+    vec![
+        RunePair { lo: ':', hi: ':' }, // 0x3A
+        RunePair { lo: 'A', hi: 'Z' }, // 0x41-0x5A
+        RunePair { lo: '_', hi: '_' }, // 0x5F
+        RunePair { lo: 'a', hi: 'z' }, // 0x61-0x7A
+        RunePair {
+            lo: '\u{C0}',
+            hi: '\u{D6}',
+        },
+        RunePair {
+            lo: '\u{D8}',
+            hi: '\u{F6}',
+        },
+        RunePair {
+            lo: '\u{F8}',
+            hi: '\u{2FF}',
+        },
+        RunePair {
+            lo: '\u{370}',
+            hi: '\u{37D}',
+        },
+        RunePair {
+            lo: '\u{37F}',
+            hi: '\u{1FFF}',
+        },
+        RunePair {
+            lo: '\u{200C}',
+            hi: '\u{200D}',
+        },
+        RunePair {
+            lo: '\u{2070}',
+            hi: '\u{218F}',
+        },
+        RunePair {
+            lo: '\u{2C00}',
+            hi: '\u{2FEF}',
+        },
+        RunePair {
+            lo: '\u{3001}',
+            hi: '\u{D7FF}',
+        },
+        RunePair {
+            lo: '\u{F900}',
+            hi: '\u{FDCF}',
+        },
+        RunePair {
+            lo: '\u{FDF0}',
+            hi: '\u{FFFD}',
+        },
+        RunePair {
+            lo: '\u{10000}',
+            hi: '\u{EFFFF}',
+        },
+    ]
+}
+
+/// XML NameChar - characters that can appear in an XML name (XSD `\c`).
+/// Includes all NameStartChar plus additional characters.
+fn xml_name_char() -> RuneRange {
+    let mut rr = xml_name_start_char();
+    rr.extend([
+        RunePair { lo: '-', hi: '-' }, // 0x2D
+        RunePair { lo: '.', hi: '.' }, // 0x2E
+        RunePair { lo: '0', hi: '9' }, // 0x30-0x39
+        RunePair {
+            lo: '\u{B7}',
+            hi: '\u{B7}',
+        },
+        RunePair {
+            lo: '\u{300}',
+            hi: '\u{36F}',
+        },
+        RunePair {
+            lo: '\u{203F}',
+            hi: '\u{2040}',
+        },
+    ]);
+    rr
+}
+
 /// Check for multi-char escape sequences that expand to character classes.
 /// Returns Some(RuneRange) for recognized escapes, None otherwise.
 fn check_multi_char_escape(c: char) -> Option<RuneRange> {
@@ -415,6 +498,14 @@ fn check_multi_char_escape(c: char) -> Option<RuneRange> {
             RunePair { lo: '\n', hi: '\n' },
             RunePair { lo: '\r', hi: '\r' },
         ])),
+        // ~i = XML NameStartChar (initial name char)
+        'i' => Some(xml_name_start_char()),
+        // ~I = NOT XML NameStartChar
+        'I' => Some(invert_rune_range(xml_name_start_char())),
+        // ~c = XML NameChar (name char)
+        'c' => Some(xml_name_char()),
+        // ~C = NOT XML NameChar
+        'C' => Some(invert_rune_range(xml_name_char())),
         _ => None,
     }
 }

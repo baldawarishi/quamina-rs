@@ -4757,20 +4757,20 @@ mod tests {
 
             // Skip patterns that are problematic for our NFA implementation:
             // - Character class subtraction [a-[b]] (XSD feature, unimplemented)
-            // - Unimplemented escapes ~i, ~c, ~p{} etc.
+            // - Unimplemented escapes ~b, ~B etc.
             fn should_skip(re: &str) -> bool {
                 // Skip character class subtraction (XSD feature not in I-Regexp)
                 if re.contains("-[") {
                     return true;
                 }
                 // Skip unimplemented escapes (multi-char escapes)
-                // ~i, ~I, ~c, ~C, ~b, ~B are unimplemented
-                // Note: ~d, ~D, ~w, ~W, ~s, ~S and ~p, ~P are now implemented!
+                // ~b, ~B are unimplemented (word boundaries - not in XSD regex)
+                // Note: ~d, ~D, ~w, ~W, ~s, ~S, ~p, ~P, ~i, ~I, ~c, ~C are now implemented!
                 let chars: Vec<char> = re.chars().collect();
                 for i in 0..chars.len().saturating_sub(1) {
                     if chars[i] == '~' {
                         let next = chars[i + 1];
-                        if matches!(next, 'i' | 'I' | 'c' | 'C' | 'b' | 'B') {
+                        if matches!(next, 'b' | 'B') {
                             return true;
                         }
                     }
@@ -4785,8 +4785,11 @@ mod tests {
                 for i in 0..chars.len().saturating_sub(1) {
                     if chars[i] == '~' {
                         let next = chars[i + 1];
-                        // ~d, ~D, ~w, ~W, ~s, ~S, ~p, ~P are our implemented extensions
-                        if matches!(next, 'd' | 'D' | 'w' | 'W' | 's' | 'S' | 'p' | 'P') {
+                        // ~d, ~D, ~w, ~W, ~s, ~S, ~p, ~P, ~i, ~I, ~c, ~C are our implemented extensions
+                        if matches!(
+                            next,
+                            'd' | 'D' | 'w' | 'W' | 's' | 'S' | 'p' | 'P' | 'i' | 'I' | 'c' | 'C'
+                        ) {
                             return true;
                         }
                     }
