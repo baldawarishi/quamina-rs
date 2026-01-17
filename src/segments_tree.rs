@@ -3,7 +3,7 @@
 //! This enables the JSON flattener to skip fields that aren't used in any pattern,
 //! providing a significant performance optimization.
 
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 use std::sync::Arc;
 
 /// Separator used between path segments (e.g., "context\nuser\nid")
@@ -31,10 +31,10 @@ pub struct SegmentsTree {
     is_root: bool,
     /// Child nodes (for nested objects)
     /// Maps segment name -> child tree
-    nodes: HashMap<String, SegmentsTree>,
+    nodes: FxHashMap<String, SegmentsTree>,
     /// Leaf fields at this level
     /// Maps segment name -> full path bytes (Arc for O(1) cloning)
-    fields: HashMap<String, Arc<[u8]>>,
+    fields: FxHashMap<String, Arc<[u8]>>,
 }
 
 impl Default for SegmentsTree {
@@ -48,8 +48,8 @@ impl SegmentsTree {
     pub fn new() -> Self {
         Self {
             is_root: true,
-            nodes: HashMap::new(),
-            fields: HashMap::new(),
+            nodes: FxHashMap::default(),
+            fields: FxHashMap::default(),
         }
     }
 
@@ -57,8 +57,8 @@ impl SegmentsTree {
     fn new_node() -> Self {
         Self {
             is_root: false,
-            nodes: HashMap::new(),
-            fields: HashMap::new(),
+            nodes: FxHashMap::default(),
+            fields: FxHashMap::default(),
         }
     }
 
