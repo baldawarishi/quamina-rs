@@ -4,7 +4,7 @@ Rust port of [quamina](https://github.com/timbray/quamina) - fast pattern-matchi
 
 ## Status
 
-**267 tests passing.** Rust 1.5-2x faster. Synced with Go commit c443b44 (Jan 2026).
+**268 tests passing.** Rust 1.5-2x faster. Synced with Go commit c443b44 (Jan 2026).
 
 | Benchmark | Go (ns) | Rust (ns) | Speedup |
 |-----------|---------|-----------|---------|
@@ -76,7 +76,7 @@ src/
 ## Commands
 
 ```bash
-cargo test                    # 267 tests
+cargo test                    # 268 tests
 cargo bench status            # benchmarks
 cargo clippy -- -D warnings   # CI check
 gh run list                   # check CI
@@ -85,11 +85,11 @@ cargo fmt && git push         # format and push
 
 ## Known Issues
 
-4 edge cases in regexp testing (supplementary plane characters with negated categories):
-- `~p{Lo}` with CJK Extension B characters
-- `~P{Mn}`, `~P{C}`, `~P{Co}` with certain test strings
+2 edge cases in regexp testing (supplementary plane characters):
+- `~p{Lo}*` with string "א𪘀" (Hebrew + CJK Extension B)
+- `~P{Mn}*` with string "ः𝅲" (Devanagari Visarga + Musical Symbol)
 
-These need investigation into NFA traversal with 4-byte UTF-8 sequences.
+These need investigation into NFA handling of 4-byte UTF-8 sequences with the `*` quantifier.
 
 ## Session Notes
 
@@ -120,7 +120,7 @@ cargo test test_regexp_end2end                  # end-to-end regexp
 
 ## Future Work
 
-1. **Fix 4 remaining edge cases** - Investigate NFA traversal for supplementary plane + negated categories
-2. **XML escapes** - Implement `~c` and `~i` for XML name characters
+1. **Fix 2 remaining edge cases** - Investigate NFA handling of 4-byte UTF-8 with `*` quantifier
+2. **XML escapes** - Implement `~c` and `~i` for XML name characters (Go doesn't have these either)
 3. **Character class subtraction** - `[a-[b]]` XSD feature (low priority)
 4. **More Unicode categories** - Complete coverage for all Unicode general categories

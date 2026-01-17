@@ -746,31 +746,85 @@ fn simplify_rune_range(mut rranges: RuneRange) -> RuneRange {
 /// Maximum Unicode code point value.
 const RUNE_MAX: char = '\u{10FFFF}';
 
+/// Surrogate range boundaries (these are invalid Unicode code points for chars)
+const SURROGATE_START_CP: u32 = 0xD800;
+const SURROGATE_END_CP: u32 = 0xDFFF;
+
+/// Add a gap range to inverted, handling surrogate boundary
+fn add_gap_range(inverted: &mut Vec<RunePair>, start: u32, end: u32) {
+    // Skip empty or invalid ranges
+    if start > end {
+        return;
+    }
+
+    // If the range spans the surrogate area, split it
+    if start < SURROGATE_START_CP && end >= SURROGATE_START_CP {
+        // Part before surrogates
+        if let (Some(lo), Some(hi)) = (
+            char::from_u32(start),
+            char::from_u32(SURROGATE_START_CP - 1),
+        ) {
+            inverted.push(RunePair { lo, hi });
+        }
+        // Part after surrogates (if any)
+        if end > SURROGATE_END_CP {
+            if let (Some(lo), Some(hi)) =
+                (char::from_u32(SURROGATE_END_CP + 1), char::from_u32(end))
+            {
+                inverted.push(RunePair { lo, hi });
+            }
+        }
+    } else if (SURROGATE_START_CP..=SURROGATE_END_CP).contains(&start) {
+        // Starts in surrogate range, only add part after
+        if end > SURROGATE_END_CP {
+            if let (Some(lo), Some(hi)) =
+                (char::from_u32(SURROGATE_END_CP + 1), char::from_u32(end))
+            {
+                inverted.push(RunePair { lo, hi });
+            }
+        }
+    } else {
+        // Normal range (not touching surrogates)
+        if let (Some(lo), Some(hi)) = (char::from_u32(start), char::from_u32(end)) {
+            inverted.push(RunePair { lo, hi });
+        }
+    }
+}
+
 /// Invert a rune range (for negated character classes).
 /// Returns a range that matches everything NOT in the input range.
 fn invert_rune_range(mut rr: RuneRange) -> RuneRange {
     rr.sort_by_key(|rp| rp.lo);
 
+    // Merge overlapping/adjacent ranges after sorting
+    let mut merged: Vec<RunePair> = Vec::new();
+    for pair in rr {
+        if let Some(last) = merged.last_mut() {
+            // Check if this pair overlaps or is adjacent to the last merged range
+            if pair.lo as u32 <= last.hi as u32 + 1 {
+                // Extend the last range if this one goes further
+                if pair.hi > last.hi {
+                    last.hi = pair.hi;
+                }
+                continue;
+            }
+        }
+        merged.push(pair);
+    }
+
     let mut inverted = Vec::new();
     let mut point: u32 = 0;
 
-    for pair in &rr {
+    for pair in &merged {
         let lo = pair.lo as u32;
         if lo > point {
-            if let (Some(start), Some(end)) = (char::from_u32(point), char::from_u32(lo - 1)) {
-                inverted.push(RunePair { lo: start, hi: end });
-            }
+            add_gap_range(&mut inverted, point, lo - 1);
         }
         point = pair.hi as u32 + 1;
     }
 
-    if point < RUNE_MAX as u32 {
-        if let Some(start) = char::from_u32(point) {
-            inverted.push(RunePair {
-                lo: start,
-                hi: RUNE_MAX,
-            });
-        }
+    if point <= RUNE_MAX as u32 {
+        add_gap_range(&mut inverted, point, RUNE_MAX as u32);
     }
 
     inverted
@@ -2751,6 +2805,8 @@ mod tests {
     #[test]
     fn test_invert_rune_range() {
         // Port of Go's TestInvertRuneRange
+        // Note: Ranges spanning surrogates (U+D800-U+DFFF) are split into
+        // pre-surrogate and post-surrogate parts since Rust chars can't be surrogates.
         let test_cases = vec![
             // {input, expected}
             (
@@ -2759,6 +2815,10 @@ mod tests {
                     RunePair { lo: '\0', hi: 'a' },
                     RunePair {
                         lo: 'c',
+                        hi: '\u{D7FF}',
+                    },
+                    RunePair {
+                        lo: '\u{E000}',
                         hi: RUNE_MAX,
                     },
                 ],
@@ -2769,6 +2829,10 @@ mod tests {
                     RunePair { lo: '\0', hi: 'k' },
                     RunePair {
                         lo: 'o',
+                        hi: '\u{D7FF}',
+                    },
+                    RunePair {
+                        lo: '\u{E000}',
                         hi: RUNE_MAX,
                     },
                 ],
@@ -2780,6 +2844,10 @@ mod tests {
                     RunePair { lo: 'o', hi: 'o' },
                     RunePair {
                         lo: 'r',
+                        hi: '\u{D7FF}',
+                    },
+                    RunePair {
+                        lo: '\u{E000}',
                         hi: RUNE_MAX,
                     },
                 ],
@@ -2804,6 +2872,10 @@ mod tests {
                     RunePair { lo: '\0', hi: 'a' },
                     RunePair {
                         lo: 'e',
+                        hi: '\u{D7FF}',
+                    },
+                    RunePair {
+                        lo: '\u{E000}',
                         hi: RUNE_MAX,
                     },
                 ],
@@ -2997,6 +3069,46 @@ mod tests {
                 .any(|m| Arc::ptr_eq(m, &field_matcher)),
             "Pattern {} should match 'abc'",
             pattern
+        );
+    }
+
+    #[test]
+    fn test_negated_category_star_edge_cases() {
+        use crate::automaton::arena::{traverse_arena_nfa, ArenaNfaBuffers};
+
+        // Helper to test if a pattern matches a string
+        fn matches(pattern: &str, input: &str) -> bool {
+            let root = parse_regexp(pattern).expect(&format!("Failed to parse: {}", pattern));
+            let (arena, start, field_matcher) = make_regexp_nfa_arena(root, false);
+            let mut bufs = ArenaNfaBuffers::with_capacity(arena.len());
+
+            // Note: traverse_arena_nfa auto-appends VALUE_TERMINATOR, so don't add it to input
+            traverse_arena_nfa(&arena, start, input.as_bytes(), &mut bufs);
+
+            bufs.transitions
+                .iter()
+                .any(|m| Arc::ptr_eq(m, &field_matcher))
+        }
+
+        // Sample 211: ~P{C}* should match '₠' (U+20A0, category Sc - not in C)
+        // First test simpler cases
+        assert!(matches(".*", "a"), ".* should match 'a'");
+        assert!(matches(".*", "₠"), ".* should match '₠'");
+        assert!(matches(".*", ""), ".* should match empty");
+
+        // Test negated category without star first
+        // ~P{C} means NOT in category C (Other)
+        // ₠ (U+20A0) is Sc (Currency Symbol), not C, so should match
+        assert!(matches("~P{C}", "₠"), "~P{{C}} should match '₠'");
+
+        // Now test with star
+        assert!(
+            matches("~P{C}*", ""),
+            "~P{{C}}* should match empty (zero chars)"
+        );
+        assert!(
+            matches("~P{C}*", "₠"),
+            "~P{{C}}* should match '₠' (single non-C char)"
         );
     }
 
