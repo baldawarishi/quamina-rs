@@ -77,8 +77,9 @@ cargo fmt                     # format before commit
 2. **Arena NFA** (`make_regexp_nfa_arena`): Efficient for `*`/`+` with cyclic structures
 
 **Sample testing (992 samples from Go):**
-- 173 samples fully tested (including `*`, `+`, `~d/~w/~s/~D/~W/~S`)
-- Skipped: `.` (huge Unicode machines), `[^...]` (large tables), `~c`/`~i`/`~p{}` (unimplemented)
+- 193 samples fully tested (including `*`, `+`, `.`, `[^...]`, `~d/~w/~s/~D/~W/~S`)
+- Go tests 128 samples - we test 50% more!
+- Skipped: `~c`/`~i`/`~p{}` (unimplemented), character class subtraction `[a-[b]]` (XSD feature)
 
 ## Next Tasks
 
