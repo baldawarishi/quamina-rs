@@ -19,6 +19,7 @@ use crate::automaton::{
     arena::{ArenaSmallTable, StateArena, StateId, ARENA_VALUE_TERMINATOR},
     merge_fas, FaState, FieldMatcher, SmallTable, BYTE_CEILING, VALUE_TERMINATOR,
 };
+use crate::unicode_categories::{get_block_ranges, get_category_ranges};
 
 /// A pair of runes representing an inclusive range [lo, hi].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -121,6 +122,7 @@ const IMPLEMENTED_FEATURES: &[RegexpFeature] = &[
     RegexpFeature::Plus,
     RegexpFeature::Star,
     RegexpFeature::Range,
+    RegexpFeature::Property,
 ];
 
 /// Parser state for regexp parsing.
@@ -502,8 +504,17 @@ fn read_atom(parse: &mut RegexpParse) -> Result<QuantifiedAtom, RegexpError> {
 
             if next == 'p' || next == 'P' {
                 parse.record_feature(RegexpFeature::Property);
-                read_category(parse)?;
-                return Ok(QuantifiedAtom::default());
+                let mut runes = read_category(parse)?;
+                // ~P{...} means NOT in the category (inverted)
+                if next == 'P' {
+                    runes = invert_rune_range(runes);
+                }
+                return Ok(QuantifiedAtom {
+                    runes,
+                    quant_min: 1,
+                    quant_max: 1,
+                    ..Default::default()
+                });
             }
 
             Err(RegexpError {
@@ -627,8 +638,12 @@ fn read_cce1(parse: &mut RegexpParse, first: bool) -> Result<RuneRange, RegexpEr
         })?;
         if next == 'p' || next == 'P' {
             parse.record_feature(RegexpFeature::Property);
-            read_category(parse)?;
-            return Ok(Vec::new());
+            let mut runes = read_category(parse)?;
+            // ~P{...} means NOT in the category (inverted)
+            if next == 'P' {
+                runes = invert_rune_range(runes);
+            }
+            return Ok(runes);
         }
         // Check for multi-char escapes (can't participate in ranges)
         if let Some(runes) = check_multi_char_escape(next) {
@@ -761,48 +776,99 @@ fn invert_rune_range(mut rr: RuneRange) -> RuneRange {
     inverted
 }
 
-/// Read a Unicode category ~p{...} or ~P{...}
-fn read_category(parse: &mut RegexpParse) -> Result<(), RegexpError> {
+/// Read a Unicode category ~p{...} or ~P{...} and return the character ranges.
+/// Handles both general categories (Lu, Ll, Nd, etc.) and Unicode blocks (IsBasicLatin, etc.).
+fn read_category(parse: &mut RegexpParse) -> Result<RuneRange, RegexpError> {
     parse.require('{')?;
 
-    let cat_initial = parse.next_rune()?;
-    let valid_initials = ['L', 'M', 'N', 'P', 'Z', 'S', 'C'];
-    if !valid_initials.contains(&cat_initial) {
+    // Collect all characters until '}'
+    let mut name = String::new();
+    loop {
+        let c = parse.next_rune()?;
+        if c == '}' {
+            break;
+        }
+        name.push(c);
+    }
+
+    if name.is_empty() {
         return Err(RegexpError {
-            message: format!("unknown category {}", cat_initial),
+            message: "empty category name".into(),
             offset: parse.last_index,
         });
     }
 
-    let cat_detail = parse.next_rune()?;
-    if cat_detail == '}' {
-        return Ok(());
+    // Check for Unicode block (starts with "Is")
+    if name.starts_with("Is") {
+        if let Some(ranges) = get_block_ranges(&name) {
+            return Ok(ranges);
+        }
+        return Err(RegexpError {
+            message: format!("unknown Unicode block ~p{{{}}}", name),
+            offset: parse.last_index,
+        });
     }
 
-    // Validate detail letter based on initial
-    let valid_details = match cat_initial {
-        'L' => "ultmo",
-        'M' => "nce",
-        'N' => "dlo",
-        'P' => "cdseifo",
-        'Z' => "slp",
-        'S' => "mcko",
-        'C' => "cfon",
-        _ => "",
+    // Parse as general category
+    let mut chars = name.chars();
+    let initial = match chars.next() {
+        Some(c) => c,
+        None => {
+            return Err(RegexpError {
+                message: "empty category name".into(),
+                offset: parse.last_index,
+            })
+        }
     };
 
-    if !valid_details.contains(cat_detail) {
+    let valid_initials = ['L', 'M', 'N', 'P', 'Z', 'S', 'C'];
+    if !valid_initials.contains(&initial) {
         return Err(RegexpError {
-            message: format!(
-                "unknown category {}p{{{}{}",
-                ESCAPE, cat_initial, cat_detail
-            ),
+            message: format!("unknown category {}", initial),
             offset: parse.last_index,
         });
     }
 
-    parse.require('}')?;
-    Ok(())
+    let detail = chars.next();
+
+    // Validate detail letter based on initial
+    if let Some(d) = detail {
+        let valid_details = match initial {
+            'L' => "ultmo",
+            'M' => "nce",
+            'N' => "dlo",
+            'P' => "cdseifo",
+            'Z' => "slp",
+            'S' => "mcko",
+            'C' => "cfon",
+            _ => "",
+        };
+
+        if !valid_details.contains(d) {
+            return Err(RegexpError {
+                message: format!("unknown category {}p{{{}{}", ESCAPE, initial, d),
+                offset: parse.last_index,
+            });
+        }
+
+        // Check for extra characters
+        if chars.next().is_some() {
+            return Err(RegexpError {
+                message: format!("invalid category name ~p{{{}}}", name),
+                offset: parse.last_index,
+            });
+        }
+    }
+
+    // Look up the category ranges
+    if let Some(ranges) = get_category_ranges(initial, detail) {
+        Ok(ranges)
+    } else {
+        Err(RegexpError {
+            message: format!("unknown category ~p{{{}}}", name),
+            offset: parse.last_index,
+        })
+    }
 }
 
 /// Read a quantifier (?, *, +, {m,n})
