@@ -50,23 +50,25 @@ src/
 
 ## Implementation Notes
 
-**Shell caching (now implemented):** For Unicode categories like `~p{L}` (~1.1M code points), we cache pre-built FA shells. Second use of same category is O(copy) instead of O(rebuild).
+**Optimizations implemented:**
+- **Shell caching:** For Unicode categories like `~p{L}` (~1.1M code points), we cache pre-built FA shells. Second use of same category is O(copy) instead of O(rebuild).
+- **Arena-based cyclic NFA:** For `+`/`*` quantifiers, we use `StateArena` with true cycles (2-3 states) instead of Go's mutable pointer approach. Production code routes ALL regexp patterns through `make_regexp_nfa_arena`.
 
 **Go parity achieved:**
 - Clean module structure (regexp/parser.rs + regexp/nfa.rs)
 - Shell caching for Unicode categories
 - Structured errors with offset context
 - Unicode block support (`~p{IsBasicLatin}`)
+- Efficient cyclic NFA for quantifiers
 
 ## Improvement Opportunities
 
 **Medium impact:**
-1. **Optimize quantifier chains** - Current 100-state chain for `+`/`*` is memory-heavy
-2. **Lazy negated categories** - Don't expand `[^abc]` eagerly
+1. **Lazy negated categories** - Don't expand `[^abc]` eagerly
 
 **Low priority (not in I-Regexp):**
-3. XML escapes `~c`/`~i` - XSD only, +53 samples
-4. Character class subtraction `[a-[b]]` - XSD only, +74 samples
+2. XML escapes `~c`/`~i` - XSD only, +53 samples
+3. Character class subtraction `[a-[b]]` - XSD only, +74 samples
 
 ## Commands
 
