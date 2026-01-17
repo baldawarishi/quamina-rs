@@ -35,7 +35,10 @@ src/
 ├── lib.rs              # Public API: Quamina, QuaminaBuilder
 ├── json.rs             # Pattern parsing, Matcher enum
 ├── flatten_json.rs     # Streaming JSON flattener
-├── regexp.rs           # I-Regexp parser + NFA builder (3715 lines - needs split)
+├── regexp/
+│   ├── mod.rs          # Re-exports and tests
+│   ├── parser.rs       # I-Regexp parser, data structures (RunePair, etc.)
+│   └── nfa.rs          # NFA building (Arc-based and arena-based)
 ├── unicode_categories.rs # Unicode category/block data
 ├── automaton/
 │   ├── small_table.rs  # SmallTable (byte transitions)
@@ -49,13 +52,13 @@ src/
 
 **Go wins:**
 - Shell caching for negated classes (major optimization we lack)
-- Better modularity (separate parser/NFA files)
 - GC enables clever caching patterns
 
 **Rust wins:**
 - Structured errors with offset context
 - Unicode block support (`~p{IsBasicLatin}`)
 - Type safety, compile-time guarantees
+- Clean module structure (regexp/parser.rs + regexp/nfa.rs)
 
 **Key Go optimization we should implement:**
 ```go
@@ -69,15 +72,14 @@ For `[^abc]` (~1.1M Unicode points): Go reuses cached shell instantly, Rust expa
 
 **High impact:**
 1. **Shell caching** - Port Go's `cachedFaShells` pattern for negated classes
-2. **Split regexp.rs** - 3715 lines is too large; split into `regexp_parser.rs` + `regexp_nfa.rs`
 
 **Medium impact:**
-3. **Optimize quantifier chains** - Current 100-state chain for `+`/`*` is memory-heavy
-4. **Lazy negated categories** - Don't expand `[^abc]` eagerly
+2. **Optimize quantifier chains** - Current 100-state chain for `+`/`*` is memory-heavy
+3. **Lazy negated categories** - Don't expand `[^abc]` eagerly
 
 **Low priority (not in I-Regexp):**
-5. XML escapes `~c`/`~i` - XSD only, +53 samples
-6. Character class subtraction `[a-[b]]` - XSD only, +74 samples
+4. XML escapes `~c`/`~i` - XSD only, +53 samples
+5. Character class subtraction `[a-[b]]` - XSD only, +74 samples
 
 ## Commands
 
@@ -97,12 +99,13 @@ cargo fmt && git push         # format and push
 4. Use todos to manage context
 
 **Key files:**
-- `src/regexp.rs` - parser + NFA (needs refactoring)
+- `src/regexp/parser.rs` - I-Regexp parsing
+- `src/regexp/nfa.rs` - NFA building (Arc and arena)
 - `src/unicode_categories.rs` - Unicode data
 - `src/lib.rs:test_regexp_validity()` - 560 samples tested
 
 **Go reference:**
-- `regexp_reader.go` - parsing (765 lines, cleaner than ours)
+- `regexp_reader.go` - parsing (765 lines)
 - `regexp_nfa.go` - NFA building with shell caching
-- `rune_range.go` - rune range utilities
+- `rune_range.go` - rune range utilities + shell caching
 - `character_properties.go` - generated Unicode data
