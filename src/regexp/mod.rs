@@ -1457,4 +1457,99 @@ mod tests {
             "a~s{{0,3}}b should match 'a  b'"
         );
     }
+
+    #[test]
+    fn test_shell_caching_cache_key() {
+        // Verify that Unicode categories get cache keys during parsing
+        let root = parse_regexp("~p{L}").unwrap();
+        assert_eq!(root.len(), 1);
+        assert_eq!(root[0].len(), 1);
+        assert_eq!(
+            root[0][0].cache_key.as_deref(),
+            Some("L"),
+            "~p{{L}} should have cache_key 'L'"
+        );
+
+        let root = parse_regexp("~p{Lu}").unwrap();
+        assert_eq!(
+            root[0][0].cache_key.as_deref(),
+            Some("Lu"),
+            "~p{{Lu}} should have cache_key 'Lu'"
+        );
+
+        // Negated categories should have "-" prefix
+        let root = parse_regexp("~P{L}").unwrap();
+        assert_eq!(
+            root[0][0].cache_key.as_deref(),
+            Some("-L"),
+            "~P{{L}} should have cache_key '-L'"
+        );
+
+        let root = parse_regexp("~P{Nd}").unwrap();
+        assert_eq!(
+            root[0][0].cache_key.as_deref(),
+            Some("-Nd"),
+            "~P{{Nd}} should have cache_key '-Nd'"
+        );
+
+        // Unicode blocks should NOT have cache key (not cached)
+        let root = parse_regexp("~p{IsBasicLatin}").unwrap();
+        assert_eq!(
+            root[0][0].cache_key, None,
+            "~p{{IsBasicLatin}} should NOT have cache_key"
+        );
+
+        // Regular character classes should NOT have cache key
+        let root = parse_regexp("[a-z]").unwrap();
+        assert_eq!(
+            root[0][0].cache_key, None,
+            "[a-z] should NOT have cache_key"
+        );
+    }
+
+    #[test]
+    fn test_shell_caching_nfa_correctness() {
+        use crate::automaton::{traverse_nfa, NfaBuffers, VALUE_TERMINATOR};
+
+        // Test that cached patterns produce correct results
+        // Build ~p{L} twice - second should use cache
+        let root1 = parse_regexp("~p{L}").unwrap();
+        let root2 = parse_regexp("~p{L}").unwrap();
+
+        let (table1, fm1) = make_regexp_nfa(root1, false);
+        let (table2, fm2) = make_regexp_nfa(root2, false);
+
+        let mut bufs = NfaBuffers::new();
+
+        // Both should match "A"
+        let value = vec![b'A', VALUE_TERMINATOR];
+        traverse_nfa(&table1, &value, &mut bufs);
+        assert!(
+            bufs.transitions.iter().any(|m| Arc::ptr_eq(m, &fm1)),
+            "First ~p{{L}} should match 'A'"
+        );
+
+        bufs.clear();
+        traverse_nfa(&table2, &value, &mut bufs);
+        assert!(
+            bufs.transitions.iter().any(|m| Arc::ptr_eq(m, &fm2)),
+            "Second ~p{{L}} should match 'A' (from cache)"
+        );
+
+        // Both should NOT match "5"
+        bufs.clear();
+        let value = vec![b'5', VALUE_TERMINATOR];
+        traverse_nfa(&table1, &value, &mut bufs);
+        assert!(
+            !bufs.transitions.iter().any(|m| Arc::ptr_eq(m, &fm1)),
+            "First ~p{{L}} should NOT match '5'"
+        );
+
+        bufs.clear();
+        traverse_nfa(&table2, &value, &mut bufs);
+        assert!(
+            !bufs.transitions.iter().any(|m| Arc::ptr_eq(m, &fm2)),
+            "Second ~p{{L}} should NOT match '5'"
+        );
+    }
 }

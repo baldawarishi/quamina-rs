@@ -52,6 +52,9 @@ pub struct QuantifiedAtom {
     pub quant_max: i32,
     /// Subtree for parenthesized groups
     pub subtree: Option<RegexpRoot>,
+    /// Cache key for large Unicode categories (e.g., "L", "Lu", "-L" for negated)
+    /// Used to cache pre-built FA shells for performance.
+    pub cache_key: Option<String>,
 }
 
 impl Default for QuantifiedAtom {
@@ -62,6 +65,7 @@ impl Default for QuantifiedAtom {
             quant_min: 1,
             quant_max: 1,
             subtree: None,
+            cache_key: None,
         }
     }
 }
@@ -506,15 +510,20 @@ fn read_atom(parse: &mut RegexpParse) -> Result<QuantifiedAtom, RegexpError> {
 
             if next == 'p' || next == 'P' {
                 parse.record_feature(RegexpFeature::Property);
-                let mut runes = read_category(parse)?;
+                let (mut runes, cache_key) = read_category(parse)?;
                 // ~P{...} means NOT in the category (inverted)
-                if next == 'P' {
+                // For negated categories, prefix cache key with "-"
+                let cache_key = if next == 'P' {
                     runes = invert_rune_range(runes);
-                }
+                    cache_key.map(|k| format!("-{}", k))
+                } else {
+                    cache_key
+                };
                 return Ok(QuantifiedAtom {
                     runes,
                     quant_min: 1,
                     quant_max: 1,
+                    cache_key,
                     ..Default::default()
                 });
             }
@@ -640,7 +649,8 @@ fn read_cce1(parse: &mut RegexpParse, first: bool) -> Result<RuneRange, RegexpEr
         })?;
         if next == 'p' || next == 'P' {
             parse.record_feature(RegexpFeature::Property);
-            let mut runes = read_category(parse)?;
+            // Inside character class, we don't use the cache key
+            let (mut runes, _cache_key) = read_category(parse)?;
             // ~P{...} means NOT in the category (inverted)
             if next == 'P' {
                 runes = invert_rune_range(runes);
@@ -825,9 +835,11 @@ pub fn invert_rune_range(mut rr: RuneRange) -> RuneRange {
     inverted
 }
 
-/// Read a Unicode category ~p{...} or ~P{...} and return the character ranges.
+/// Read a Unicode category ~p{...} or ~P{...} and return the character ranges
+/// along with a cache key for large categories.
 /// Handles both general categories (Lu, Ll, Nd, etc.) and Unicode blocks (IsBasicLatin, etc.).
-fn read_category(parse: &mut RegexpParse) -> Result<RuneRange, RegexpError> {
+/// Returns (ranges, cache_key) where cache_key is Some for general categories.
+fn read_category(parse: &mut RegexpParse) -> Result<(RuneRange, Option<String>), RegexpError> {
     parse.require('{')?;
 
     // Collect all characters until '}'
@@ -848,9 +860,10 @@ fn read_category(parse: &mut RegexpParse) -> Result<RuneRange, RegexpError> {
     }
 
     // Check for Unicode block (starts with "Is")
+    // Unicode blocks are not cached (smaller than categories)
     if name.starts_with("Is") {
         if let Some(ranges) = get_block_ranges(&name) {
-            return Ok(ranges);
+            return Ok((ranges, None));
         }
         return Err(RegexpError {
             message: format!("unknown Unicode block ~p{{{}}}", name),
@@ -909,9 +922,15 @@ fn read_category(parse: &mut RegexpParse) -> Result<RuneRange, RegexpError> {
         }
     }
 
+    // Build the cache key (e.g., "L", "Lu", "Nd")
+    let cache_key = match detail {
+        Some(d) => format!("{}{}", initial, d),
+        None => initial.to_string(),
+    };
+
     // Look up the category ranges
     if let Some(ranges) = get_category_ranges(initial, detail) {
-        Ok(ranges)
+        Ok((ranges, Some(cache_key)))
     } else {
         Err(RegexpError {
             message: format!("unknown category ~p{{{}}}", name),

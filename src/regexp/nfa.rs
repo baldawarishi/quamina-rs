@@ -3,8 +3,17 @@
 //! This module builds finite automata from parsed regexp trees.
 //! Supports both Arc-based structures (for patterns without cycles) and
 //! arena-based structures (for patterns with + or * quantifiers).
+//!
+//! ## Shell Caching
+//!
+//! For large Unicode categories like `~p{L}` (all letters, ~1.1M code points),
+//! building the FA from scratch is expensive. We cache pre-built "shells" -
+//! FAs built with a placeholder state as the destination. When a cached
+//! category is needed, we copy the shell and replace the placeholder with
+//! the actual next state.
 
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex, OnceLock};
 
 use crate::automaton::{
     arena::{ArenaSmallTable, StateArena, StateId, ARENA_VALUE_TERMINATOR},
@@ -12,6 +21,99 @@ use crate::automaton::{
 };
 
 use super::parser::{QuantifiedAtom, RegexpBranch, RegexpRoot, RuneRange, REGEXP_QUANTIFIER_MAX};
+
+// ============================================================================
+// Shell Caching for Unicode Categories
+// ============================================================================
+
+/// Global placeholder state used as a sentinel when building cached FA shells.
+/// We use Arc::ptr_eq to identify this placeholder during shell copying.
+fn placeholder_state() -> &'static Arc<FaState> {
+    static PLACEHOLDER: OnceLock<Arc<FaState>> = OnceLock::new();
+    PLACEHOLDER.get_or_init(|| Arc::new(FaState::with_table(SmallTable::new())))
+}
+
+/// Global cache of pre-built FA shells for Unicode categories.
+/// Key is the category name (e.g., "L", "Lu", "-L" for negated).
+fn shell_cache() -> &'static Mutex<HashMap<String, SmallTable>> {
+    static CACHE: OnceLock<Mutex<HashMap<String, SmallTable>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Build an FA from a cached shell by copying it and replacing the placeholder.
+fn fa_from_shell(shell: &SmallTable, new_next: &Arc<FaState>) -> SmallTable {
+    let placeholder = placeholder_state();
+    copy_shell_table(shell, placeholder, new_next)
+}
+
+/// Copy a SmallTable, replacing transitions to placeholder with new_next.
+fn copy_shell_table(
+    shell: &SmallTable,
+    placeholder: &Arc<FaState>,
+    new_next: &Arc<FaState>,
+) -> SmallTable {
+    SmallTable {
+        ceilings: shell.ceilings.clone(),
+        steps: shell
+            .steps
+            .iter()
+            .map(|step| {
+                step.as_ref().map(|state| {
+                    if Arc::ptr_eq(state, placeholder) {
+                        new_next.clone()
+                    } else {
+                        copy_shell_node(state, placeholder, new_next)
+                    }
+                })
+            })
+            .collect(),
+        epsilons: shell.epsilons.clone(),
+        spinout: shell.spinout.clone(),
+    }
+}
+
+/// Recursively copy an FaState, replacing placeholder with new_next.
+fn copy_shell_node(
+    shell: &Arc<FaState>,
+    placeholder: &Arc<FaState>,
+    new_next: &Arc<FaState>,
+) -> Arc<FaState> {
+    Arc::new(FaState {
+        table: copy_shell_table(&shell.table, placeholder, new_next),
+        field_transitions: shell.field_transitions.clone(),
+    })
+}
+
+/// Build a rune range FA with optional caching.
+/// If `cache_key` is provided, the FA is cached for reuse.
+fn make_cached_rune_range_fa(
+    rr: &RuneRange,
+    next: &Arc<FaState>,
+    cache_key: Option<&str>,
+) -> SmallTable {
+    if let Some(key) = cache_key {
+        let cache = shell_cache();
+        let mut cache_guard = cache.lock().unwrap();
+
+        // Check if we have a cached shell
+        if let Some(shell) = cache_guard.get(key) {
+            return fa_from_shell(shell, next);
+        }
+
+        // Build shell with placeholder as destination
+        let placeholder = placeholder_state();
+        let shell = make_rune_range_nfa(rr, placeholder);
+
+        // Cache the shell
+        cache_guard.insert(key.to_string(), shell.clone());
+
+        // Return a copy with the real next state
+        fa_from_shell(&shell, next)
+    } else {
+        // No caching - build directly
+        make_rune_range_nfa(rr, next)
+    }
+}
 
 /// Convert a rune to UTF-8 bytes.
 fn rune_to_utf8(r: char) -> Vec<u8> {
@@ -97,7 +199,8 @@ fn make_atom_fa(qa: &QuantifiedAtom, next_step: &Arc<FaState>) -> SmallTable {
     } else if let Some(ref subtree) = qa.subtree {
         make_nfa_from_branches(subtree, next_step, false)
     } else {
-        make_rune_range_nfa(&qa.runes, next_step)
+        // Use caching for large Unicode categories
+        make_cached_rune_range_fa(&qa.runes, next_step, qa.cache_key.as_deref())
     }
 }
 
