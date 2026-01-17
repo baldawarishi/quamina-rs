@@ -371,6 +371,46 @@ fn check_single_char_escape(c: char) -> Option<char> {
     None
 }
 
+/// Check for multi-char escape sequences that expand to character classes.
+/// Returns Some(RuneRange) for recognized escapes, None otherwise.
+fn check_multi_char_escape(c: char) -> Option<RuneRange> {
+    match c {
+        // ~d = digit [0-9]
+        'd' => Some(vec![RunePair { lo: '0', hi: '9' }]),
+        // ~D = non-digit (everything except 0-9)
+        'D' => Some(invert_rune_range(vec![RunePair { lo: '0', hi: '9' }])),
+        // ~w = word char [a-zA-Z0-9_]
+        'w' => Some(vec![
+            RunePair { lo: 'a', hi: 'z' },
+            RunePair { lo: 'A', hi: 'Z' },
+            RunePair { lo: '0', hi: '9' },
+            RunePair { lo: '_', hi: '_' },
+        ]),
+        // ~W = non-word char
+        'W' => Some(invert_rune_range(vec![
+            RunePair { lo: 'a', hi: 'z' },
+            RunePair { lo: 'A', hi: 'Z' },
+            RunePair { lo: '0', hi: '9' },
+            RunePair { lo: '_', hi: '_' },
+        ])),
+        // ~s = whitespace [ \t\n\r]
+        's' => Some(vec![
+            RunePair { lo: ' ', hi: ' ' },
+            RunePair { lo: '\t', hi: '\t' },
+            RunePair { lo: '\n', hi: '\n' },
+            RunePair { lo: '\r', hi: '\r' },
+        ]),
+        // ~S = non-whitespace
+        'S' => Some(invert_rune_range(vec![
+            RunePair { lo: ' ', hi: ' ' },
+            RunePair { lo: '\t', hi: '\t' },
+            RunePair { lo: '\n', hi: '\n' },
+            RunePair { lo: '\r', hi: '\r' },
+        ])),
+        _ => None,
+    }
+}
+
 /// Read an atom.
 fn read_atom(parse: &mut RegexpParse) -> Result<QuantifiedAtom, RegexpError> {
     let b = parse.next_rune()?;
@@ -444,6 +484,16 @@ fn read_atom(parse: &mut RegexpParse) -> Result<QuantifiedAtom, RegexpError> {
                         lo: escaped,
                         hi: escaped,
                     }],
+                    quant_min: 1,
+                    quant_max: 1,
+                    ..Default::default()
+                });
+            }
+
+            // Check for multi-char escapes (~d, ~w, ~s, ~D, ~W, ~S)
+            if let Some(runes) = check_multi_char_escape(next) {
+                return Ok(QuantifiedAtom {
+                    runes,
                     quant_min: 1,
                     quant_max: 1,
                     ..Default::default()
@@ -579,6 +629,10 @@ fn read_cce1(parse: &mut RegexpParse, first: bool) -> Result<RuneRange, RegexpEr
             parse.record_feature(RegexpFeature::Property);
             read_category(parse)?;
             return Ok(Vec::new());
+        }
+        // Check for multi-char escapes (can't participate in ranges)
+        if let Some(runes) = check_multi_char_escape(next) {
+            return Ok(runes);
         }
         check_single_char_escape(next).ok_or_else(|| RegexpError {
             message: format!(
@@ -3229,5 +3283,211 @@ mod tests {
                 count
             );
         }
+    }
+
+    #[test]
+    fn test_multi_char_escapes_parse() {
+        // Test ~d parses correctly (digits)
+        let root = parse_regexp("~d").unwrap();
+        assert_eq!(root.len(), 1);
+        assert_eq!(root[0].len(), 1);
+        assert_eq!(root[0][0].runes.len(), 1);
+        assert_eq!(root[0][0].runes[0].lo, '0');
+        assert_eq!(root[0][0].runes[0].hi, '9');
+
+        // Test ~w parses correctly (word chars: a-z, A-Z, 0-9, _)
+        let root = parse_regexp("~w").unwrap();
+        assert_eq!(root.len(), 1);
+        assert_eq!(root[0].len(), 1);
+        assert_eq!(root[0][0].runes.len(), 4); // 4 ranges
+
+        // Test ~s parses correctly (whitespace)
+        let root = parse_regexp("~s").unwrap();
+        assert_eq!(root.len(), 1);
+        assert_eq!(root[0].len(), 1);
+        assert_eq!(root[0][0].runes.len(), 4); // space, tab, newline, carriage return
+
+        // Test ~D parses correctly (non-digits - inverted)
+        let root = parse_regexp("~D").unwrap();
+        assert_eq!(root.len(), 1);
+        assert_eq!(root[0].len(), 1);
+        // Inverted range should have 2 parts: [0, '0'-1] and ['9'+1, MAX]
+        assert!(root[0][0].runes.len() >= 2);
+
+        // Test ~W and ~S parse without error
+        assert!(parse_regexp("~W").is_ok());
+        assert!(parse_regexp("~S").is_ok());
+    }
+
+    #[test]
+    fn test_multi_char_escapes_nfa() {
+        use crate::automaton::{traverse_nfa, NfaBuffers, VALUE_TERMINATOR};
+
+        // Test ~d matches digits
+        let root = parse_regexp("~d").unwrap();
+        let (table, field_matcher) = make_regexp_nfa(root, false);
+        let mut bufs = NfaBuffers::new();
+
+        // Should match "5"
+        let value = vec![b'5', VALUE_TERMINATOR];
+        traverse_nfa(&table, &value, &mut bufs);
+        assert!(
+            bufs.transitions
+                .iter()
+                .any(|m| Arc::ptr_eq(m, &field_matcher)),
+            "~d should match '5'"
+        );
+
+        // Should NOT match "a"
+        bufs.clear();
+        let value = vec![b'a', VALUE_TERMINATOR];
+        traverse_nfa(&table, &value, &mut bufs);
+        assert!(
+            !bufs
+                .transitions
+                .iter()
+                .any(|m| Arc::ptr_eq(m, &field_matcher)),
+            "~d should NOT match 'a'"
+        );
+
+        // Test ~w matches word chars
+        let root = parse_regexp("~w").unwrap();
+        let (table, field_matcher) = make_regexp_nfa(root, false);
+
+        // Should match "a"
+        bufs.clear();
+        let value = vec![b'a', VALUE_TERMINATOR];
+        traverse_nfa(&table, &value, &mut bufs);
+        assert!(
+            bufs.transitions
+                .iter()
+                .any(|m| Arc::ptr_eq(m, &field_matcher)),
+            "~w should match 'a'"
+        );
+
+        // Should match "_"
+        bufs.clear();
+        let value = vec![b'_', VALUE_TERMINATOR];
+        traverse_nfa(&table, &value, &mut bufs);
+        assert!(
+            bufs.transitions
+                .iter()
+                .any(|m| Arc::ptr_eq(m, &field_matcher)),
+            "~w should match '_'"
+        );
+
+        // Should NOT match "-"
+        bufs.clear();
+        let value = vec![b'-', VALUE_TERMINATOR];
+        traverse_nfa(&table, &value, &mut bufs);
+        assert!(
+            !bufs
+                .transitions
+                .iter()
+                .any(|m| Arc::ptr_eq(m, &field_matcher)),
+            "~w should NOT match '-'"
+        );
+
+        // Test ~s matches whitespace
+        let root = parse_regexp("~s").unwrap();
+        let (table, field_matcher) = make_regexp_nfa(root, false);
+
+        // Should match " "
+        bufs.clear();
+        let value = vec![b' ', VALUE_TERMINATOR];
+        traverse_nfa(&table, &value, &mut bufs);
+        assert!(
+            bufs.transitions
+                .iter()
+                .any(|m| Arc::ptr_eq(m, &field_matcher)),
+            "~s should match ' '"
+        );
+
+        // Should match "\t"
+        bufs.clear();
+        let value = vec![b'\t', VALUE_TERMINATOR];
+        traverse_nfa(&table, &value, &mut bufs);
+        assert!(
+            bufs.transitions
+                .iter()
+                .any(|m| Arc::ptr_eq(m, &field_matcher)),
+            "~s should match '\\t'"
+        );
+
+        // Should NOT match "x"
+        bufs.clear();
+        let value = vec![b'x', VALUE_TERMINATOR];
+        traverse_nfa(&table, &value, &mut bufs);
+        assert!(
+            !bufs
+                .transitions
+                .iter()
+                .any(|m| Arc::ptr_eq(m, &field_matcher)),
+            "~s should NOT match 'x'"
+        );
+    }
+
+    #[test]
+    fn test_multi_char_escapes_in_class() {
+        // Test [~d] in character class
+        let root = parse_regexp("[~d]").unwrap();
+        assert_eq!(root.len(), 1);
+        assert_eq!(root[0].len(), 1);
+        assert_eq!(root[0][0].runes.len(), 1);
+        assert_eq!(root[0][0].runes[0].lo, '0');
+        assert_eq!(root[0][0].runes[0].hi, '9');
+
+        // Test [~da-z] combines digit with range
+        let root = parse_regexp("[~da-z]").unwrap();
+        assert_eq!(root.len(), 1);
+        assert_eq!(root[0].len(), 1);
+        // Should have digits [0-9] and [a-z]
+        assert!(root[0][0].runes.len() >= 2);
+    }
+
+    #[test]
+    fn test_multi_char_escape_with_quantifier() {
+        use crate::automaton::{traverse_nfa, NfaBuffers, VALUE_TERMINATOR};
+
+        // Test ~d+ matches one or more digits
+        let root = parse_regexp("~d+").unwrap();
+        let (table, field_matcher) = make_regexp_nfa(root, false);
+        let mut bufs = NfaBuffers::new();
+
+        // Should match "123"
+        let value = vec![b'1', b'2', b'3', VALUE_TERMINATOR];
+        traverse_nfa(&table, &value, &mut bufs);
+        assert!(
+            bufs.transitions
+                .iter()
+                .any(|m| Arc::ptr_eq(m, &field_matcher)),
+            "~d+ should match '123'"
+        );
+
+        // Test ~s{0,3} matches up to 3 whitespace
+        let root = parse_regexp("a~s{0,3}b").unwrap();
+        let (table, field_matcher) = make_regexp_nfa(root, false);
+
+        // Should match "ab" (0 spaces)
+        bufs.clear();
+        let value = vec![b'a', b'b', VALUE_TERMINATOR];
+        traverse_nfa(&table, &value, &mut bufs);
+        assert!(
+            bufs.transitions
+                .iter()
+                .any(|m| Arc::ptr_eq(m, &field_matcher)),
+            "a~s{{0,3}}b should match 'ab'"
+        );
+
+        // Should match "a  b" (2 spaces)
+        bufs.clear();
+        let value = vec![b'a', b' ', b' ', b'b', VALUE_TERMINATOR];
+        traverse_nfa(&table, &value, &mut bufs);
+        assert!(
+            bufs.transitions
+                .iter()
+                .any(|m| Arc::ptr_eq(m, &field_matcher)),
+            "a~s{{0,3}}b should match 'a  b'"
+        );
     }
 }

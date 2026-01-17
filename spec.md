@@ -4,7 +4,7 @@ Rust port of [quamina](https://github.com/timbray/quamina) - fast pattern-matchi
 
 ## Status
 
-**258 tests passing.** Rust 1.5-2x faster. Synced with Go commit c443b44 (Jan 2026).
+**262 tests passing.** Rust 1.5-2x faster. Synced with Go commit c443b44 (Jan 2026).
 
 | Benchmark | Go (ns) | Rust (ns) | Speedup |
 |-----------|---------|-----------|---------|
@@ -17,7 +17,7 @@ Rust port of [quamina](https://github.com/timbray/quamina) - fast pattern-matchi
 
 **Go parity:** `"value"`, `{"prefix"}`, `{"suffix"}`, `{"wildcard"}`, `{"shellstyle"}`, `{"exists"}`, `{"anything-but"}`, `{"equals-ignore-case"}`, `{"regexp"}`
 
-**Rust-only:** `{"anything-but": 404}` (numeric), `{"numeric": [">=", 0]}`, `{"cidr": "10.0.0.0/24"}`, `{"regexp": "a{2,5}"}` (range quantifiers)
+**Rust-only:** `{"anything-but": 404}` (numeric), `{"numeric": [">=", 0]}`, `{"cidr": "10.0.0.0/24"}`, `{"regexp": "a{2,5}"}` (range quantifiers), `~d`/`~w`/`~s`/`~D`/`~W`/`~S` (character class escapes)
 
 ## Architecture
 
@@ -53,6 +53,7 @@ gh run list                   # check CI
 - `.` any char, `[...]` classes, `|` alternation, `(...)` groups
 - `?` optional, `+` one-or-more, `*` zero-or-more
 - `{n}` exactly n, `{n,m}` between n and m, `{n,}` at least n
+- `~d` digits, `~w` word chars, `~s` whitespace (and negated `~D`/`~W`/`~S`)
 - Escape char is `~` (not `\`) to avoid JSON escaping
 
 **Two NFA implementations:**
@@ -64,7 +65,7 @@ gh run list                   # check CI
 - Skipped features in bulk testing:
   - `.` (dot) - creates huge Unicode state machines
   - `[^...]` negated classes - large UTF-8 range tables
-  - `~w`, `~d`, `~s`, `~p{}` - unimplemented character class escapes
+  - `~c`, `~i`, `~p{}` - XML name chars and Unicode property escapes (not implemented)
   - `-[` character class subtraction - XSD feature, not I-Regexp
 
 **Recent fix:** `{n}` now correctly means "exactly n" (was "at least n"). Go has same bug but skips all `{}` tests.
@@ -80,21 +81,7 @@ cargo bench bulk_1000x10  # ~62ms (was ~5s naive)
 
 ## Next Tasks
 
-### 1. Character Class Escapes (Medium)
-Implement `~w` (word), `~d` (digit), `~s` (space) and negated versions.
-
-**Files:** `src/regexp.rs`
-**Approach:** Add to `check_single_char_escape()` or create multi-char escape handler. Each maps to a `RuneRange`.
-
-```rust
-// ~d = [0-9]
-// ~w = [a-zA-Z0-9_]
-// ~s = [ \t\n\r]
-```
-
-**Challenge:** Large Unicode ranges for `~W`, `~D`, `~S` (negated) - use optimized range construction like `[^...]`.
-
-### 2. Enable `*`/`+` Sample Testing (Medium)
+### 1. Enable `*`/`+` Sample Testing (Medium)
 Arena NFA handles `*`/`+` efficiently but sample testing is slow.
 
 **Options:**
@@ -102,7 +89,7 @@ Arena NFA handles `*`/`+` efficiently but sample testing is slow.
 - Add timeout per sample
 - Profile and optimize arena NFA traversal
 
-### 3. Pattern Retrieval API (Easy)
+### 2. Pattern Retrieval API (Easy)
 Add methods to retrieve registered patterns (Go #73).
 
 **Files:** `src/lib.rs`
@@ -113,7 +100,7 @@ impl Quamina<X> {
 }
 ```
 
-### 4. Unicode Property Matchers (Hard)
+### 3. Unicode Property Matchers (Hard)
 `~p{Lu}` (uppercase), `~P{Ll}` (not lowercase). Requires Unicode tables.
 
 **Files:** `src/regexp.rs`
