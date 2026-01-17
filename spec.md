@@ -13,11 +13,23 @@ Rust port of [quamina](https://github.com/timbray/quamina) - fast pattern-matchi
 | citylots | 3,971 | 2,117 | 1.9x |
 | shellstyle_26_patterns | 731 | 405 | 1.8x |
 
-## Pattern Types
+## Completeness
+
+**Rust is a superset of Go quamina.** All Go features implemented plus Rust-only extensions.
 
 **Go parity:** `"value"`, `{"prefix"}`, `{"suffix"}`, `{"wildcard"}`, `{"shellstyle"}`, `{"exists"}`, `{"anything-but"}`, `{"equals-ignore-case"}`, `{"regexp"}`
 
-**Rust-only:** `{"anything-but": 404}` (numeric), `{"numeric": [">=", 0]}`, `{"cidr": "10.0.0.0/24"}`, `{"regexp": "a{2,5}"}` (range quantifiers), `~d`/`~w`/`~s`/`~D`/`~W`/`~S` (character class escapes)
+**Rust-only extensions:**
+- `{"numeric": [">=", 0]}` - numeric comparisons (Go has TODO)
+- `{"cidr": "10.0.0.0/24"}` - IP range matching (not in Go)
+- `{"anything-but": 404}` - numeric anything-but
+- `{"regexp": "a{2,5}"}` - range quantifiers
+- `~d`/`~w`/`~s`/`~D`/`~W`/`~S` - character class escapes
+
+**Regexp sample testing:**
+- Rust: 193 samples tested (including `*`, `+`, `.`, `[^...]`)
+- Go: 128 samples tested
+- We test 50% more patterns than Go!
 
 ## Public API
 
@@ -27,10 +39,10 @@ q.add_pattern(id, pattern_json)?;
 q.delete_patterns(id)?;
 q.matches_for_event(event)?;
 
-// Inspection (added Jan 2026)
+// Inspection
 q.list_pattern_ids() -> Vec<&X>   // all active pattern IDs
 q.contains_pattern(&id) -> bool   // check if pattern exists
-q.pattern_count() -> usize        // count of active patterns
+q.pattern_count() -> usize
 q.is_empty() -> bool
 ```
 
@@ -66,7 +78,7 @@ cargo fmt                     # format before commit
 ## Regexp Implementation
 
 **I-Regexp subset (RFC 9485):**
-- `.` any char, `[...]` classes, `|` alternation, `(...)` groups
+- `.` any char, `[...]` classes, `[^...]` negated classes, `|` alternation, `(...)` groups
 - `?` optional, `+` one-or-more, `*` zero-or-more
 - `{n}` exactly n, `{n,m}` between n and m, `{n,}` at least n
 - `~d` digits, `~w` word chars, `~s` whitespace (and negated `~D`/`~W`/`~S`)
@@ -76,15 +88,17 @@ cargo fmt                     # format before commit
 1. **Chain NFA** (`make_regexp_nfa`): Simple patterns, no cycles
 2. **Arena NFA** (`make_regexp_nfa_arena`): Efficient for `*`/`+` with cyclic structures
 
-**Sample testing (992 samples from Go):**
-- 193 samples fully tested (including `*`, `+`, `.`, `[^...]`, `~d/~w/~s/~D/~W/~S`)
-- Go tests 128 samples - we test 50% more!
-- Skipped: `~c`/`~i`/`~p{}` (unimplemented), character class subtraction `[a-[b]]` (XSD feature)
+**Skipped in sample testing:** `~c`/`~i`/`~p{}` (unimplemented), character class subtraction `[a-[b]]` (XSD feature)
 
 ## Next Tasks
 
 ### 1. Unicode Property Matchers (Hard)
 `~p{Lu}` (uppercase), `~P{Ll}` (not lowercase). Requires Unicode tables. Not in Go either.
+
+### 2. Potential Improvements
+- Consider implementing `~c` (XML name chars) and `~i` (XML initial chars) if needed
+- Performance profiling for large pattern sets
+- Documentation improvements
 
 ## Session Notes
 
@@ -92,15 +106,18 @@ cargo fmt                     # format before commit
 1. Read this spec for context
 2. For Go behavior, read Go source directly - don't trust past interpretations
 3. Push often, check CI (`gh run list`)
+4. Use todos to manage context window
 
-**Test regexp changes:**
+**Test commands:**
 ```bash
-cargo test test_regexp_validity -- --nocapture
-cargo test test_multi_char_escapes  # new: ~d/~w/~s tests
-cargo test test_nfa_range
+cargo test test_regexp_validity -- --nocapture  # 193 samples
+cargo test test_multi_char_escapes              # ~d/~w/~s tests
+cargo test test_nfa_range                       # range quantifiers
+cargo test test_regexp_end2end                  # end-to-end regexp
 ```
 
 **Key files:**
-- Regexp samples: `src/regexp_samples.rs` (992 samples)
+- Regexp samples: `src/regexp_samples.rs` (992 samples from Go)
 - Regexp tests: `src/regexp.rs` (bottom of file)
 - Multi-char escapes: `src/regexp.rs:check_multi_char_escape()`
+- Sample validity test: `src/lib.rs:test_regexp_validity()`
