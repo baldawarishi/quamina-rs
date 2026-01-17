@@ -4756,31 +4756,16 @@ mod tests {
 
             // Skip patterns that are problematic for our NFA implementation:
             // - Character class subtraction [a-[b]] (XSD feature, unimplemented)
-            // - Negated character classes [^...] (creates huge UTF-8 range tables)
-            // - Dot (.) anywhere (creates huge Unicode state machines)
             // - Unimplemented escapes ~i, ~c, ~p{} etc.
             fn should_skip(re: &str) -> bool {
                 // Skip character class subtraction (XSD feature not in I-Regexp)
                 if re.contains("-[") {
                     return true;
                 }
-                // Skip negated character classes (creates huge state machines)
-                if re.contains("[^") {
-                    return true;
-                }
-                // Skip unescaped dot (.) - creates huge Unicode state machines
-                let chars: Vec<char> = re.chars().collect();
-                for i in 0..chars.len() {
-                    if chars[i] == '.' {
-                        // Check if dot is escaped with ~
-                        if i == 0 || chars[i - 1] != '~' {
-                            return true;
-                        }
-                    }
-                }
                 // Skip unimplemented escapes (multi-char escapes)
                 // ~i, ~I, ~c, ~C, ~p, ~P, ~b, ~B are unimplemented
                 // Note: ~d, ~D, ~w, ~W, ~s, ~S are now implemented!
+                let chars: Vec<char> = re.chars().collect();
                 for i in 0..chars.len().saturating_sub(1) {
                     if chars[i] == '~' {
                         let next = chars[i + 1];
