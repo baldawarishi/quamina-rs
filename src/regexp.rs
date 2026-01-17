@@ -3110,6 +3110,50 @@ mod tests {
             matches("~P{C}*", "₠"),
             "~P{{C}}* should match '₠' (single non-C char)"
         );
+
+        // Test Sample 147: ~p{Lo}* should match "א𪘀"
+        // Both characters are Lo (Other Letter):
+        // א (U+05D0) Hebrew Alef, 𪘀 (U+2A600) CJK Extension B
+        assert!(matches("~p{Lo}", "א"), "~p{{Lo}} should match Hebrew Alef");
+        assert!(
+            matches("~p{Lo}", "𪘀"),
+            "~p{{Lo}} should match CJK Extension B char"
+        );
+        assert!(
+            matches("~p{Lo}*", "א"),
+            "~p{{Lo}}* should match Hebrew Alef"
+        );
+        assert!(
+            matches("~p{Lo}*", "𪘀"),
+            "~p{{Lo}}* should match CJK Extension B char"
+        );
+        assert!(
+            matches("~p{Lo}*", "א𪘀"),
+            "~p{{Lo}}* should match Hebrew + CJK"
+        );
+
+        // Test with VALUE_TERMINATOR appended (matching test_regexp_validity behavior)
+        use crate::automaton::arena::ARENA_VALUE_TERMINATOR;
+        fn matches_with_vt(pattern: &str, input: &str) -> bool {
+            let root = parse_regexp(pattern).expect(&format!("Failed to parse: {}", pattern));
+            let (arena, start, field_matcher) = make_regexp_nfa_arena(root, false);
+            let mut bufs = ArenaNfaBuffers::with_capacity(arena.len());
+
+            // Add VALUE_TERMINATOR to input (like test_regexp_validity does)
+            let mut value: Vec<u8> = input.as_bytes().to_vec();
+            value.push(ARENA_VALUE_TERMINATOR);
+            traverse_arena_nfa(&arena, start, &value, &mut bufs);
+
+            bufs.transitions
+                .iter()
+                .any(|m| Arc::ptr_eq(m, &field_matcher))
+        }
+
+        // These should also pass with VALUE_TERMINATOR appended
+        assert!(
+            matches_with_vt("~p{Lo}*", "א𪘀"),
+            "~p{{Lo}}* should match Hebrew + CJK (with VT)"
+        );
     }
 
     // ============= Range Quantifier Edge Case Tests =============

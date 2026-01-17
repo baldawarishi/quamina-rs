@@ -486,6 +486,11 @@ fn category_lo() -> Vec<RunePair> {
         rp('\u{20000}', '\u{2A6FF}'),
         // CJK Extension C-F
         rp('\u{2A700}', '\u{2CEAF}'),
+        // CJK Compatibility Ideographs
+        rp('\u{F900}', '\u{FA6D}'),
+        rp('\u{FA70}', '\u{FAD9}'),
+        // CJK Compatibility Ideographs Supplement
+        rp('\u{2F800}', '\u{2FA1D}'),
         // Hiragana
         rp('\u{3041}', '\u{3096}'),
         // Katakana
@@ -540,12 +545,12 @@ fn category_mn() -> Vec<RunePair> {
         rp('\u{09E2}', '\u{09E3}'),
         // Combining diacritical marks for symbols
         rp('\u{20D0}', '\u{20FF}'),
-        // Musical Symbols - combining marks (U+1D165-U+1D169, U+1D16D-U+1D172, U+1D17B-U+1D182, U+1D185-U+1D18B, U+1D1AA-U+1D1AD)
-        rp('\u{1D165}', '\u{1D169}'),
-        rp('\u{1D16D}', '\u{1D172}'),
-        rp('\u{1D17B}', '\u{1D182}'),
-        rp('\u{1D185}', '\u{1D18B}'),
-        rp('\u{1D1AA}', '\u{1D1AD}'),
+        // Musical Symbols - Mn (Nonspacing Mark) only
+        // Note: U+1D165-U+1D166 are Mc (stems), U+1D16D-U+1D172 are Mc (flags)
+        rp('\u{1D167}', '\u{1D169}'), // Tremolo marks (Mn)
+        rp('\u{1D17B}', '\u{1D182}'), // Various combining marks (Mn)
+        rp('\u{1D185}', '\u{1D18B}'), // Various combining marks (Mn)
+        rp('\u{1D1AA}', '\u{1D1AD}'), // Combining marks (Mn)
     ]
 }
 
