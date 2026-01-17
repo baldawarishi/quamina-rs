@@ -24,8 +24,8 @@ Rust port of [quamina](https://github.com/timbray/quamina) - fast pattern-matchi
 - `{"anything-but": 404}` - numeric anything-but
 - `{"regexp": "a{2,5}"}` - range quantifiers `{n}`, `{n,m}`, `{n,}`
 - `~d`/`~w`/`~s`/`~D`/`~W`/`~S` - character class escapes
-- `~p{Lu}`/`~p{Ll}`/`~p{Nd}` - Unicode property matchers (NEW!)
-- `~p{IsBasicLatin}` - Unicode block matchers (NEW!)
+- `~p{Lu}`/`~p{Ll}`/`~p{Nd}` - Unicode general category matchers
+- `~p{IsBasicLatin}` - Unicode block matchers
 
 **Regexp sample testing:** Rust tests 560 samples (Go's test suite has 992 total samples)
 
