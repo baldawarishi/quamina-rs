@@ -1037,6 +1037,44 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
         self.deleted_patterns.clear();
         self.pruner_stats.reset();
     }
+
+    /// Returns a list of all active (non-deleted) pattern identifiers.
+    ///
+    /// This provides a way to inspect what patterns are currently registered
+    /// with the Quamina instance.
+    ///
+    /// # Example
+    /// ```
+    /// # use quamina::Quamina;
+    /// let mut q: Quamina<String> = Quamina::new();
+    /// q.add_pattern("p1".into(), r#"{"status": ["active"]}"#).unwrap();
+    /// q.add_pattern("p2".into(), r#"{"type": ["event"]}"#).unwrap();
+    ///
+    /// let ids = q.list_pattern_ids();
+    /// assert_eq!(ids.len(), 2);
+    /// ```
+    pub fn list_pattern_ids(&self) -> Vec<&X> {
+        self.pattern_defs
+            .keys()
+            .filter(|id| !self.deleted_patterns.contains(*id))
+            .collect()
+    }
+
+    /// Checks if a pattern with the given identifier exists (and hasn't been deleted).
+    ///
+    /// # Example
+    /// ```
+    /// # use quamina::Quamina;
+    /// let mut q: Quamina<String> = Quamina::new();
+    /// let p1: String = "p1".into();
+    /// assert!(!q.contains_pattern(&p1));
+    ///
+    /// q.add_pattern(p1.clone(), r#"{"status": ["active"]}"#).unwrap();
+    /// assert!(q.contains_pattern(&p1));
+    /// ```
+    pub fn contains_pattern(&self, id: &X) -> bool {
+        self.pattern_defs.contains_key(id) && !self.deleted_patterns.contains(id)
+    }
 }
 
 impl<X: Clone + Eq + Hash + Send + Sync> Default for Quamina<X> {

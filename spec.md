@@ -89,18 +89,7 @@ Arena NFA handles `*`/`+` efficiently but sample testing is slow.
 - Add timeout per sample
 - Profile and optimize arena NFA traversal
 
-### 2. Pattern Retrieval API (Easy)
-Add methods to retrieve registered patterns (Go #73).
-
-**Files:** `src/lib.rs`
-```rust
-impl Quamina<X> {
-    pub fn get_patterns(&self) -> Vec<&X> { ... }
-    pub fn list_pattern_ids(&self) -> Vec<&X> { ... }
-}
-```
-
-### 3. Unicode Property Matchers (Hard)
+### 2. Unicode Property Matchers (Hard)
 `~p{Lu}` (uppercase), `~P{Ll}` (not lowercase). Requires Unicode tables.
 
 **Files:** `src/regexp.rs`
