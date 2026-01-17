@@ -4,7 +4,7 @@ Rust port of [quamina](https://github.com/timbray/quamina) - fast pattern-matchi
 
 ## Status
 
-**268 tests passing.** Rust 1.5-2x faster. Synced with Go commit 74475a4 (Jan 2026).
+**270 tests passing.** Rust 1.5-2x faster. Synced with Go commit 74475a4 (Jan 2026).
 
 | Benchmark | Go (ns) | Rust (ns) | Speedup |
 |-----------|---------|-----------|---------|
@@ -37,8 +37,8 @@ src/
 ├── flatten_json.rs     # Streaming JSON flattener
 ├── regexp/
 │   ├── mod.rs          # Re-exports and tests
-│   ├── parser.rs       # I-Regexp parser, data structures (RunePair, etc.)
-│   └── nfa.rs          # NFA building (Arc-based and arena-based)
+│   ├── parser.rs       # I-Regexp parser, data structures
+│   └── nfa.rs          # NFA building + shell caching
 ├── unicode_categories.rs # Unicode category/block data
 ├── automaton/
 │   ├── small_table.rs  # SmallTable (byte transitions)
@@ -48,43 +48,30 @@ src/
 └── wildcard.rs         # Shellstyle matching
 ```
 
-## Go vs Rust Implementation Comparison
+## Implementation Notes
 
-**Go wins:**
-- Shell caching for negated classes (major optimization we lack)
-- GC enables clever caching patterns
+**Shell caching (now implemented):** For Unicode categories like `~p{L}` (~1.1M code points), we cache pre-built FA shells. Second use of same category is O(copy) instead of O(rebuild).
 
-**Rust wins:**
+**Go parity achieved:**
+- Clean module structure (regexp/parser.rs + regexp/nfa.rs)
+- Shell caching for Unicode categories
 - Structured errors with offset context
 - Unicode block support (`~p{IsBasicLatin}`)
-- Type safety, compile-time guarantees
-- Clean module structure (regexp/parser.rs + regexp/nfa.rs)
-
-**Key Go optimization we should implement:**
-```go
-// Go builds FA once with placeholder, reuses for different next states
-cachedFaShells["L"] = makeRuneRangeFA(letterRunes, PlaceholderState)
-fa := faFromShell(cachedFaShells["L"], PlaceholderState, realNextState)
-```
-For `[^abc]` (~1.1M Unicode points): Go reuses cached shell instantly, Rust expands all points every time.
 
 ## Improvement Opportunities
 
-**High impact:**
-1. **Shell caching** - Port Go's `cachedFaShells` pattern for negated classes
-
 **Medium impact:**
-2. **Optimize quantifier chains** - Current 100-state chain for `+`/`*` is memory-heavy
-3. **Lazy negated categories** - Don't expand `[^abc]` eagerly
+1. **Optimize quantifier chains** - Current 100-state chain for `+`/`*` is memory-heavy
+2. **Lazy negated categories** - Don't expand `[^abc]` eagerly
 
 **Low priority (not in I-Regexp):**
-4. XML escapes `~c`/`~i` - XSD only, +53 samples
-5. Character class subtraction `[a-[b]]` - XSD only, +74 samples
+3. XML escapes `~c`/`~i` - XSD only, +53 samples
+4. Character class subtraction `[a-[b]]` - XSD only, +74 samples
 
 ## Commands
 
 ```bash
-cargo test                    # 268 tests
+cargo test                    # 270 tests
 cargo bench status            # benchmarks
 cargo clippy -- -D warnings   # CI check
 gh run list                   # check CI
@@ -100,12 +87,10 @@ cargo fmt && git push         # format and push
 
 **Key files:**
 - `src/regexp/parser.rs` - I-Regexp parsing
-- `src/regexp/nfa.rs` - NFA building (Arc and arena)
+- `src/regexp/nfa.rs` - NFA building + shell caching
 - `src/unicode_categories.rs` - Unicode data
-- `src/lib.rs:test_regexp_validity()` - 560 samples tested
 
 **Go reference:**
-- `regexp_reader.go` - parsing (765 lines)
-- `regexp_nfa.go` - NFA building with shell caching
-- `rune_range.go` - rune range utilities + shell caching
-- `character_properties.go` - generated Unicode data
+- `regexp_reader.go` - parsing
+- `regexp_nfa.go` - NFA building
+- `rune_range.go` - shell caching
