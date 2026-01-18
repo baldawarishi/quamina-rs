@@ -2183,67 +2183,74 @@ mod tests {
     #[test]
     fn test_regexp_end2end() {
         // Comprehensive regexp tests ported from Go's TestRegexpEnd2End
-        struct RegexpSample {
-            regex: &'static str,
-            matches: &'static [&'static str],
-            nomatches: &'static [&'static str],
-        }
+        use crate::regexp_samples::RegexpSample;
 
         let tests = [
             RegexpSample {
                 regex: "(xyz)?a?b",
                 matches: &["xyzb", "xyzab", "ab", "b"],
                 nomatches: &["xyzc", "c", "xyza"],
+                valid: true,
             },
             RegexpSample {
                 regex: "a|b",
                 matches: &["a", "b"],
                 nomatches: &["x"],
+                valid: true,
             },
             RegexpSample {
                 regex: "a",
                 matches: &["a"],
                 nomatches: &["b", ""],
+                valid: true,
             },
             RegexpSample {
                 regex: "a.b",
                 matches: &["axb", "a.b"],
                 nomatches: &["ab", "axxb"],
+                valid: true,
             },
             RegexpSample {
                 regex: "abc|def",
                 matches: &["abc", "def"],
                 nomatches: &["x"],
+                valid: true,
             },
             RegexpSample {
                 regex: "[hij]",
                 matches: &["h", "i", "j"],
                 nomatches: &["x"],
+                valid: true,
             },
             RegexpSample {
                 regex: "a[e-g]x",
                 matches: &["aex", "afx", "agx"],
                 nomatches: &["ax", "axx"],
+                valid: true,
             },
             RegexpSample {
                 regex: "[ae-gx]",
                 matches: &["a", "e", "f", "g", "x"],
                 nomatches: &["b"],
+                valid: true,
             },
             RegexpSample {
                 regex: "[-ab]",
                 matches: &["-", "a", "b"],
                 nomatches: &["c"],
+                valid: true,
             },
             RegexpSample {
                 regex: "[ab-]",
                 matches: &["-", "a", "b"],
                 nomatches: &["c"],
+                valid: true,
             },
             RegexpSample {
                 regex: "[~[~]]",
                 matches: &["[", "]"],
                 nomatches: &["a"],
+                valid: true,
             },
             // Note: Go tests [~r~t~n] matching \r, \t, \n literal bytes
             // In JSON these would be escaped, so we test differently
@@ -2251,31 +2258,37 @@ mod tests {
                 regex: "[a-c]|[xz]",
                 matches: &["a", "b", "c", "x", "z"],
                 nomatches: &["w"],
+                valid: true,
             },
             RegexpSample {
                 regex: "[ac-e]h|p[xy]",
                 matches: &["ah", "ch", "dh", "eh", "px", "py"],
                 nomatches: &["xp"],
+                valid: true,
             },
             RegexpSample {
                 regex: "[0-9][0-9][rtn][dh]",
                 matches: &["11th", "23rd", "22nd"],
                 nomatches: &["first", "9th"],
+                valid: true,
             },
             RegexpSample {
                 regex: "a(h|i)z",
                 matches: &["ahz", "aiz"],
                 nomatches: &["a.z"],
+                valid: true,
             },
             RegexpSample {
                 regex: "a([1-3]|ac)z",
                 matches: &["a1z", "a2z", "a3z", "aacz"],
                 nomatches: &["a.z", "a0z"],
+                valid: true,
             },
             RegexpSample {
                 regex: "a(h|([x-z]|(1|2)))z",
                 matches: &["ahz", "axz", "a1z", "a2z"],
                 nomatches: &["a.z"],
+                valid: true,
             },
         ];
 
