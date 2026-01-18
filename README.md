@@ -2,11 +2,11 @@
 
 Rust port of [quamina](https://github.com/timbray/quamina) - a fast pattern-matching library for filtering JSON events.
 
-All credit should go to [Tim Bray](https://www.tbray.org/) who designed and maintains the original quamina. Tim also created [aws/event-ruler](https://github.com/aws/event-ruler), the Java library that powers Amazon EventBridge among a staggering amount of Amazon things. For those curious, Tim also has documented the design extensively in his [Quamina Diary](https://www.tbray.org/ongoing/What/Technology/Quamina%20Diary/) - highly recommended reading for understanding the internals.
+All credit should go to [Tim Bray](https://www.tbray.org/) who designed and maintains the original quamina. Tim also created [aws/event-ruler](https://github.com/aws/event-ruler), the Java library that powers Amazon EventBridge among a staggering amount of Amazon things. For those curious, Tim also has documented the design extensively in his [Quamina Diary](https://www.tbray.org/ongoing/What/Technology/Quamina%20Diary/) Series which I'd highly recommend for understanding the internals of Quamina.
 
 ## Warning
 
-This port was 100% vibecoded. I don't have a deep understanding of the source code (yet). Use at your own risk ... but if you do, please report issues.
+This port was 100% "vibecoded" in the background. I don't have a deep understanding of the source code (yet). Use at your own risk ... but if you do find issues, please do report them.
 
 ## Feature Parity
 
