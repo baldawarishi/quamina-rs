@@ -2,21 +2,31 @@
 
 Rust port of [quamina](https://github.com/timbray/quamina) - fast pattern-matching for JSON events.
 
-## Next Session: Feature Parity or Performance
+## Next Session: Test Coverage Audit for Other Go Tests
 
-**Goal:** Dead code audit complete. Choose next priority:
-- Feature parity: Sync with any new Go features
-- Performance: Profile and optimize hot paths
-- Cleanup: Further code organization
+**Goal:** Continue checking for test coverage gaps between Go and Rust.
 
-**Recent cleanup:**
-- Removed `wildcard.rs` entirely - was test-only fallback code never used in production
-- API-level tests in lib.rs cover all shellstyle/wildcard cases via automaton
-- `value_matches()` only handles `Matcher::Regex` (with debug_assert for others)
+**Approach for coverage audits:**
+1. Use subtasks/todos to manage context window
+2. Read actual Go test files (don't trust comments) - e.g., `anything_but_test.go`, `numbers_test.go`
+3. Compare exact test cases, patterns, and values - not just test names
+4. Add missing tests to Rust with references to Go line numbers
+
+**Go test files to audit (not yet checked):**
+- `anything_but_test.go` - AnythingBut matcher tests
+- `numbers_test.go` - Numeric matcher tests
+- `arrays_test.go` - Array handling tests
+- `escaping_test.go` - JSON escaping tests
+- `flatten_json_test.go` - JSON flattening tests
+- `monocase_test.go` - Case-insensitive matching tests
+
+**Recently audited (wildcard/shellstyle):**
+- Added 33 new tests for multi-pattern interactions, escape sequences, Unicode, edge cases
+- Tests now: 268 → 301
 
 ## Status
 
-**268 tests passing.** Rust 1.5-2x faster. Synced with Go commit 74475a4 (Jan 2026).
+**301 tests passing.** Rust 1.5-2x faster. Synced with Go commit 74475a4 (Jan 2026).
 
 | Benchmark | Go (ns) | Rust (ns) | Speedup |
 |-----------|---------|-----------|---------|
@@ -82,7 +92,7 @@ src/
 ## Commands
 
 ```bash
-cargo test                    # 268 tests
+cargo test                    # 301 tests
 cargo bench status            # benchmarks
 cargo clippy -- -D warnings   # CI check
 gh run list                   # check CI

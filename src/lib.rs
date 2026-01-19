@@ -3851,6 +3851,727 @@ mod tests {
     }
 
     // ========================================================================
+    // Multi-Pattern Wildcard Tests - Ported from Go's exerciseMultiPatterns
+    // ========================================================================
+
+    /// Helper for multi-pattern wildcard tests (mirrors Go's exerciseMultiPatterns)
+    fn exercise_multi_patterns(
+        should_not_match_any: &[&str],
+        patterns_with_matches: &[(&str, &[&str])],
+    ) {
+        let mut q = Quamina::new();
+
+        // Add all patterns
+        for (pattern, _) in patterns_with_matches {
+            q.add_pattern(*pattern, pattern)
+                .unwrap_or_else(|e| panic!("Failed to add pattern {}: {:?}", pattern, e));
+        }
+
+        // Verify each pattern matches its expected values
+        for (pattern, should_match) in patterns_with_matches {
+            for val in *should_match {
+                let event = format!(r#"{{"x":"{}"}}"#, val);
+                let matches = q.matches_for_event(event.as_bytes()).unwrap();
+                assert!(
+                    matches.contains(pattern),
+                    "Pattern '{}' should match '{}', got {:?}",
+                    pattern,
+                    val,
+                    matches
+                );
+            }
+        }
+
+        // Verify none of the should_not_match values match any pattern
+        for val in should_not_match_any {
+            let event = format!(r#"{{"x":"{}"}}"#, val);
+            let matches = q.matches_for_event(event.as_bytes()).unwrap();
+            assert!(
+                matches.is_empty(),
+                "'{}' should not match any pattern, got {:?}",
+                val,
+                matches
+            );
+        }
+    }
+
+    #[test]
+    fn test_wildcard_multi_patterns_basic() {
+        // Go line 42-45: *, h*o, exact match
+        exercise_multi_patterns(
+            &[],
+            &[
+                (
+                    r#"{"x":[{"wildcard": "*"}]}"#,
+                    &["", "*", "h", "ho", "hello"],
+                ),
+                (r#"{"x":[{"wildcard": "h*o"}]}"#, &["ho", "hello"]),
+                (r#"{"x":["hello"]}"#, &["hello"]),
+            ],
+        );
+    }
+
+    #[test]
+    fn test_wildcard_multi_patterns_suffix_exact() {
+        // Go line 46-48
+        exercise_multi_patterns(
+            &["", "hellox", "blahabc"],
+            &[
+                (
+                    r#"{"x":[{"wildcard": "*hello"}]}"#,
+                    &["hello", "xhello", "hehello"],
+                ),
+                (r#"{"x":["abc"]}"#, &["abc"]),
+            ],
+        );
+    }
+
+    #[test]
+    fn test_wildcard_multi_patterns_suffix_infix() {
+        // Go line 49-51
+        exercise_multi_patterns(
+            &["", "h", "ello", "hel", "hlo", "hell"],
+            &[
+                (
+                    r#"{"x":[{"wildcard": "*hello"}]}"#,
+                    &["hello", "xhello", "hehello"],
+                ),
+                (
+                    r#"{"x":[{"wildcard": "h*llo"}]}"#,
+                    &["hllo", "hello", "hehello"],
+                ),
+            ],
+        );
+    }
+
+    #[test]
+    fn test_wildcard_multi_patterns_suffix_infix2() {
+        // Go line 52-54
+        exercise_multi_patterns(
+            &["", "h", "ello", "hel", "heo", "hell"],
+            &[
+                (
+                    r#"{"x":[{"wildcard": "*hello"}]}"#,
+                    &["hello", "xhello", "hehello"],
+                ),
+                (
+                    r#"{"x":[{"wildcard": "he*lo"}]}"#,
+                    &["helo", "hello", "hehello"],
+                ),
+            ],
+        );
+    }
+
+    #[test]
+    fn test_wildcard_multi_patterns_suffix_double() {
+        // Go line 55-57
+        exercise_multi_patterns(
+            &["", "e", "l", "lo", "hel"],
+            &[
+                (r#"{"x":[{"wildcard": "*elo"}]}"#, &["elo", "helo", "xhelo"]),
+                (
+                    r#"{"x":[{"wildcard": "e*l*"}]}"#,
+                    &["el", "elo", "exl", "elx", "exlx", "exxl", "elxx", "exxlxx"],
+                ),
+            ],
+        );
+    }
+
+    #[test]
+    fn test_wildcard_multi_patterns_suffix_double2() {
+        // Go line 58-60
+        exercise_multi_patterns(
+            &["", "he", "hexxo", "ello"],
+            &[
+                (
+                    r#"{"x":[{"wildcard": "*hello"}]}"#,
+                    &["hello", "xhello", "xxhello"],
+                ),
+                (
+                    r#"{"x":[{"wildcard": "he*l*"}]}"#,
+                    &[
+                        "hel", "hello", "helo", "hexl", "hexlx", "hexxl", "helxx", "hexxlxx",
+                    ],
+                ),
+            ],
+        );
+    }
+
+    #[test]
+    fn test_wildcard_multi_patterns_infix_pair() {
+        // Go line 61-63
+        exercise_multi_patterns(
+            &["", "hlo", "heo", "hllol", "helol"],
+            &[
+                (
+                    r#"{"x":[{"wildcard": "h*llo"}]}"#,
+                    &["hllo", "hello", "hxxxllo", "hexxxllo"],
+                ),
+                (
+                    r#"{"x":[{"wildcard": "he*lo"}]}"#,
+                    &["helo", "hello", "hexxxlo", "hexxxllo"],
+                ),
+            ],
+        );
+    }
+
+    #[test]
+    fn test_wildcard_multi_patterns_suffix_pair() {
+        // Go line 64-66
+        exercise_multi_patterns(
+            &[
+                "", "hlox", "hllo", "helo", "heox", "helx", "hellx", "helloxx", "heloxx",
+            ],
+            &[
+                (
+                    r#"{"x":[{"wildcard": "h*llox"}]}"#,
+                    &["hllox", "hellox", "hxxxllox", "helhllox", "hheloxllox"],
+                ),
+                (
+                    r#"{"x":[{"wildcard": "hel*ox"}]}"#,
+                    &["helox", "hellox", "helxxxox", "helhllox", "helhlloxox"],
+                ),
+            ],
+        );
+    }
+
+    #[test]
+    fn test_wildcard_multi_patterns_complex1() {
+        // Go line 67-69
+        exercise_multi_patterns(
+            &[
+                "", "h", "he", "hl", "el", "hlo", "llo", "hllol", "hxll", "hexxx",
+            ],
+            &[
+                (
+                    r#"{"x":[{"wildcard": "h*llo"}]}"#,
+                    &["hllo", "hello", "hxxxllo", "hexxxllo", "hexxxlllo"],
+                ),
+                (
+                    r#"{"x":[{"wildcard": "he*l*"}]}"#,
+                    &[
+                        "hel",
+                        "helo",
+                        "hexl",
+                        "hello",
+                        "helol",
+                        "hexxxlo",
+                        "hexxxllo",
+                        "hexxxlllo",
+                    ],
+                ),
+            ],
+        );
+    }
+
+    #[test]
+    fn test_wildcard_multi_patterns_complex2() {
+        // Go line 70-72
+        exercise_multi_patterns(
+            &[
+                "", "h", "hex", "hl", "exl", "hxlo", "xllo", "hxllol", "hxxll", "hexxx",
+            ],
+            &[
+                (
+                    r#"{"x":[{"wildcard": "h*xllo"}]}"#,
+                    &["hxllo", "hexllo", "hxxxllo", "hexxxllo"],
+                ),
+                (
+                    r#"{"x":[{"wildcard": "hex*l*"}]}"#,
+                    &[
+                        "hexl",
+                        "hexlo",
+                        "hexxl",
+                        "hexllo",
+                        "hexlol",
+                        "hexxxlo",
+                        "hexxxllo",
+                        "hexxxlllo",
+                    ],
+                ),
+            ],
+        );
+    }
+
+    #[test]
+    fn test_wildcard_multi_patterns_overlap1() {
+        // Go line 73-75
+        exercise_multi_patterns(
+            &["", "hel", "heo", "hlo", "hellxox"],
+            &[
+                (
+                    r#"{"x":[{"wildcard": "he*lo"}]}"#,
+                    &["helo", "hello", "hexxxlo", "helxxxlo"],
+                ),
+                (
+                    r#"{"x":[{"wildcard": "hel*o"}]}"#,
+                    &["helo", "hello", "hellxo", "helxxxo", "helxxxlo"],
+                ),
+            ],
+        );
+    }
+
+    #[test]
+    fn test_wildcard_multi_patterns_overlap2() {
+        // Go line 76-78
+        exercise_multi_patterns(
+            &["", "hlo", "hll", "hel", "helox"],
+            &[
+                (
+                    r#"{"x":[{"wildcard": "h*llo"}]}"#,
+                    &["hllo", "hello", "hxxxllo", "helllo"],
+                ),
+                (
+                    r#"{"x":[{"wildcard": "hel*o"}]}"#,
+                    &["helo", "hello", "helxo", "helllo"],
+                ),
+            ],
+        );
+    }
+
+    #[test]
+    fn test_wildcard_multi_patterns_prefix_suffix() {
+        // Go line 79-81
+        exercise_multi_patterns(
+            &["", "he", "hel", "helox", "helx", "hxlo"],
+            &[
+                (
+                    r#"{"x":[{"wildcard": "he*lo"}]}"#,
+                    &["helo", "hello", "helllo", "helxlo"],
+                ),
+                (
+                    r#"{"x":[{"wildcard": "hell*"}]}"#,
+                    &["hell", "hello", "helllo", "hellx", "hellxxx"],
+                ),
+            ],
+        );
+    }
+
+    #[test]
+    fn test_wildcard_multi_patterns_prefix_suffix2() {
+        // Go line 82-84
+        exercise_multi_patterns(
+            &["", "hel", "helox", "helxox", "hexo"],
+            &[
+                (
+                    r#"{"x":[{"wildcard": "hel*o"}]}"#,
+                    &["helo", "hello", "helllo", "hellloo", "helloo", "heloo"],
+                ),
+                (
+                    r#"{"x":[{"wildcard": "hell*"}]}"#,
+                    &["hell", "hello", "helllo", "hellloo", "helloo", "hellox"],
+                ),
+            ],
+        );
+    }
+
+    #[test]
+    fn test_wildcard_multi_patterns_prefix_pair() {
+        // Go line 85-87
+        exercise_multi_patterns(
+            &["", "he", "hex", "hexlo"],
+            &[
+                (
+                    r#"{"x":[{"wildcard": "hel*"}]}"#,
+                    &["hel", "helx", "hello", "hellox"],
+                ),
+                (r#"{"x":[{"wildcard": "hello*"}]}"#, &["hello", "hellox"]),
+            ],
+        );
+    }
+
+    #[test]
+    fn test_wildcard_multi_patterns_suffix_exact2() {
+        // Go line 88-90
+        exercise_multi_patterns(
+            &["", "he", "hex", "hexlo"],
+            &[
+                (
+                    r#"{"x":[{"wildcard": "*hello"}]}"#,
+                    &["hello", "hhello", "hhhello"],
+                ),
+                (r#"{"x":["hello"]}"#, &["hello"]),
+            ],
+        );
+    }
+
+    #[test]
+    fn test_wildcard_multi_patterns_infix_exact() {
+        // Go line 91-93
+        exercise_multi_patterns(
+            &["", "he", "hel", "heo", "heloz", "hellox", "heloxo"],
+            &[
+                (
+                    r#"{"x":[{"wildcard": "he*lo"}]}"#,
+                    &["helo", "hello", "helllo"],
+                ),
+                (r#"{"x":["helox"]}"#, &["helox"]),
+            ],
+        );
+    }
+
+    #[test]
+    fn test_wildcard_multi_patterns_infix_exact2() {
+        // Go line 94-96
+        exercise_multi_patterns(
+            &["", "he", "helx", "helo", "hexlx", "hellox", "heloxx"],
+            &[
+                (
+                    r#"{"x":[{"wildcard": "he*l"}]}"#,
+                    &["hel", "hexl", "hexxxl"],
+                ),
+                (r#"{"x":["helox"]}"#, &["helox"]),
+            ],
+        );
+    }
+
+    #[test]
+    fn test_wildcard_multi_patterns_prefix_exact() {
+        // Go line 97-99
+        exercise_multi_patterns(
+            &["", "h", "hxlox", "hxelox"],
+            &[
+                (
+                    r#"{"x":[{"wildcard": "he*"}]}"#,
+                    &["he", "helo", "helox", "heloxx"],
+                ),
+                (r#"{"x":["helox"]}"#, &["helox"]),
+            ],
+        );
+    }
+
+    #[test]
+    fn test_wildcard_multi_patterns_double_exact() {
+        // Go line 100-102
+        exercise_multi_patterns(
+            &["", "h", "he", "hel", "hexxo", "hexxohexxo"],
+            &[
+                (
+                    r#"{"x":[{"wildcard": "h*l*o"}]}"#,
+                    &[
+                        "hlo",
+                        "helo",
+                        "hllo",
+                        "hello",
+                        "hexloo",
+                        "hellohello",
+                        "hellohellxo",
+                    ],
+                ),
+                (r#"{"x":["hellohello"]}"#, &["hellohello"]),
+            ],
+        );
+    }
+
+    #[test]
+    fn test_wildcard_multi_patterns_double_exact2() {
+        // Go line 103-105
+        exercise_multi_patterns(
+            &["", "h", "he", "hlo", "hexxo", "hexxohexxo"],
+            &[
+                (
+                    r#"{"x":[{"wildcard": "he*l*"}]}"#,
+                    &[
+                        "hel",
+                        "helo",
+                        "hexl",
+                        "hello",
+                        "hexloo",
+                        "hellohellx",
+                        "hellohello",
+                    ],
+                ),
+                (r#"{"x":["hellohello"]}"#, &["hellohello"]),
+            ],
+        );
+    }
+
+    // ========================================================================
+    // Missing Escape Pattern Tests
+    // ========================================================================
+
+    #[test]
+    fn test_wildcard_escape_backslash_star() {
+        // Go line 40: `he\\\\\\*llo` (raw string = he\\\\\\*llo, 11 chars)
+        // After JSON parse: he\\\*llo (escaped backslash + escaped star)
+        // Wildcard meaning: he + literal_backslash + literal_star + llo
+        // Should match literal string "he\*llo" (6 chars)
+        let mut q = Quamina::new();
+        q.add_pattern("p1", r#"{"x": [{"wildcard": "he\\\\\\*llo"}]}"#)
+            .unwrap();
+
+        // Should match "he\*llo" - in JSON, backslash needs escaping: "he\\*llo"
+        let matches = q
+            .matches_for_event(r#"{"x": "he\\*llo"}"#.as_bytes())
+            .unwrap();
+        assert_eq!(matches, vec!["p1"], "Should match he\\*llo");
+
+        // Should NOT match - use raw strings for JSON to avoid double-escaping confusion
+        let no_match_events = [
+            r#"{"x": "hello"}"#,
+            r#"{"x": "he\\\\llo"}"#, // he\\llo (2 backslashes)
+            r#"{"x": "he\\llo"}"#,   // he\llo (1 backslash)
+            r#"{"x": "he\\xxllo"}"#, // he\xxllo
+        ];
+        for event in no_match_events {
+            let matches = q.matches_for_event(event.as_bytes()).unwrap();
+            assert!(matches.is_empty(), "Should not match {}", event);
+        }
+    }
+
+    #[test]
+    fn test_wildcard_escape_backslash_wildcard() {
+        // Go line 41: `he\\\\*llo` (raw string = he\\\\*llo, 10 chars)
+        // After JSON parse: he\\*llo (escaped backslash + wildcard)
+        // Wildcard meaning: he + literal_backslash + wildcard + llo
+        // Should match "he\" followed by anything followed by "llo"
+        let mut q = Quamina::new();
+        q.add_pattern("p1", r#"{"x": [{"wildcard": "he\\\\*llo"}]}"#)
+            .unwrap();
+
+        // Should match - values with "he\" prefix and "llo" suffix
+        let match_events = [
+            r#"{"x": "he\\llo"}"#,   // he\llo (1 backslash, matches wildcard)
+            r#"{"x": "he\\*llo"}"#,  // he\*llo
+            r#"{"x": "he\\\\llo"}"#, // he\\llo (2 backslashes)
+            r#"{"x": "he\\xxllo"}"#, // he\xxllo
+        ];
+        for event in match_events {
+            let matches = q.matches_for_event(event.as_bytes()).unwrap();
+            assert_eq!(matches, vec!["p1"], "Should match {}", event);
+        }
+
+        // Should NOT match
+        let no_match_events = [
+            r#"{"x": "hello"}"#,  // no backslash after he
+            r#"{"x": "he\\ll"}"#, // doesn't end with llo
+        ];
+        for event in no_match_events {
+            let matches = q.matches_for_event(event.as_bytes()).unwrap();
+            assert!(matches.is_empty(), "Should not match {}", event);
+        }
+    }
+
+    // ========================================================================
+    // Missing TestWildCardRuler Cases
+    // ========================================================================
+
+    #[test]
+    fn test_shellstyle_duplicate_pattern() {
+        // Go TestWildCardRuler: r4 and r5 are identical patterns
+        let mut q = Quamina::new();
+        q.add_pattern("r4", r#"{"c": [{"shellstyle": "xy*"}]}"#)
+            .unwrap();
+        q.add_pattern("r5", r#"{"c": [{"shellstyle": "xy*"}]}"#)
+            .unwrap();
+
+        let matches = q.matches_for_event(r#"{"c": "xyzzz"}"#.as_bytes()).unwrap();
+        assert_eq!(matches.len(), 2, "Both r4 and r5 should match");
+        assert!(matches.contains(&"r4"));
+        assert!(matches.contains(&"r5"));
+    }
+
+    #[test]
+    fn test_shellstyle_double_wildcard() {
+        // Go TestWildCardRuler: r6 = 12*4*
+        let mut q = Quamina::new();
+        q.add_pattern("r6", r#"{"d": [{"shellstyle": "12*4*"}]}"#)
+            .unwrap();
+
+        // Should match
+        let matches = q.matches_for_event(r#"{"d": "12345"}"#.as_bytes()).unwrap();
+        assert_eq!(matches, vec!["r6"], "12*4* should match 12345");
+
+        // Should NOT match
+        let no_match = q.matches_for_event(r#"{"d": "1235"}"#.as_bytes()).unwrap();
+        assert!(no_match.is_empty(), "12*4* should not match 1235");
+    }
+
+    #[test]
+    fn test_shellstyle_zero_length_prefix() {
+        // Go TestWildCardRuler: {"a": "bc"} should match *bc
+        let mut q = Quamina::new();
+        q.add_pattern("r1", r#"{"a": [{"shellstyle": "*bc"}]}"#)
+            .unwrap();
+
+        let matches = q.matches_for_event(r#"{"a": "bc"}"#.as_bytes()).unwrap();
+        assert_eq!(
+            matches,
+            vec!["r1"],
+            "*bc should match bc (zero-length prefix)"
+        );
+    }
+
+    #[test]
+    fn test_shellstyle_ruler_negative_cases() {
+        // Go TestWildCardRuler: additional negative test cases
+        let mut q = Quamina::new();
+        q.add_pattern("r2", r#"{"b": [{"shellstyle": "d*f"}]}"#)
+            .unwrap();
+        q.add_pattern("r4", r#"{"c": [{"shellstyle": "xy*"}]}"#)
+            .unwrap();
+
+        // Should NOT match
+        let cases = [
+            (r#"{"c": "abc"}"#, "xy* should not match abc"),
+            (r#"{"c": "abcxyz"}"#, "xy* should not match abcxyz"),
+            (r#"{"b": "de"}"#, "d*f should not match de"),
+        ];
+
+        for (event, msg) in cases {
+            let matches = q.matches_for_event(event.as_bytes()).unwrap();
+            assert!(matches.is_empty(), "{}", msg);
+        }
+    }
+
+    // ========================================================================
+    // Unicode Test Strings
+    // ========================================================================
+
+    #[test]
+    fn test_wildcard_unicode_strings() {
+        // Go TestWildcardMatching includes Unicode strings with Őz
+        let mut q = Quamina::new();
+
+        // Test *hello with Unicode prefix
+        q.add_pattern("p1", r#"{"x": [{"wildcard": "*hello"}]}"#)
+            .unwrap();
+        let matches = q
+            .matches_for_event(r#"{"x": "23Őzhello"}"#.as_bytes())
+            .unwrap();
+        assert_eq!(matches, vec!["p1"], "*hello should match 23Őzhello");
+
+        // Test h*llo with Unicode in middle
+        let mut q2 = Quamina::new();
+        q2.add_pattern("p2", r#"{"x": [{"wildcard": "h*llo"}]}"#)
+            .unwrap();
+        let matches2 = q2
+            .matches_for_event(r#"{"x": "hel23Őzlllo"}"#.as_bytes())
+            .unwrap();
+        assert_eq!(matches2, vec!["p2"], "h*llo should match hel23Őzlllo");
+
+        // Test hello* with Unicode suffix
+        let mut q3 = Quamina::new();
+        q3.add_pattern("p3", r#"{"x": [{"wildcard": "hello*"}]}"#)
+            .unwrap();
+        let matches3 = q3
+            .matches_for_event(r#"{"x": "hello23Őzlllo"}"#.as_bytes())
+            .unwrap();
+        assert_eq!(matches3, vec!["p3"], "hello* should match hello23Őzlllo");
+
+        // Test h*l*o with Unicode
+        let mut q4 = Quamina::new();
+        q4.add_pattern("p4", r#"{"x": [{"wildcard": "h*l*o"}]}"#)
+            .unwrap();
+        let matches4 = q4
+            .matches_for_event(r#"{"x": "hel23Őzlllo"}"#.as_bytes())
+            .unwrap();
+        assert_eq!(matches4, vec!["p4"], "h*l*o should match hel23Őzlllo");
+    }
+
+    // ========================================================================
+    // Missing TestMakeShellStyleFA Edge Cases
+    // ========================================================================
+
+    #[test]
+    fn test_shellstyle_suffix_with_space() {
+        // Go TestMakeShellStyleFA: *ST should match "STA ST"
+        let mut q = Quamina::new();
+        q.add_pattern("p1", r#"{"x": [{"shellstyle": "*ST"}]}"#)
+            .unwrap();
+
+        let matches = q
+            .matches_for_event(r#"{"x": "STA ST"}"#.as_bytes())
+            .unwrap();
+        assert_eq!(matches, vec!["p1"], "*ST should match 'STA ST'");
+
+        let matches2 = q.matches_for_event(r#"{"x": "1ST"}"#.as_bytes()).unwrap();
+        assert_eq!(matches2, vec!["p1"], "*ST should match '1ST'");
+
+        // Negative cases
+        let no1 = q.matches_for_event(r#"{"x": "STA"}"#.as_bytes()).unwrap();
+        assert!(no1.is_empty(), "*ST should not match 'STA'");
+
+        let no2 = q
+            .matches_for_event(r#"{"x": "STAST "}"#.as_bytes())
+            .unwrap();
+        assert!(
+            no2.is_empty(),
+            "*ST should not match 'STAST ' (trailing space)"
+        );
+    }
+
+    #[test]
+    fn test_shellstyle_prefix_negative() {
+        // Go TestMakeShellStyleFA: foo* negative cases
+        let mut q = Quamina::new();
+        q.add_pattern("p1", r#"{"x": [{"shellstyle": "foo*"}]}"#)
+            .unwrap();
+
+        let no1 = q.matches_for_event(r#"{"x": "afoo"}"#.as_bytes()).unwrap();
+        assert!(no1.is_empty(), "foo* should not match 'afoo'");
+
+        let no2 = q.matches_for_event(r#"{"x": "fofo"}"#.as_bytes()).unwrap();
+        assert!(no2.is_empty(), "foo* should not match 'fofo'");
+    }
+
+    #[test]
+    fn test_shellstyle_suffix_negative() {
+        // Go TestMakeShellStyleFA: *foo negative cases
+        let mut q = Quamina::new();
+        q.add_pattern("p1", r#"{"x": [{"shellstyle": "*foo"}]}"#)
+            .unwrap();
+
+        let no1 = q.matches_for_event(r#"{"x": "foox"}"#.as_bytes()).unwrap();
+        assert!(no1.is_empty(), "*foo should not match 'foox'");
+
+        let no2 = q.matches_for_event(r#"{"x": "afooo"}"#.as_bytes()).unwrap();
+        assert!(no2.is_empty(), "*foo should not match 'afooo'");
+    }
+
+    #[test]
+    fn test_shellstyle_contains_negative() {
+        // Go TestMakeShellStyleFA: *foo* negative cases
+        let mut q = Quamina::new();
+        q.add_pattern("p1", r#"{"x": [{"shellstyle": "*foo*"}]}"#)
+            .unwrap();
+
+        let no1 = q.matches_for_event(r#"{"x": "afoa"}"#.as_bytes()).unwrap();
+        assert!(no1.is_empty(), "*foo* should not match 'afoa'");
+
+        let no2 = q
+            .matches_for_event(r#"{"x": "fofofoxooxoo"}"#.as_bytes())
+            .unwrap();
+        assert!(no2.is_empty(), "*foo* should not match 'fofofoxooxoo'");
+    }
+
+    #[test]
+    fn test_shellstyle_double_wildcard_variations() {
+        // Go TestMakeShellStyleFA: xx*yy*zz and *xx*yy* additional cases
+        let mut q = Quamina::new();
+        q.add_pattern("p1", r#"{"x": [{"shellstyle": "xx*yy*zz"}]}"#)
+            .unwrap();
+
+        // Additional positive cases from Go
+        for val in ["xxyycdzz", "xxabyyzz"] {
+            let event = format!(r#"{{"x": "{}"}}"#, val);
+            let matches = q.matches_for_event(event.as_bytes()).unwrap();
+            assert_eq!(matches, vec!["p1"], "xx*yy*zz should match {}", val);
+        }
+
+        // Test *xx*yy* additional cases
+        let mut q2 = Quamina::new();
+        q2.add_pattern("p2", r#"{"x": [{"shellstyle": "*xx*yy*"}]}"#)
+            .unwrap();
+
+        for val in ["abxxcdyyef", "xxcdyyef", "abxxyyef", "xxcdyy", "xxyyef"] {
+            let event = format!(r#"{{"x": "{}"}}"#, val);
+            let matches = q2.matches_for_event(event.as_bytes()).unwrap();
+            assert_eq!(matches, vec!["p2"], "*xx*yy* should match {}", val);
+        }
+    }
+
+    // ========================================================================
     // Stress Tests - Ported from Go quamina
     // ========================================================================
 
