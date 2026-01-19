@@ -2,19 +2,47 @@
 
 Rust port of [quamina](https://github.com/timbray/quamina) - fast pattern-matching for JSON events.
 
-## Next Session: Regexp HashMap Fallback Elimination
+## Next Session: Go Test Gap Analysis
+
+**Goal:** Identify missing tests from Go that we should add, and document tests we intentionally skip.
+
+### Approach
+
+Use subtasks to parallelize analysis. Read Go test source code directly - don't trust summaries.
+
+### Steps
+
+1. **List Go tests**: `grep -h "^func Test" ~/Development/quamina_go_rs/quamina/*_test.go`
+2. **List Rust tests**: `grep -h "fn test_" src/**/*.rs`
+3. **For each Go test file**, spawn subtask to:
+   - Read the actual test code
+   - Check if Rust has equivalent coverage
+   - Categorize: Covered / Should Add / Won't Cover / Shouldn't Cover
+
+### Categories
+
+| Category | Criteria |
+|----------|----------|
+| **Covered** | Rust has equivalent test for same behavior |
+| **Should Add** | User-facing behavior not tested in Rust |
+| **Won't Cover** | Go internal implementation detail (e.g., specific data structure tests) |
+| **Shouldn't Cover** | Different Rust architecture (e.g., Go pruner vs Rust Arc) |
+
+### Deliverable
+
+Update this spec with table of intentionally skipped Go tests and rationale.
+
+---
+
+## Future: Regexp HashMap Fallback Elimination
 
 **Goal:** Eliminate HashMap fallback for `Matcher::Regex` with lookaheads/backreferences, or document as intentional limitation.
 
-### Background
-
-Regex patterns that use features not representable as automata (lookaheads, backreferences) currently fall back to HashMap-based matching. This impacts performance for those specific patterns.
-
 ### Options to Consider
 
-1. **Document as limitation**: Some regex features fundamentally can't be represented as DFA/NFA, requiring backtracking
+1. **Document as limitation**: Some regex features fundamentally can't be represented as DFA/NFA
 2. **Partial conversion**: Convert what's possible to automaton, fall back only for specific subpatterns
-3. **Alternative approach**: Use hybrid matching where automaton handles prefix/suffix and regex crate handles complex parts
+3. **Alternative approach**: Hybrid matching where automaton handles prefix/suffix
 
 ## Status
 
