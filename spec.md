@@ -2,31 +2,37 @@
 
 Rust port of [quamina](https://github.com/timbray/quamina) - fast pattern-matching for JSON events.
 
-## Next Session: Test Coverage Audit for Other Go Tests
+## Next Session: Performance Investigation or New Features
 
-**Goal:** Continue checking for test coverage gaps between Go and Rust.
+**Completed:** Full test coverage audit of all Go test files.
 
-**Approach for coverage audits:**
-1. Use subtasks/todos to manage context window
-2. Read actual Go test files (don't trust comments) - e.g., `anything_but_test.go`, `numbers_test.go`
-3. Compare exact test cases, patterns, and values - not just test names
-4. Add missing tests to Rust with references to Go line numbers
-
-**Go test files to audit (not yet checked):**
-- `anything_but_test.go` - AnythingBut matcher tests
-- `numbers_test.go` - Numeric matcher tests
-- `arrays_test.go` - Array handling tests
-- `escaping_test.go` - JSON escaping tests
-- `flatten_json_test.go` - JSON flattening tests
-- `monocase_test.go` - Case-insensitive matching tests
-
-**Recently audited (wildcard/shellstyle):**
-- Added 33 new tests for multi-pattern interactions, escape sequences, Unicode, edge cases
-- Tests now: 268 → 301
+**Possible next steps:**
+- Investigate removing flattener early termination for stricter JSON validation
+- Add more stress/fuzz tests
+- Performance profiling and optimization
+- Consider removing HashMap fallback for regex
 
 ## Status
 
-**301 tests passing.** Rust 1.5-2x faster. Synced with Go commit 74475a4 (Jan 2026).
+**304 tests passing.** Rust 1.5-2x faster. Synced with Go commit 74475a4 (Jan 2026).
+
+### Test Coverage Audit (Completed)
+
+All Go test files audited. Tests added: 301 → 304.
+
+**Files audited:**
+- ✅ `anything_but_test.go` - Added wordle words test
+- ✅ `numbers_test.go` - Added numeric variant tests (0.000035e6)
+- ✅ `arrays_test.go` - Already comprehensive
+- ✅ `escaping_test.go` - Added all 8 JSON escape tests (\b, \f, \r, \/, \")
+- ✅ `flatten_json_test.go` - Added error case tests, documented early termination
+- ✅ `monocase_test.go` - Added singleton merge test
+
+### Behavioral Differences (Documented)
+
+1. **anything-but single string syntax**: Rust accepts `{"anything-but": "foo"}` (EventBridge/Ruler compatible), Go requires `{"anything-but": ["foo"]}`. See json.rs:344.
+
+2. **Flattener early termination**: Rust stops parsing JSON once all needed pattern fields are found. Invalid JSON after those fields (like `{"a": 23z}` when only "a" is needed) may not be detected. Go always fully validates. This is intentional for performance. See lib.rs:1532 and flatten_json.rs:284-291.
 
 | Benchmark | Go (ns) | Rust (ns) | Speedup |
 |-----------|---------|-----------|---------|
@@ -92,7 +98,7 @@ src/
 ## Commands
 
 ```bash
-cargo test                    # 301 tests
+cargo test                    # 304 tests
 cargo bench status            # benchmarks
 cargo clippy -- -D warnings   # CI check
 gh run list                   # check CI

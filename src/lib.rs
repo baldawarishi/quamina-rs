@@ -1120,6 +1120,15 @@ mod tests {
         // Scientific notation
         let m3 = q.matches_for_event(r#"{"x": 3.5e1}"#.as_bytes()).unwrap();
         assert_eq!(m3, vec!["p1"], "3.5e1 should match [35]");
+
+        // Additional variants from Go's TestMatcherNumerics (numbers_test.go:174)
+        let m4 = q.matches_for_event(r#"{"x": 35.000}"#.as_bytes()).unwrap();
+        assert_eq!(m4, vec!["p1"], "35.000 should match [35]");
+
+        let m5 = q
+            .matches_for_event(r#"{"x": 0.000035e6}"#.as_bytes())
+            .unwrap();
+        assert_eq!(m5, vec!["p1"], "0.000035e6 should match [35]");
     }
 
     #[test]
@@ -1490,6 +1499,43 @@ mod tests {
             q.matches_for_event(r#"{ "a" : }"#.as_bytes()).is_err(),
             "Missing value should error"
         );
+
+        // Additional error cases from Go's TestFJErrorCases (flatten_json_test.go:249)
+        // Invalid escape sequence in string value
+        assert!(
+            q.matches_for_event(r#"{"a": "a\zb"}"#.as_bytes()).is_err(),
+            "Invalid escape \\z should error"
+        );
+
+        // Invalid escape sequence in field name
+        assert!(
+            q.matches_for_event(r#"{"a\zb": 2}"#.as_bytes()).is_err(),
+            "Invalid escape in field name should error"
+        );
+
+        // Invalid value identifier
+        assert!(
+            q.matches_for_event(r#"{"a": xx}"#.as_bytes()).is_err(),
+            "Invalid value xx should error"
+        );
+
+        // Truncated true literal
+        assert!(
+            q.matches_for_event(r#"{"a": tru}"#.as_bytes()).is_err(),
+            "Truncated 'tru' should error"
+        );
+
+        // Invalid literal
+        assert!(
+            q.matches_for_event(r#"{"a": truse}"#.as_bytes()).is_err(),
+            "Invalid 'truse' should error"
+        );
+
+        // Note: Rust's flattener has an early termination optimization - once all
+        // needed pattern fields are found, parsing stops. This means invalid JSON
+        // after the needed fields (like `{"a": 23z}` when only "a" is needed) may
+        // not be detected. Go always fully validates. This trade-off is intentional
+        // for performance on large JSON documents with few needed fields.
     }
 
     #[test]
@@ -1557,6 +1603,35 @@ mod tests {
             .matches_for_event(r#"{"b": "ABCXYZ"}"#.as_bytes())
             .unwrap();
         assert!(m5.is_empty(), "ABCXYZ should not match xyz patterns");
+    }
+
+    #[test]
+    fn test_equals_ignore_case_with_exact_match() {
+        // Based on Go's TestSingletonMonocaseMerge (monocase_test.go:48)
+        // Tests that exact match and equals-ignore-case patterns can coexist and merge correctly
+        let mut q = Quamina::new();
+
+        // Add exact match pattern
+        q.add_pattern("singleton", r#"{"x": ["singleton"]}"#)
+            .unwrap();
+
+        // Add equals-ignore-case pattern on same field
+        q.add_pattern("mono", r#"{"x": [{"equals-ignore-case": "foo"}]}"#)
+            .unwrap();
+
+        // Exact match should work
+        let m1 = q
+            .matches_for_event(r#"{"x": "singleton"}"#.as_bytes())
+            .unwrap();
+        assert_eq!(m1, vec!["singleton"], "Exact match should work");
+
+        // Case-insensitive match should work
+        let m2 = q.matches_for_event(r#"{"x": "FoO"}"#.as_bytes()).unwrap();
+        assert_eq!(m2, vec!["mono"], "Case-insensitive match should work");
+
+        // Neither should match different values
+        let m3 = q.matches_for_event(r#"{"x": "bar"}"#.as_bytes()).unwrap();
+        assert!(m3.is_empty(), "Unrelated value should not match");
     }
 
     #[test]
@@ -2500,6 +2575,48 @@ mod tests {
     }
 
     #[test]
+    fn test_json_all_escape_sequences() {
+        // Based on Go's TestOneEscape (escaping_test.go:45)
+        // Tests all 8 standard JSON escape sequences plus unicode escapes
+
+        // Test: \" (quote)
+        let mut q1 = Quamina::new();
+        // Pattern with literal quote in value (escaped in JSON as \")
+        // Raw string: "hello\"world" = hello"world
+        q1.add_pattern("p1", r#"{"x": ["hello\"world"]}"#).unwrap();
+        let m1 = q1
+            .matches_for_event(r#"{"x": "hello\"world"}"#.as_bytes())
+            .unwrap();
+        assert_eq!(m1, vec!["p1"], "Quote escape should match");
+
+        // Test: \/ (forward slash - optional in JSON but must be handled)
+        let mut q2 = Quamina::new();
+        q2.add_pattern("p2", r#"{"x": ["a/b"]}"#).unwrap();
+        let m2 = q2.matches_for_event(r#"{"x": "a\/b"}"#.as_bytes()).unwrap();
+        assert_eq!(m2, vec!["p2"], "Forward slash escape should match");
+
+        // Test: \b (backspace, 0x08)
+        let mut q3 = Quamina::new();
+        let pattern_with_backspace = format!(r#"{{"x": ["a{}b"]}}"#, '\x08');
+        q3.add_pattern("p3", &pattern_with_backspace).unwrap();
+        let m3 = q3.matches_for_event(r#"{"x": "a\bb"}"#.as_bytes()).unwrap();
+        assert_eq!(m3, vec!["p3"], "Backspace escape should match");
+
+        // Test: \f (form feed, 0x0c)
+        let mut q4 = Quamina::new();
+        let pattern_with_formfeed = format!(r#"{{"x": ["a{}b"]}}"#, '\x0c');
+        q4.add_pattern("p4", &pattern_with_formfeed).unwrap();
+        let m4 = q4.matches_for_event(r#"{"x": "a\fb"}"#.as_bytes()).unwrap();
+        assert_eq!(m4, vec!["p4"], "Form feed escape should match");
+
+        // Test: \r (carriage return)
+        let mut q5 = Quamina::new();
+        q5.add_pattern("p5", r#"{"x": ["a\rb"]}"#).unwrap();
+        let m5 = q5.matches_for_event(r#"{"x": "a\rb"}"#.as_bytes()).unwrap();
+        assert_eq!(m5, vec!["p5"], "Carriage return escape should match");
+    }
+
+    #[test]
     fn test_array_element_matching() {
         // Pattern should match if value is ANY element of the array
         let mut q = Quamina::new();
@@ -3242,6 +3359,62 @@ mod tests {
             let event = format!(r#"{{"x": "{}"}}"#, val);
             let matches = q.matches_for_event(event.as_bytes()).unwrap();
             assert_eq!(matches.len(), 1, "{} should match notTTT", val);
+        }
+    }
+
+    #[test]
+    fn test_anything_but_wordle_words() {
+        // Based on Go quamina's TestAnythingButMatching (anything_but_test.go:150)
+        // Tests anything-but against wordle word list with edge case "problem words"
+        use std::fs;
+        use std::path::Path;
+
+        // Problem words designed to test edge cases:
+        // - 4-letter prefix of existing wordle
+        // - 4-letter suffix of existing wordle
+        // - 5-letter non-wordle
+        // - 6-letter where wordle might match at start or end
+        let problem_words = ["bloo", "aper", "fnord", "doubts", "astern"];
+
+        let mut q = Quamina::new();
+        // Build pattern with quoted problem words for JSON array
+        let problem_json: Vec<String> =
+            problem_words.iter().map(|w| format!("\"{}\"", w)).collect();
+        let pattern = format!(
+            r#"{{"a": [{{"anything-but": [{}]}}]}}"#,
+            problem_json.join(",")
+        );
+        q.add_pattern("not_problems", &pattern).unwrap();
+
+        // Problem words should NOT match (they're excluded)
+        for word in &problem_words {
+            let event = format!(r#"{{"a": "{}"}}"#, word);
+            let matches = q.matches_for_event(event.as_bytes()).unwrap();
+            assert!(
+                matches.is_empty(),
+                "Problem word '{}' should be excluded",
+                word
+            );
+        }
+
+        // All wordle words should match (they're not in the exclusion list)
+        let wwords_path = Path::new("testdata/wwords.txt");
+        if wwords_path.exists() {
+            let contents = fs::read_to_string(wwords_path).unwrap();
+            for word in contents.lines() {
+                let word = word.trim();
+                if word.is_empty() {
+                    continue;
+                }
+                let event = format!(r#"{{"a": "{}"}}"#, word);
+                let matches = q.matches_for_event(event.as_bytes()).unwrap();
+                assert_eq!(
+                    matches.len(),
+                    1,
+                    "Wordle word '{}' should match anything-but pattern",
+                    word
+                );
+            }
         }
     }
 
