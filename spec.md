@@ -77,15 +77,30 @@ Rust port of [quamina](https://github.com/timbray/quamina) - fast pattern-matchi
 
 ---
 
-## Next Session: Optional Enhancements
+## Next Session: Investigate Benchmark Regressions
 
-**Go Test Gap Analysis Complete** - no priority gaps remaining.
+**Goal:** Identify and fix performance regressions detected in benchmark run (Jan 2026).
 
-### Possible Future Work
+### Regressions to Investigate
 
-1. **Character class subtraction** `[a-[b]]` - XSD regex feature, unimplemented
-2. **Word boundaries** `~b/~B` - Not in I-Regexp spec, unimplemented
-3. **Performance optimization** - Profile and optimize hot paths if needed
+| Benchmark | Before | After | Regression |
+|-----------|--------|-------|------------|
+| `has_matches_early_exit` | 176 ns | 542 ns | **+232%** |
+| `multi_field_and_3_fields` | 189 ns | 433 ns | **+129%** |
+
+### Approach
+
+1. Use `git bisect` to find the commit that introduced each regression
+2. Profile with `cargo flamegraph` to identify hot paths
+3. Fix or document as intentional trade-off
+
+### Core Benchmarks (Stable)
+
+| Benchmark | Spec | Current | Status |
+|-----------|------|---------|--------|
+| citylots | 2,117 ns | 2,115 ns | ✓ |
+| shellstyle_26_patterns | 405 ns | 426 ns | ✓ |
+| status_middle_nested | 4,912 ns | 5,140 ns | ✓ |
 
 ---
 
@@ -98,6 +113,13 @@ Rust port of [quamina](https://github.com/timbray/quamina) - fast pattern-matchi
 1. **Document as limitation**: Some regex features fundamentally can't be represented as DFA/NFA
 2. **Partial conversion**: Convert what's possible to automaton, fall back only for specific subpatterns
 3. **Alternative approach**: Hybrid matching where automaton handles prefix/suffix
+
+---
+
+## Future: Optional Enhancements
+
+1. **Character class subtraction** `[a-[b]]` - XSD regex feature, unimplemented
+2. **Word boundaries** `~b/~B` - Not in I-Regexp spec, unimplemented
 
 ## Status
 
