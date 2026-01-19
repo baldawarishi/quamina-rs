@@ -11,7 +11,6 @@ pub mod regexp;
 #[doc(hidden)]
 pub mod segments_tree;
 mod unicode_categories;
-mod wildcard;
 
 #[cfg(test)]
 mod regexp_samples;

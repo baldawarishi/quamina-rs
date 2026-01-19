@@ -2,36 +2,21 @@
 
 Rust port of [quamina](https://github.com/timbray/quamina) - fast pattern-matching for JSON events.
 
-## Next Session: Dead Code Audit
+## Next Session: Feature Parity or Performance
 
-**Goal:** Continue removing dead fallback matcher code and ensure test coverage uses real APIs.
+**Goal:** Dead code audit complete. Choose next priority:
+- Feature parity: Sync with any new Go features
+- Performance: Profile and optimize hot paths
+- Cleanup: Further code organization
 
-**Context:** After CIDR/AnythingButNumeric automaton migrations, we found substantial dead code in `value_matches()` and related functions. This session cleaned up CIDR; more may remain.
-
-**Audit checklist:**
-1. Check `value_matches()` in lib.rs - only `Matcher::Regex` should use fallback now
-2. Search for `#[cfg(test)]` functions that duplicate automaton behavior
-3. For each dead code candidate:
-   - Verify equivalent test coverage exists via Quamina API
-   - Remove the dead code
-   - Run `cargo test` and `cargo clippy -- -D warnings`
-
-**Recent cleanup (commit f9a9fb1):**
-- Removed `CidrPattern::matches()` - tested via `test_cidr_ipv4_*` API tests
-- Removed dead `value_matches()` branches - all matchers except Regex use automaton
-- Marked `wildcard.rs` functions as `#[cfg(test)]` - automaton handles shellstyle/wildcard
-
-**Pattern for cleanup:**
-```
-1. Identify: grep for fallback/matches methods not called in production
-2. Verify: ensure API-level tests cover the same cases
-3. Remove: delete dead code, update imports
-4. Validate: cargo test && cargo clippy -- -D warnings
-```
+**Recent cleanup:**
+- Removed `wildcard.rs` entirely - was test-only fallback code never used in production
+- API-level tests in lib.rs cover all shellstyle/wildcard cases via automaton
+- `value_matches()` only handles `Matcher::Regex` (with debug_assert for others)
 
 ## Status
 
-**274 tests passing.** Rust 1.5-2x faster. Synced with Go commit 74475a4 (Jan 2026).
+**268 tests passing.** Rust 1.5-2x faster. Synced with Go commit 74475a4 (Jan 2026).
 
 | Benchmark | Go (ns) | Rust (ns) | Speedup |
 |-----------|---------|-----------|---------|
@@ -63,13 +48,12 @@ src/
 ├── regexp/
 │   ├── parser.rs       # I-Regexp parser
 │   └── nfa.rs          # NFA building + shell caching
-├── automaton/
-│   ├── small_table.rs  # SmallTable (byte transitions)
-│   ├── fa_builders.rs  # FA construction (string, prefix, cidr, etc.)
-│   ├── nfa.rs          # traverse_dfa, traverse_nfa
-│   ├── arena.rs        # StateArena for cyclic NFA
-│   └── trie.rs         # ValueTrie for O(n) bulk construction
-└── wildcard.rs         # Test-only fallback matching (automaton handles prod)
+└── automaton/
+    ├── small_table.rs  # SmallTable (byte transitions)
+    ├── fa_builders.rs  # FA construction (string, prefix, cidr, shellstyle, etc.)
+    ├── nfa.rs          # traverse_dfa, traverse_nfa
+    ├── arena.rs        # StateArena for cyclic NFA
+    └── trie.rs         # ValueTrie for O(n) bulk construction
 ```
 
 ## HashMap Fallback Status
@@ -98,7 +82,7 @@ src/
 ## Commands
 
 ```bash
-cargo test                    # 274 tests
+cargo test                    # 268 tests
 cargo bench status            # benchmarks
 cargo clippy -- -D warnings   # CI check
 gh run list                   # check CI
