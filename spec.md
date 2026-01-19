@@ -4,16 +4,17 @@ Rust port of [quamina](https://github.com/timbray/quamina) - fast pattern-matchi
 
 ## Go Test Gap Analysis (Completed)
 
-**Summary:** Analyzed 134 Go tests across 40 files. ~75 covered, ~4 priority gaps, ~40 intentionally skipped.
+**Summary:** Analyzed 134 Go tests across 40 files. ~75 covered, 3 priority gaps, ~40 intentionally skipped (with Rust equivalent rigor).
 
 ### Priority Gaps (Should Add)
 
 | Go Test | Priority | Description |
 |---------|----------|-------------|
-| TestRegexpValidity | High | 900+ XSD regex samples from Michael Kay - comprehensive Unicode property categories (`~p{L}`, `~p{Cc}`, `~P{IsBasicLatin}`) |
 | TestArrayCorrectness | High | Complex nested array matching with AND logic across members, array index tracking |
 | TestRulerCl2 | Medium | Integration test with all matchers on citylots2 dataset (40K+ lines) |
 | TestFJErrorCases | Medium | 43 distinct JSON error cases for malformed input handling |
+
+**Already Covered (Regex):** `test_regexp_validity` runs 992 XSD samples. Skips character class subtraction `[a-[b]]` and `~b/~B` (unimplemented).
 
 ### Intentionally Skipped Go Tests
 
@@ -46,6 +47,17 @@ Rust port of [quamina](https://github.com/timbray/quamina) - fast pattern-matchi
 | TestSkinnyRuneTree | Go-specific NFA construction; Rust uses arena-based |
 | TestBadState, TestUnsetRebuildTrigger, TestFlattener | Go pruner/state interface (Rust uses Arc) |
 
+**Rust Equivalent Rigor for Skipped Go Tests:**
+
+| Go Concern | Rust Tests |
+|------------|------------|
+| Pruner stats/triggers | `test_pruner_stats`, `test_should_rebuild_threshold`, `test_rebuild_after_delete`, `test_rebuild_zero_filtered_denominator` |
+| Concurrency | `test_arc_concurrent_read_write`, `test_concurrent_update_during_matching`, `test_concurrent_citylots_stress`, `test_send_sync` |
+| Memory/lifecycle | `test_arc_pattern_lifecycle`, `test_arc_memory_cleanup`, `test_arc_snapshot_isolation`, `test_arc_field_matcher_sharing` |
+| SmallTable | `test_small_table_step`, `test_small_table_with_mappings` |
+| NFA/Arena | `test_arena_alloc`, `test_arena_cyclic_reference`, `test_arena_state_count_vs_chain`, `test_arena_nfa_*` |
+| SegmentsTree | `test_segments_tree_tracker_impl` |
+
 ### Already Covered (Examples)
 
 | Go Test | Rust Equivalent |
@@ -67,14 +79,13 @@ Rust port of [quamina](https://github.com/timbray/quamina) - fast pattern-matchi
 
 ## Next Session: Add Priority Gap Tests
 
-**Goal:** Add the 4 priority gap tests identified above.
+**Goal:** Add the 3 priority gap tests identified above.
 
 ### Steps
 
-1. **TestRegexpValidity equivalent**: Add comprehensive Unicode property category tests using XSD regex samples
-2. **TestArrayCorrectness equivalent**: Add complex nested array matching test
-3. **TestRulerCl2 equivalent**: Add integration test with multiple matcher types
-4. **TestFJErrorCases equivalent**: Add JSON error case coverage
+1. **TestArrayCorrectness equivalent**: Add complex nested array matching test with AND logic
+2. **TestRulerCl2 equivalent**: Add integration test with all matcher types (exact, prefix, anything-but, shellstyle, equals-ignore-case, regexp)
+3. **TestFJErrorCases equivalent**: Add JSON error case coverage (43 malformed input cases)
 
 ---
 
