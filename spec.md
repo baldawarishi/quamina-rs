@@ -87,15 +87,52 @@ Investigated reported regressions via git bisect:
 
 ---
 
-## Future: Regexp HashMap Fallback Elimination
+## Regex Fallback: Research & Design (Jan 2026)
 
-**Goal:** Eliminate HashMap fallback for `Matcher::Regex` with lookaheads/backreferences, or document as intentional limitation.
+Patterns with lookaheads (`(?=...)`, `(?!...)`) or backreferences (`\1`, `(.+)\1`) use the `regex` crate via HashMap fallback. This is the correct design based on computational complexity research.
 
-### Options to Consider
+### Why Fallback is Necessary
 
-1. **Document as limitation**: Some regex features fundamentally can't be represented as DFA/NFA
-2. **Partial conversion**: Convert what's possible to automaton, fall back only for specific subpatterns
-3. **Alternative approach**: Hybrid matching where automaton handles prefix/suffix
+**Lookaheads** - Convertible to automata but complex:
+- [POPL 2024 (Mamouras)](https://dl.acm.org/doi/10.1145/3632934): Oracle-NFA achieves O(m×n) time
+- [EPFL 2023](https://systemf.epfl.ch/blog/re2-lookbehinds/): Added linear-time lookbehinds to RE2/rust-regex
+- Trade-off: 2-5x slowdown, significant implementation complexity
+
+**Backreferences** - Fundamentally hard:
+- [Schmid 2024](https://arxiv.org/abs/1903.05896): NP-complete in general
+- **Active Variable Degree (avd)**: When bounded, matching is O(|α||w|^O(avd))
+- Most practical patterns have avd=1-2 (polynomial), but implementation is complex
+
+### Current Approach: Regex Crate Fallback
+
+```
+Pattern with (?=...) or \1
+    ↓
+parse_regexp() fails
+    ↓
+regex::Regex::new() succeeds
+    ↓
+Matcher::Regex stored in fallback_patterns HashMap
+    ↓
+Matched separately after automaton traversal
+```
+
+**Why this is fine:**
+- The `regex` crate is battle-tested and fast
+- Lookaheads/backreferences are rare in event filtering use cases
+- Hybrid approach: automaton handles 99% of patterns, fallback handles edge cases
+
+### Future Exploration: Graceful Integration
+
+Rather than a completely separate HashMap eval path, explore hybrid approaches inspired by numbits (Q-number encoding for numeric ranges):
+
+**Potential directions:**
+1. **Lookahead decomposition**: `foo(?=bar)` → two-automaton intersection at match position
+2. **Single-char backreference enumeration**: `(.)\1` → `aa|bb|cc|...` (automaton-compatible)
+3. **AVD-based routing**: Compute active variable degree, use polynomial algorithm for avd≤2
+4. **Post-filter approach**: Automaton narrows candidates, regex confirms matches
+
+**Key insight from numbits**: Creative encoding can make "non-automaton" problems automaton-friendly. Q-numbers encode floats as comparable byte strings. Similar tricks might work for simple lookahead/backreference patterns.
 
 ---
 
@@ -103,6 +140,8 @@ Investigated reported regressions via git bisect:
 
 1. **Character class subtraction** `[a-[b]]` - XSD regex feature, unimplemented
 2. **Word boundaries** `~b/~B` - Not in I-Regexp spec, unimplemented
+3. **Simple lookahead transformation** - Convert `A(?=B)` to automaton intersection
+4. **Single-char backreference** - Expand `(.)\1` to character class union
 
 ## Status
 
@@ -195,13 +234,20 @@ Go uses a pruner with explicit delete tracking and periodic rebuilds. Rust uses 
 - Concurrent reads safe during writes (RwLock on matcher)
 - Field matchers shared across patterns via Arc
 
-## HashMap Fallback Status
+## Matcher Implementation Status
 
-**Goal:** Eliminate HashMap fallback entirely.
-
-**Remaining:** `Matcher::Regex` with lookaheads/backreferences - low priority
-
-**Completed:** `AnythingButNumeric` (Q-number FA), `Cidr` (IPv4 DFA, IPv6 NFA)
+| Matcher | Implementation | Notes |
+|---------|---------------|-------|
+| Exact, Prefix, Suffix | Automaton | Core matchers |
+| Wildcard, Shellstyle | Automaton | NFA-based |
+| EqualsIgnoreCase | Automaton | Case-folded FA |
+| AnythingBut (string) | Automaton | Complement construction |
+| AnythingButNumeric | Automaton | Q-number FA |
+| Numeric comparisons | Automaton | Q-number range FA |
+| Cidr (IPv4) | Automaton | DFA-based |
+| Cidr (IPv6) | Automaton | NFA-based |
+| ParsedRegexp (I-Regexp) | Automaton | Custom parser → NFA |
+| Regex (lookahead/backref) | HashMap fallback | Uses `regex` crate - see research section |
 
 ## Commands
 
