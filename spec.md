@@ -2,9 +2,36 @@
 
 Rust port of [quamina](https://github.com/timbray/quamina) - fast pattern-matching for JSON events.
 
+## Next Session: Dead Code Audit
+
+**Goal:** Continue removing dead fallback matcher code and ensure test coverage uses real APIs.
+
+**Context:** After CIDR/AnythingButNumeric automaton migrations, we found substantial dead code in `value_matches()` and related functions. This session cleaned up CIDR; more may remain.
+
+**Audit checklist:**
+1. Check `value_matches()` in lib.rs - only `Matcher::Regex` should use fallback now
+2. Search for `#[cfg(test)]` functions that duplicate automaton behavior
+3. For each dead code candidate:
+   - Verify equivalent test coverage exists via Quamina API
+   - Remove the dead code
+   - Run `cargo test` and `cargo clippy -- -D warnings`
+
+**Recent cleanup (commit f9a9fb1):**
+- Removed `CidrPattern::matches()` - tested via `test_cidr_ipv4_*` API tests
+- Removed dead `value_matches()` branches - all matchers except Regex use automaton
+- Marked `wildcard.rs` functions as `#[cfg(test)]` - automaton handles shellstyle/wildcard
+
+**Pattern for cleanup:**
+```
+1. Identify: grep for fallback/matches methods not called in production
+2. Verify: ensure API-level tests cover the same cases
+3. Remove: delete dead code, update imports
+4. Validate: cargo test && cargo clippy -- -D warnings
+```
+
 ## Status
 
-**275 tests passing.** Rust 1.5-2x faster. Synced with Go commit 74475a4 (Jan 2026).
+**274 tests passing.** Rust 1.5-2x faster. Synced with Go commit 74475a4 (Jan 2026).
 
 | Benchmark | Go (ns) | Rust (ns) | Speedup |
 |-----------|---------|-----------|---------|
@@ -42,7 +69,7 @@ src/
 │   ├── nfa.rs          # traverse_dfa, traverse_nfa
 │   ├── arena.rs        # StateArena for cyclic NFA
 │   └── trie.rs         # ValueTrie for O(n) bulk construction
-└── wildcard.rs         # Shellstyle matching
+└── wildcard.rs         # Test-only fallback matching (automaton handles prod)
 ```
 
 ## HashMap Fallback Status
@@ -71,7 +98,7 @@ src/
 ## Commands
 
 ```bash
-cargo test                    # 275 tests
+cargo test                    # 274 tests
 cargo bench status            # benchmarks
 cargo clippy -- -D warnings   # CI check
 gh run list                   # check CI
