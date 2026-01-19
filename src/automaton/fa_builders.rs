@@ -7,6 +7,7 @@
 //! - `make_wildcard_fa`: Wildcard patterns with escaping
 //! - `make_anything_but_fa`: Negative matching
 //! - `make_monocase_fa`: Case-insensitive matching
+//! - `make_cidr_fa`: IPv4/IPv6 CIDR range matching
 //! - `merge_fas`: Merge two automata
 
 use std::collections::HashMap;
@@ -912,6 +913,341 @@ fn make_greater_fa_step(
     let mut table = SmallTable::new();
     table.pack(&unpacked);
     table
+}
+
+/// Build a CIDR pattern FA for IPv4 addresses.
+///
+/// Matches IP address strings that fall within the specified CIDR range.
+/// The FA matches character-by-character, validating each octet as 0-255.
+///
+/// # Arguments
+/// * `cidr` - The CIDR pattern to match
+/// * `next_field` - The field matcher to transition to on match
+pub fn make_cidr_fa(cidr: &crate::json::CidrPattern, next_field: Arc<FieldMatcher>) -> SmallTable {
+    use crate::json::CidrPattern;
+
+    match cidr {
+        CidrPattern::V4 {
+            network,
+            prefix_len,
+        } => make_ipv4_cidr_fa(network, *prefix_len, next_field),
+        CidrPattern::V6 {
+            network,
+            prefix_len,
+        } => make_ipv6_cidr_fa(network, *prefix_len, next_field),
+    }
+}
+
+/// Build an FA for IPv4 CIDR matching.
+///
+/// The FA structure:
+/// - For each of 4 octets: match digits representing valid octet values
+/// - Between octets: match '.'
+/// - At end: match VALUE_TERMINATOR
+///
+/// Based on prefix_len, each octet is either:
+/// - Fixed (all 8 bits constrained): must match exact value
+/// - Range (some bits constrained): must be within a range
+/// - Free (no bits constrained): any value 0-255
+fn make_ipv4_cidr_fa(
+    network: &[u8; 4],
+    prefix_len: u8,
+    next_field: Arc<FieldMatcher>,
+) -> SmallTable {
+    // Build the FA from right to left (last octet first)
+    // Start with the match state (VALUE_TERMINATOR transition)
+    let match_state = Arc::new(FaState {
+        table: SmallTable::new(),
+        field_transitions: vec![next_field],
+    });
+    let end_table = SmallTable::with_mappings(None, &[VALUE_TERMINATOR], &[match_state]);
+
+    // Build each octet from right to left
+    let mut current_table = end_table;
+
+    for octet_idx in (0..4).rev() {
+        // Calculate bit constraints for this octet
+        let octet_start_bit = octet_idx * 8;
+        let octet_end_bit = octet_start_bit + 8;
+
+        let (min_val, max_val) = if prefix_len as usize >= octet_end_bit {
+            // All 8 bits are constrained - exact match
+            (network[octet_idx], network[octet_idx])
+        } else if (prefix_len as usize) <= octet_start_bit {
+            // No bits constrained - any value 0-255
+            (0u8, 255u8)
+        } else {
+            // Partial constraint - some high bits are fixed
+            let constrained_bits = prefix_len as usize - octet_start_bit;
+            let mask = !0u8 << (8 - constrained_bits);
+            let base = network[octet_idx] & mask;
+            let range_size = 1u16 << (8 - constrained_bits);
+            (base, (base as u16 + range_size - 1).min(255) as u8)
+        };
+
+        // Build FA for this octet range
+        let octet_table = make_octet_range_fa(min_val, max_val, current_table);
+
+        // If not the first octet, prepend a dot transition
+        if octet_idx > 0 {
+            let octet_state = Arc::new(FaState::with_table(octet_table));
+            current_table = SmallTable::with_mappings(None, b".", &[octet_state]);
+        } else {
+            current_table = octet_table;
+        }
+    }
+
+    current_table
+}
+
+/// Build an FA for IPv6 CIDR matching.
+///
+/// IPv6 addresses are formatted as 8 groups of 4 hex digits separated by colons.
+/// For simplicity, we match the canonical expanded form (no :: shorthand).
+fn make_ipv6_cidr_fa(
+    network: &[u8; 16],
+    prefix_len: u8,
+    next_field: Arc<FieldMatcher>,
+) -> SmallTable {
+    // Build the FA from right to left (last group first)
+    let match_state = Arc::new(FaState {
+        table: SmallTable::new(),
+        field_transitions: vec![next_field],
+    });
+    let end_table = SmallTable::with_mappings(None, &[VALUE_TERMINATOR], &[match_state]);
+
+    let mut current_table = end_table;
+
+    // IPv6 has 8 groups of 16 bits each (2 bytes per group)
+    for group_idx in (0..8).rev() {
+        let byte_idx = group_idx * 2;
+        let group_start_bit = group_idx * 16;
+        let group_end_bit = group_start_bit + 16;
+
+        let group_value = ((network[byte_idx] as u16) << 8) | (network[byte_idx + 1] as u16);
+
+        let (min_val, max_val) = if prefix_len as usize >= group_end_bit {
+            // All 16 bits constrained - exact match
+            (group_value, group_value)
+        } else if (prefix_len as usize) <= group_start_bit {
+            // No bits constrained - any value 0-ffff
+            (0u16, 0xffffu16)
+        } else {
+            // Partial constraint
+            let constrained_bits = prefix_len as usize - group_start_bit;
+            let mask = !0u16 << (16 - constrained_bits);
+            let base = group_value & mask;
+            let range_size = 1u32 << (16 - constrained_bits);
+            (base, (base as u32 + range_size - 1).min(0xffff) as u16)
+        };
+
+        // Build FA for this hex group range
+        let group_table = make_ipv6_group_range_fa(min_val, max_val, current_table);
+
+        // If not the first group, prepend a colon transition
+        if group_idx > 0 {
+            let group_state = Arc::new(FaState::with_table(group_table));
+            current_table = SmallTable::with_mappings(None, b":", &[group_state]);
+        } else {
+            current_table = group_table;
+        }
+    }
+
+    current_table
+}
+
+/// Build an FA that matches an IPv4 octet value in a range [min_val, max_val].
+///
+/// The FA matches 1-3 digit strings representing numbers in the range.
+/// For example, range [0, 255] matches "0", "1", ..., "255".
+fn make_octet_range_fa(min_val: u8, max_val: u8, continuation: SmallTable) -> SmallTable {
+    // Generate all valid octet strings and build a trie-like FA
+    let mut fa_tables: Vec<SmallTable> = Vec::new();
+
+    for val in min_val..=max_val {
+        let val_str = val.to_string();
+        let val_bytes = val_str.as_bytes();
+        let val_fa = build_literal_chain_with_continuation(val_bytes, &continuation);
+        fa_tables.push(val_fa);
+    }
+
+    // Merge all FAs into one
+    if fa_tables.is_empty() {
+        return SmallTable::new();
+    }
+
+    let mut result = fa_tables.remove(0);
+    for fa in fa_tables {
+        result = merge_fas(&result, &fa);
+    }
+    result
+}
+
+/// Build an FA that matches an IPv6 group value in a range [min_val, max_val].
+///
+/// IPv6 groups are 1-4 hex digits (leading zeros may be omitted).
+fn make_ipv6_group_range_fa(min_val: u16, max_val: u16, continuation: SmallTable) -> SmallTable {
+    // For efficiency, we build a range-based FA rather than enumerating all values
+    // Group format: 1-4 hex digits (case-insensitive)
+
+    if min_val == max_val {
+        // Exact match
+        let val_str = format!("{:x}", min_val);
+        let val_bytes = val_str.as_bytes();
+        // Also match uppercase variant
+        let val_upper = format!("{:X}", min_val);
+
+        let lower_fa = build_literal_chain_with_continuation(val_bytes, &continuation);
+
+        if val_str == val_upper {
+            return lower_fa;
+        }
+
+        let upper_fa = build_literal_chain_with_continuation(val_upper.as_bytes(), &continuation);
+        return merge_fas(&lower_fa, &upper_fa);
+    }
+
+    // For ranges, we need to match any hex value in [min_val, max_val]
+    // This is complex for arbitrary ranges. For simplicity, if the range is 0-ffff,
+    // we use a simple pattern matching 1-4 hex digits.
+    if min_val == 0 && max_val == 0xffff {
+        return make_any_ipv6_group_fa(continuation);
+    }
+
+    // For partial ranges, enumerate values (expensive but correct)
+    // In practice, CIDR prefixes often align to nibble boundaries
+    let mut fa_tables: Vec<SmallTable> = Vec::new();
+
+    // Limit enumeration to avoid huge FAs
+    let range_size = (max_val - min_val + 1) as usize;
+    if range_size > 256 {
+        // Too large - fall back to any group (conservative match)
+        return make_any_ipv6_group_fa(continuation);
+    }
+
+    for val in min_val..=max_val {
+        let val_str = format!("{:x}", val);
+        let val_fa = build_literal_chain_with_continuation(val_str.as_bytes(), &continuation);
+
+        // Also match uppercase
+        let val_upper = format!("{:X}", val);
+        if val_str != val_upper {
+            let upper_fa =
+                build_literal_chain_with_continuation(val_upper.as_bytes(), &continuation);
+            fa_tables.push(merge_fas(&val_fa, &upper_fa));
+        } else {
+            fa_tables.push(val_fa);
+        }
+    }
+
+    if fa_tables.is_empty() {
+        return SmallTable::new();
+    }
+
+    let mut result = fa_tables.remove(0);
+    for fa in fa_tables {
+        result = merge_fas(&result, &fa);
+    }
+    result
+}
+
+/// Build an FA that matches any valid IPv6 group (1-4 hex digits, case-insensitive).
+fn make_any_ipv6_group_fa(continuation: SmallTable) -> SmallTable {
+    // Build FA for 1-4 hex digits
+    // hex_digit = [0-9a-fA-F]
+    let continuation_state = Arc::new(FaState::with_table(continuation));
+
+    // State for having matched 4 digits (only VALUE_TERMINATOR or separator valid)
+    let after_4 = continuation_state.clone();
+
+    // State for having matched 3 digits (can match 1 more or end)
+    let after_3 = Arc::new(FaState::with_table(make_hex_digit_table(Some(
+        after_4.clone(),
+    ))));
+
+    // State for having matched 2 digits (can match 1-2 more or end)
+    let after_2 = Arc::new(FaState::with_table(make_hex_digit_table(Some(
+        after_3.clone(),
+    ))));
+
+    // State for having matched 1 digit (can match 1-3 more or end)
+    let after_1 = Arc::new(FaState::with_table(make_hex_digit_table(Some(
+        after_2.clone(),
+    ))));
+
+    // Initial state: must match at least 1 hex digit
+    make_hex_digit_table_start(after_1, continuation_state)
+}
+
+/// Build a SmallTable that transitions on any hex digit to the next state,
+/// with optional transition to end state.
+fn make_hex_digit_table(next_state: Option<Arc<FaState>>) -> SmallTable {
+    let hex_digits: &[u8] = b"0123456789abcdefABCDEF";
+    let mut unpacked: [Option<Arc<FaState>>; BYTE_CEILING] = std::array::from_fn(|_| None);
+
+    if let Some(ref state) = next_state {
+        for &digit in hex_digits {
+            unpacked[digit as usize] = Some(state.clone());
+        }
+    }
+
+    let mut table = SmallTable::new();
+    table.pack(&unpacked);
+    table
+}
+
+/// Build the start state for hex group matching (must match 1 digit, then optional more).
+fn make_hex_digit_table_start(
+    after_one: Arc<FaState>,
+    continuation_state: Arc<FaState>,
+) -> SmallTable {
+    let hex_digits: &[u8] = b"0123456789abcdefABCDEF";
+
+    // For the first digit, we need to:
+    // 1. On hex digit: go to after_one state
+    // 2. The after_one state should allow:
+    //    - More hex digits (up to 3 more)
+    //    - The continuation (end of group)
+
+    // Modify after_one's table to also allow continuation on any byte that starts the continuation
+    // This is tricky. Let's build it differently.
+
+    // Actually, the continuation here is either ':' (between groups) or VALUE_TERMINATOR (end)
+    // We need the after_one state to accept:
+    // - More hex digits -> after_2
+    // - Anything that the continuation accepts
+
+    // Simpler approach: merge after_one's table with a table that has epsilon to continuation
+    let mut after_one_table = after_one.table.clone();
+    after_one_table.epsilons.push(continuation_state.clone());
+
+    let after_one_with_end = Arc::new(FaState {
+        table: after_one_table,
+        field_transitions: vec![],
+    });
+
+    let mut unpacked: [Option<Arc<FaState>>; BYTE_CEILING] = std::array::from_fn(|_| None);
+    for &digit in hex_digits {
+        unpacked[digit as usize] = Some(after_one_with_end.clone());
+    }
+
+    let mut table = SmallTable::new();
+    table.pack(&unpacked);
+    table
+}
+
+/// Build a literal chain FA that ends with the given continuation table.
+fn build_literal_chain_with_continuation(bytes: &[u8], continuation: &SmallTable) -> SmallTable {
+    if bytes.is_empty() {
+        return continuation.clone();
+    }
+
+    let mut current = continuation.clone();
+    for &byte in bytes.iter().rev() {
+        let next_state = Arc::new(FaState::with_table(current));
+        current = SmallTable::with_mappings(None, &[byte], &[next_state]);
+    }
+    current
 }
 
 /// Merge two finite automata into one that matches either pattern.

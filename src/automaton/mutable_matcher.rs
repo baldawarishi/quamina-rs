@@ -13,9 +13,9 @@ use std::sync::Arc;
 
 use super::arena::{traverse_arena_nfa, ArenaNfaBuffers, StateArena, StateId};
 use super::fa_builders::{
-    make_anything_but_fa, make_anything_but_numeric_fa, make_monocase_fa, make_numeric_greater_fa,
-    make_numeric_less_fa, make_numeric_range_fa, make_prefix_fa, make_shellstyle_fa,
-    make_string_fa, make_wildcard_fa, merge_fas,
+    make_anything_but_fa, make_anything_but_numeric_fa, make_cidr_fa, make_monocase_fa,
+    make_numeric_greater_fa, make_numeric_less_fa, make_numeric_range_fa, make_prefix_fa,
+    make_shellstyle_fa, make_string_fa, make_wildcard_fa, merge_fas,
 };
 use super::nfa::{traverse_dfa, traverse_nfa};
 use super::small_table::{FieldMatcher, NfaBuffers, SmallTable};
@@ -201,6 +201,13 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
                 // Numeric ranges use Q-number ordering in the automaton
                 *self.has_numbers.borrow_mut() = true;
                 self.add_numeric_range_transition(cmp)
+            }
+            Matcher::Cidr(ref cidr) => {
+                // IPv6 CIDR patterns use epsilon transitions, so mark as nondeterministic
+                if matches!(cidr, crate::json::CidrPattern::V6 { .. }) {
+                    *self.is_nondeterministic.borrow_mut() = true;
+                }
+                self.add_cidr_transition(cidr)
             }
             // For Regex fallback, we create a simple next state
             // These would need runtime checking
@@ -593,6 +600,38 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
                 return next_fm;
             }
         };
+
+        let mut start_table = self.start_table.borrow_mut();
+        if let Some(ref existing) = *start_table {
+            *start_table = Some(merge_fas(existing, &new_fa));
+        } else if self.singleton_match.borrow().is_some() {
+            let singleton_val = self.singleton_match.borrow().clone().unwrap();
+            let singleton_trans = self.singleton_transition.borrow().clone().unwrap();
+            let singleton_arc = Arc::new(FieldMatcher::new());
+            self.transition_map
+                .borrow_mut()
+                .insert(Arc::as_ptr(&singleton_arc), singleton_trans);
+            let singleton_fa = make_string_fa(&singleton_val, singleton_arc);
+            *start_table = Some(merge_fas(&singleton_fa, &new_fa));
+            *self.singleton_match.borrow_mut() = None;
+            *self.singleton_transition.borrow_mut() = None;
+        } else {
+            *start_table = Some(new_fa);
+        }
+
+        next_fm
+    }
+
+    /// Add a CIDR pattern transition using automaton-based IP matching.
+    ///
+    /// Builds an FA that matches IP addresses in the specified CIDR range.
+    fn add_cidr_transition(&self, cidr: &crate::json::CidrPattern) -> Rc<MutableFieldMatcher<X>> {
+        let next_fm = Rc::new(MutableFieldMatcher::new());
+        let next_arc = Arc::new(FieldMatcher::new());
+        self.transition_map
+            .borrow_mut()
+            .insert(Arc::as_ptr(&next_arc), next_fm.clone());
+        let new_fa = make_cidr_fa(cidr, next_arc);
 
         let mut start_table = self.start_table.borrow_mut();
         if let Some(ref existing) = *start_table {

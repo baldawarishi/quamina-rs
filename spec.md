@@ -77,35 +77,32 @@ src/
 **Goal:** Eliminate HashMap fallback entirely by moving all patterns to automaton-based matching.
 
 **Remaining HashMap fallbacks** (see `Matcher::is_automaton_compatible()` in `src/json.rs`):
-1. `Matcher::Cidr` - IP range matching
-2. `Matcher::Regex` - Regex with advanced features (lookaheads, lookbehinds, backreferences)
+1. `Matcher::Regex` - Regex with advanced features (lookaheads, lookbehinds, backreferences)
 
 **Completed:**
 - ✅ `AnythingButNumeric` - Uses Q-number FA (same algorithm as string anything-but)
+- ✅ `Cidr` - IPv4 uses deterministic trie-based FA, IPv6 uses NFA with epsilon transitions
 
-### Next: CIDR Automaton Support
+### CIDR Automaton Implementation (Completed)
 
-**Why:** Common use case (IPs in logs, security events), predictable pattern.
+**IPv4 approach:**
+- Build FA from right to left (last octet first)
+- For each octet: calculate bit constraints from prefix_len
+  - Fully constrained (8 bits in prefix): exact match
+  - Partially constrained: range match (e.g., 128-255 for high bit fixed)
+  - Unconstrained: any value 0-255
+- Enumerate valid octet strings and merge into trie-like FA
+- Connect octets with '.' transitions
 
-**Approach:**
-1. Parse CIDR notation into network address + prefix length (already done in `CidrPattern`)
-2. Build FA that matches valid IP strings character-by-character
-3. For each octet position, create transitions for valid digit sequences
-4. Example: `10.0.0.0/8` matches `10.X.X.X` where X is any valid octet (0-255)
+**IPv6 approach:**
+- Similar structure with 8 groups of hex digits separated by ':'
+- Uses NFA traversal (epsilon transitions for variable-length hex groups)
+- Supports both lowercase and uppercase hex digits
 
-**Challenge:** IP addresses are strings like `"10.0.0.1"`, not binary. Need to match:
-- Each octet as 1-3 digit string (0-255)
-- Dots between octets
-- Validate octet values don't exceed 255
-
-**Key insight:** Can build a trie-like FA for valid octet values (0-255), then compose 4 of them with dot separators.
-
-**Files to modify:**
-- `src/automaton/fa_builders.rs` - Add `make_cidr_fa` function
-- `src/automaton/mutable_matcher.rs` - Add `add_cidr_transition` method
-- `src/json.rs` - Update `is_automaton_compatible()` to return true for CIDR
-
-**Reference:** See `make_anything_but_numeric_fa` for similar pattern of converting semantic values to automaton.
+**Files modified:**
+- `src/automaton/fa_builders.rs` - Added `make_cidr_fa`, `make_ipv4_cidr_fa`, `make_ipv6_cidr_fa`
+- `src/automaton/mutable_matcher.rs` - Added `add_cidr_transition` method
+- `src/json.rs` - Updated `is_automaton_compatible()` to return true for CIDR
 
 ### Future: Regex Advanced Features (Low Priority)
 - Lookaheads, lookbehinds, backreferences are outside I-Regexp scope

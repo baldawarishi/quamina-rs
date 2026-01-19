@@ -257,8 +257,8 @@ impl Matcher {
             // Numeric ranges use Q-number ordering in automaton
             Matcher::Numeric(_) => true,
             Matcher::Regex(_) => false,
-            // CIDR requires runtime IP parsing (not automaton compatible)
-            Matcher::Cidr(_) => false,
+            // CIDR uses automaton-based IP matching
+            Matcher::Cidr(_) => true,
         }
     }
 }
