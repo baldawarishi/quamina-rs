@@ -2,35 +2,79 @@
 
 Rust port of [quamina](https://github.com/timbray/quamina) - fast pattern-matching for JSON events.
 
-## Next Session: Go Test Gap Analysis
+## Go Test Gap Analysis (Completed)
 
-**Goal:** Identify missing tests from Go that we should add, and document tests we intentionally skip.
+**Summary:** Analyzed 134 Go tests across 40 files. ~75 covered, ~4 priority gaps, ~40 intentionally skipped.
 
-### Approach
+### Priority Gaps (Should Add)
 
-Use subtasks to parallelize analysis. Read Go test source code directly - don't trust summaries.
+| Go Test | Priority | Description |
+|---------|----------|-------------|
+| TestRegexpValidity | High | 900+ XSD regex samples from Michael Kay - comprehensive Unicode property categories (`~p{L}`, `~p{Cc}`, `~P{IsBasicLatin}`) |
+| TestArrayCorrectness | High | Complex nested array matching with AND logic across members, array index tracking |
+| TestRulerCl2 | Medium | Integration test with all matchers on citylots2 dataset (40K+ lines) |
+| TestFJErrorCases | Medium | 43 distinct JSON error cases for malformed input handling |
+
+### Intentionally Skipped Go Tests
+
+**Go Internal Implementation Details (Won't Cover):**
+
+| Test | Rationale |
+|------|-----------|
+| TestInvalidValueTypes | Go panic testing (language-specific) |
+| TestMakeFAFragment, TestMakeByteDotFA | Internal FA construction details |
+| TestAddRuneTreeEntry, TestMultiLengthRR, TestRRiterator | Go runeTreeNode data structure |
+| TestIsNormalChar, TestSingleCharEscape, TestReadCCE1 | Go parser internals |
+| TestRRCacheEffectiveness | Go-specific cached FA shells optimization |
+| TestTriggerTooManyFilteredDenom, TestLiveRatioTrigger, TestNeverTrigger | Go pruner internals |
+| TestMemIterateFerr, TestStateDelete | Go memState interface |
+| TestUnpack, TestSmallTableIterator | Go SmallTable internals |
+| TestStateLists | Go stateLists deduplication structure |
+| TestEpsilonClosure | Go computes standalone; Rust inline during traverse_nfa |
+| TestFocusedMerge | Go FA merge statistics |
+| TestPP, TestNullPP | Go pretty printer (debugging) |
+| TestRegexpSamplesExist | Sanity check for test data |
+| TestShellStyleBuildTime | Go performance benchmark |
+
+**Different Architecture (Shouldn't Cover):**
+
+| Test | Rationale |
+|------|-----------|
+| TestAddX, TestAddXSingleThreaded | Go matchSet vs Rust Vec with dedup |
+| TestCityLots | Go benchmark; Rust has `cargo bench` |
+| TestBasicRegexpFeatureRead, TestAddRegexpTransition | Go feature detection API (Rust doesn't expose) |
+| TestSkinnyRuneTree | Go-specific NFA construction; Rust uses arena-based |
+| TestBadState, TestUnsetRebuildTrigger, TestFlattener | Go pruner/state interface (Rust uses Arc) |
+
+### Already Covered (Examples)
+
+| Go Test | Rust Equivalent |
+|---------|-----------------|
+| TestCopy | `test_arc_snapshot_isolation` |
+| TestConcurrencyCore | `test_arc_concurrent_read_write` |
+| TestBasic | `test_arc_pattern_lifecycle` |
+| TestTriggerRebuild | `test_arc_memory_cleanup` |
+| TestConcurrency | `test_concurrent_citylots_stress` |
+| TestUTF16Escaping | `test_utf16_surrogate_pairs` |
+| TestOneEscape | `test_json_escape_all_eight` |
+| TestAnythingButMerging | `test_anything_but_*` tests |
+| TestWildcardMatching | `test_wildcard_*` tests |
+| TestEqualsIgnoreCaseMatching | `test_equals_ignore_case_*` tests |
+| TestNfa2Dfa | `test_shellstyle_*` tests |
+| TestToxicStack | `test_toxic_stack_arena` |
+
+---
+
+## Next Session: Add Priority Gap Tests
+
+**Goal:** Add the 4 priority gap tests identified above.
 
 ### Steps
 
-1. **List Go tests**: `grep -h "^func Test" ~/Development/quamina_go_rs/quamina/*_test.go`
-2. **List Rust tests**: `grep -h "fn test_" src/**/*.rs`
-3. **For each Go test file**, spawn subtask to:
-   - Read the actual test code
-   - Check if Rust has equivalent coverage
-   - Categorize: Covered / Should Add / Won't Cover / Shouldn't Cover
-
-### Categories
-
-| Category | Criteria |
-|----------|----------|
-| **Covered** | Rust has equivalent test for same behavior |
-| **Should Add** | User-facing behavior not tested in Rust |
-| **Won't Cover** | Go internal implementation detail (e.g., specific data structure tests) |
-| **Shouldn't Cover** | Different Rust architecture (e.g., Go pruner vs Rust Arc) |
-
-### Deliverable
-
-Update this spec with table of intentionally skipped Go tests and rationale.
+1. **TestRegexpValidity equivalent**: Add comprehensive Unicode property category tests using XSD regex samples
+2. **TestArrayCorrectness equivalent**: Add complex nested array matching test
+3. **TestRulerCl2 equivalent**: Add integration test with multiple matcher types
+4. **TestFJErrorCases equivalent**: Add JSON error case coverage
 
 ---
 
