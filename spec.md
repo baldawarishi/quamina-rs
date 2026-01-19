@@ -4,17 +4,17 @@ Rust port of [quamina](https://github.com/timbray/quamina) - fast pattern-matchi
 
 ## Go Test Gap Analysis (Completed)
 
-**Summary:** Analyzed 134 Go tests across 40 files. ~75 covered, 3 priority gaps, ~40 intentionally skipped (with Rust equivalent rigor).
+**Summary:** Analyzed 134 Go tests across 40 files. All covered or intentionally skipped (with Rust equivalent rigor).
 
 ### Priority Gaps (Should Add)
 
-| Go Test | Priority | Description |
-|---------|----------|-------------|
-| TestArrayCorrectness | High | Complex nested array matching with AND logic across members, array index tracking |
-| TestRulerCl2 | Medium | Integration test with all matchers on citylots2 dataset (40K+ lines) |
-| TestFJErrorCases | Medium | 43 distinct JSON error cases for malformed input handling |
+*None remaining* - all gaps analyzed and either covered or intentionally skipped.
 
-**Already Covered (Regex):** `test_regexp_validity` runs 992 XSD samples. Skips character class subtraction `[a-[b]]` and `~b/~B` (unimplemented).
+**Already Covered:**
+- `test_regexp_validity` - 992 XSD samples (skips `[a-[b]]`, `~b/~B` unimplemented)
+- `test_array_cross_element_comprehensive` - exact port of TestArrayCorrectness (bands JSON, same-element AND logic)
+- `test_stress_citylots2_operators` - exact port of TestRulerCl2 (exact, prefix, anything-but, shellstyle, equals-ignore-case, regexp)
+- `test_invalid_json_events` + `test_bad_event_error_handling` - covers TestFJErrorCases; Rust rejects control chars (0x00-0x1f) in field names/values, remaining cases caught by early termination (documented at lib.rs:1537)
 
 ### Intentionally Skipped Go Tests
 
@@ -77,15 +77,15 @@ Rust port of [quamina](https://github.com/timbray/quamina) - fast pattern-matchi
 
 ---
 
-## Next Session: Add Priority Gap Tests
+## Next Session: Optional Enhancements
 
-**Goal:** Add the 3 priority gap tests identified above.
+**Go Test Gap Analysis Complete** - no priority gaps remaining.
 
-### Steps
+### Possible Future Work
 
-1. **TestArrayCorrectness equivalent**: Add complex nested array matching test with AND logic
-2. **TestRulerCl2 equivalent**: Add integration test with all matcher types (exact, prefix, anything-but, shellstyle, equals-ignore-case, regexp)
-3. **TestFJErrorCases equivalent**: Add JSON error case coverage (43 malformed input cases)
+1. **Character class subtraction** `[a-[b]]` - XSD regex feature, unimplemented
+2. **Word boundaries** `~b/~B` - Not in I-Regexp spec, unimplemented
+3. **Performance optimization** - Profile and optimize hot paths if needed
 
 ---
 
