@@ -8,9 +8,7 @@ use quamina::automaton::arena::{
     traverse_arena_nfa, ArenaNfaBuffers, ArenaSmallTable, StateArena, StateId,
     ARENA_VALUE_TERMINATOR,
 };
-use quamina::automaton::{
-    traverse_nfa, FaState, FieldMatcher, NfaBuffers, SmallTable, BYTE_CEILING, VALUE_TERMINATOR,
-};
+use quamina::automaton::FieldMatcher;
 use quamina::flatten_json::FlattenJsonState;
 use quamina::segments_tree::SegmentsTree;
 use quamina::Quamina;
@@ -476,58 +474,7 @@ fn bench_regexp_dot_star(c: &mut Criterion) {
     });
 }
 
-// === Arena vs Chain NFA comparison benchmarks ===
-
-/// Helper: Build chain-based NFA for [a-z]+ (current approach with 100 states)
-fn build_chain_nfa_plus() -> (SmallTable, Arc<FieldMatcher>) {
-    let field_matcher = Arc::new(FieldMatcher::new());
-    let depth = 100;
-
-    // Build trailer: match_state -> VALUE_TERMINATOR -> match
-    let match_state = Arc::new(FaState {
-        table: SmallTable::new(),
-        field_transitions: vec![field_matcher.clone()],
-    });
-    let exit_state = Arc::new(FaState::with_table(SmallTable::with_mappings(
-        None,
-        &[VALUE_TERMINATOR],
-        &[match_state],
-    )));
-
-    // Build chain from inside out (deepest level first)
-    let mut next_level: Option<Arc<FaState>> = None;
-
-    for _i in 0..depth {
-        // Loopback epsilons: always include exit, and include next_level if it exists
-        let mut loopback_epsilons = vec![exit_state.clone()];
-        if let Some(ref nl) = next_level {
-            loopback_epsilons.push(nl.clone());
-        }
-
-        let loopback = Arc::new(FaState::with_table(SmallTable {
-            ceilings: Vec::new(),
-            steps: Vec::new(),
-            epsilons: loopback_epsilons,
-            spinout: None,
-        }));
-
-        // Build transition table for 'a'-'z'
-        let mut unpacked: [Option<Arc<FaState>>; BYTE_CEILING] = std::array::from_fn(|_| None);
-        for b in b'a'..=b'z' {
-            unpacked[b as usize] = Some(loopback.clone());
-        }
-        let mut loop_table = SmallTable::new();
-        loop_table.pack(&unpacked);
-
-        // For +, no epsilon to exit from entry (must match at least once)
-        // but we don't need that for this benchmark since we're testing matching strings
-
-        next_level = Some(Arc::new(FaState::with_table(loop_table)));
-    }
-
-    let start_state = next_level.unwrap();
-    (start_state.table.clone(), field_matcher)
-}
+// === Arena NFA benchmarks ===
 
 /// Helper: Build arena-based NFA for [a-z]+ (cyclic, ~4 states)
 fn build_arena_nfa_plus() -> (StateArena, StateId, Arc<FieldMatcher>) {
@@ -569,26 +516,6 @@ fn build_arena_nfa_plus() -> (StateArena, StateId, Arc<FieldMatcher>) {
     (arena, start, field_matcher)
 }
 
-/// Benchmark: Chain-based NFA traversal for [a-z]+ pattern
-fn bench_chain_nfa_traversal(c: &mut Criterion) {
-    let (table, _field_matcher) = build_chain_nfa_plus();
-    let mut bufs = NfaBuffers::new();
-
-    // Test with 100-character string
-    let value: Vec<u8> = (0..100)
-        .map(|_| b'a')
-        .chain(std::iter::once(VALUE_TERMINATOR))
-        .collect();
-
-    c.bench_function("chain_nfa_100chars", |b| {
-        b.iter(|| {
-            bufs.clear();
-            traverse_nfa(&table, black_box(&value), &mut bufs);
-            black_box(bufs.transitions.len())
-        })
-    });
-}
-
 /// Benchmark: Arena-based NFA traversal for [a-z]+ pattern
 fn bench_arena_nfa_traversal(c: &mut Criterion) {
     let (arena, start, _field_matcher) = build_arena_nfa_plus();
@@ -601,26 +528,6 @@ fn bench_arena_nfa_traversal(c: &mut Criterion) {
         b.iter(|| {
             bufs.clear();
             traverse_arena_nfa(&arena, start, black_box(&value), &mut bufs);
-            black_box(bufs.transitions.len())
-        })
-    });
-}
-
-/// Benchmark: Chain-based NFA traversal with short string
-fn bench_chain_nfa_short(c: &mut Criterion) {
-    let (table, _field_matcher) = build_chain_nfa_plus();
-    let mut bufs = NfaBuffers::new();
-
-    // Test with 5-character string
-    let value: Vec<u8> = (0..5)
-        .map(|_| b'a')
-        .chain(std::iter::once(VALUE_TERMINATOR))
-        .collect();
-
-    c.bench_function("chain_nfa_5chars", |b| {
-        b.iter(|| {
-            bufs.clear();
-            traverse_nfa(&table, black_box(&value), &mut bufs);
             black_box(bufs.transitions.len())
         })
     });
@@ -810,10 +717,8 @@ criterion_group!(
     bench_regexp_star_long,
     bench_regexp_complex,
     bench_regexp_dot_star,
-    // Arena vs Chain NFA comparison benchmarks
-    bench_chain_nfa_traversal,
+    // Arena NFA benchmarks
     bench_arena_nfa_traversal,
-    bench_chain_nfa_short,
     bench_arena_nfa_short,
     // CityLots benchmark (comparable to Go)
     bench_citylots,
