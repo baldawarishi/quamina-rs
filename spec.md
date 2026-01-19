@@ -72,6 +72,46 @@ src/
 **Low priority (not in I-Regexp):**
 2. Character class subtraction `[a-[b]]` - XSD only, +74 samples
 
+## HashMap Fallback Deprecation Plan
+
+**Goal:** Eliminate HashMap fallback entirely by moving all patterns to automaton-based matching.
+
+**Current HashMap fallbacks** (see `Matcher::is_automaton_compatible()` in `src/json.rs`):
+1. `Matcher::Regex` - Regex with advanced features (lookaheads, lookbehinds, backreferences)
+2. `Matcher::Cidr` - IP range matching
+3. `Matcher::AnythingButNumeric` - Numeric exclusion lists
+
+**Migration priority:**
+
+### Phase 1: CIDR (High Value, Medium Complexity)
+- **Why:** Common use case (IPs in logs, security events), predictable pattern
+- **Approach:** Convert CIDR to automaton-compatible byte ranges
+  - Parse CIDR notation into prefix + mask
+  - Build SmallTable transitions for valid IP byte sequences
+  - Example: `10.0.0.0/24` → transitions for `10.0.0.[0-255]`
+- **Impact:** Enables automaton matching for all IP filtering patterns
+- **Files:** `src/json.rs` (CIDR matcher), `src/automaton/` (add IP transition builder)
+
+### Phase 2: AnythingButNumeric (High Value, Low Complexity)
+- **Why:** Simple to implement, completes numeric matching support
+- **Approach:** Use Q-number NFA with inverted ranges
+  - Current `Matcher::Numeric` already uses Q-number automaton
+  - Extend to support exclusion lists via inverted transitions
+  - Reuse existing Q-number encoding from `src/numbits.rs`
+- **Impact:** All numeric patterns (ranges + exclusions) use automaton
+- **Files:** `src/automaton/mutable_matcher.rs`, `src/numbits.rs`
+
+### Phase 3: Regex Advanced Features (Lower Priority, High Complexity)
+- **Consider:** Lookaheads, lookbehinds, backreferences
+- **Feasibility check:** These are typically NP-complete and may not be worth automaton implementation
+- **Alternative:** Keep regex crate fallback for these edge cases, as they're outside I-Regexp scope
+- **Decision:** Evaluate after Phase 1 & 2 - may choose to keep this fallback permanently
+
+**Success criteria:**
+- After Phase 1 & 2: 95%+ of real-world patterns use automaton matching
+- Zero performance regression on existing benchmarks
+- Maintain or improve memory usage
+
 ## Commands
 
 ```bash
