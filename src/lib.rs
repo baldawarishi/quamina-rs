@@ -314,8 +314,8 @@ impl<X: Clone + Eq + Hash + Send + Sync> Default for QuaminaBuilder<X> {
 /// The main pattern matcher
 ///
 /// Quamina uses a hybrid matching approach:
-/// - Automaton-based matching for patterns using supported operators (exact, prefix, wildcard, etc.)
-/// - HashMap-based fallback for patterns using unsupported operators (suffix, regex, numeric comparisons)
+/// - Automaton-based matching for patterns using supported operators (exact, prefix, suffix, wildcard, numeric comparisons, I-Regexp, etc.)
+/// - HashMap-based fallback for patterns with unsupported features (regex lookaheads/lookbehinds, backreferences, CIDR, anything-but-numeric)
 ///
 /// Quamina is Clone, allowing you to create snapshots for concurrent use:
 /// ```
