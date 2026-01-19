@@ -2,15 +2,24 @@
 
 Rust port of [quamina](https://github.com/timbray/quamina) - fast pattern-matching for JSON events.
 
-## Next Session: Performance Investigation or New Features
+## Next Session: Final Verification Before Regexp Work
+
+**Goal:** Quick sanity check before moving on to Regexp HashMap fallback elimination.
+
+**Verification checklist:**
+1. Run `cargo test` - confirm 304 tests pass
+2. Run `cargo clippy -- -D warnings` - no warnings
+3. Check CI status with `gh run list`
+4. Quick review of any remaining Go test files not yet checked (search for `_test.go`)
+5. Verify benchmarks haven't regressed: `cargo bench status`
+
+**After verification, proceed to Regexp work:**
+- Goal: Eliminate HashMap fallback for `Matcher::Regex`
+- Currently regex with advanced features (lookaheads, backreferences) falls back to HashMap
+- Investigate if these can be converted to automaton-based matching
+- Low priority but would complete the "no HashMap fallback" goal
 
 **Completed:** Full test coverage audit of all Go test files.
-
-**Possible next steps:**
-- Investigate removing flattener early termination for stricter JSON validation
-- Add more stress/fuzz tests
-- Performance profiling and optimization
-- Consider removing HashMap fallback for regex
 
 ## Status
 
