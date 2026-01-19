@@ -76,39 +76,40 @@ src/
 
 **Goal:** Eliminate HashMap fallback entirely by moving all patterns to automaton-based matching.
 
-**Current HashMap fallbacks** (see `Matcher::is_automaton_compatible()` in `src/json.rs`):
-1. `Matcher::Regex` - Regex with advanced features (lookaheads, lookbehinds, backreferences)
-2. `Matcher::Cidr` - IP range matching
+**Remaining HashMap fallbacks** (see `Matcher::is_automaton_compatible()` in `src/json.rs`):
+1. `Matcher::Cidr` - IP range matching
+2. `Matcher::Regex` - Regex with advanced features (lookaheads, lookbehinds, backreferences)
 
 **Completed:**
-- ✅ `Matcher::AnythingButNumeric` - Now uses Q-number FA with automaton (Phase 2 complete)
+- ✅ `AnythingButNumeric` - Uses Q-number FA (same algorithm as string anything-but)
 
-**Migration priority:**
+### Next: CIDR Automaton Support
 
-### Phase 1: CIDR (High Value, Medium Complexity)
-- **Why:** Common use case (IPs in logs, security events), predictable pattern
-- **Approach:** Convert CIDR to automaton-compatible byte ranges
-  - Parse CIDR notation into prefix + mask
-  - Build SmallTable transitions for valid IP byte sequences
-  - Example: `10.0.0.0/24` → transitions for `10.0.0.[0-255]`
-- **Impact:** Enables automaton matching for all IP filtering patterns
-- **Files:** `src/json.rs` (CIDR matcher), `src/automaton/` (add IP transition builder)
+**Why:** Common use case (IPs in logs, security events), predictable pattern.
 
-### ~~Phase 2: AnythingButNumeric~~ ✅ DONE
-- Uses Q-number FA - converts excluded numbers to Q-number byte sequences
-- Same algorithm as string-based `anything-but` but with Q-number encoding
-- Values are converted to Q-numbers during matching for proper numeric comparison
+**Approach:**
+1. Parse CIDR notation into network address + prefix length (already done in `CidrPattern`)
+2. Build FA that matches valid IP strings character-by-character
+3. For each octet position, create transitions for valid digit sequences
+4. Example: `10.0.0.0/8` matches `10.X.X.X` where X is any valid octet (0-255)
 
-### Phase 3: Regex Advanced Features (Lower Priority, High Complexity)
-- **Consider:** Lookaheads, lookbehinds, backreferences
-- **Feasibility check:** These are typically NP-complete and may not be worth automaton implementation
-- **Alternative:** Keep regex crate fallback for these edge cases, as they're outside I-Regexp scope
-- **Decision:** Evaluate after Phase 1 - may choose to keep this fallback permanently
+**Challenge:** IP addresses are strings like `"10.0.0.1"`, not binary. Need to match:
+- Each octet as 1-3 digit string (0-255)
+- Dots between octets
+- Validate octet values don't exceed 255
 
-**Success criteria:**
-- After Phase 1: 95%+ of real-world patterns use automaton matching
-- Zero performance regression on existing benchmarks
-- Maintain or improve memory usage
+**Key insight:** Can build a trie-like FA for valid octet values (0-255), then compose 4 of them with dot separators.
+
+**Files to modify:**
+- `src/automaton/fa_builders.rs` - Add `make_cidr_fa` function
+- `src/automaton/mutable_matcher.rs` - Add `add_cidr_transition` method
+- `src/json.rs` - Update `is_automaton_compatible()` to return true for CIDR
+
+**Reference:** See `make_anything_but_numeric_fa` for similar pattern of converting semantic values to automaton.
+
+### Future: Regex Advanced Features (Low Priority)
+- Lookaheads, lookbehinds, backreferences are outside I-Regexp scope
+- May keep regex crate fallback permanently for these edge cases
 
 ## Commands
 
