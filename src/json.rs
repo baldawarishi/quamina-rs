@@ -192,40 +192,6 @@ impl CidrPattern {
 
         result
     }
-
-    /// Check if an IP address matches this CIDR pattern
-    pub fn matches(&self, ip_str: &str) -> bool {
-        match self {
-            CidrPattern::V4 {
-                network,
-                prefix_len,
-            } => {
-                if let Some(ip) = Self::parse_ipv4(ip_str) {
-                    let mask = if *prefix_len == 0 {
-                        0u32
-                    } else {
-                        !0u32 << (32 - prefix_len)
-                    };
-                    let ip_bits = u32::from_be_bytes(ip) & mask;
-                    let network_bits = u32::from_be_bytes(*network);
-                    ip_bits == network_bits
-                } else {
-                    false
-                }
-            }
-            CidrPattern::V6 {
-                network,
-                prefix_len,
-            } => {
-                if let Some(ip) = Self::parse_ipv6(ip_str) {
-                    let masked_ip = Self::apply_ipv6_mask(&ip, *prefix_len);
-                    masked_ip == *network
-                } else {
-                    false
-                }
-            }
-        }
-    }
 }
 
 impl Matcher {

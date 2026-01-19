@@ -29,7 +29,6 @@ use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::hash::Hash;
 use std::sync::atomic::{AtomicU64, Ordering};
-use wildcard::{shellstyle_match, wildcard_match};
 
 /// Statistics for pruner rebuilding decisions
 #[derive(Debug, Default)]
@@ -856,52 +855,23 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
         false
     }
 
-    /// Check if a single value matches a matcher
+    /// Check if a single value matches a matcher (fallback path).
+    ///
+    /// Only `Matcher::Regex` uses this fallback path. All other matchers go through
+    /// the automaton path via `is_automaton_compatible() == true`.
     fn value_matches(&self, matcher: &Matcher, value: &str) -> bool {
         match matcher {
-            Matcher::Exact(expected) => value == expected,
-            Matcher::NumericExact(expected) => value
-                .parse::<f64>()
-                .ok()
-                .is_some_and(|num| num == *expected),
-            Matcher::Exists(_) => true, // Handled separately in backtrack_match
-            Matcher::Prefix(prefix) => value.starts_with(prefix),
-            Matcher::Suffix(suffix) => value.ends_with(suffix),
-            Matcher::Wildcard(pattern) => wildcard_match(pattern, value),
-            Matcher::Shellstyle(pattern) => shellstyle_match(pattern, value),
-            Matcher::AnythingBut(excluded) => !excluded.iter().any(|e| e == value),
-            Matcher::AnythingButNumeric(excluded) => {
-                // Parse value as number, then check if NOT in excluded list
-                if let Ok(num) = value.parse::<f64>() {
-                    !excluded.iter().any(|&e| (e - num).abs() < f64::EPSILON)
-                } else {
-                    // Non-numeric value: doesn't match any excluded numbers, so passes
-                    true
-                }
-            }
-            Matcher::EqualsIgnoreCase(expected) => value.to_lowercase() == expected.to_lowercase(),
-            Matcher::Numeric(cmp) => value.parse::<f64>().ok().is_some_and(|num| {
-                let lower_ok = match cmp.lower {
-                    Some((true, bound)) => num >= bound,
-                    Some((false, bound)) => num > bound,
-                    None => true,
-                };
-                let upper_ok = match cmp.upper {
-                    Some((true, bound)) => num <= bound,
-                    Some((false, bound)) => num < bound,
-                    None => true,
-                };
-                lower_ok && upper_ok
-            }),
             Matcher::Regex(re) => re.is_match(value),
-            // ParsedRegexp should go through automaton path, not fallback
-            // This case shouldn't normally be hit since is_automaton_compatible returns true
-            Matcher::ParsedRegexp(_) => {
-                // Fallback: use regex crate for matching (less efficient but correct)
-                // Convert back to a simple regex - this is a fallback that shouldn't be hit
+            _ => {
+                // All other matchers should go through automaton path, not fallback.
+                // If we reach here, is_automaton_compatible() is out of sync.
+                debug_assert!(
+                    false,
+                    "Matcher should use automaton path, not fallback: {:?}",
+                    std::mem::discriminant(matcher)
+                );
                 false
             }
-            Matcher::Cidr(cidr) => cidr.matches(value),
         }
     }
 
@@ -5220,31 +5190,6 @@ mod tests {
             .matches_for_event(r#"{"network": "8.8.8.8"}"#.as_bytes())
             .unwrap();
         assert!(m3.is_empty(), "Public IP should not match");
-    }
-
-    #[test]
-    fn test_cidr_pattern_parsing() {
-        // Test CidrPattern parsing directly
-        use crate::json::CidrPattern;
-
-        // IPv4
-        let cidr = CidrPattern::parse("10.0.0.0/24").unwrap();
-        assert!(cidr.matches("10.0.0.50"));
-        assert!(!cidr.matches("10.0.1.50"));
-
-        // IPv6
-        let cidr6 = CidrPattern::parse("2001:db8::/32").unwrap();
-        assert!(cidr6.matches("2001:db8:1:2:3:4:5:6"));
-        assert!(!cidr6.matches("2001:db9:1:2:3:4:5:6"));
-
-        // Edge cases
-        let cidr_zero = CidrPattern::parse("0.0.0.0/0").unwrap();
-        assert!(cidr_zero.matches("1.2.3.4"));
-        assert!(cidr_zero.matches("255.255.255.255"));
-
-        let cidr_single = CidrPattern::parse("192.168.1.1/32").unwrap();
-        assert!(cidr_single.matches("192.168.1.1"));
-        assert!(!cidr_single.matches("192.168.1.2"));
     }
 
     #[test]

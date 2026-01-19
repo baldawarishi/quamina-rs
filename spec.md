@@ -2,36 +2,6 @@
 
 Rust port of [quamina](https://github.com/timbray/quamina) - fast pattern-matching for JSON events.
 
-## Next Session: Investigate Benchmark Regression
-
-**Priority:** Debug `status_context_fields` +12% regression before other work.
-
-**Observed after CIDR commit:**
-```
-status_context_fields   370ns -> 372ns  (+12% regression)
-status_middle_nested    improved -2%
-status_last_field       improved -2.6%
-citylots                no change
-```
-
-**Investigation steps:**
-1. Run `cargo bench status_context_fields` multiple times to confirm regression is real (not noise)
-2. If confirmed, bisect: revert CIDR changes temporarily to isolate
-3. Profile with `cargo flamegraph` or `perf` to find hotspot
-4. Check if new code paths affect non-CIDR patterns (unlikely but verify)
-
-**Possible causes:**
-- Code size increase affecting instruction cache
-- New imports/dependencies in hot paths
-- Unlikely: CIDR code shouldn't run for non-CIDR patterns
-
-**Commands for investigation:**
-```bash
-cargo bench status_context_fields -- --noplot  # Run 5+ times
-git stash && cargo bench status_context_fields  # Compare without CIDR
-cargo flamegraph --bench matching -- --bench status_context_fields
-```
-
 ## Status
 
 **275 tests passing.** Rust 1.5-2x faster. Synced with Go commit 74475a4 (Jan 2026).

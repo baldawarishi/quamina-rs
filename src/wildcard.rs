@@ -1,5 +1,9 @@
 //! Wildcard and shellstyle pattern matching
+//!
+//! Note: These functions are only used in tests. Production code uses the
+//! automaton-based matching via `make_shellstyle_fa` and `make_wildcard_fa`.
 
+#[cfg(test)]
 /// Shellstyle matching: simple wildcard where * matches any sequence (no escaping)
 pub(crate) fn shellstyle_match(pattern: &str, text: &str) -> bool {
     // Split pattern by * to get literal segments
@@ -54,6 +58,7 @@ pub(crate) fn shellstyle_match(pattern: &str, text: &str) -> bool {
     true
 }
 
+#[cfg(test)]
 /// Wildcard matching supporting * as wildcard, with \* and \\ escaping
 pub(crate) fn wildcard_match(pattern: &str, text: &str) -> bool {
     // Parse pattern into segments: either literal strings or wildcards
@@ -63,12 +68,14 @@ pub(crate) fn wildcard_match(pattern: &str, text: &str) -> bool {
     match_segments(&segments, text)
 }
 
+#[cfg(test)]
 #[derive(Debug, PartialEq)]
 enum WildcardSegment {
     Literal(String),
     Star,
 }
 
+#[cfg(test)]
 /// Parse wildcard pattern handling \* and \\ escapes
 fn parse_wildcard_pattern(pattern: &str) -> Vec<WildcardSegment> {
     let mut segments = Vec::new();
@@ -112,6 +119,7 @@ fn parse_wildcard_pattern(pattern: &str) -> Vec<WildcardSegment> {
     segments
 }
 
+#[cfg(test)]
 /// Match parsed wildcard segments against text
 fn match_segments(segments: &[WildcardSegment], text: &str) -> bool {
     if segments.is_empty() {
@@ -140,6 +148,7 @@ fn match_segments(segments: &[WildcardSegment], text: &str) -> bool {
     wildcard_dp(segments, text)
 }
 
+#[cfg(test)]
 /// DP-based wildcard matching
 fn wildcard_dp(segments: &[WildcardSegment], text: &str) -> bool {
     // Convert segments to a simpler form for DP
