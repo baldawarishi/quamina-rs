@@ -13,9 +13,9 @@ use std::sync::Arc;
 
 use super::arena::{traverse_arena_nfa, ArenaNfaBuffers, StateArena, StateId};
 use super::fa_builders::{
-    make_anything_but_fa, make_monocase_fa, make_numeric_greater_fa, make_numeric_less_fa,
-    make_numeric_range_fa, make_prefix_fa, make_shellstyle_fa, make_string_fa, make_wildcard_fa,
-    merge_fas,
+    make_anything_but_fa, make_anything_but_numeric_fa, make_monocase_fa, make_numeric_greater_fa,
+    make_numeric_less_fa, make_numeric_range_fa, make_prefix_fa, make_shellstyle_fa,
+    make_string_fa, make_wildcard_fa, merge_fas,
 };
 use super::nfa::{traverse_dfa, traverse_nfa};
 use super::small_table::{FieldMatcher, NfaBuffers, SmallTable};
@@ -180,6 +180,11 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
                 let excluded_bytes: Vec<Vec<u8>> =
                     excluded.iter().map(|s| s.as_bytes().to_vec()).collect();
                 self.add_anything_but_transition(&excluded_bytes)
+            }
+            Matcher::AnythingButNumeric(excluded) => {
+                // Mark as having numbers so values get Q-number conversion
+                *self.has_numbers.borrow_mut() = true;
+                self.add_anything_but_numeric_transition(excluded)
             }
             Matcher::EqualsIgnoreCase(s) => self.add_monocase_transition(s.as_bytes()),
             Matcher::ParsedRegexp(ref tree) => {
@@ -451,6 +456,39 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
             .borrow_mut()
             .insert(Arc::as_ptr(&next_arc), next_fm.clone());
         let new_fa = make_anything_but_fa(excluded, next_arc);
+
+        let mut start_table = self.start_table.borrow_mut();
+        if let Some(ref existing) = *start_table {
+            *start_table = Some(merge_fas(existing, &new_fa));
+        } else if self.singleton_match.borrow().is_some() {
+            let singleton_val = self.singleton_match.borrow().clone().unwrap();
+            let singleton_trans = self.singleton_transition.borrow().clone().unwrap();
+            let singleton_arc = Arc::new(FieldMatcher::new());
+            self.transition_map
+                .borrow_mut()
+                .insert(Arc::as_ptr(&singleton_arc), singleton_trans);
+            let singleton_fa = make_string_fa(&singleton_val, singleton_arc);
+            *start_table = Some(merge_fas(&singleton_fa, &new_fa));
+            *self.singleton_match.borrow_mut() = None;
+            *self.singleton_transition.borrow_mut() = None;
+        } else {
+            *start_table = Some(new_fa);
+        }
+
+        next_fm
+    }
+
+    /// Add a numeric anything-but transition using Q-number FA.
+    ///
+    /// Matches any numeric value NOT in the excluded list.
+    /// Values are compared using Q-number representation for proper numeric ordering.
+    fn add_anything_but_numeric_transition(&self, excluded: &[f64]) -> Rc<MutableFieldMatcher<X>> {
+        let next_fm = Rc::new(MutableFieldMatcher::new());
+        let next_arc = Arc::new(FieldMatcher::new());
+        self.transition_map
+            .borrow_mut()
+            .insert(Arc::as_ptr(&next_arc), next_fm.clone());
+        let new_fa = make_anything_but_numeric_fa(excluded, next_arc);
 
         let mut start_table = self.start_table.borrow_mut();
         if let Some(ref existing) = *start_table {

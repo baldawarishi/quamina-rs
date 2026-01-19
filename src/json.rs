@@ -244,8 +244,8 @@ impl Matcher {
             Matcher::Shellstyle(_) => true,
             Matcher::Wildcard(_) => true,
             Matcher::AnythingBut(_) => true,
-            // AnythingButNumeric: needs runtime comparison of Q-numbers
-            Matcher::AnythingButNumeric(_) => false,
+            // AnythingButNumeric: uses Q-number FA with automaton
+            Matcher::AnythingButNumeric(_) => true,
             // EqualsIgnoreCase: automaton supports full Unicode case folding
             Matcher::EqualsIgnoreCase(_) => true,
             // ParsedRegexp: uses our custom NFA integrated into automaton

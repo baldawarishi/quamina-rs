@@ -79,7 +79,9 @@ src/
 **Current HashMap fallbacks** (see `Matcher::is_automaton_compatible()` in `src/json.rs`):
 1. `Matcher::Regex` - Regex with advanced features (lookaheads, lookbehinds, backreferences)
 2. `Matcher::Cidr` - IP range matching
-3. `Matcher::AnythingButNumeric` - Numeric exclusion lists
+
+**Completed:**
+- ✅ `Matcher::AnythingButNumeric` - Now uses Q-number FA with automaton (Phase 2 complete)
 
 **Migration priority:**
 
@@ -92,23 +94,19 @@ src/
 - **Impact:** Enables automaton matching for all IP filtering patterns
 - **Files:** `src/json.rs` (CIDR matcher), `src/automaton/` (add IP transition builder)
 
-### Phase 2: AnythingButNumeric (High Value, Low Complexity)
-- **Why:** Simple to implement, completes numeric matching support
-- **Approach:** Use Q-number NFA with inverted ranges
-  - Current `Matcher::Numeric` already uses Q-number automaton
-  - Extend to support exclusion lists via inverted transitions
-  - Reuse existing Q-number encoding from `src/numbits.rs`
-- **Impact:** All numeric patterns (ranges + exclusions) use automaton
-- **Files:** `src/automaton/mutable_matcher.rs`, `src/numbits.rs`
+### ~~Phase 2: AnythingButNumeric~~ ✅ DONE
+- Uses Q-number FA - converts excluded numbers to Q-number byte sequences
+- Same algorithm as string-based `anything-but` but with Q-number encoding
+- Values are converted to Q-numbers during matching for proper numeric comparison
 
 ### Phase 3: Regex Advanced Features (Lower Priority, High Complexity)
 - **Consider:** Lookaheads, lookbehinds, backreferences
 - **Feasibility check:** These are typically NP-complete and may not be worth automaton implementation
 - **Alternative:** Keep regex crate fallback for these edge cases, as they're outside I-Regexp scope
-- **Decision:** Evaluate after Phase 1 & 2 - may choose to keep this fallback permanently
+- **Decision:** Evaluate after Phase 1 - may choose to keep this fallback permanently
 
 **Success criteria:**
-- After Phase 1 & 2: 95%+ of real-world patterns use automaton matching
+- After Phase 1: 95%+ of real-world patterns use automaton matching
 - Zero performance regression on existing benchmarks
 - Maintain or improve memory usage
 

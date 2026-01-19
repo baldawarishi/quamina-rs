@@ -289,6 +289,26 @@ fn make_wildcard_fa_step(
     SmallTable::with_mappings(None, &[ch], &[next_state])
 }
 
+/// Build an anything-but-numeric FA that matches any Q-number NOT in the excluded list.
+///
+/// Similar to `make_anything_but_fa` but operates on Q-number representations
+/// of the excluded values. Used for numeric "anything-but" patterns like
+/// `{"anything-but": [404, 500]}`.
+///
+/// # Arguments
+/// * `excluded` - The list of excluded f64 values
+/// * `next_field` - The field matcher to transition to on success
+pub fn make_anything_but_numeric_fa(excluded: &[f64], next_field: Arc<FieldMatcher>) -> SmallTable {
+    // Convert excluded numbers to Q-number representations
+    let excluded_q_nums: Vec<Vec<u8>> = excluded
+        .iter()
+        .map(|&n| crate::numbits::q_num_from_f64(n))
+        .collect();
+
+    // Reuse the string-based anything-but implementation
+    make_anything_but_fa(&excluded_q_nums, next_field)
+}
+
 /// Build an anything-but FA that matches any value NOT in the excluded list.
 ///
 /// The automaton works by having a default "success" transition for all bytes,
