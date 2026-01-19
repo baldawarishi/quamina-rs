@@ -2,6 +2,36 @@
 
 Rust port of [quamina](https://github.com/timbray/quamina) - fast pattern-matching for JSON events.
 
+## Next Session: Investigate Benchmark Regression
+
+**Priority:** Debug `status_context_fields` +12% regression before other work.
+
+**Observed after CIDR commit:**
+```
+status_context_fields   370ns -> 372ns  (+12% regression)
+status_middle_nested    improved -2%
+status_last_field       improved -2.6%
+citylots                no change
+```
+
+**Investigation steps:**
+1. Run `cargo bench status_context_fields` multiple times to confirm regression is real (not noise)
+2. If confirmed, bisect: revert CIDR changes temporarily to isolate
+3. Profile with `cargo flamegraph` or `perf` to find hotspot
+4. Check if new code paths affect non-CIDR patterns (unlikely but verify)
+
+**Possible causes:**
+- Code size increase affecting instruction cache
+- New imports/dependencies in hot paths
+- Unlikely: CIDR code shouldn't run for non-CIDR patterns
+
+**Commands for investigation:**
+```bash
+cargo bench status_context_fields -- --noplot  # Run 5+ times
+git stash && cargo bench status_context_fields  # Compare without CIDR
+cargo flamegraph --bench matching -- --bench status_context_fields
+```
+
 ## Status
 
 **275 tests passing.** Rust 1.5-2x faster. Synced with Go commit 74475a4 (Jan 2026).
@@ -14,22 +44,17 @@ Rust port of [quamina](https://github.com/timbray/quamina) - fast pattern-matchi
 
 ## Completeness
 
-**Rust is fully I-Regexp (RFC 9485) compliant.** Go lacks range quantifiers `{n,m}`.
-
-**Pattern matchers:** `"value"`, `{"prefix"}`, `{"suffix"}`, `{"wildcard"}`, `{"shellstyle"}`, `{"exists"}`, `{"anything-but"}`, `{"equals-ignore-case"}`, `{"regexp"}`
+**Pattern matchers:** `"value"`, `{"prefix"}`, `{"suffix"}`, `{"wildcard"}`, `{"shellstyle"}`, `{"exists"}`, `{"anything-but"}`, `{"equals-ignore-case"}`, `{"regexp"}`, `{"cidr"}`, `{"numeric"}`
 
 **Rust-only extensions:**
 - `{"numeric": [">=", 0]}` - numeric comparisons
-- `{"cidr": "10.0.0.0/24"}` - IP range matching
+- `{"cidr": "10.0.0.0/24"}` - IP range matching (now automaton-based)
 - `{"anything-but": 404}` - numeric anything-but
 - `{"regexp": "a{2,5}"}` - range quantifiers (Go lacks)
-- `~d`/`~w`/`~s` - character class escapes (not in I-Regexp)
-- `~i`/`~c` - XML name character escapes (XSD compatibility)
-- `~p{IsBasicLatin}` - Unicode blocks (not in I-Regexp)
-- `(?:...)` - non-capturing groups (XSD syntax)
-- `*?`/`+?`/`{n,m}?` - lazy quantifiers (XSD syntax)
-
-**Regexp samples:** Rust 652, Go 203 (of 992 total)
+- `~d`/`~w`/`~s` - character class escapes
+- `~p{IsBasicLatin}` - Unicode blocks
+- `(?:...)` - non-capturing groups
+- `*?`/`+?`/`{n,m}?` - lazy quantifiers
 
 ## Architecture
 
@@ -39,74 +64,39 @@ src/
 ├── json.rs             # Pattern parsing, Matcher enum
 ├── flatten_json.rs     # Streaming JSON flattener
 ├── regexp/
-│   ├── mod.rs          # Re-exports and tests
-│   ├── parser.rs       # I-Regexp parser, data structures
+│   ├── parser.rs       # I-Regexp parser
 │   └── nfa.rs          # NFA building + shell caching
-├── unicode_categories.rs # Unicode category/block data
 ├── automaton/
 │   ├── small_table.rs  # SmallTable (byte transitions)
+│   ├── fa_builders.rs  # FA construction (string, prefix, cidr, etc.)
 │   ├── nfa.rs          # traverse_dfa, traverse_nfa
 │   ├── arena.rs        # StateArena for cyclic NFA
 │   └── trie.rs         # ValueTrie for O(n) bulk construction
 └── wildcard.rs         # Shellstyle matching
 ```
 
-## Implementation Notes
+## HashMap Fallback Status
 
-**Optimizations implemented:**
-- **Shell caching:** For Unicode categories like `~p{L}` (~1.1M code points), we cache pre-built FA shells. Second use of same category is O(copy) instead of O(rebuild).
-- **Arena-based cyclic NFA:** For `+`/`*` quantifiers, we use `StateArena` with true cycles (2-3 states) instead of Go's mutable pointer approach. Production code routes ALL regexp patterns through `make_regexp_nfa_arena`.
+**Goal:** Eliminate HashMap fallback entirely.
 
-**Go parity achieved:**
-- Clean module structure (regexp/parser.rs + regexp/nfa.rs)
-- Shell caching for Unicode categories
-- Structured errors with offset context
-- Unicode block support (`~p{IsBasicLatin}`)
-- Efficient cyclic NFA for quantifiers
-
-## Improvement Opportunities
-
-**Medium impact:**
-1. **Lazy negated categories** - Don't expand `[^abc]` eagerly
-
-**Low priority (not in I-Regexp):**
-2. Character class subtraction `[a-[b]]` - XSD only, +74 samples
-
-## HashMap Fallback Deprecation Plan
-
-**Goal:** Eliminate HashMap fallback entirely by moving all patterns to automaton-based matching.
-
-**Remaining HashMap fallbacks** (see `Matcher::is_automaton_compatible()` in `src/json.rs`):
-1. `Matcher::Regex` - Regex with advanced features (lookaheads, lookbehinds, backreferences)
+**Remaining:**
+- `Matcher::Regex` - Advanced features (lookaheads, backreferences) - low priority
 
 **Completed:**
-- ✅ `AnythingButNumeric` - Uses Q-number FA (same algorithm as string anything-but)
-- ✅ `Cidr` - IPv4 uses deterministic trie-based FA, IPv6 uses NFA with epsilon transitions
+- `AnythingButNumeric` - Q-number FA
+- `Cidr` - IPv4 deterministic FA, IPv6 NFA with epsilons
 
-### CIDR Automaton Implementation (Completed)
+## Implementation Notes
 
-**IPv4 approach:**
-- Build FA from right to left (last octet first)
-- For each octet: calculate bit constraints from prefix_len
-  - Fully constrained (8 bits in prefix): exact match
-  - Partially constrained: range match (e.g., 128-255 for high bit fixed)
-  - Unconstrained: any value 0-255
-- Enumerate valid octet strings and merge into trie-like FA
-- Connect octets with '.' transitions
+**Optimizations:**
+- **Shell caching:** Unicode categories cached as pre-built FA shells
+- **Arena-based cyclic NFA:** For `+`/`*` quantifiers, true cycles instead of chain copies
+- **CIDR FA:** IPv4 uses trie-like octet matching, IPv6 uses NFA for hex groups
 
-**IPv6 approach:**
-- Similar structure with 8 groups of hex digits separated by ':'
-- Uses NFA traversal (epsilon transitions for variable-length hex groups)
-- Supports both lowercase and uppercase hex digits
-
-**Files modified:**
-- `src/automaton/fa_builders.rs` - Added `make_cidr_fa`, `make_ipv4_cidr_fa`, `make_ipv6_cidr_fa`
-- `src/automaton/mutable_matcher.rs` - Added `add_cidr_transition` method
-- `src/json.rs` - Updated `is_automaton_compatible()` to return true for CIDR
-
-### Future: Regex Advanced Features (Low Priority)
-- Lookaheads, lookbehinds, backreferences are outside I-Regexp scope
-- May keep regex crate fallback permanently for these edge cases
+**CIDR Implementation:**
+- IPv4: Build FA right-to-left, each octet constrained by prefix_len bits
+- IPv6: 8 hex groups with ':' separators, epsilon transitions for variable-length
+- Files: `fa_builders.rs` (`make_cidr_fa`), `mutable_matcher.rs` (`add_cidr_transition`)
 
 ## Commands
 
@@ -120,17 +110,12 @@ cargo fmt && git push         # format and push
 
 ## Session Checklist
 
-1. Read this spec
+1. Read this spec (especially "Next Session" section)
 2. For Go behavior, read Go source directly
 3. Push often, check CI (`gh run list`)
 4. Use todos to manage context
 
 **Key files:**
-- `src/regexp/parser.rs` - I-Regexp parsing
+- `src/automaton/fa_builders.rs` - FA construction
+- `src/automaton/mutable_matcher.rs` - Pattern building
 - `src/regexp/nfa.rs` - NFA building + shell caching
-- `src/unicode_categories.rs` - Unicode data
-
-**Go reference:**
-- `regexp_reader.go` - parsing
-- `regexp_nfa.go` - NFA building
-- `rune_range.go` - shell caching
