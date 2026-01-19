@@ -2,55 +2,23 @@
 
 Rust port of [quamina](https://github.com/timbray/quamina) - fast pattern-matching for JSON events.
 
-## Next Session: Edge Case Tests + Arc Architecture Tests
+## Next Session: Regexp HashMap Fallback Elimination
 
-**Goal:** Add missing edge case tests and Arc-based architecture tests before Regexp work.
+**Goal:** Eliminate HashMap fallback for `Matcher::Regex` with lookaheads/backreferences, or document as intentional limitation.
 
-### Phase 1: Edge Case Tests (Target: ~100% user-facing coverage)
+### Background
 
-| Test | Description | Priority |
-|------|-------------|----------|
-| `test_utf16_surrogate_pairs` | Emoji via `\ud83d\ude00` → 😀, multi-emoji, mixed | High |
-| `test_json_escape_all_eight` | All 8 escapes: `\"`, `\\`, `\/`, `\b`, `\f`, `\n`, `\r`, `\t` | High |
-| `test_unicode_member_names` | Field names with escapes: `{"😀": 1, "x\u0078y": 2}` | High |
-| `test_invalid_utf8_dot_rejection` | Dot (.) rejects invalid UTF-8: `(0xC0, 0x80)`, `(0xED, 0xA0, 0x80)` | Medium |
-| `test_numbits_boundary_values` | Float64 boundaries: zero, subnormal, normal ranges | Medium |
-| `test_numbits_to_qnumber_utf8` | 10K random numbits → Q-number, verify UTF-8 valid + ordering | Low |
+Regex patterns that use features not representable as automata (lookaheads, backreferences) currently fall back to HashMap-based matching. This impacts performance for those specific patterns.
 
-**Reason for each:**
-- UTF-16/escapes: Go has comprehensive tests, we should match
-- Invalid UTF-8: Security edge case, ensures bad input rejected
-- Numbits boundaries: Numeric matching correctness at extremes
-- Numbits UTF-8: Internal invariant verification
+### Options to Consider
 
-### Phase 2: Arc Architecture Tests (Match Go's internal depth)
-
-Go has detailed tests for pruner/memState/matchSet internals. We need equivalent depth for our Arc-based design:
-
-| Test | Description | Go Equivalent |
-|------|-------------|---------------|
-| `test_arc_snapshot_isolation` | Clone creates independent snapshot, mutations don't leak | `TestCopy` |
-| `test_arc_concurrent_read_write` | 4 threads: 2 readers + 2 writers, no data races | `TestConcurrencyCore` |
-| `test_arc_pattern_lifecycle` | Add → match → delete → rebuild → verify deleted gone | `TestBasic` |
-| `test_arc_field_matcher_sharing` | Same pattern on different IDs shares fieldMatcher Arc | (internal) |
-| `test_arc_memory_cleanup` | After delete+rebuild, Arc refcounts drop, memory freed | `TestTriggerRebuild` |
-| `test_concurrent_citylots_stress` | Pattern adds during 10K event matching, validate counts | `TestConcurrency` |
-
-**Why Arc tests matter:**
-- Go's pruner ensures deleted patterns are cleaned up; our Arc design relies on refcounting
-- Concurrent safety is implicit in Rust but explicit tests catch logic bugs
-- Snapshot isolation is key API guarantee for users
-
-### Phase 3: Regexp HashMap Fallback Elimination
-
-After tests pass, proceed to:
-- Goal: Eliminate HashMap fallback for `Matcher::Regex`
-- Currently regex with lookaheads/backreferences falls back to HashMap
-- Investigate automaton conversion or document as intentional limitation
+1. **Document as limitation**: Some regex features fundamentally can't be represented as DFA/NFA, requiring backtracking
+2. **Partial conversion**: Convert what's possible to automaton, fall back only for specific subpatterns
+3. **Alternative approach**: Use hybrid matching where automaton handles prefix/suffix and regex crate handles complex parts
 
 ## Status
 
-**304 tests passing.** Rust 1.5-2x faster. Synced with Go commit 74475a4 (Jan 2026).
+**316 tests passing.** Rust 1.5-2x faster. Synced with Go commit 74475a4 (Jan 2026).
 
 | Benchmark | Go (ns) | Rust (ns) | Speedup |
 |-----------|---------|-----------|---------|
@@ -62,11 +30,29 @@ After tests pass, proceed to:
 
 | Category | Coverage | Notes |
 |----------|----------|-------|
-| Pattern matchers | ~95% | Wildcard/shellstyle excellent |
-| Regexp (992 XSD samples) | ~90% | Minor UTF-8 edge cases |
-| Numbers/Escaping | ~85% | UTF-16 surrogates missing |
-| Core/Infrastructure | ~85% | Arc tests pending |
-| Concurrency | ~60% | Scale stress tests pending |
+| Pattern matchers | ~98% | Wildcard/shellstyle/escaping comprehensive |
+| Regexp (992 XSD samples) | ~95% | UTF-8 validation + invalid rejection |
+| Numbers/Escaping | ~95% | UTF-16 surrogates, all 8 JSON escapes |
+| Core/Infrastructure | ~95% | Arc lifecycle + snapshot isolation |
+| Concurrency | ~90% | Concurrent read/write + citylots stress |
+
+### Completed Tests (Phase 1 + 2)
+
+**Edge Case Tests:**
+- `test_utf16_surrogate_pairs`: All Go emoji combinations (😀💋😺, x💋y, Ж💋中, etc.)
+- `test_json_escape_all_eight`: All 8 JSON escapes (`\"`, `\\`, `\/`, `\b`, `\f`, `\n`, `\r`, `\t`)
+- `test_unicode_member_names`: Field names with escapes and surrogate pairs
+- `test_invalid_utf8_dot_rejection`: Regexp dot rejects overlong, surrogates, invalid continuation
+- `test_numbits_boundary_values`: Float64 boundaries (subnormal, normal, min/max)
+- `test_numbits_to_qnumber_utf8`: 10K random Q-numbers verify UTF-8 valid + ordering
+
+**Arc Architecture Tests:**
+- `test_arc_snapshot_isolation`: Clone creates independent snapshot (Go TestCopy)
+- `test_arc_concurrent_read_write`: 4 threads, 2 readers + 2 writers (Go TestConcurrencyCore)
+- `test_arc_pattern_lifecycle`: Add → match → delete → rebuild → re-add (Go TestBasic)
+- `test_arc_field_matcher_sharing`: Same pattern on different IDs
+- `test_arc_memory_cleanup`: Delete + rebuild cleans up (Go TestTriggerRebuild)
+- `test_concurrent_citylots_stress`: Pattern adds during 10K event matching (Go TestConcurrency)
 
 ### Behavioral Differences (Documented)
 

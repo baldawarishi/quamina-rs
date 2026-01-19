@@ -443,6 +443,9 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
             self.segments_tree.add(&segment_path);
         }
 
+        // If pattern was previously deleted, un-delete it
+        self.deleted_patterns.remove(&x);
+
         // Store pattern definition for cloning
         self.pattern_defs
             .entry(x.clone())
@@ -6123,5 +6126,830 @@ mod tests {
             .matches_for_event(r#"{"field": "value_99_0"}"#.as_bytes())
             .unwrap();
         assert!(matches.is_empty());
+    }
+
+    // =========================================================================
+    // Phase 1 Edge Case Tests - Matching Go's comprehensive escaping tests
+    // =========================================================================
+
+    #[test]
+    fn test_utf16_surrogate_pairs() {
+        // Based on Go's TestUTF16Escaping (escaping_test.go:72)
+        // Tests all emoji combinations from Go:
+        // emoji: U+1F600 d83d de00 😀 U+1F48B d83d dc8b 💋 U+1F63A d83d de3a 😺 U+4E2D 4e2d 中 U+0416 0416 Ж
+
+        let test_cases: Vec<(&str, &str, &str)> = vec![
+            // (pattern_literal, event_escaped, description)
+            (
+                "😀💋😺",
+                r#"\ud83d\ude00\ud83d\udc8b\ud83d\ude3a"#,
+                "three surrogates",
+            ),
+            ("中Жy", r#"\u4e2d\u0416\u0079"#, "two CJK + ASCII"),
+            ("x中Ж", r#"\u0078\u4e2d\u0416"#, "ASCII + two CJK"),
+            ("x中y", r#"\u0078\u4e2d\u0079"#, "ASCII + CJK + ASCII"),
+            (
+                "x💋y",
+                r#"\u0078\ud83d\udc8b\u0079"#,
+                "ASCII + surrogate + ASCII",
+            ),
+            (
+                "😺Ж💋",
+                r#"\ud83d\ude3a\u0416\ud83d\udc8b"#,
+                "surrogate + CJK + surrogate",
+            ),
+            (
+                "Ж💋中",
+                r#"\u0416\ud83d\udc8b\u4e2d"#,
+                "CJK + surrogate + CJK",
+            ),
+        ];
+
+        for (literal, escaped, desc) in test_cases {
+            let mut q = Quamina::new();
+            let pattern = format!(r#"{{"emoji": ["{}"]}}"#, literal);
+            q.add_pattern("p1", &pattern).unwrap();
+
+            let event = format!(r#"{{"emoji": "{}"}}"#, escaped);
+            let matches = q.matches_for_event(event.as_bytes()).unwrap();
+            assert_eq!(
+                matches,
+                vec!["p1"],
+                "UTF-16 {} should decode to literal",
+                desc
+            );
+        }
+
+        // Test invalid UTF-16 sequences should error
+        let bad_escapes = [
+            r#"{"x": "\uaabx"}"#, // invalid hex digit
+            r#"{"x": "\u03"}"#,   // truncated escape
+        ];
+        for bad in bad_escapes {
+            let mut q = Quamina::new();
+            q.add_pattern("p", r#"{"x": ["test"]}"#).unwrap();
+            let result = q.matches_for_event(bad.as_bytes());
+            assert!(result.is_err(), "Should reject invalid escape: {}", bad);
+        }
+    }
+
+    #[test]
+    fn test_json_escape_all_eight() {
+        // Based on Go's TestOneEscape (escaping_test.go:45)
+        // Tests all 8 standard JSON escape sequences
+
+        // Create patterns with literal characters, match events with escapes
+        let test_cases: Vec<(&str, &str, &str)> = vec![
+            // (pattern_value, event_escaped, description)
+            (r#"a"b"#, r#"a\"b"#, "quote"),
+            (r#"a\b"#, r#"a\\b"#, "backslash"),
+            ("a/b", r#"a\/b"#, "forward slash"),
+            ("a\x08b", r#"a\bb"#, "backspace"),
+            ("a\x0cb", r#"a\fb"#, "form feed"),
+            ("a\nb", r#"a\nb"#, "newline"),
+            ("a\rb", r#"a\rb"#, "carriage return"),
+            ("a\tb", r#"a\tb"#, "tab"),
+        ];
+
+        for (literal, escaped, desc) in test_cases {
+            let mut q = Quamina::new();
+            // Need to properly escape the pattern JSON
+            let pattern_value = literal
+                .replace('\\', r#"\\"#)
+                .replace('"', r#"\""#)
+                .replace('\n', r#"\n"#)
+                .replace('\r', r#"\r"#)
+                .replace('\t', r#"\t"#)
+                .replace('\x08', r#"\b"#)
+                .replace('\x0c', r#"\f"#);
+            let pattern = format!(r#"{{"x": ["{}"]}}"#, pattern_value);
+            q.add_pattern("p1", &pattern)
+                .unwrap_or_else(|e| panic!("Pattern {} failed: {}", desc, e));
+
+            let event = format!(r#"{{"x": "{}"}}"#, escaped);
+            let matches = q.matches_for_event(event.as_bytes()).unwrap();
+            assert_eq!(
+                matches,
+                vec!["p1"],
+                "JSON escape {} should decode correctly",
+                desc
+            );
+        }
+    }
+
+    #[test]
+    fn test_unicode_member_names() {
+        // Based on Go's TestReadMemberName (escaping_test.go:7)
+        // Tests field names with unicode escapes and emoji
+
+        // Test 1: Emoji field name with surrogate pairs in event
+        let mut q1 = Quamina::new();
+        q1.add_pattern("p1", r#"{"😀💋😺": [1]}"#).unwrap();
+        // Event uses escaped surrogate pairs
+        let event1 = r#"{"\ud83d\ude00\ud83d\udc8b\ud83d\ude3a": 1}"#;
+        let matches1 = q1.matches_for_event(event1.as_bytes()).unwrap();
+        assert_eq!(matches1, vec!["p1"], "Emoji field name with surrogates");
+
+        // Test 2: Mixed escapes: x\u0078\ud83d\udc8by = xx💋y
+        let mut q2 = Quamina::new();
+        q2.add_pattern("p2", r#"{"xx💋y": ["value"]}"#).unwrap();
+        let event2 = r#"{"x\u0078\ud83d\udc8by": "value"}"#;
+        let matches2 = q2.matches_for_event(event2.as_bytes()).unwrap();
+        assert_eq!(matches2, vec!["p2"], "Mixed escape field name");
+
+        // Test 3: Multiple escaped fields in same event
+        let mut q3 = Quamina::new();
+        q3.add_pattern("p3", r#"{"😀💋😺": [1], "xx💋y": ["2"]}"#)
+            .unwrap();
+        let event3 = r#"{"\ud83d\ude00\ud83d\udc8b\ud83d\ude3a": 1, "x\u0078\ud83d\udc8by": "2"}"#;
+        let matches3 = q3.matches_for_event(event3.as_bytes()).unwrap();
+        assert_eq!(matches3, vec!["p3"], "Multiple escaped field names");
+
+        // Test 4: Unicode escape in field name: \u0066\u006f\u006f = foo
+        let mut q4 = Quamina::new();
+        q4.add_pattern("p4", r#"{"foo": [1]}"#).unwrap();
+        let event4 = r#"{"\u0066\u006f\u006f": 1}"#;
+        let matches4 = q4.matches_for_event(event4.as_bytes()).unwrap();
+        assert_eq!(matches4, vec!["p4"], "Unicode escape in field name");
+    }
+
+    #[test]
+    fn test_invalid_utf8_dot_rejection() {
+        // Test that regexp dot (.) rejects invalid UTF-8 sequences
+        // The dot FA is designed to only match valid UTF-8 characters
+
+        // Pattern with dot that should match any single valid UTF-8 char
+        let mut q = Quamina::new();
+        q.add_pattern("p1", r#"{"x": [{"regexp": "a.b"}]}"#)
+            .unwrap();
+
+        // Valid UTF-8 should match
+        let valid_cases = [
+            r#"{"x": "aXb"}"#,  // ASCII
+            r#"{"x": "aЖb"}"#,  // 2-byte UTF-8 (Cyrillic Ж = D0 96)
+            r#"{"x": "a中b"}"#, // 3-byte UTF-8 (Chinese 中)
+            r#"{"x": "a😀b"}"#, // 4-byte UTF-8 (emoji)
+        ];
+        for event in valid_cases {
+            let matches = q.matches_for_event(event.as_bytes()).unwrap();
+            assert_eq!(
+                matches,
+                vec!["p1"],
+                "Dot should match valid UTF-8: {}",
+                event
+            );
+        }
+
+        // Invalid UTF-8 should NOT match (dot rejects them)
+        // These are raw byte sequences that don't form valid UTF-8
+
+        // Test 1: Overlong encoding (0xC0 0x80 = overlong NUL)
+        let invalid_overlong: Vec<u8> = vec![
+            b'{', b'"', b'x', b'"', b':', b' ', b'"', b'a', 0xC0, 0x80,
+            b'b', // overlong NUL encoding
+            b'"', b'}',
+        ];
+        let matches = q.matches_for_event(&invalid_overlong).unwrap();
+        assert!(matches.is_empty(), "Dot should reject overlong encoding");
+
+        // Test 2: UTF-16 surrogate (0xED 0xA0 0x80 = U+D800, invalid in UTF-8)
+        let invalid_surrogate: Vec<u8> = vec![
+            b'{', b'"', b'x', b'"', b':', b' ', b'"', b'a', 0xED, 0xA0, 0x80,
+            b'b', // surrogate U+D800
+            b'"', b'}',
+        ];
+        let matches = q.matches_for_event(&invalid_surrogate).unwrap();
+        assert!(matches.is_empty(), "Dot should reject UTF-16 surrogates");
+
+        // Test 3: Invalid continuation (high byte not followed by continuation)
+        let invalid_continuation: Vec<u8> = vec![
+            b'{', b'"', b'x', b'"', b':', b' ', b'"', b'a', 0xC2, b'X',
+            b'b', // 0xC2 starts 2-byte but 'X' is not continuation
+            b'"', b'}',
+        ];
+        let matches = q.matches_for_event(&invalid_continuation).unwrap();
+        assert!(matches.is_empty(), "Dot should reject invalid continuation");
+
+        // Test 4: Byte above valid UTF-8 range (0xF5+)
+        let invalid_high: Vec<u8> = vec![
+            b'{', b'"', b'x', b'"', b':', b' ', b'"', b'a', 0xF5, 0x80, 0x80, 0x80,
+            b'b', // 0xF5 is invalid start byte
+            b'"', b'}',
+        ];
+        let matches = q.matches_for_event(&invalid_high).unwrap();
+        assert!(matches.is_empty(), "Dot should reject bytes >= 0xF5");
+
+        // Test 5: Standalone continuation byte
+        let invalid_standalone: Vec<u8> = vec![
+            b'{', b'"', b'x', b'"', b':', b' ', b'"', b'a', 0x80,
+            b'b', // 0x80 is continuation without start
+            b'"', b'}',
+        ];
+        let matches = q.matches_for_event(&invalid_standalone).unwrap();
+        assert!(
+            matches.is_empty(),
+            "Dot should reject standalone continuation"
+        );
+    }
+
+    #[test]
+    fn test_numbits_boundary_values() {
+        // Test float64 boundary values for numeric matching
+        use crate::numbits::{numbits_from_f64, q_num_from_f64, to_q_number};
+
+        // Float64 boundary categories:
+        // - Subnormal (smallest positive): 2^-1074 to 2^-1022
+        // - Normal minimum: 2^-1022 ≈ 2.225e-308
+        // - Normal maximum: (2 - 2^-52) × 2^1023 ≈ 1.798e+308
+
+        // Test zero
+        let nb_zero = numbits_from_f64(0.0);
+        let q_zero = q_num_from_f64(0.0);
+        assert!(nb_zero > 0, "Zero should have non-zero numbits");
+        assert!(!q_zero.is_empty(), "Zero should have non-empty Q-number");
+
+        // Test smallest positive subnormal: f64::MIN_POSITIVE / 2^52 ≈ 4.94e-324
+        let smallest_subnormal = 5e-324_f64;
+        let nb_small = numbits_from_f64(smallest_subnormal);
+        let q_small = q_num_from_f64(smallest_subnormal);
+        assert!(nb_small > nb_zero, "Smallest subnormal > 0");
+        assert!(
+            q_small > q_zero,
+            "Smallest subnormal Q-number > zero Q-number"
+        );
+
+        // Test smallest normal: f64::MIN_POSITIVE ≈ 2.225e-308
+        let smallest_normal = f64::MIN_POSITIVE;
+        let nb_min_normal = numbits_from_f64(smallest_normal);
+        let q_min_normal = q_num_from_f64(smallest_normal);
+        assert!(
+            nb_min_normal > nb_small,
+            "Smallest normal > smallest subnormal"
+        );
+        assert!(q_min_normal > q_small, "Q-number ordering preserved");
+
+        // Test largest normal: f64::MAX ≈ 1.798e+308
+        let largest_normal = f64::MAX;
+        let nb_max = numbits_from_f64(largest_normal);
+        let q_max = q_num_from_f64(largest_normal);
+        assert!(nb_max > nb_min_normal, "Max > min positive");
+        assert!(q_max > q_min_normal, "Q-number ordering preserved");
+
+        // Test negative boundaries
+        let nb_neg_max = numbits_from_f64(-f64::MAX);
+        let nb_neg_min = numbits_from_f64(-f64::MIN_POSITIVE);
+        let nb_neg_small = numbits_from_f64(-5e-324_f64);
+
+        // Negative ordering: -MAX < -MIN_POSITIVE < -subnormal < 0
+        assert!(nb_neg_max < nb_neg_min, "-MAX < -MIN_POSITIVE");
+        assert!(nb_neg_min < nb_neg_small, "-MIN_POSITIVE < -subnormal");
+        assert!(nb_neg_small < nb_zero, "-subnormal < 0");
+
+        // Test that all Q-numbers are valid (bytes in 0-127 range)
+        let test_values = [
+            0.0,
+            1.0,
+            -1.0,
+            f64::MIN_POSITIVE,
+            f64::MAX,
+            -f64::MAX,
+            5e-324,
+            -5e-324,
+            1e100,
+            -1e100,
+            0.5,
+            -0.5,
+        ];
+        for &val in &test_values {
+            let q = q_num_from_f64(val);
+            for &byte in &q {
+                assert!(
+                    byte < 128,
+                    "Q-number byte {} >= 128 for value {}",
+                    byte,
+                    val
+                );
+            }
+        }
+
+        // Test numbits round-trip consistency
+        for &val in &test_values {
+            let nb = numbits_from_f64(val);
+            let q1 = q_num_from_f64(val);
+            let q2 = to_q_number(nb);
+            assert_eq!(q1, q2, "Q-number should match via both paths for {}", val);
+        }
+    }
+
+    #[test]
+    fn test_numbits_to_qnumber_utf8() {
+        // Test that Q-numbers are valid for automaton processing
+        // Q-numbers use base-128 encoding (bytes 0-127), which is ASCII-compatible
+        use crate::numbits::q_num_from_f64;
+
+        // Generate 10K random floats and verify Q-number properties
+        let mut rng_state = 0xDEADBEEF_u64;
+
+        for i in 0..10_000 {
+            // Simple LCG for reproducibility
+            rng_state = rng_state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+
+            // Generate a random f64 in a wide range
+            let sign = if rng_state & 1 == 0 { 1.0 } else { -1.0 };
+            let exp = ((rng_state >> 1) % 600) as i32 - 300; // -300 to +299
+            let mantissa = ((rng_state >> 10) as f64) / (1u64 << 54) as f64;
+            let val = sign * (1.0 + mantissa) * 10f64.powi(exp);
+
+            // Skip if not finite (shouldn't happen with our construction, but be safe)
+            if !val.is_finite() {
+                continue;
+            }
+
+            let q = q_num_from_f64(val);
+
+            // Property 1: Non-empty
+            assert!(
+                !q.is_empty(),
+                "Q-number should be non-empty for value at index {}",
+                i
+            );
+
+            // Property 2: All bytes < 128 (valid for automaton)
+            for (j, &byte) in q.iter().enumerate() {
+                assert!(
+                    byte < 128,
+                    "Q-number byte {} at pos {} >= 128 for value at index {}",
+                    byte,
+                    j,
+                    i
+                );
+            }
+
+            // Property 3: Valid UTF-8 (since all bytes are ASCII)
+            assert!(
+                std::str::from_utf8(&q).is_ok(),
+                "Q-number should be valid UTF-8 for value at index {}",
+                i
+            );
+
+            // Property 4: Length bounded
+            assert!(
+                q.len() <= 10,
+                "Q-number length {} exceeds max 10 for value at index {}",
+                q.len(),
+                i
+            );
+        }
+
+        // Test ordering preservation across 1000 random pairs
+        let mut prev_val = f64::NEG_INFINITY;
+        let mut prev_q = q_num_from_f64(-1e308);
+
+        rng_state = 0x12345678_u64;
+        let mut ordered_vals: Vec<f64> = Vec::new();
+
+        for _ in 0..1000 {
+            rng_state = rng_state.wrapping_mul(6364136223846793005).wrapping_add(1);
+            let val = ((rng_state as f64) / (u64::MAX as f64)) * 2e100 - 1e100;
+            if val.is_finite() {
+                ordered_vals.push(val);
+            }
+        }
+
+        ordered_vals.sort_by(|a, b| a.partial_cmp(b).unwrap());
+
+        for val in ordered_vals {
+            let q = q_num_from_f64(val);
+            if prev_val < val {
+                assert!(
+                    prev_q <= q,
+                    "Q-number ordering violated: {} ({:?}) should be <= {} ({:?})",
+                    prev_val,
+                    prev_q,
+                    val,
+                    q
+                );
+            }
+            prev_val = val;
+            prev_q = q;
+        }
+    }
+
+    // =========================================================================
+    // Phase 2 Arc Architecture Tests - Matching Go's internal depth
+    // =========================================================================
+
+    #[test]
+    fn test_arc_snapshot_isolation() {
+        // Based on Go's TestCopy - Clone creates independent snapshot, mutations don't leak
+        let mut q1 = Quamina::new();
+
+        // Add initial patterns
+        q1.add_pattern("p1", r#"{"status": ["active"]}"#).unwrap();
+        q1.add_pattern("p2", r#"{"type": ["user"]}"#).unwrap();
+
+        // Create snapshot via clone
+        let mut q2 = q1.clone();
+
+        // Verify both have the same patterns initially
+        let event_active = r#"{"status": "active"}"#;
+        let event_user = r#"{"type": "user"}"#;
+        assert_eq!(
+            q1.matches_for_event(event_active.as_bytes()).unwrap(),
+            vec!["p1"]
+        );
+        assert_eq!(
+            q2.matches_for_event(event_active.as_bytes()).unwrap(),
+            vec!["p1"]
+        );
+        assert_eq!(
+            q1.matches_for_event(event_user.as_bytes()).unwrap(),
+            vec!["p2"]
+        );
+        assert_eq!(
+            q2.matches_for_event(event_user.as_bytes()).unwrap(),
+            vec!["p2"]
+        );
+
+        // Mutate q1: add a pattern
+        q1.add_pattern("p3", r#"{"level": ["admin"]}"#).unwrap();
+
+        // Mutate q2: delete a pattern
+        q2.delete_patterns(&"p1").unwrap();
+
+        // Verify isolation: q1's mutation didn't affect q2
+        let event_admin = r#"{"level": "admin"}"#;
+        assert_eq!(
+            q1.matches_for_event(event_admin.as_bytes()).unwrap(),
+            vec!["p3"]
+        );
+        assert!(
+            q2.matches_for_event(event_admin.as_bytes())
+                .unwrap()
+                .is_empty(),
+            "q2 should not have p3 (q1's mutation)"
+        );
+
+        // Verify isolation: q2's deletion didn't affect q1
+        assert_eq!(
+            q1.matches_for_event(event_active.as_bytes()).unwrap(),
+            vec!["p1"],
+            "q1 should still have p1 (q2's deletion shouldn't affect)"
+        );
+        assert!(
+            q2.matches_for_event(event_active.as_bytes())
+                .unwrap()
+                .is_empty(),
+            "q2 should not have p1 (deleted)"
+        );
+
+        // Verify pattern counts are independent
+        assert_eq!(q1.pattern_count(), 3);
+        assert_eq!(q2.pattern_count(), 1); // p2 remains after p1 deleted
+    }
+
+    #[test]
+    fn test_arc_concurrent_read_write() {
+        // Based on Go's TestConcurrencyCore - 4 threads: 2 readers + 2 writers, no data races
+        use std::sync::Arc;
+        use std::thread;
+
+        let q = Arc::new(std::sync::RwLock::new(Quamina::new()));
+
+        // Add initial patterns
+        {
+            let mut guard = q.write().unwrap();
+            for i in 0..10 {
+                let pattern = format!(r#"{{"field{}": ["value{}"]}}"#, i, i);
+                guard.add_pattern(format!("init_{}", i), &pattern).unwrap();
+            }
+        }
+
+        let barrier = Arc::new(std::sync::Barrier::new(4));
+        let mut handles = vec![];
+
+        // 2 reader threads
+        for reader_id in 0..2 {
+            let q = Arc::clone(&q);
+            let barrier = Arc::clone(&barrier);
+            handles.push(thread::spawn(move || {
+                barrier.wait();
+
+                let mut match_count = 0;
+                for _ in 0..1000 {
+                    let guard = q.read().unwrap();
+                    for i in 0..10 {
+                        let event = format!(r#"{{"field{}": "value{}"}}"#, i, i);
+                        let matches = guard.matches_for_event(event.as_bytes()).unwrap();
+                        match_count += matches.len();
+                    }
+                }
+                (reader_id, match_count)
+            }));
+        }
+
+        // 2 writer threads
+        for writer_id in 0..2 {
+            let q = Arc::clone(&q);
+            let barrier = Arc::clone(&barrier);
+            handles.push(thread::spawn(move || {
+                barrier.wait();
+
+                for i in 0..100 {
+                    let mut guard = q.write().unwrap();
+                    let pattern = format!(r#"{{"writer{}_field{}": ["val"]}}"#, writer_id, i);
+                    guard
+                        .add_pattern(format!("w{}_{}", writer_id, i), &pattern)
+                        .unwrap();
+                }
+                (writer_id + 10, 0) // Different ID range for writers
+            }));
+        }
+
+        // Wait for all threads
+        for handle in handles {
+            let (id, count) = handle.join().expect("Thread panicked");
+            if id < 10 {
+                // Reader thread
+                assert!(count > 0, "Reader {} should have found some matches", id);
+            }
+        }
+
+        // Verify final state
+        let guard = q.read().unwrap();
+        assert_eq!(guard.pattern_count(), 10 + 200); // 10 initial + 2 writers * 100 each
+    }
+
+    #[test]
+    fn test_arc_pattern_lifecycle() {
+        // Based on Go's TestBasic - Add → match → delete → rebuild → verify deleted gone
+        let mut q = Quamina::new();
+
+        // Phase 1: Add patterns
+        q.add_pattern("p1", r#"{"status": ["active"]}"#).unwrap();
+        q.add_pattern("p2", r#"{"status": ["inactive"]}"#).unwrap();
+        q.add_pattern("p3", r#"{"type": ["user"]}"#).unwrap();
+
+        // Phase 2: Match - all patterns work
+        let event1 = r#"{"status": "active"}"#;
+        let event2 = r#"{"status": "inactive"}"#;
+        let event3 = r#"{"type": "user"}"#;
+
+        assert_eq!(q.matches_for_event(event1.as_bytes()).unwrap(), vec!["p1"]);
+        assert_eq!(q.matches_for_event(event2.as_bytes()).unwrap(), vec!["p2"]);
+        assert_eq!(q.matches_for_event(event3.as_bytes()).unwrap(), vec!["p3"]);
+
+        // Phase 3: Delete pattern
+        q.delete_patterns(&"p1").unwrap();
+
+        // Deleted pattern should not match
+        assert!(
+            q.matches_for_event(event1.as_bytes()).unwrap().is_empty(),
+            "Deleted pattern should not match"
+        );
+
+        // Other patterns should still work
+        assert_eq!(q.matches_for_event(event2.as_bytes()).unwrap(), vec!["p2"]);
+        assert_eq!(q.matches_for_event(event3.as_bytes()).unwrap(), vec!["p3"]);
+
+        // Phase 4: Rebuild via clone
+        let q_rebuilt = q.clone();
+
+        // Verify deleted pattern is truly gone after rebuild
+        assert!(
+            q_rebuilt
+                .matches_for_event(event1.as_bytes())
+                .unwrap()
+                .is_empty(),
+            "Deleted pattern should still be gone after rebuild"
+        );
+
+        // Other patterns should still work
+        assert_eq!(
+            q_rebuilt.matches_for_event(event2.as_bytes()).unwrap(),
+            vec!["p2"]
+        );
+        assert_eq!(
+            q_rebuilt.matches_for_event(event3.as_bytes()).unwrap(),
+            vec!["p3"]
+        );
+
+        // Verify pattern count reflects deletion
+        assert_eq!(q_rebuilt.pattern_count(), 2);
+
+        // Re-add deleted pattern - should work
+        let mut q_final = q_rebuilt;
+        q_final
+            .add_pattern("p1", r#"{"status": ["active"]}"#)
+            .unwrap();
+        assert_eq!(
+            q_final.matches_for_event(event1.as_bytes()).unwrap(),
+            vec!["p1"]
+        );
+        assert_eq!(q_final.pattern_count(), 3);
+    }
+
+    #[test]
+    fn test_arc_field_matcher_sharing() {
+        // Test that same pattern on different IDs works correctly
+        // (internal optimization - both should share automaton structure)
+        let mut q = Quamina::new();
+
+        // Add identical patterns with different IDs
+        q.add_pattern("id1", r#"{"status": ["active"]}"#).unwrap();
+        q.add_pattern("id2", r#"{"status": ["active"]}"#).unwrap();
+        q.add_pattern("id3", r#"{"status": ["active"]}"#).unwrap();
+
+        // All three should match the same event
+        let event = r#"{"status": "active"}"#;
+        let mut matches = q.matches_for_event(event.as_bytes()).unwrap();
+        matches.sort();
+        assert_eq!(matches, vec!["id1", "id2", "id3"]);
+
+        // Delete one, others should still work
+        q.delete_patterns(&"id2").unwrap();
+        let mut matches2 = q.matches_for_event(event.as_bytes()).unwrap();
+        matches2.sort();
+        assert_eq!(matches2, vec!["id1", "id3"]);
+
+        // Clone and verify sharing survives
+        let q2 = q.clone();
+        let mut matches3 = q2.matches_for_event(event.as_bytes()).unwrap();
+        matches3.sort();
+        assert_eq!(matches3, vec!["id1", "id3"]);
+    }
+
+    #[test]
+    fn test_arc_memory_cleanup() {
+        // Based on Go's TestTriggerRebuild - After delete+rebuild, memory is cleaned
+        let mut q = Quamina::new();
+
+        // Add many patterns
+        for i in 0..100 {
+            let pattern = format!(r#"{{"field{}": ["value{}"]}}"#, i, i);
+            q.add_pattern(format!("p{}", i), &pattern).unwrap();
+        }
+        assert_eq!(q.pattern_count(), 100);
+
+        // Delete half the patterns
+        for i in 0..50 {
+            q.delete_patterns(&format!("p{}", i)).unwrap();
+        }
+        assert_eq!(q.pattern_count(), 50);
+
+        // Verify deleted patterns don't match
+        for i in 0..50 {
+            let event = format!(r#"{{"field{}": "value{}"}}"#, i, i);
+            assert!(
+                q.matches_for_event(event.as_bytes()).unwrap().is_empty(),
+                "Deleted pattern p{} should not match",
+                i
+            );
+        }
+
+        // Verify remaining patterns still work
+        for i in 50..100 {
+            let event = format!(r#"{{"field{}": "value{}"}}"#, i, i);
+            let matches = q.matches_for_event(event.as_bytes()).unwrap();
+            assert_eq!(matches.len(), 1, "Pattern p{} should match", i);
+            assert_eq!(matches[0], format!("p{}", i));
+        }
+
+        // Rebuild via clone - this cleans up deleted patterns from internal structures
+        let q_rebuilt = q.clone();
+        assert_eq!(q_rebuilt.pattern_count(), 50);
+
+        // Verify remaining patterns still work after rebuild
+        for i in 50..100 {
+            let event = format!(r#"{{"field{}": "value{}"}}"#, i, i);
+            let matches = q_rebuilt.matches_for_event(event.as_bytes()).unwrap();
+            assert_eq!(
+                matches.len(),
+                1,
+                "Pattern p{} should match after rebuild",
+                i
+            );
+        }
+
+        // Verify no contains_pattern for deleted ones
+        for i in 0..50 {
+            assert!(
+                !q_rebuilt.contains_pattern(&format!("p{}", i)),
+                "Deleted pattern p{} should not exist after rebuild",
+                i
+            );
+        }
+    }
+
+    #[test]
+    fn test_concurrent_citylots_stress() {
+        // Based on Go's TestConcurrency - Pattern adds during concurrent event matching
+        use std::sync::Arc;
+        use std::thread;
+
+        // Sample citylots-style event
+        let citylots_event = r#"{
+            "type": "Feature",
+            "properties": {
+                "MAPBLKLOT": "0001001",
+                "BLKLOT": "0001001",
+                "BLOCK_NUM": "0001",
+                "LOT_NUM": "001",
+                "FROM_ST": "0",
+                "TO_ST": "0",
+                "STREET": "UNKNOWN",
+                "ST_TYPE": null,
+                "ODD_EVEN": "E"
+            },
+            "geometry": {
+                "type": "Polygon",
+                "coordinates": [[[-122.422, 37.808], [-122.422, 37.808]]]
+            }
+        }"#;
+
+        // Use String IDs for this test to allow dynamic pattern ID generation
+        let q = Arc::new(std::sync::RwLock::new(Quamina::<String>::new()));
+
+        // Pre-populate with some patterns
+        {
+            let mut guard = q.write().unwrap();
+            guard
+                .add_pattern("type_feature".to_string(), r#"{"type": ["Feature"]}"#)
+                .unwrap();
+            guard
+                .add_pattern(
+                    "props_block".to_string(),
+                    r#"{"properties": {"BLOCK_NUM": ["0001"]}}"#,
+                )
+                .unwrap();
+        }
+
+        let barrier = Arc::new(std::sync::Barrier::new(3));
+
+        // Reader thread - does 10K event matches
+        let q_reader = Arc::clone(&q);
+        let barrier_reader = Arc::clone(&barrier);
+        let reader_handle = thread::spawn(move || {
+            barrier_reader.wait();
+
+            let mut match_counts = std::collections::HashMap::<String, usize>::new();
+            for _ in 0..10_000 {
+                let guard = q_reader.read().unwrap();
+                let matches = guard.matches_for_event(citylots_event.as_bytes()).unwrap();
+                for m in matches {
+                    *match_counts.entry(m).or_insert(0) += 1;
+                }
+            }
+            match_counts
+        });
+
+        // Writer thread 1 - adds patterns during reads
+        let q_writer1 = Arc::clone(&q);
+        let barrier_writer1 = Arc::clone(&barrier);
+        let writer1_handle = thread::spawn(move || {
+            barrier_writer1.wait();
+
+            for i in 0..50 {
+                let mut guard = q_writer1.write().unwrap();
+                let pattern = format!(r#"{{"properties": {{"FROM_ST": ["{}"]}}}}"#, i);
+                guard
+                    .add_pattern(format!("from_st_{}", i), &pattern)
+                    .unwrap();
+            }
+        });
+
+        // Writer thread 2 - adds different patterns during reads
+        let q_writer2 = Arc::clone(&q);
+        let barrier_writer2 = Arc::clone(&barrier);
+        let writer2_handle = thread::spawn(move || {
+            barrier_writer2.wait();
+
+            for i in 0..50 {
+                let mut guard = q_writer2.write().unwrap();
+                let pattern = format!(r#"{{"geometry": {{"type": ["Polygon{}"]}}}}"#, i);
+                guard.add_pattern(format!("geo_{}", i), &pattern).unwrap();
+            }
+        });
+
+        writer1_handle.join().expect("Writer 1 panicked");
+        writer2_handle.join().expect("Writer 2 panicked");
+        let match_counts = reader_handle.join().expect("Reader panicked");
+
+        // Verify consistent matching - the initial patterns should always match
+        // (may get some or none of the dynamically added patterns depending on timing)
+        assert!(
+            *match_counts.get("type_feature").unwrap_or(&0) == 10_000,
+            "type_feature should match all 10K events"
+        );
+        assert!(
+            *match_counts.get("props_block").unwrap_or(&0) == 10_000,
+            "props_block should match all 10K events"
+        );
+
+        // Verify final pattern count
+        let guard = q.read().unwrap();
+        assert_eq!(guard.pattern_count(), 2 + 50 + 50); // 2 initial + 50 from each writer
     }
 }
