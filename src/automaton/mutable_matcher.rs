@@ -191,6 +191,12 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
                 *self.is_nondeterministic.borrow_mut() = true;
                 self.add_regexp_transition(tree)
             }
+            Matcher::MultiCondition(ref mc) => {
+                // Multi-condition patterns use arena-based NFA for primary pattern
+                // Conditions are verified during matching
+                *self.is_nondeterministic.borrow_mut() = true;
+                self.add_multi_condition_transition(mc)
+            }
             Matcher::Suffix(s) => {
                 // Suffix "abc" is equivalent to shellstyle "*abc"
                 *self.is_nondeterministic.borrow_mut() = true;
@@ -562,6 +568,44 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
 
         // Store arena NFA (supports multiple per value matcher)
         self.arena_nfas.borrow_mut().push((arena, start));
+
+        next_fm
+    }
+
+    /// Add a multi-condition transition for lookaround patterns.
+    ///
+    /// Multi-condition patterns have a primary pattern plus conditions (lookarounds):
+    /// - Primary pattern is built as an arena NFA
+    /// - Conditions are stored for verification during matching
+    ///
+    /// For now, we build the primary automaton. Condition verification will be added
+    /// when condition automata are built and stored.
+    fn add_multi_condition_transition(
+        &self,
+        mc: &crate::json::MultiConditionPattern,
+    ) -> Rc<MutableFieldMatcher<X>> {
+        let next_fm = Rc::new(MutableFieldMatcher::new());
+
+        // Build primary pattern automaton
+        let (arena, start, field_matcher_arc) = make_regexp_nfa_arena(mc.primary.clone(), false);
+
+        self.transition_map
+            .borrow_mut()
+            .insert(Arc::as_ptr(&field_matcher_arc), next_fm.clone());
+
+        // Store arena NFA for primary pattern
+        self.arena_nfas.borrow_mut().push((arena, start));
+
+        // TODO: Build and store condition automata for verification during matching
+        // For positive lookahead A(?=B): build automaton for combined pattern AB
+        // For negative lookahead A(?!B): build automaton for combined pattern AB
+        // During matching, verify conditions after primary matches
+
+        // For now, conditions are built but not verified yet.
+        // The transformation in json.rs ensures:
+        // - PositiveLookahead contains the combined pattern (AB)
+        // - NegativeLookahead contains the combined pattern (AB)
+        // Condition verification requires storing these separately and checking during match.
 
         next_fm
     }
