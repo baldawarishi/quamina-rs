@@ -45,6 +45,8 @@ pub enum Matcher {
     Regex(regex::Regex),
     /// CIDR pattern for IP address matching
     Cidr(CidrPattern),
+    /// Multi-condition pattern for lookaround support ((?=...), (?!...), (?<=...), (?<!...))
+    MultiCondition(MultiConditionPattern),
 }
 
 /// Numeric comparison operators
@@ -194,6 +196,121 @@ impl CidrPattern {
     }
 }
 
+// ============================================================================
+// Multi-Condition Matching (Lookaround Support)
+// ============================================================================
+
+/// A condition in a multi-condition matcher for lookaround patterns.
+///
+/// Conditions are evaluated after the primary pattern matches. They are
+/// ordered by estimated cost (cheapest first) for fast-fail optimization.
+/// Inspired by regex crate's prefilter strategy: memchr > byteset > memmem.
+#[derive(Debug, Clone)]
+pub enum LookaroundCondition {
+    /// `(?=...)` - positive lookahead: combined pattern (primary + lookahead) must match
+    /// Stored as the full combined pattern for automaton construction.
+    PositiveLookahead(RegexpRoot),
+
+    /// `(?!...)` - negative lookahead: combined pattern must NOT match
+    /// If primary matches but primary+suffix also matches, reject.
+    NegativeLookahead(RegexpRoot),
+
+    /// `(?<=...)` - positive lookbehind: pattern before match position must match
+    /// `byte_length` is the fixed UTF-8 byte length of the lookbehind pattern.
+    PositiveLookbehind {
+        pattern: RegexpRoot,
+        byte_length: usize,
+    },
+
+    /// `(?<!...)` - negative lookbehind: pattern before match position must NOT match
+    NegativeLookbehind {
+        pattern: RegexpRoot,
+        byte_length: usize,
+    },
+}
+
+impl LookaroundCondition {
+    /// Returns true if this is a negative condition ((?!...) or (?<!...)).
+    /// Negative conditions typically have higher false positive rates during
+    /// candidate filtering, so they should be checked after positive conditions.
+    pub fn is_negative(&self) -> bool {
+        matches!(
+            self,
+            LookaroundCondition::NegativeLookahead(_)
+                | LookaroundCondition::NegativeLookbehind { .. }
+        )
+    }
+
+    /// Returns true if this is a lookbehind condition.
+    pub fn is_lookbehind(&self) -> bool {
+        matches!(
+            self,
+            LookaroundCondition::PositiveLookbehind { .. }
+                | LookaroundCondition::NegativeLookbehind { .. }
+        )
+    }
+
+    /// Estimated cost for condition ordering (lower = check first).
+    /// Based on regex crate insights: prefilter speed > selectivity > complexity.
+    ///
+    /// Cost model:
+    /// - Positive lookahead: 10 (shares prefix with primary, likely fast)
+    /// - Negative lookahead: 20 (higher false positive rate)
+    /// - Positive lookbehind: 30 (requires position tracking)
+    /// - Negative lookbehind: 40 (position tracking + higher FP rate)
+    pub fn cost_estimate(&self) -> u32 {
+        match self {
+            LookaroundCondition::PositiveLookahead(_) => 10,
+            LookaroundCondition::NegativeLookahead(_) => 20,
+            LookaroundCondition::PositiveLookbehind { .. } => 30,
+            LookaroundCondition::NegativeLookbehind { .. } => 40,
+        }
+    }
+}
+
+/// Multi-condition pattern for lookaround support.
+///
+/// Combines a primary pattern with additional conditions (lookarounds) that
+/// must all be satisfied for a match. Conditions are stored in cost order
+/// (cheapest first) for fast-fail optimization.
+///
+/// # Example patterns
+/// - `foo(?=bar)` → primary="foo", conditions=[PositiveLookahead("foobar")]
+/// - `foo(?!bar)` → primary="foo", conditions=[NegativeLookahead("foobar")]
+/// - `(?<=foo)bar` → primary="bar", conditions=[PositiveLookbehind("foo", 3)]
+/// - `(?=.*X)(?=.*Y)Z` → primary="Z", conditions=[PositiveLookahead(.*X), PositiveLookahead(.*Y)]
+#[derive(Debug, Clone)]
+pub struct MultiConditionPattern {
+    /// Primary pattern (what we're actually matching).
+    /// This is checked first; if it doesn't match, conditions are skipped.
+    pub primary: RegexpRoot,
+
+    /// Additional conditions (lookarounds) to verify after primary matches.
+    /// Stored in cost order (cheapest first) for fast-fail optimization.
+    /// All conditions must be satisfied for the overall match to succeed.
+    pub conditions: Vec<LookaroundCondition>,
+}
+
+impl MultiConditionPattern {
+    /// Create a new multi-condition pattern with conditions sorted by cost.
+    pub fn new(primary: RegexpRoot, mut conditions: Vec<LookaroundCondition>) -> Self {
+        // Sort conditions by cost estimate (cheapest first) for fast-fail
+        conditions.sort_by_key(|c| c.cost_estimate());
+        Self {
+            primary,
+            conditions,
+        }
+    }
+
+    /// Returns true if all conditions are automaton-compatible.
+    /// Currently all lookaround conditions use RegexpRoot, which is automaton-compatible.
+    pub fn is_automaton_compatible(&self) -> bool {
+        // Primary is always a RegexpRoot (automaton-compatible)
+        // All conditions contain RegexpRoot patterns
+        true
+    }
+}
+
 impl Matcher {
     /// Check if this matcher is supported by the automaton-based matching engine.
     ///
@@ -225,6 +342,8 @@ impl Matcher {
             Matcher::Regex(_) => false,
             // CIDR uses automaton-based IP matching
             Matcher::Cidr(_) => true,
+            // MultiCondition: lookaround patterns using multi-automaton intersection
+            Matcher::MultiCondition(mc) => mc.is_automaton_compatible(),
         }
     }
 }
