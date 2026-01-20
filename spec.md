@@ -397,6 +397,7 @@ File: `src/regexp/parser.rs`
 2. Add `parse_lookaround()` to detect `(?=`, `(?!`, `(?<=`, `(?<!`
 3. Track lookaround positions during parsing
 4. Reject nested/unsupported patterns with clear errors
+5. Add unit tests with the same rigor as quamina (../quamina)
 
 Reference: `fancy-regex/src/parse.rs:895-901` for lookaround detection
 
@@ -407,6 +408,7 @@ File: `src/json.rs`
 2. Add `MultiConditionMatcher` struct
 3. Add `Matcher::MultiCondition` variant
 4. Update `is_automaton_compatible()` to return true for MultiCondition
+5. Add unit tests with the same rigor as quamina (../quamina)
 
 #### Phase 3: Pattern Transformation (~100 lines)
 File: `src/regexp/parser.rs`
@@ -415,6 +417,7 @@ File: `src/regexp/parser.rs`
 2. `transform_negative_lookahead(prefix, suffix)` -> primary + MustNotMatch
 3. `transform_lookbehind(prefix, behind)` -> primary + LookBehind
 4. `transform_multi_lookahead(conditions, pattern)` -> primary + Vec<Condition>
+5. Add unit tests with the same rigor as quamina (../quamina)
 
 Reference: `fancy-regex/src/compile.rs:413-471` for transformation logic
 
@@ -424,9 +427,10 @@ File: `src/lib.rs`
 1. Add `match_multi_condition()` function
 2. Integrate into `value_matches()` path
 3. Ensure conditions are evaluated in order (fast-fail)
+4. Add unit tests with the same rigor as quamina (../quamina)
 
 #### Phase 5: Tests (~100 lines)
-File: `src/lib.rs` (test module)
+File: `src/lib.rs` (test module) with the same or higher rigor than quamina (../quamina)
 
 ```rust
 #[test] fn test_positive_lookahead() // foo(?=bar) matches "foobar" at "foo"
@@ -437,9 +441,11 @@ File: `src/lib.rs` (test module)
 #[test] fn test_rejected_backref()   // (.+)\1 returns error
 ```
 
+See quamina-rs/src/regexp_samples.rs and how its used within lib.rs as well.
+
 ### Performance Targets
 
-Benchmark against `regex` crate (in `../regex`):
+Benchmark all regex against `regex` crate (in `../regex`), esp but not limited to:
 
 | Pattern | Target | Notes |
 |---------|--------|-------|
@@ -448,6 +454,8 @@ Benchmark against `regex` crate (in `../regex`):
 | Negative lookahead | <2x regex | Single extra check |
 
 Run: `cargo bench lookahead` (to be added)
+
+Also continue to benchmark against quamina's qo repo as well. 
 
 ### Error Messages
 
@@ -469,12 +477,13 @@ Patterns like `(.)~1` are transformed at parse time in `src/regexp/parser.rs`:
 x(.)~1y    -> xaay|xbby|...x~~y
 ```
 
-This remains the only backref support - multi-char backrefs are rejected.
+This remains the only backref support - multi-char backrefs are rejected. We will take this out as a supported feature and then deprecated HashMap-based fallback patterns and any associated deadcode. 
 
 ### References
 
 - **fancy-regex** (`../fancy-regex`): Parser structure, lookaround detection
 - **regex** (`../regex`): Performance baseline, automaton patterns
+- **event-ruler** (`../event-rule`): Spiritual successor to Quamina
 - **POPL 2024**: Oracle-NFA for O(m×n) lookarounds
 - **numbits** (`src/numbits.rs`): Transform-to-automaton philosophy
 

@@ -19,8 +19,9 @@ mod parser;
 // Re-export public API
 pub use nfa::{make_dot_fa, make_regexp_nfa, make_regexp_nfa_arena, regexp_has_plus_star};
 pub use parser::{
-    invert_rune_range, parse_regexp, simplify_rune_range, QuantifiedAtom, RegexpBranch,
-    RegexpError, RegexpRoot, RunePair, RuneRange, REGEXP_QUANTIFIER_MAX, RUNE_MAX,
+    collect_lookarounds, has_top_level_lookaround, invert_rune_range, parse_regexp,
+    simplify_rune_range, LookaroundType, QuantifiedAtom, RegexpBranch, RegexpError, RegexpRoot,
+    RunePair, RuneRange, REGEXP_QUANTIFIER_MAX, RUNE_MAX,
 };
 
 #[cfg(test)]
@@ -189,13 +190,110 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_lookaround_supported() {
+        // Lookahead (?=...) should now parse successfully
+        assert!(parse_regexp("a(?=b)").is_ok(), "Positive lookahead should parse");
+        // Negative lookahead (?!...) should now parse successfully
+        assert!(parse_regexp("a(?!b)").is_ok(), "Negative lookahead should parse");
+        // Lookbehind (?<=...) should now parse successfully
+        assert!(
+            parse_regexp("(?<=a)b").is_ok(),
+            "Positive lookbehind should parse"
+        );
+        // Negative lookbehind (?<!...) should now parse successfully
+        assert!(
+            parse_regexp("(?<!a)b").is_ok(),
+            "Negative lookbehind should parse"
+        );
+    }
+
+    #[test]
     fn test_parse_unsupported_group_extension() {
-        // Lookahead (?=...) should fail
-        assert!(parse_regexp("a(?=b)").is_err());
-        // Negative lookahead (?!...) should fail
-        assert!(parse_regexp("a(?!b)").is_err());
         // Atomic group (?>...) should fail
-        assert!(parse_regexp("(?>a)").is_err());
+        assert!(parse_regexp("(?>a)").is_err(), "Atomic group should fail");
+        // Named groups (?<name>...) should fail
+        assert!(
+            parse_regexp("(?<name>a)").is_err(),
+            "Named group should fail"
+        );
+    }
+
+    #[test]
+    fn test_parse_nested_lookaround_rejected() {
+        // Nested lookaround should be rejected
+        assert!(
+            parse_regexp("(?=(?=a)b)").is_err(),
+            "Nested lookahead should fail"
+        );
+        assert!(
+            parse_regexp("(?=a(?!b))").is_err(),
+            "Lookahead containing negative lookahead should fail"
+        );
+        assert!(
+            parse_regexp("(?<=(?<=a)b)").is_err(),
+            "Nested lookbehind should fail"
+        );
+    }
+
+    #[test]
+    fn test_parse_variable_length_lookbehind_rejected() {
+        // Variable-length lookbehind should be rejected
+        assert!(
+            parse_regexp("(?<=a+)b").is_err(),
+            "Variable-length lookbehind (plus) should fail"
+        );
+        assert!(
+            parse_regexp("(?<=a*)b").is_err(),
+            "Variable-length lookbehind (star) should fail"
+        );
+        assert!(
+            parse_regexp("(?<=a?)b").is_err(),
+            "Variable-length lookbehind (optional) should fail"
+        );
+        // But fixed-length lookbehind should succeed
+        assert!(
+            parse_regexp("(?<=ab)c").is_ok(),
+            "Fixed-length lookbehind should parse"
+        );
+        assert!(
+            parse_regexp("(?<=abc)d").is_ok(),
+            "Fixed-length lookbehind (3 chars) should parse"
+        );
+    }
+
+    #[test]
+    fn test_lookaround_atom_properties() {
+        // Verify lookaround atoms have correct properties
+        let root = parse_regexp("foo(?=bar)").unwrap();
+        assert_eq!(root.len(), 1);
+        // Should have: f, o, o, (?=bar)
+        assert_eq!(root[0].len(), 4);
+        // Last atom should be lookahead
+        assert_eq!(
+            root[0][3].lookaround,
+            Some(LookaroundType::PositiveLookahead)
+        );
+        assert!(root[0][3].subtree.is_some());
+
+        let root = parse_regexp("foo(?!bar)").unwrap();
+        assert_eq!(
+            root[0][3].lookaround,
+            Some(LookaroundType::NegativeLookahead)
+        );
+
+        let root = parse_regexp("(?<=foo)bar").unwrap();
+        // Should have: (?<=foo), b, a, r
+        assert_eq!(root[0].len(), 4);
+        assert_eq!(
+            root[0][0].lookaround,
+            Some(LookaroundType::PositiveLookbehind)
+        );
+
+        let root = parse_regexp("(?<!foo)bar").unwrap();
+        assert_eq!(
+            root[0][0].lookaround,
+            Some(LookaroundType::NegativeLookbehind)
+        );
     }
 
     #[test]

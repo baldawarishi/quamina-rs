@@ -57,6 +57,8 @@ pub struct QuantifiedAtom {
     pub cache_key: Option<String>,
     /// Backreference to a capturing group (e.g., ~1 refers to group 1)
     pub backref_group: Option<u8>,
+    /// Lookaround assertion type (if this atom is a lookaround group)
+    pub lookaround: Option<LookaroundType>,
 }
 
 impl Default for QuantifiedAtom {
@@ -69,6 +71,7 @@ impl Default for QuantifiedAtom {
             subtree: None,
             cache_key: None,
             backref_group: None,
+            lookaround: None,
         }
     }
 }
@@ -105,6 +108,37 @@ pub type RegexpBranch = Vec<QuantifiedAtom>;
 /// The root of a parsed regexp (alternatives separated by |).
 pub type RegexpRoot = Vec<RegexpBranch>;
 
+/// Type of lookaround assertion
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LookaroundType {
+    /// `(?=...)` - positive lookahead: match if followed by pattern
+    PositiveLookahead,
+    /// `(?!...)` - negative lookahead: match if NOT followed by pattern
+    NegativeLookahead,
+    /// `(?<=...)` - positive lookbehind: match if preceded by pattern
+    PositiveLookbehind,
+    /// `(?<!...)` - negative lookbehind: match if NOT preceded by pattern
+    NegativeLookbehind,
+}
+
+impl LookaroundType {
+    /// Returns true if this is a negative lookaround ((?!...) or (?<!...))
+    pub fn is_negative(&self) -> bool {
+        matches!(
+            self,
+            LookaroundType::NegativeLookahead | LookaroundType::NegativeLookbehind
+        )
+    }
+
+    /// Returns true if this is a lookbehind ((?<=...) or (?<!...))
+    pub fn is_lookbehind(&self) -> bool {
+        matches!(
+            self,
+            LookaroundType::PositiveLookbehind | LookaroundType::NegativeLookbehind
+        )
+    }
+}
+
 /// Features found during parsing (for validation).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RegexpFeature {
@@ -122,6 +156,8 @@ pub enum RegexpFeature {
     OrBar,
     /// Backreference (~1, ~2, etc.) - may be transformed for simple patterns
     Backref,
+    /// Lookaround assertion (?=, ?!, ?<=, ?<!)
+    Lookaround,
 }
 
 /// Features that are implemented in the NFA builder.
@@ -138,6 +174,7 @@ const IMPLEMENTED_FEATURES: &[RegexpFeature] = &[
     RegexpFeature::Star,
     RegexpFeature::Range,
     RegexpFeature::Property,
+    RegexpFeature::Lookaround,
 ];
 
 /// Parser state for regexp parsing.
@@ -341,6 +378,173 @@ fn branch_has_backref(branch: &RegexpBranch) -> bool {
     false
 }
 
+// ============================================================================
+// Lookaround Validation
+// ============================================================================
+
+/// Check if a tree contains any nested lookaround (lookaround inside lookaround).
+/// This is not supported and should be rejected.
+fn has_nested_lookaround(tree: &RegexpRoot) -> bool {
+    for branch in tree {
+        for atom in branch {
+            if atom.lookaround.is_some() {
+                // This atom IS a lookaround. Check if its subtree contains another lookaround.
+                if let Some(subtree) = &atom.subtree {
+                    if tree_has_lookaround(subtree) {
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+    false
+}
+
+/// Recursively check if a tree contains any lookaround at any depth.
+fn tree_has_lookaround(tree: &RegexpRoot) -> bool {
+    for branch in tree {
+        for atom in branch {
+            if atom.lookaround.is_some() {
+                return true;
+            }
+            if let Some(subtree) = &atom.subtree {
+                if tree_has_lookaround(subtree) {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+/// Validate lookaround constructs in a parsed tree.
+/// Returns Ok(()) if valid, Err with message if invalid.
+fn validate_lookarounds(tree: &RegexpRoot) -> Result<(), String> {
+    // Check for nested lookarounds
+    if has_nested_lookaround(tree) {
+        return Err("nested lookaround not supported: `(?=...(?=...)...)`".into());
+    }
+
+    // Check for variable-length lookbehind
+    for branch in tree {
+        for atom in branch {
+            if let Some(la_type) = &atom.lookaround {
+                if la_type.is_lookbehind() {
+                    if let Some(subtree) = &atom.subtree {
+                        if has_variable_length_pattern(subtree) {
+                            return Err(
+                                "variable-length lookbehind not yet supported: `(?<=a+)`; \
+                                 use fixed-length like `(?<=aaa)`"
+                                    .into(),
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Check if a pattern can match strings of different lengths.
+/// Used to validate lookbehind patterns which require fixed length.
+fn has_variable_length_pattern(tree: &RegexpRoot) -> bool {
+    // Multiple branches (alternation) can have different lengths
+    if tree.len() > 1 {
+        // Check if branches have same fixed length
+        let first_len = branch_fixed_length(&tree[0]);
+        for branch in tree.iter().skip(1) {
+            let branch_len = branch_fixed_length(branch);
+            if first_len != branch_len {
+                return true; // Different lengths in alternation
+            }
+        }
+        // If we get here, all branches have same length (or all are variable)
+        return first_len.is_none();
+    }
+
+    if tree.is_empty() {
+        return false;
+    }
+
+    // Single branch - check for quantifiers that cause variable length
+    branch_fixed_length(&tree[0]).is_none()
+}
+
+/// Calculate the fixed length of a branch, or None if variable length.
+fn branch_fixed_length(branch: &RegexpBranch) -> Option<usize> {
+    let mut total = 0usize;
+    for atom in branch {
+        // Variable length quantifiers
+        if atom.quant_min != atom.quant_max {
+            return None;
+        }
+        // Star or plus (variable length)
+        if atom.is_star() || atom.is_plus() {
+            return None;
+        }
+
+        let atom_len = if atom.is_dot {
+            // Dot matches one character, but UTF-8 encoding varies in length
+            // For simplicity, we allow single-character matchers
+            1
+        } else if !atom.runes.is_empty() {
+            // Character class - could have varying UTF-8 lengths
+            // But from a character count perspective, it's always 1 char
+            1
+        } else if let Some(subtree) = &atom.subtree {
+            // Group - recurse (but it's the match count, not UTF-8 bytes)
+            if subtree.len() == 1 {
+                branch_fixed_length(&subtree[0])?
+            } else {
+                // Alternation - check if all have same length
+                let first_len = branch_fixed_length(&subtree[0])?;
+                for b in subtree.iter().skip(1) {
+                    if branch_fixed_length(b) != Some(first_len) {
+                        return None;
+                    }
+                }
+                first_len
+            }
+        } else {
+            0 // Empty atom (backrefs etc.)
+        };
+
+        // Multiply by quantifier
+        total += atom_len * (atom.quant_min as usize);
+    }
+    Some(total)
+}
+
+/// Collect all lookaround atoms from a tree with their positions.
+/// Used for pattern transformation.
+pub fn collect_lookarounds(tree: &RegexpRoot) -> Vec<(usize, usize, LookaroundType, RegexpRoot)> {
+    let mut result = Vec::new();
+    for (branch_idx, branch) in tree.iter().enumerate() {
+        for (atom_idx, atom) in branch.iter().enumerate() {
+            if let Some(la_type) = atom.lookaround {
+                if let Some(subtree) = &atom.subtree {
+                    result.push((branch_idx, atom_idx, la_type, subtree.clone()));
+                }
+            }
+        }
+    }
+    result
+}
+
+/// Check if a tree contains any lookaround at the top level.
+pub fn has_top_level_lookaround(tree: &RegexpRoot) -> bool {
+    for branch in tree {
+        for atom in branch {
+            if atom.lookaround.is_some() {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 /// Transform a single branch with backreferences.
 /// Returns multiple branches (alternation) for successful transformation.
 fn transform_branch_backrefs(branch: &RegexpBranch) -> Result<Vec<RegexpBranch>, String> {
@@ -511,6 +715,16 @@ pub fn parse_regexp(re: &str) -> Result<RegexpRoot, RegexpError> {
                     offset: 0,
                 });
             }
+        }
+    }
+
+    // Validate lookaround constructs (nested, variable-length lookbehind)
+    if parse.found_features.contains(&RegexpFeature::Lookaround) {
+        if let Err(msg) = validate_lookarounds(&tree) {
+            return Err(RegexpError {
+                message: msg,
+                offset: 0,
+            });
         }
     }
 
@@ -784,12 +998,55 @@ fn read_atom(parse: &mut RegexpParse) -> Result<QuantifiedAtom, RegexpError> {
         }
         '(' => {
             parse.nest();
-            // Check for non-capturing group (?:...)
+            // Check for group extensions (?:...), (?=...), (?!...), (?<=...), (?<!...)
+            let mut lookaround_type: Option<LookaroundType> = None;
             match parse.next_rune() {
                 Ok('?') => {
                     match parse.next_rune() {
                         Ok(':') => {
+                            // Non-capturing group (?:...)
                             parse.record_feature(RegexpFeature::NonCapturingGroup);
+                        }
+                        Ok('=') => {
+                            // Positive lookahead (?=...)
+                            parse.record_feature(RegexpFeature::Lookaround);
+                            lookaround_type = Some(LookaroundType::PositiveLookahead);
+                        }
+                        Ok('!') => {
+                            // Negative lookahead (?!...)
+                            parse.record_feature(RegexpFeature::Lookaround);
+                            lookaround_type = Some(LookaroundType::NegativeLookahead);
+                        }
+                        Ok('<') => {
+                            // Lookbehind - need to check next char
+                            match parse.next_rune() {
+                                Ok('=') => {
+                                    // Positive lookbehind (?<=...)
+                                    parse.record_feature(RegexpFeature::Lookaround);
+                                    lookaround_type = Some(LookaroundType::PositiveLookbehind);
+                                }
+                                Ok('!') => {
+                                    // Negative lookbehind (?<!...)
+                                    parse.record_feature(RegexpFeature::Lookaround);
+                                    lookaround_type = Some(LookaroundType::NegativeLookbehind);
+                                }
+                                Ok(c) => {
+                                    // Could be named group (?<name>...) - not supported
+                                    return Err(RegexpError {
+                                        message: format!(
+                                            "named capturing groups (?<{}...) not supported",
+                                            c
+                                        ),
+                                        offset: parse.last_index,
+                                    });
+                                }
+                                Err(_) => {
+                                    return Err(RegexpError {
+                                        message: "unexpected end after (?<".into(),
+                                        offset: parse.last_index,
+                                    });
+                                }
+                            }
                         }
                         Ok(c) => {
                             // Some other (? extension we don't support
@@ -823,6 +1080,7 @@ fn read_atom(parse: &mut RegexpParse) -> Result<QuantifiedAtom, RegexpError> {
                 subtree: Some(subtree),
                 quant_min: 1,
                 quant_max: 1,
+                lookaround: lookaround_type,
                 ..Default::default()
             })
         }
