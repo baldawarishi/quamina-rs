@@ -6965,22 +6965,38 @@ mod tests {
         // Positive lookahead: foo(?=bar)
         let pattern = r#"{"field": [{"regexp": "foo(?=bar)"}]}"#;
         let result = parse_pattern(pattern);
-        assert!(result.is_ok(), "foo(?=bar) should parse: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "foo(?=bar) should parse: {:?}",
+            result.err()
+        );
 
         // Negative lookahead: foo(?!bar)
         let pattern = r#"{"field": [{"regexp": "foo(?!bar)"}]}"#;
         let result = parse_pattern(pattern);
-        assert!(result.is_ok(), "foo(?!bar) should parse: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "foo(?!bar) should parse: {:?}",
+            result.err()
+        );
 
         // Positive lookbehind: (?<=foo)bar
         let pattern = r#"{"field": [{"regexp": "(?<=foo)bar"}]}"#;
         let result = parse_pattern(pattern);
-        assert!(result.is_ok(), "(?<=foo)bar should parse: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "(?<=foo)bar should parse: {:?}",
+            result.err()
+        );
 
         // Negative lookbehind: (?<!foo)bar
         let pattern = r#"{"field": [{"regexp": "(?<!foo)bar"}]}"#;
         let result = parse_pattern(pattern);
-        assert!(result.is_ok(), "(?<!foo)bar should parse: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "(?<!foo)bar should parse: {:?}",
+            result.err()
+        );
     }
 
     #[test]
@@ -7120,7 +7136,10 @@ mod tests {
         assert_eq!(mc.primary.len(), 1, "Primary should have 1 branch");
         assert_eq!(mc.conditions.len(), 1, "Should have 1 condition");
         assert!(!mc.conditions[0].is_negative(), "Should be positive");
-        assert!(!mc.conditions[0].is_lookbehind(), "Should not be lookbehind");
+        assert!(
+            !mc.conditions[0].is_lookbehind(),
+            "Should not be lookbehind"
+        );
     }
 
     #[test]
@@ -7150,9 +7169,21 @@ mod tests {
         let mc = MultiConditionPattern::new(primary, conditions);
 
         // Verify conditions are sorted by cost (lowest first)
-        assert_eq!(mc.conditions[0].cost_estimate(), 20, "First should be cost 20");
-        assert_eq!(mc.conditions[1].cost_estimate(), 30, "Second should be cost 30");
-        assert_eq!(mc.conditions[2].cost_estimate(), 40, "Third should be cost 40");
+        assert_eq!(
+            mc.conditions[0].cost_estimate(),
+            20,
+            "First should be cost 20"
+        );
+        assert_eq!(
+            mc.conditions[1].cost_estimate(),
+            30,
+            "Second should be cost 30"
+        );
+        assert_eq!(
+            mc.conditions[2].cost_estimate(),
+            40,
+            "Third should be cost 40"
+        );
     }
 
     #[test]
