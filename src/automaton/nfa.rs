@@ -6,7 +6,7 @@
 
 use std::sync::Arc;
 
-use super::small_table::{FaState, FieldMatcher, NfaBuffers, SmallTable, VALUE_TERMINATOR};
+use super::small_table::{FaState, FieldMatcher, NfaBuffers, SmallTable, StatePtr, VALUE_TERMINATOR};
 
 /// Traverse a DFA (deterministic finite automaton) on a value.
 ///
@@ -67,12 +67,15 @@ pub fn traverse_nfa(table: &SmallTable, val: &[u8], bufs: &mut NfaBuffers) {
             // Compute epsilon closure inline using buffers
             bufs.epsilon_closure.clear();
             bufs.epsilon_stack.clear();
+            bufs.epsilon_seen.clear();
+            bufs.epsilon_seen.insert(StatePtr::new(Arc::as_ptr(&state)));
             bufs.epsilon_closure.push(state.clone());
             bufs.epsilon_stack.push(state);
 
             while let Some(current) = bufs.epsilon_stack.pop() {
                 for eps in &current.table.epsilons {
-                    if !bufs.epsilon_closure.iter().any(|s| Arc::ptr_eq(s, eps)) {
+                    // O(1) membership check instead of O(n)
+                    if bufs.epsilon_seen.insert(StatePtr::new(Arc::as_ptr(eps))) {
                         bufs.epsilon_closure.push(eps.clone());
                         bufs.epsilon_stack.push(eps.clone());
                     }
@@ -119,12 +122,15 @@ pub fn traverse_nfa(table: &SmallTable, val: &[u8], bufs: &mut NfaBuffers) {
     for state in &final_states {
         bufs.epsilon_closure.clear();
         bufs.epsilon_stack.clear();
+        bufs.epsilon_seen.clear();
+        bufs.epsilon_seen.insert(StatePtr::new(Arc::as_ptr(state)));
         bufs.epsilon_closure.push(state.clone());
         bufs.epsilon_stack.push(state.clone());
 
         while let Some(current) = bufs.epsilon_stack.pop() {
             for eps in &current.table.epsilons {
-                if !bufs.epsilon_closure.iter().any(|s| Arc::ptr_eq(s, eps)) {
+                // O(1) membership check instead of O(n)
+                if bufs.epsilon_seen.insert(StatePtr::new(Arc::as_ptr(eps))) {
                     bufs.epsilon_closure.push(eps.clone());
                     bufs.epsilon_stack.push(eps.clone());
                 }

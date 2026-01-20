@@ -22,6 +22,7 @@ mod fa_builders;
 mod mutable_matcher;
 mod nfa;
 mod small_table;
+pub mod sparse_set;
 mod thread_safe;
 pub mod trie;
 

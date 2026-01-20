@@ -10,6 +10,25 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use rustc_hash::FxHashSet;
+
+/// Wrapper for raw pointers that implements Send+Sync.
+/// Safe because these pointers are only used within NfaBuffers which is mutex-protected.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub struct StatePtr(*const FaState);
+
+// SAFETY: StatePtr is only used within NfaBuffers for epsilon closure deduplication.
+// The NfaBuffers are protected by a Mutex in Quamina, so concurrent access is prevented.
+// The pointers point to Arc<FaState> data which has its own thread-safety guarantees.
+unsafe impl Send for StatePtr {}
+unsafe impl Sync for StatePtr {}
+
+impl StatePtr {
+    pub fn new(ptr: *const FaState) -> Self {
+        StatePtr(ptr)
+    }
+}
+
 /// Maximum byte value we handle. UTF-8 bytes 0xF5-0xFF can't appear in valid strings.
 /// We use 0xF5 as a value terminator.
 pub const BYTE_CEILING: usize = 0xF6;
@@ -304,6 +323,8 @@ pub struct NfaBuffers {
     pub epsilon_stack: Vec<Arc<FaState>>,
     /// Sorted vec of seen transition pointers (as usize) for deduplication
     pub seen_transitions: Vec<usize>,
+    /// HashSet for O(1) epsilon closure membership testing
+    pub epsilon_seen: FxHashSet<StatePtr>,
 }
 
 impl NfaBuffers {
@@ -315,6 +336,7 @@ impl NfaBuffers {
             epsilon_closure: Vec::with_capacity(8),
             epsilon_stack: Vec::with_capacity(8),
             seen_transitions: Vec::with_capacity(16),
+            epsilon_seen: FxHashSet::default(),
         }
     }
 

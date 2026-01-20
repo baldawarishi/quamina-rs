@@ -4,7 +4,7 @@ Rust port of [quamina](https://github.com/timbray/quamina) - fast pattern-matchi
 
 ## Status
 
-**332 tests passing.** Rust 1.5-2x faster than Go. Synced with Go commit 74475a4 (Jan 2026).
+**337 tests passing.** Rust 1.5-2x faster than Go. Synced with Go commit 74475a4 (Jan 2026).
 
 | Benchmark | Go (ns) | Rust (ns) | Speedup |
 |-----------|---------|-----------|---------|
@@ -43,12 +43,12 @@ src/
 
 Based on analysis of `../regex` (regex-automata crate). See that repo for implementation reference.
 
-### Phase 1: Quick Wins (1-2 days each)
+### Phase 1: Quick Wins ✅ COMPLETE
 
-| Task | File | Impact | Reference |
-|------|------|--------|-----------|
-| Fix epsilon closure O(n²)→O(n) | `automaton/nfa.rs:68-80` | 10-30% NFA speedup | Use `FxHashSet<*const FaState>` instead of `.any()` |
-| Add SparseSet | New: `automaton/sparse_set.rs` | 10-20% NFA speedup | Copy from `regex-automata/src/util/sparse_set.rs` |
+| Task | File | Impact | Status |
+|------|------|--------|--------|
+| Fix epsilon closure O(n²)→O(n) | `automaton/nfa.rs` | 10-30% NFA speedup | ✅ Done - uses `FxHashSet<StatePtr>` |
+| Add SparseSet | `automaton/sparse_set.rs` | 10-20% NFA speedup | ✅ Done - O(1) clear via generation counter |
 
 **Epsilon closure fix:**
 ```rust
@@ -171,7 +171,7 @@ if let Some(prefilter) = value_matcher.prefilter() {
 ## Commands
 
 ```bash
-cargo test                    # 332 tests
+cargo test                    # 337 tests
 cargo bench                   # benchmarks
 cargo clippy -- -D warnings   # lint
 gh run list                   # CI status
