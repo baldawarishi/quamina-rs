@@ -7,7 +7,6 @@ license = "Apache-2.0"
 repository = "https://github.com/baldawarishi/quamina-rs"
 
 [dependencies]
-regex = "1"
 arc-swap = "1.7"
 parking_lot = "0.12"
 smallvec = "1.13"
@@ -17,6 +16,7 @@ rustc-hash = "2.1"
 criterion = "0.5"
 flate2 = "1.0"
 rand = "0.8"
+regex = "1"  # For benchmarking comparisons
 
 [[bench]]
 name = "matching"

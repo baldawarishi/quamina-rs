@@ -96,8 +96,8 @@ impl Clone for PrunerStats {
     }
 }
 
-/// Pattern definition: (field matchers, is_automaton_compatible)
-type PatternDef = (HashMap<String, Vec<Matcher>>, bool);
+/// Pattern definition: field matchers
+type PatternDef = HashMap<String, Vec<Matcher>>;
 
 /// Errors that can occur during pattern matching
 #[derive(Debug)]
@@ -376,12 +376,10 @@ impl<X: Clone + Eq + Hash + Send + Sync> Clone for Quamina<X> {
             if self.deleted_patterns.contains(id) {
                 continue;
             }
-            for (fields, is_automaton_compatible) in patterns {
-                if *is_automaton_compatible {
-                    let pattern_fields: Vec<(String, Vec<Matcher>)> =
-                        fields.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
-                    automaton.add_pattern(id.clone(), &pattern_fields);
-                }
+            for fields in patterns {
+                let pattern_fields: Vec<(String, Vec<Matcher>)> =
+                    fields.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+                automaton.add_pattern(id.clone(), &pattern_fields);
             }
         }
 
@@ -431,12 +429,6 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
     pub fn add_pattern(&mut self, x: X, pattern_json: &str) -> Result<(), QuaminaError> {
         let fields = json::parse_pattern(pattern_json)?;
 
-        // Check if all matchers are automaton-compatible
-        let is_automaton_compatible = fields
-            .values()
-            .flat_map(|matchers| matchers.iter())
-            .all(|m| m.is_automaton_compatible());
-
         // Add field paths to segments tree (convert dot-separated to newline-separated)
         for field_path in fields.keys() {
             let segment_path = field_path.replace('.', "\n");
@@ -450,30 +442,12 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
         self.pattern_defs
             .entry(x.clone())
             .or_default()
-            .push((fields.clone(), is_automaton_compatible));
+            .push(fields.clone());
 
-        if is_automaton_compatible {
-            // Route to automaton
-            let pattern_fields: Vec<(String, Vec<Matcher>)> = fields.into_iter().collect();
-            self.automaton.add_pattern(x, &pattern_fields);
-        } else {
-            // Route to fallback
-            let mut has_exists_false = false;
-            for (field_path, matchers) in &fields {
-                self.fallback_field_index
-                    .entry(field_path.clone())
-                    .or_default()
-                    .insert(x.clone());
-                if matchers.iter().any(|m| matches!(m, Matcher::Exists(false))) {
-                    has_exists_false = true;
-                }
-            }
-            if has_exists_false {
-                self.fallback_exists_false.insert(x.clone());
-            }
-            let pattern = Pattern { fields };
-            self.fallback_patterns.entry(x).or_default().push(pattern);
-        }
+        // Route to automaton
+        let pattern_fields: Vec<(String, Vec<Matcher>)> = fields.into_iter().collect();
+        self.automaton.add_pattern(x, &pattern_fields);
+
         Ok(())
     }
 
@@ -857,24 +831,15 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
         false
     }
 
-    /// Check if a single value matches a matcher (fallback path).
-    ///
-    /// Only `Matcher::Regex` uses this fallback path. All other matchers go through
-    /// the automaton path via `is_automaton_compatible() == true`.
-    fn value_matches(&self, matcher: &Matcher, value: &str) -> bool {
-        match matcher {
-            Matcher::Regex(re) => re.is_match(value),
-            _ => {
-                // All other matchers should go through automaton path, not fallback.
-                // If we reach here, is_automaton_compatible() is out of sync.
-                debug_assert!(
-                    false,
-                    "Matcher should use automaton path, not fallback: {:?}",
-                    std::mem::discriminant(matcher)
-                );
-                false
-            }
-        }
+    /// Legacy fallback path - should never be reached.
+    /// All matchers now go through the automaton path.
+    fn value_matches(&self, matcher: &Matcher, _value: &str) -> bool {
+        debug_assert!(
+            false,
+            "Matcher should use automaton path, not fallback: {:?}",
+            std::mem::discriminant(matcher)
+        );
+        false
     }
 
     /// Delete all patterns with the given identifier
@@ -961,12 +926,10 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
             if self.deleted_patterns.contains(id) {
                 continue;
             }
-            for (fields, is_automaton_compatible) in patterns {
-                if *is_automaton_compatible {
-                    let pattern_fields: Vec<(String, Vec<Matcher>)> =
-                        fields.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
-                    new_automaton.add_pattern(id.clone(), &pattern_fields);
-                }
+            for fields in patterns {
+                let pattern_fields: Vec<(String, Vec<Matcher>)> =
+                    fields.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+                new_automaton.add_pattern(id.clone(), &pattern_fields);
             }
         }
 
@@ -7014,12 +6977,6 @@ mod tests {
             "foo(?=bar) should produce MultiCondition matcher, got {:?}",
             matchers[0]
         );
-
-        // Verify it's automaton compatible
-        assert!(
-            matchers[0].is_automaton_compatible(),
-            "MultiCondition should be automaton compatible"
-        );
     }
 
     #[test]
@@ -7045,13 +7002,28 @@ mod tests {
             result
         );
 
-        // Backreferences are not supported
+        // Backreferences are not supported (at parser level)
         use crate::regexp::parse_regexp;
         let result = parse_regexp("(abc)~1");
         assert!(
             result.is_err(),
-            "Backreferences should fail: {:?}",
+            "Backreferences should fail in parser: {:?}",
             result
+        );
+
+        // Backreferences are also rejected at pattern level (not falling back to regex)
+        let pattern = r#"{"field": [{"regexp": "(.)~1"}]}"#;
+        let result = parse_pattern(pattern);
+        assert!(
+            result.is_err(),
+            "Backreferences should fail in pattern parsing: {:?}",
+            result
+        );
+        let err = result.unwrap_err();
+        assert!(
+            err.to_string().contains("backreference"),
+            "Error should mention backreference: {}",
+            err
         );
     }
 

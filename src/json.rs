@@ -42,10 +42,8 @@ pub enum Matcher {
     AnythingButNumeric(Vec<f64>),
     EqualsIgnoreCase(String),
     Numeric(NumericComparison),
-    /// Regex pattern parsed into our custom NFA (automaton-compatible)
+    /// Regex pattern parsed into our custom NFA
     ParsedRegexp(RegexpRoot),
-    /// Regex pattern using the regex crate (fallback for unsupported features)
-    Regex(regex::Regex),
     /// CIDR pattern for IP address matching
     Cidr(CidrPattern),
     /// Multi-condition pattern for lookaround support ((?=...), (?!...), (?<=...), (?<!...))
@@ -304,14 +302,6 @@ impl MultiConditionPattern {
             conditions,
         }
     }
-
-    /// Returns true if all conditions are automaton-compatible.
-    /// Currently all lookaround conditions use RegexpRoot, which is automaton-compatible.
-    pub fn is_automaton_compatible(&self) -> bool {
-        // Primary is always a RegexpRoot (automaton-compatible)
-        // All conditions contain RegexpRoot patterns
-        true
-    }
 }
 
 // ============================================================================
@@ -486,43 +476,6 @@ fn compute_branch_byte_length(branch: &RegexpBranch) -> Result<usize, String> {
         total += atom_len * count;
     }
     Ok(total)
-}
-
-impl Matcher {
-    /// Check if this matcher is supported by the automaton-based matching engine.
-    ///
-    /// The automaton supports: Exact, Prefix, Shellstyle, Wildcard, AnythingBut, Exists,
-    /// and EqualsIgnoreCase (with full Unicode case folding).
-    ///
-    /// Not fully supported (need runtime checking or have limitations):
-    /// - Numeric comparisons, Regex: not implemented in automaton
-    pub fn is_automaton_compatible(&self) -> bool {
-        match self {
-            Matcher::Exact(_) => true,
-            Matcher::Exists(_) => true,
-            Matcher::Prefix(_) => true,
-            Matcher::Shellstyle(_) => true,
-            Matcher::Wildcard(_) => true,
-            Matcher::AnythingBut(_) => true,
-            // AnythingButNumeric: uses Q-number FA with automaton
-            Matcher::AnythingButNumeric(_) => true,
-            // EqualsIgnoreCase: automaton supports full Unicode case folding
-            Matcher::EqualsIgnoreCase(_) => true,
-            // ParsedRegexp: uses our custom NFA integrated into automaton
-            Matcher::ParsedRegexp(_) => true,
-            // NumericExact: uses merged string + Q-number FAs to handle different representations
-            Matcher::NumericExact(_) => true,
-            // Suffix uses shellstyle with leading *
-            Matcher::Suffix(_) => true,
-            // Numeric ranges use Q-number ordering in automaton
-            Matcher::Numeric(_) => true,
-            Matcher::Regex(_) => false,
-            // CIDR uses automaton-based IP matching
-            Matcher::Cidr(_) => true,
-            // MultiCondition: lookaround patterns using multi-automaton intersection
-            Matcher::MultiCondition(mc) => mc.is_automaton_compatible(),
-        }
-    }
 }
 
 /// Parse a pattern JSON into field -> matchers map
@@ -733,17 +686,11 @@ fn value_to_matcher(value: &Value) -> Result<Matcher, QuaminaError> {
                                     }
                                     return Ok(Matcher::ParsedRegexp(tree));
                                 }
-                                Err(_) => {
-                                    // Fall back to regex crate for unsupported features
-                                    match regex::Regex::new(s) {
-                                        Ok(re) => return Ok(Matcher::Regex(re)),
-                                        Err(e) => {
-                                            return Err(QuaminaError::InvalidPattern(format!(
-                                                "invalid regex: {}",
-                                                e
-                                            )))
-                                        }
-                                    }
+                                Err(e) => {
+                                    return Err(QuaminaError::InvalidPattern(format!(
+                                        "invalid regexp: {}",
+                                        e.message
+                                    )));
                                 }
                             }
                         }
