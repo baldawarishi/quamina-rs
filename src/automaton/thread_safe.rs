@@ -19,7 +19,9 @@ use parking_lot::Mutex;
 
 use super::arena::{traverse_arena_nfa, ArenaNfaBuffers, StateArena, StateId};
 use super::fa_builders::{make_prefix_fa, make_shellstyle_fa, make_string_fa, merge_fas};
-use super::mutable_matcher::{EventField, EventFieldRef, MutableFieldMatcher, MutableValueMatcher};
+use super::mutable_matcher::{
+    EventField, EventFieldRef, MultiConditionNfa, MutableFieldMatcher, MutableValueMatcher,
+};
 use super::nfa::{traverse_dfa, traverse_nfa};
 use super::small_table::{FieldMatcher, NfaBuffers, SmallTable};
 
@@ -116,6 +118,8 @@ pub struct FrozenValueMatcher<X: Clone + Eq + Hash> {
     transition_map: FxHashMap<usize, Arc<FrozenFieldMatcher<X>>>,
     /// Arena-based NFAs for regexp patterns (2.5x faster than chain-based)
     arena_nfas: Vec<(StateArena, StateId)>,
+    /// Multi-condition NFAs for lookaround patterns with condition verification
+    multi_condition_nfas: Vec<MultiConditionNfa>,
 }
 
 // Safety: FrozenValueMatcher only contains Arc, FxHashMap, Option, and primitives
@@ -132,6 +136,7 @@ impl<X: Clone + Eq + Hash> FrozenValueMatcher<X> {
             has_numbers: false,
             transition_map: FxHashMap::default(),
             arena_nfas: Vec::new(),
+            multi_condition_nfas: Vec::new(),
         }
     }
 
@@ -201,6 +206,58 @@ impl<X: Clone + Eq + Hash> FrozenValueMatcher<X> {
                 // Map Arc<FieldMatcher> transitions to FrozenFieldMatcher using pointer address
                 for arc_fm in &arena_bufs.transitions {
                     let ptr = Arc::as_ptr(arc_fm) as usize;
+                    if let Some(frozen_fm) = self.transition_map.get(&ptr) {
+                        // Avoid duplicates
+                        if !result.iter().any(|r| Arc::ptr_eq(r, frozen_fm)) {
+                            result.push(frozen_fm.clone());
+                        }
+                    }
+                }
+            }
+        }
+
+        // Traverse multi-condition NFAs (for lookaround patterns)
+        // For lookaround patterns, we check conditions directly on the full value.
+        // The conditions contain the combined patterns that capture full matching semantics:
+        // - PositiveLookahead("foobar"): "foobar" must match full value
+        // - NegativeLookahead("foobar"): "foobar" must NOT match full value
+        // - Lookbehind conditions are pre-combined with primary during build
+        if !self.multi_condition_nfas.is_empty() {
+            let mut condition_bufs = ArenaNfaBuffers::new();
+
+            for mc_nfa in self.multi_condition_nfas.iter() {
+                // Verify all conditions against the full value
+                let mut all_conditions_pass = true;
+
+                for condition in &mc_nfa.conditions {
+                    // Traverse the condition automaton on the full value
+                    traverse_arena_nfa(
+                        &condition.arena,
+                        condition.start,
+                        &value_to_match,
+                        &mut condition_bufs,
+                    );
+
+                    let condition_matched = !condition_bufs.transitions.is_empty();
+
+                    // Check if condition passes:
+                    // - Positive condition: must match
+                    // - Negative condition: must NOT match
+                    let condition_passes = if condition.is_negative {
+                        !condition_matched
+                    } else {
+                        condition_matched
+                    };
+
+                    if !condition_passes {
+                        all_conditions_pass = false;
+                        break; // Fast-fail: one condition failed, no need to check others
+                    }
+                }
+
+                // Only add transitions if all conditions pass
+                if all_conditions_pass {
+                    let ptr = mc_nfa.field_matcher_ptr as usize;
                     if let Some(frozen_fm) = self.transition_map.get(&ptr) {
                         // Avoid duplicates
                         if !result.iter().any(|r| Arc::ptr_eq(r, frozen_fm)) {
@@ -394,6 +451,9 @@ impl<X: Clone + Eq + Hash + Send + Sync> ThreadSafeCoreMatcher<X> {
         // Copy the arena NFAs
         let arena_nfas = mutable.arena_nfas.borrow().clone();
 
+        // Copy the multi-condition NFAs (for lookaround patterns)
+        let multi_condition_nfas = mutable.multi_condition_nfas.borrow().clone();
+
         FrozenValueMatcher {
             start_table: mutable.start_table.borrow().clone(),
             singleton_match,
@@ -402,6 +462,7 @@ impl<X: Clone + Eq + Hash + Send + Sync> ThreadSafeCoreMatcher<X> {
             has_numbers: *mutable.has_numbers.borrow(),
             transition_map,
             arena_nfas,
+            multi_condition_nfas,
         }
     }
 

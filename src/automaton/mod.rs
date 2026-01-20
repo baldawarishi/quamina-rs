@@ -41,7 +41,8 @@ pub use fa_builders::{
 
 // Re-export from mutable_matcher
 pub use mutable_matcher::{
-    CoreMatcher, EventField, EventFieldRef, MutableFieldMatcher, MutableValueMatcher,
+    ConditionNfa, CoreMatcher, EventField, EventFieldRef, MultiConditionNfa, MutableFieldMatcher,
+    MutableValueMatcher,
 };
 
 // Re-export from thread_safe

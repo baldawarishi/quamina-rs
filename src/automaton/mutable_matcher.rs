@@ -22,6 +22,70 @@ use super::small_table::{FieldMatcher, NfaBuffers, SmallTable};
 use super::trie::ValueTrie;
 use crate::regexp::make_regexp_nfa_arena;
 
+/// A condition NFA for lookaround verification.
+///
+/// Each condition is an automaton that must match (or not match, if negative)
+/// the full value for the overall pattern to succeed.
+#[derive(Clone, Debug)]
+pub struct ConditionNfa {
+    pub arena: StateArena,
+    pub start: StateId,
+    /// True for negative conditions ((?!...) or (?<!...))
+    pub is_negative: bool,
+}
+
+/// Arena NFA with conditions for multi-condition patterns (lookarounds).
+///
+/// The primary automaton is matched first. If it produces transitions,
+/// all conditions are verified against the full value.
+#[derive(Clone)]
+pub struct MultiConditionNfa {
+    pub primary_arena: StateArena,
+    pub primary_start: StateId,
+    /// Field matcher pointer for transition mapping
+    pub field_matcher_ptr: *const FieldMatcher,
+    /// Conditions to verify after primary matches
+    pub conditions: Vec<ConditionNfa>,
+}
+
+/// Build a combined pattern for lookbehind verification.
+///
+/// For `(?<=foo)bar`: lookbehind="foo", primary="bar" -> combined="foobar"
+/// The combined pattern is used to check if the full value matches.
+fn build_lookbehind_combined_pattern(
+    lookbehind: &crate::regexp::RegexpRoot,
+    primary: &crate::regexp::RegexpRoot,
+) -> crate::regexp::RegexpRoot {
+    use crate::regexp::RegexpBranch;
+
+    // Handle empty cases
+    if lookbehind.is_empty() {
+        return primary.clone();
+    }
+    if primary.is_empty() {
+        return lookbehind.clone();
+    }
+
+    // Simple case: single branch in each
+    if lookbehind.len() == 1 && primary.len() == 1 {
+        let mut combined: RegexpBranch = lookbehind[0].clone();
+        combined.extend(primary[0].clone());
+        return vec![combined];
+    }
+
+    // Complex case: alternation in one or both
+    // Create all combinations: (lb1|lb2)(p1|p2) -> lb1p1|lb1p2|lb2p1|lb2p2
+    let mut combined_branches = Vec::new();
+    for lb_branch in lookbehind {
+        for p_branch in primary {
+            let mut combined: RegexpBranch = lb_branch.clone();
+            combined.extend(p_branch.clone());
+            combined_branches.push(combined);
+        }
+    }
+    combined_branches
+}
+
 /// A mutable field matcher used during pattern building.
 /// This is similar to Go's fieldMatcher with its updateable atomic pointer.
 #[derive(Default)]
@@ -142,6 +206,8 @@ pub struct MutableValueMatcher<X: Clone + Eq + std::hash::Hash> {
     pub(crate) transition_map: RefCell<HashMap<*const FieldMatcher, Rc<MutableFieldMatcher<X>>>>,
     /// Arena-based NFAs for regexp patterns (2.5x faster than chain-based)
     pub(crate) arena_nfas: RefCell<Vec<(StateArena, StateId)>>,
+    /// Multi-condition NFAs for lookaround patterns
+    pub(crate) multi_condition_nfas: RefCell<Vec<MultiConditionNfa>>,
     /// Buffers for arena NFA traversal
     pub(crate) arena_bufs: RefCell<ArenaNfaBuffers>,
 }
@@ -156,6 +222,7 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
             has_numbers: RefCell::new(false),
             transition_map: RefCell::new(HashMap::new()),
             arena_nfas: RefCell::new(Vec::new()),
+            multi_condition_nfas: RefCell::new(Vec::new()),
             arena_bufs: RefCell::new(ArenaNfaBuffers::new()),
         }
     }
@@ -576,36 +643,70 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
     ///
     /// Multi-condition patterns have a primary pattern plus conditions (lookarounds):
     /// - Primary pattern is built as an arena NFA
-    /// - Conditions are stored for verification during matching
+    /// - Condition automata are built for verification during matching
     ///
-    /// For now, we build the primary automaton. Condition verification will be added
-    /// when condition automata are built and stored.
+    /// For lookahead: condition stores combined pattern (AB), build automaton directly.
+    /// For lookbehind: condition stores B, combine with primary (A) to get BA.
     fn add_multi_condition_transition(
         &self,
         mc: &crate::json::MultiConditionPattern,
     ) -> Rc<MutableFieldMatcher<X>> {
+        use crate::json::LookaroundCondition;
+
         let next_fm = Rc::new(MutableFieldMatcher::new());
 
         // Build primary pattern automaton
-        let (arena, start, field_matcher_arc) = make_regexp_nfa_arena(mc.primary.clone(), false);
+        let (primary_arena, primary_start, field_matcher_arc) =
+            make_regexp_nfa_arena(mc.primary.clone(), false);
 
         self.transition_map
             .borrow_mut()
             .insert(Arc::as_ptr(&field_matcher_arc), next_fm.clone());
 
-        // Store arena NFA for primary pattern
-        self.arena_nfas.borrow_mut().push((arena, start));
+        // Build condition automata
+        let mut condition_nfas = Vec::new();
 
-        // TODO: Build and store condition automata for verification during matching
-        // For positive lookahead A(?=B): build automaton for combined pattern AB
-        // For negative lookahead A(?!B): build automaton for combined pattern AB
-        // During matching, verify conditions after primary matches
+        for condition in &mc.conditions {
+            let (combined_pattern, is_negative) = match condition {
+                LookaroundCondition::PositiveLookahead(pattern) => {
+                    // Lookahead already stores the combined pattern (primary + lookahead)
+                    (pattern.clone(), false)
+                }
+                LookaroundCondition::NegativeLookahead(pattern) => {
+                    // Same as positive, but negative check
+                    (pattern.clone(), true)
+                }
+                LookaroundCondition::PositiveLookbehind { pattern, .. } => {
+                    // Lookbehind stores just the prefix pattern, combine with primary
+                    // (?<=foo)bar: pattern="foo", primary="bar" -> combined="foobar"
+                    let combined = build_lookbehind_combined_pattern(pattern, &mc.primary);
+                    (combined, false)
+                }
+                LookaroundCondition::NegativeLookbehind { pattern, .. } => {
+                    // Same as positive, but negative check
+                    let combined = build_lookbehind_combined_pattern(pattern, &mc.primary);
+                    (combined, true)
+                }
+            };
 
-        // For now, conditions are built but not verified yet.
-        // The transformation in json.rs ensures:
-        // - PositiveLookahead contains the combined pattern (AB)
-        // - NegativeLookahead contains the combined pattern (AB)
-        // Condition verification requires storing these separately and checking during match.
+            // Build automaton for the combined pattern
+            let (arena, start, _) = make_regexp_nfa_arena(combined_pattern, false);
+            condition_nfas.push(ConditionNfa {
+                arena,
+                start,
+                is_negative,
+            });
+        }
+
+        // Store in multi_condition_nfas for condition verification during matching
+        self.multi_condition_nfas
+            .borrow_mut()
+            .push(MultiConditionNfa {
+                primary_arena,
+                primary_start,
+                field_matcher_ptr: Arc::as_ptr(&field_matcher_arc),
+                conditions: condition_nfas,
+            });
 
         next_fm
     }
@@ -765,6 +866,59 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
                 // Map Arc<FieldMatcher> transitions to Rc<MutableFieldMatcher<X>>
                 for arc_fm in &arena_bufs.transitions {
                     let ptr = Arc::as_ptr(arc_fm);
+                    if let Some(mutable_fm) = transition_map.get(&ptr) {
+                        // Avoid duplicates
+                        if !result.iter().any(|r| Rc::ptr_eq(r, mutable_fm)) {
+                            result.push(mutable_fm.clone());
+                        }
+                    }
+                }
+            }
+        }
+
+        // Traverse multi-condition NFAs (for lookaround patterns)
+        // For lookaround patterns, we check conditions directly on the full value.
+        // The conditions contain the combined patterns that capture full matching semantics:
+        // - PositiveLookahead("foobar"): "foobar" must match full value
+        // - NegativeLookahead("foobar"): "foobar" must NOT match full value
+        // - Lookbehind conditions are pre-combined with primary during build
+        let multi_condition_nfas = self.multi_condition_nfas.borrow();
+        if !multi_condition_nfas.is_empty() {
+            let mut condition_bufs = ArenaNfaBuffers::new();
+
+            for mc_nfa in multi_condition_nfas.iter() {
+                // Verify all conditions against the full value
+                let mut all_conditions_pass = true;
+
+                for condition in &mc_nfa.conditions {
+                    // Traverse the condition automaton on the full value
+                    traverse_arena_nfa(
+                        &condition.arena,
+                        condition.start,
+                        &value_to_match,
+                        &mut condition_bufs,
+                    );
+
+                    let condition_matched = !condition_bufs.transitions.is_empty();
+
+                    // Check if condition passes:
+                    // - Positive condition: must match
+                    // - Negative condition: must NOT match
+                    let condition_passes = if condition.is_negative {
+                        !condition_matched
+                    } else {
+                        condition_matched
+                    };
+
+                    if !condition_passes {
+                        all_conditions_pass = false;
+                        break; // Fast-fail: one condition failed, no need to check others
+                    }
+                }
+
+                // Only add transitions if all conditions pass
+                if all_conditions_pass {
+                    let ptr = mc_nfa.field_matcher_ptr;
                     if let Some(mutable_fm) = transition_map.get(&ptr) {
                         // Avoid duplicates
                         if !result.iter().any(|r| Rc::ptr_eq(r, mutable_fm)) {

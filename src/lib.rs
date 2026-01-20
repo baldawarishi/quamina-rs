@@ -7077,8 +7077,7 @@ mod tests {
 
     #[test]
     fn test_lookaround_primary_match() {
-        // Test that the primary pattern part matches (condition verification is TODO)
-        // This tests the basic automaton building for multi-condition patterns
+        // Test that lookaround patterns match with condition verification
         let mut q = Quamina::<String>::new();
 
         // Add pattern where primary is "foo"
@@ -7086,15 +7085,21 @@ mod tests {
         let pattern = r#"{"status": [{"regexp": "foo(?=bar)"}]}"#;
         q.add_pattern("lookahead".to_string(), pattern).unwrap();
 
-        // Event with "foo" - primary matches
-        // Note: Full condition verification not yet implemented
-        // When implemented, this should only match if value is "foobar"
-        let event = r#"{"status": "foo"}"#;
+        // Event with "foobar" - primary "foo" matches and condition "foobar" matches
+        let event = r#"{"status": "foobar"}"#;
         let matches = q.matches_for_event(event.as_bytes()).unwrap();
-        // Primary pattern "foo" matches "foo"
         assert!(
             matches.contains(&"lookahead".to_string()),
-            "Primary pattern 'foo' should match value 'foo'"
+            "foo(?=bar) should match 'foobar'"
+        );
+
+        // Event with just "foo" - primary matches but condition fails
+        // (combined pattern "foobar" doesn't match "foo")
+        let event = r#"{"status": "foo"}"#;
+        let matches = q.matches_for_event(event.as_bytes()).unwrap();
+        assert!(
+            !matches.contains(&"lookahead".to_string()),
+            "foo(?=bar) should NOT match 'foo' (lookahead fails)"
         );
     }
 
@@ -7150,55 +7155,93 @@ mod tests {
         assert_eq!(mc.conditions[2].cost_estimate(), 40, "Third should be cost 40");
     }
 
-    // TODO: Add these tests when condition verification is implemented
-    //
-    // #[test]
-    // fn test_positive_lookahead_match() {
-    //     // foo(?=bar) matches "foobar" (foo at position with bar following)
-    //     let mut q = Quamina::<String>::new();
-    //     let pattern = r#"{"status": [{"regexp": "foo(?=bar)"}]}"#;
-    //     q.add_pattern("test".to_string(), pattern).unwrap();
-    //
-    //     let event = r#"{"status": "foobar"}"#;
-    //     let matches = q.matches_for_event(event.as_bytes()).unwrap();
-    //     assert!(matches.contains(&"test".to_string()));
-    //
-    //     // Should NOT match "foobaz" (bar doesn't follow)
-    //     let event = r#"{"status": "foobaz"}"#;
-    //     let matches = q.matches_for_event(event.as_bytes()).unwrap();
-    //     assert!(!matches.contains(&"test".to_string()));
-    // }
-    //
-    // #[test]
-    // fn test_negative_lookahead_match() {
-    //     // foo(?!bar) matches "foobaz" but not "foobar"
-    //     let mut q = Quamina::<String>::new();
-    //     let pattern = r#"{"status": [{"regexp": "foo(?!bar)"}]}"#;
-    //     q.add_pattern("test".to_string(), pattern).unwrap();
-    //
-    //     let event = r#"{"status": "foobaz"}"#;
-    //     let matches = q.matches_for_event(event.as_bytes()).unwrap();
-    //     assert!(matches.contains(&"test".to_string()));
-    //
-    //     let event = r#"{"status": "foobar"}"#;
-    //     let matches = q.matches_for_event(event.as_bytes()).unwrap();
-    //     assert!(!matches.contains(&"test".to_string()));
-    // }
-    //
-    // #[test]
-    // fn test_lookbehind_match() {
-    //     // (?<=foo)bar matches "foobar" at "bar" position
-    //     let mut q = Quamina::<String>::new();
-    //     let pattern = r#"{"status": [{"regexp": "(?<=foo)bar"}]}"#;
-    //     q.add_pattern("test".to_string(), pattern).unwrap();
-    //
-    //     let event = r#"{"status": "foobar"}"#;
-    //     let matches = q.matches_for_event(event.as_bytes()).unwrap();
-    //     assert!(matches.contains(&"test".to_string()));
-    //
-    //     // Should NOT match "xxxbar" (foo doesn't precede)
-    //     let event = r#"{"status": "xxxbar"}"#;
-    //     let matches = q.matches_for_event(event.as_bytes()).unwrap();
-    //     assert!(!matches.contains(&"test".to_string()));
-    // }
+    #[test]
+    fn test_positive_lookahead_match() {
+        // foo(?=bar) matches "foobar" (foo at position with bar following)
+        let mut q = Quamina::<String>::new();
+        let pattern = r#"{"status": [{"regexp": "foo(?=bar)"}]}"#;
+        q.add_pattern("test".to_string(), pattern).unwrap();
+
+        let event = r#"{"status": "foobar"}"#;
+        let matches = q.matches_for_event(event.as_bytes()).unwrap();
+        assert!(
+            matches.contains(&"test".to_string()),
+            "foo(?=bar) should match 'foobar'"
+        );
+
+        // Should NOT match "foobaz" (bar doesn't follow)
+        let event = r#"{"status": "foobaz"}"#;
+        let matches = q.matches_for_event(event.as_bytes()).unwrap();
+        assert!(
+            !matches.contains(&"test".to_string()),
+            "foo(?=bar) should NOT match 'foobaz'"
+        );
+    }
+
+    #[test]
+    fn test_negative_lookahead_match() {
+        // foo(?!bar) matches "foobaz" but not "foobar"
+        let mut q = Quamina::<String>::new();
+        let pattern = r#"{"status": [{"regexp": "foo(?!bar)"}]}"#;
+        q.add_pattern("test".to_string(), pattern).unwrap();
+
+        let event = r#"{"status": "foobaz"}"#;
+        let matches = q.matches_for_event(event.as_bytes()).unwrap();
+        assert!(
+            matches.contains(&"test".to_string()),
+            "foo(?!bar) should match 'foobaz'"
+        );
+
+        let event = r#"{"status": "foobar"}"#;
+        let matches = q.matches_for_event(event.as_bytes()).unwrap();
+        assert!(
+            !matches.contains(&"test".to_string()),
+            "foo(?!bar) should NOT match 'foobar'"
+        );
+    }
+
+    #[test]
+    fn test_lookbehind_match() {
+        // (?<=foo)bar matches "foobar" at "bar" position
+        let mut q = Quamina::<String>::new();
+        let pattern = r#"{"status": [{"regexp": "(?<=foo)bar"}]}"#;
+        q.add_pattern("test".to_string(), pattern).unwrap();
+
+        let event = r#"{"status": "foobar"}"#;
+        let matches = q.matches_for_event(event.as_bytes()).unwrap();
+        assert!(
+            matches.contains(&"test".to_string()),
+            "(?<=foo)bar should match 'foobar'"
+        );
+
+        // Should NOT match "xxxbar" (foo doesn't precede)
+        let event = r#"{"status": "xxxbar"}"#;
+        let matches = q.matches_for_event(event.as_bytes()).unwrap();
+        assert!(
+            !matches.contains(&"test".to_string()),
+            "(?<=foo)bar should NOT match 'xxxbar'"
+        );
+    }
+
+    #[test]
+    fn test_negative_lookbehind_match() {
+        // (?<!foo)bar matches "xxxbar" but not "foobar"
+        let mut q = Quamina::<String>::new();
+        let pattern = r#"{"status": [{"regexp": "(?<!foo)bar"}]}"#;
+        q.add_pattern("test".to_string(), pattern).unwrap();
+
+        let event = r#"{"status": "xxxbar"}"#;
+        let matches = q.matches_for_event(event.as_bytes()).unwrap();
+        assert!(
+            matches.contains(&"test".to_string()),
+            "(?<!foo)bar should match 'xxxbar'"
+        );
+
+        let event = r#"{"status": "foobar"}"#;
+        let matches = q.matches_for_event(event.as_bytes()).unwrap();
+        assert!(
+            !matches.contains(&"test".to_string()),
+            "(?<!foo)bar should NOT match 'foobar'"
+        );
+    }
 }
