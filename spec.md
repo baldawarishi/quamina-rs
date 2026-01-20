@@ -4,7 +4,7 @@ Rust port of [quamina](https://github.com/timbray/quamina) - fast pattern-matchi
 
 ## Status
 
-**336 tests passing.** Rust 1.5-2x faster than Go. Synced with Go commit 74475a4 (Jan 2026).
+**332 tests passing.** Rust 1.5-2x faster than Go. Synced with Go commit 74475a4 (Jan 2026).
 
 | Benchmark | Go (ns) | Rust (ns) | Speedup |
 |-----------|---------|-----------|---------|
@@ -52,6 +52,7 @@ src/
 | 5 | Lookaround tests (parsing, transformation, primary match) | ✅ Done |
 | 6 | Lookahead condition verification | ✅ Done |
 | 7 | Lookbehind condition verification | ✅ Done |
+| 8 | Remove regex fallback + dependency | ✅ Done |
 | 9 | End-to-end lookaround tests | ✅ Done |
 
 ### Implementation Details
@@ -66,27 +67,6 @@ src/
 - `ConditionNfa`: arena NFA + is_negative flag for condition verification
 - `MultiConditionNfa`: primary arena NFA + list of condition NFAs
 - `multi_condition_nfas` field in `MutableValueMatcher` and `FrozenValueMatcher`
-
----
-
-## Next Session: Cleanup
-
-### Phase 8: Remove HashMap Fallback + regex Dependency
-Files: `src/json.rs`, `src/lib.rs`, `Cargo.toml`
-
-**Goal:** Remove `Matcher::Regex(regex::Regex)` variant, all fallback code, and `regex` crate dependency.
-
-1. Remove `Matcher::Regex` enum variant from `src/json.rs`
-2. Remove fallback path in `parse_regexp_value()`
-3. Remove `regex = "1"` from `Cargo.toml` (or move to dev-dependencies for benchmarking)
-4. Update `is_automaton_compatible()` (can simplify or remove)
-
-**Breaking changes:**
-- Patterns that relied on regex fallback will now fail at parse time
-- This is acceptable - the fallback had wrong semantics for most patterns anyway
-
-**Performance comparison (before removal):**
-- Compare quamina-rs vs `regex` crate vs quamina (Go) on equivalent patterns
 
 ---
 
@@ -123,7 +103,6 @@ pub struct MultiConditionNfa {
 pub enum Matcher {
     // ... existing variants ...
     MultiCondition(MultiConditionPattern),
-    Regex(regex::Regex),  // TO BE REMOVED in Phase 8
 }
 ```
 
@@ -152,7 +131,7 @@ Backreferences cannot be implemented with standard automata or multi-condition p
 ## Commands
 
 ```bash
-cargo test                    # run all tests (336)
+cargo test                    # run all tests (332)
 cargo bench                   # all benchmarks
 cargo clippy -- -D warnings   # lint
 gh run list                   # check CI
