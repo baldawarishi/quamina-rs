@@ -192,9 +192,15 @@ mod tests {
     #[test]
     fn test_parse_lookaround_supported() {
         // Lookahead (?=...) should now parse successfully
-        assert!(parse_regexp("a(?=b)").is_ok(), "Positive lookahead should parse");
+        assert!(
+            parse_regexp("a(?=b)").is_ok(),
+            "Positive lookahead should parse"
+        );
         // Negative lookahead (?!...) should now parse successfully
-        assert!(parse_regexp("a(?!b)").is_ok(), "Negative lookahead should parse");
+        assert!(
+            parse_regexp("a(?!b)").is_ok(),
+            "Negative lookahead should parse"
+        );
         // Lookbehind (?<=...) should now parse successfully
         assert!(
             parse_regexp("(?<=a)b").is_ok(),
