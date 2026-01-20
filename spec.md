@@ -9,7 +9,7 @@ Rust port of [quamina](https://github.com/timbray/quamina) - fast pattern-matchi
 | Benchmark | Go (ns) | Rust (ns) | Speedup |
 |-----------|---------|-----------|---------|
 | citylots | 3,971 | 2,117 | 1.9x |
-| shellstyle_26_patterns | 731 | 430 | 1.7x |
+| shellstyle_26_patterns | 731 | 454 | 1.6x |
 | status_middle_nested | 7,437 | 5,400 | 1.4x |
 
 **Matchers:** `"value"`, `{"prefix"}`, `{"suffix"}`, `{"wildcard"}`, `{"shellstyle"}`, `{"exists"}`, `{"anything-but"}`, `{"equals-ignore-case"}`, `{"regexp"}`, `{"cidr"}`, `{"numeric"}`
@@ -47,20 +47,10 @@ Based on analysis of `../regex` (regex-automata crate). See that repo for implem
 
 | Task | File | Impact | Status |
 |------|------|--------|--------|
-| Fix epsilon closure O(n²)→O(n) | `automaton/nfa.rs` | 10-30% NFA speedup | ✅ Done - uses `FxHashSet<StatePtr>` |
-| Add SparseSet | `automaton/sparse_set.rs` | 10-20% NFA speedup | ✅ Done - O(1) clear via generation counter |
+| Fix epsilon closure O(n²)→O(n) | `automaton/nfa.rs` | 10-18% NFA speedup | ✅ Done - uses `FxHashSet<StatePtr>` |
+| Add SparseSet | `automaton/sparse_set.rs` | Future use | ✅ Done - O(1) clear via generation counter |
 
-**Epsilon closure fix:**
-```rust
-// Current (O(n²)):
-!bufs.epsilon_closure.iter().any(|s| Arc::ptr_eq(s, eps))
-
-// Better (O(n)):
-let mut seen: FxHashSet<*const FaState> = FxHashSet::default();
-if seen.insert(Arc::as_ptr(eps)) { /* process */ }
-```
-
-**SparseSet** - O(1) clear via generation counter, not memory zeroing.
+**Tradeoff:** Shellstyle patterns regressed ~6% (small epsilon closures where HashSet overhead > Vec scan). Still 1.6x faster than Go. See `nfa.rs` comments for hybrid approach and architectural fix options.
 
 ### Phase 2: Byte Classes (3-5 days)
 
