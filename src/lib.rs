@@ -6952,4 +6952,253 @@ mod tests {
         let guard = q.read().unwrap();
         assert_eq!(guard.pattern_count(), 2 + 50 + 50); // 2 initial + 50 from each writer
     }
+
+    // =========================================================================
+    // Lookaround Pattern Tests (Phase 5)
+    // =========================================================================
+
+    #[test]
+    fn test_lookaround_pattern_parsing() {
+        // Test that lookaround patterns parse and create MultiCondition matcher
+        use crate::json::parse_pattern;
+
+        // Positive lookahead: foo(?=bar)
+        let pattern = r#"{"field": [{"regexp": "foo(?=bar)"}]}"#;
+        let result = parse_pattern(pattern);
+        assert!(result.is_ok(), "foo(?=bar) should parse: {:?}", result.err());
+
+        // Negative lookahead: foo(?!bar)
+        let pattern = r#"{"field": [{"regexp": "foo(?!bar)"}]}"#;
+        let result = parse_pattern(pattern);
+        assert!(result.is_ok(), "foo(?!bar) should parse: {:?}", result.err());
+
+        // Positive lookbehind: (?<=foo)bar
+        let pattern = r#"{"field": [{"regexp": "(?<=foo)bar"}]}"#;
+        let result = parse_pattern(pattern);
+        assert!(result.is_ok(), "(?<=foo)bar should parse: {:?}", result.err());
+
+        // Negative lookbehind: (?<!foo)bar
+        let pattern = r#"{"field": [{"regexp": "(?<!foo)bar"}]}"#;
+        let result = parse_pattern(pattern);
+        assert!(result.is_ok(), "(?<!foo)bar should parse: {:?}", result.err());
+    }
+
+    #[test]
+    fn test_lookaround_transformation() {
+        // Test that lookaround patterns transform to MultiConditionPattern
+        use crate::json::{parse_pattern, Matcher};
+
+        // Test positive lookahead transformation
+        let pattern = r#"{"field": [{"regexp": "foo(?=bar)"}]}"#;
+        let result = parse_pattern(pattern).unwrap();
+        let matchers = result.get("field").unwrap();
+        assert_eq!(matchers.len(), 1);
+        assert!(
+            matches!(&matchers[0], Matcher::MultiCondition(_)),
+            "foo(?=bar) should produce MultiCondition matcher, got {:?}",
+            matchers[0]
+        );
+
+        // Verify it's automaton compatible
+        assert!(
+            matchers[0].is_automaton_compatible(),
+            "MultiCondition should be automaton compatible"
+        );
+    }
+
+    #[test]
+    fn test_lookaround_rejected_patterns() {
+        // Test that unsupported patterns are rejected
+        use crate::json::parse_pattern;
+
+        // Nested lookaround should fail
+        let pattern = r#"{"field": [{"regexp": "(?=(?=a)b)c"}]}"#;
+        let result = parse_pattern(pattern);
+        assert!(
+            result.is_err(),
+            "Nested lookaround should fail: {:?}",
+            result
+        );
+
+        // Variable-length lookbehind should fail
+        let pattern = r#"{"field": [{"regexp": "(?<=a+)b"}]}"#;
+        let result = parse_pattern(pattern);
+        assert!(
+            result.is_err(),
+            "Variable-length lookbehind should fail: {:?}",
+            result
+        );
+
+        // Multi-char backreference fails in our parser, but falls back to regex crate
+        // which treats ~1 as literal characters. Test the parser directly.
+        use crate::regexp::parse_regexp;
+        let result = parse_regexp("(abc)~1");
+        assert!(
+            result.is_err(),
+            "Multi-char backreference should fail in I-Regexp parser: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn test_lookaround_pattern_add_to_quamina() {
+        // Test that lookaround patterns can be added to Quamina
+        let mut q = Quamina::<String>::new();
+
+        // Add positive lookahead pattern
+        let pattern = r#"{"status": [{"regexp": "foo(?=bar)"}]}"#;
+        let result = q.add_pattern("test1".to_string(), pattern);
+        assert!(
+            result.is_ok(),
+            "Adding foo(?=bar) pattern should succeed: {:?}",
+            result.err()
+        );
+
+        // Add negative lookahead pattern
+        let pattern = r#"{"status": [{"regexp": "foo(?!baz)"}]}"#;
+        let result = q.add_pattern("test2".to_string(), pattern);
+        assert!(
+            result.is_ok(),
+            "Adding foo(?!baz) pattern should succeed: {:?}",
+            result.err()
+        );
+
+        // Add lookbehind pattern
+        let pattern = r#"{"status": [{"regexp": "(?<=pre)fix"}]}"#;
+        let result = q.add_pattern("test3".to_string(), pattern);
+        assert!(
+            result.is_ok(),
+            "Adding (?<=pre)fix pattern should succeed: {:?}",
+            result.err()
+        );
+
+        assert_eq!(q.pattern_count(), 3);
+    }
+
+    #[test]
+    fn test_lookaround_primary_match() {
+        // Test that the primary pattern part matches (condition verification is TODO)
+        // This tests the basic automaton building for multi-condition patterns
+        let mut q = Quamina::<String>::new();
+
+        // Add pattern where primary is "foo"
+        // foo(?=bar) has primary="foo", condition=PositiveLookahead("foobar")
+        let pattern = r#"{"status": [{"regexp": "foo(?=bar)"}]}"#;
+        q.add_pattern("lookahead".to_string(), pattern).unwrap();
+
+        // Event with "foo" - primary matches
+        // Note: Full condition verification not yet implemented
+        // When implemented, this should only match if value is "foobar"
+        let event = r#"{"status": "foo"}"#;
+        let matches = q.matches_for_event(event.as_bytes()).unwrap();
+        // Primary pattern "foo" matches "foo"
+        assert!(
+            matches.contains(&"lookahead".to_string()),
+            "Primary pattern 'foo' should match value 'foo'"
+        );
+    }
+
+    #[test]
+    fn test_multi_condition_pattern_fields() {
+        // Test MultiConditionPattern structure
+        use crate::json::{LookaroundCondition, MultiConditionPattern};
+        use crate::regexp::parse_regexp;
+
+        // Create a multi-condition pattern manually
+        let primary = parse_regexp("foo").unwrap();
+        let combined = parse_regexp("foobar").unwrap();
+        let conditions = vec![LookaroundCondition::PositiveLookahead(combined)];
+
+        let mc = MultiConditionPattern::new(primary, conditions);
+
+        // Verify structure
+        assert_eq!(mc.primary.len(), 1, "Primary should have 1 branch");
+        assert_eq!(mc.conditions.len(), 1, "Should have 1 condition");
+        assert!(!mc.conditions[0].is_negative(), "Should be positive");
+        assert!(!mc.conditions[0].is_lookbehind(), "Should not be lookbehind");
+    }
+
+    #[test]
+    fn test_condition_cost_ordering() {
+        // Test that conditions are sorted by cost
+        use crate::json::{LookaroundCondition, MultiConditionPattern};
+        use crate::regexp::parse_regexp;
+
+        let primary = parse_regexp("test").unwrap();
+        let pattern1 = parse_regexp("a").unwrap();
+        let pattern2 = parse_regexp("b").unwrap();
+        let pattern3 = parse_regexp("c").unwrap();
+
+        // Create conditions in reverse cost order
+        let conditions = vec![
+            LookaroundCondition::NegativeLookbehind {
+                pattern: pattern3.clone(),
+                byte_length: 1,
+            }, // cost 40
+            LookaroundCondition::PositiveLookbehind {
+                pattern: pattern2.clone(),
+                byte_length: 1,
+            }, // cost 30
+            LookaroundCondition::NegativeLookahead(pattern1.clone()), // cost 20
+        ];
+
+        let mc = MultiConditionPattern::new(primary, conditions);
+
+        // Verify conditions are sorted by cost (lowest first)
+        assert_eq!(mc.conditions[0].cost_estimate(), 20, "First should be cost 20");
+        assert_eq!(mc.conditions[1].cost_estimate(), 30, "Second should be cost 30");
+        assert_eq!(mc.conditions[2].cost_estimate(), 40, "Third should be cost 40");
+    }
+
+    // TODO: Add these tests when condition verification is implemented
+    //
+    // #[test]
+    // fn test_positive_lookahead_match() {
+    //     // foo(?=bar) matches "foobar" (foo at position with bar following)
+    //     let mut q = Quamina::<String>::new();
+    //     let pattern = r#"{"status": [{"regexp": "foo(?=bar)"}]}"#;
+    //     q.add_pattern("test".to_string(), pattern).unwrap();
+    //
+    //     let event = r#"{"status": "foobar"}"#;
+    //     let matches = q.matches_for_event(event.as_bytes()).unwrap();
+    //     assert!(matches.contains(&"test".to_string()));
+    //
+    //     // Should NOT match "foobaz" (bar doesn't follow)
+    //     let event = r#"{"status": "foobaz"}"#;
+    //     let matches = q.matches_for_event(event.as_bytes()).unwrap();
+    //     assert!(!matches.contains(&"test".to_string()));
+    // }
+    //
+    // #[test]
+    // fn test_negative_lookahead_match() {
+    //     // foo(?!bar) matches "foobaz" but not "foobar"
+    //     let mut q = Quamina::<String>::new();
+    //     let pattern = r#"{"status": [{"regexp": "foo(?!bar)"}]}"#;
+    //     q.add_pattern("test".to_string(), pattern).unwrap();
+    //
+    //     let event = r#"{"status": "foobaz"}"#;
+    //     let matches = q.matches_for_event(event.as_bytes()).unwrap();
+    //     assert!(matches.contains(&"test".to_string()));
+    //
+    //     let event = r#"{"status": "foobar"}"#;
+    //     let matches = q.matches_for_event(event.as_bytes()).unwrap();
+    //     assert!(!matches.contains(&"test".to_string()));
+    // }
+    //
+    // #[test]
+    // fn test_lookbehind_match() {
+    //     // (?<=foo)bar matches "foobar" at "bar" position
+    //     let mut q = Quamina::<String>::new();
+    //     let pattern = r#"{"status": [{"regexp": "(?<=foo)bar"}]}"#;
+    //     q.add_pattern("test".to_string(), pattern).unwrap();
+    //
+    //     let event = r#"{"status": "foobar"}"#;
+    //     let matches = q.matches_for_event(event.as_bytes()).unwrap();
+    //     assert!(matches.contains(&"test".to_string()));
+    //
+    //     // Should NOT match "xxxbar" (foo doesn't precede)
+    //     let event = r#"{"status": "xxxbar"}"#;
+    //     let matches = q.matches_for_event(event.as_bytes()).unwrap();
+    //     assert!(!matches.contains(&"test".to_string()));
+    // }
 }
