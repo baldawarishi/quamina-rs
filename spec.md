@@ -12,9 +12,9 @@ Rust port of [quamina](https://github.com/timbray/quamina) - fast pattern-matchi
 | shellstyle_26_patterns | 731 | 430 | 1.7x |
 | status_middle_nested | 7,437 | 5,400 | 1.4x |
 
-**Pattern matchers:** `"value"`, `{"prefix"}`, `{"suffix"}`, `{"wildcard"}`, `{"shellstyle"}`, `{"exists"}`, `{"anything-but"}`, `{"equals-ignore-case"}`, `{"regexp"}`, `{"cidr"}`, `{"numeric"}`
+**Matchers:** `"value"`, `{"prefix"}`, `{"suffix"}`, `{"wildcard"}`, `{"shellstyle"}`, `{"exists"}`, `{"anything-but"}`, `{"equals-ignore-case"}`, `{"regexp"}`, `{"cidr"}`, `{"numeric"}`
 
-**Rust-only extensions:** `{"numeric": [">=", 0]}`, `{"cidr": "10.0.0.0/24"}`, `{"anything-but": 404}`, `{"regexp": "a{2,5}"}`, `~d`/`~w`/`~s`, `~p{IsBasicLatin}`, `(?:...)`, lazy quantifiers
+**Rust extensions:** `{"numeric": [">=", 0]}`, `{"anything-but": 404}`, `{"regexp": "a{2,5}"}`, `~d`/`~w`/`~s`, `~p{IsBasicLatin}`, `(?:...)`, lazy quantifiers, lookarounds
 
 ---
 
@@ -23,118 +23,158 @@ Rust port of [quamina](https://github.com/timbray/quamina) - fast pattern-matchi
 ```
 src/
 ├── lib.rs              # Public API: Quamina, QuaminaBuilder
-├── json.rs             # Pattern parsing, Matcher enum, MultiConditionPattern
+├── json.rs             # Pattern parsing, Matcher enum
 ├── flatten_json.rs     # Streaming JSON flattener
 ├── regexp/
-│   ├── parser.rs       # I-Regexp parser + lookaround detection
-│   └── nfa.rs          # NFA building + shell caching
+│   ├── parser.rs       # I-Regexp parser + lookaround
+│   └── nfa.rs          # NFA building
 └── automaton/
     ├── small_table.rs  # SmallTable (byte transitions)
-    ├── fa_builders.rs  # FA construction (string, prefix, cidr, shellstyle)
+    ├── fa_builders.rs  # FA construction
     ├── nfa.rs          # traverse_dfa, traverse_nfa
     ├── arena.rs        # StateArena for cyclic NFA
-    ├── mutable_matcher.rs # Pattern building, MultiCondition handling
-    └── trie.rs         # ValueTrie for O(n) bulk construction
+    ├── mutable_matcher.rs # Pattern building
+    └── trie.rs         # ValueTrie for bulk construction
 ```
 
 ---
 
-## Lookaround Implementation Status
+## Performance Optimization Roadmap
 
-### Completed
+Based on analysis of `../regex` (regex-automata crate). See that repo for implementation reference.
 
-| Phase | Description | Status |
-|-------|-------------|--------|
-| 1 | Parser detection (`(?=`, `(?!`, `(?<=`, `(?<!`) | ✅ Done |
-| 2 | Data structures (`LookaroundCondition`, `MultiConditionPattern`) | ✅ Done |
-| 3 | Pattern transformation (A(?=B) → primary + conditions) | ✅ Done |
-| 4 | Primary automaton matching | ✅ Done |
-| 5 | Lookaround tests (parsing, transformation, primary match) | ✅ Done |
-| 6 | Lookahead condition verification | ✅ Done |
-| 7 | Lookbehind condition verification | ✅ Done |
-| 8 | Remove regex fallback + dependency | ✅ Done |
-| 9 | End-to-end lookaround tests | ✅ Done |
+### Phase 1: Quick Wins (1-2 days each)
 
-### Implementation Details
+| Task | File | Impact | Reference |
+|------|------|--------|-----------|
+| Fix epsilon closure O(n²)→O(n) | `automaton/nfa.rs:68-80` | 10-30% NFA speedup | Use `FxHashSet<*const FaState>` instead of `.any()` |
+| Add SparseSet | New: `automaton/sparse_set.rs` | 10-20% NFA speedup | Copy from `regex-automata/src/util/sparse_set.rs` |
 
-**Condition verification** implemented in `mutable_matcher.rs` and `thread_safe.rs`:
-- For lookahead `A(?=B)`: combined pattern AB must match the full value
-- For negative lookahead `A(?!B)`: combined pattern AB must NOT match the full value
-- For lookbehind `(?<=B)A`: combined pattern BA must match the full value
-- For negative lookbehind `(?<!B)A`: combined pattern BA must NOT match the full value
+**Epsilon closure fix:**
+```rust
+// Current (O(n²)):
+!bufs.epsilon_closure.iter().any(|s| Arc::ptr_eq(s, eps))
 
-**Key data structures:**
-- `ConditionNfa`: arena NFA + is_negative flag for condition verification
-- `MultiConditionNfa`: primary arena NFA + list of condition NFAs
-- `multi_condition_nfas` field in `MutableValueMatcher` and `FrozenValueMatcher`
+// Better (O(n)):
+let mut seen: FxHashSet<*const FaState> = FxHashSet::default();
+if seen.insert(Arc::as_ptr(eps)) { /* process */ }
+```
 
----
+**SparseSet** - O(1) clear via generation counter, not memory zeroing.
 
-## Data Structures Reference
+### Phase 2: Byte Classes (3-5 days)
+
+**Problem:** SmallTable uses up to 256 ceiling/step entries.
+**Solution:** Compute byte equivalence classes at pattern compile time.
+
+Pattern `[a-z]+` only needs 3 classes: `[0-96]`, `[97-122]`, `[123-255]`
 
 ```rust
-// src/json.rs
-pub enum LookaroundCondition {
-    PositiveLookahead(RegexpRoot),      // (?=...) - combined pattern must match
-    NegativeLookahead(RegexpRoot),      // (?!...) - combined pattern must NOT match
-    PositiveLookbehind { pattern: RegexpRoot, byte_length: usize }, // (?<=...)
-    NegativeLookbehind { pattern: RegexpRoot, byte_length: usize }, // (?<!...)
+// New struct
+pub struct ByteClasses([u8; 256]);  // maps byte → class ID (0-255)
+
+impl ByteClasses {
+    fn get(&self, byte: u8) -> u8 { self.0[byte as usize] }
 }
 
-pub struct MultiConditionPattern {
-    pub primary: RegexpRoot,                    // What we match
-    pub conditions: Vec<LookaroundCondition>,   // What we verify (cost-sorted)
-}
-
-// src/automaton/mutable_matcher.rs
-pub struct ConditionNfa {
-    pub arena: StateArena,
-    pub start: StateId,
-    pub is_negative: bool,  // true for (?!...) and (?<!...)
-}
-
-pub struct MultiConditionNfa {
-    pub primary_arena: StateArena,
-    pub primary_start: StateId,
-    pub field_matcher_ptr: *const FieldMatcher,
-    pub conditions: Vec<ConditionNfa>,
-}
-
-pub enum Matcher {
-    // ... existing variants ...
-    MultiCondition(MultiConditionPattern),
+// SmallTable changes
+pub struct SmallTable {
+    byte_classes: ByteClasses,      // shared across all tables
+    ceilings: Vec<u8>,              // now indexes into classes, not raw bytes
+    steps: Vec<Option<Arc<FaState>>>,
 }
 ```
 
+**Impact:** 50-90% memory reduction, better cache locality.
+**Reference:** `regex-automata/src/util/alphabet.rs:185-230`
+
+### Phase 3: State Acceleration (1 week)
+
+**Problem:** Wildcard patterns like `[^,]+` check every byte.
+**Solution:** Use memchr SIMD to skip to exit bytes.
+
+```rust
+pub struct AccelInfo {
+    exit_bytes: [u8; 3],  // bytes that leave this state
+    len: u8,              // 0 = not accelerated, 1-3 = use memchr
+}
+
+// In traverse_nfa, when state is accelerated:
+if let Some(accel) = state.accel() {
+    let skip = match accel.len {
+        1 => memchr::memchr(accel.exit_bytes[0], &val[pos..]),
+        2 => memchr::memchr2(accel.exit_bytes[0], accel.exit_bytes[1], &val[pos..]),
+        3 => memchr::memchr3(...),
+        _ => None,
+    };
+    if let Some(n) = skip { pos += n; }
+}
+```
+
+**Impact:** 5-100x speedup on repetitive patterns.
+**Reference:** `regex-automata/src/dfa/accel.rs:90-130`
+**Dependency:** Add `memchr` crate.
+
+### Phase 4: Prefilter Infrastructure (2 weeks)
+
+**Problem:** Full automaton runs on every field value.
+**Solution:** Fast literal prefix search before automaton.
+
+```rust
+pub enum Prefilter {
+    None,
+    Memchr(u8),                    // Single byte literal
+    Memchr2(u8, u8),               // Two alternatives
+    Memmem(Vec<u8>),               // Literal string
+    AhoCorasick(aho_corasick::AhoCorasick), // Multiple literals
+}
+
+// Before automaton traversal:
+if let Some(prefilter) = value_matcher.prefilter() {
+    if !prefilter.might_match(val) {
+        return; // Skip automaton entirely
+    }
+}
+```
+
+**Impact:** 2-10x overall speedup.
+**Reference:** `regex-automata/src/util/prefilter/`
+**Dependency:** Add `aho-corasick` crate.
+
 ---
 
-## Rejected Patterns (Error at Parse Time)
+## What quamina-rs Already Does Well
+
+1. **Arena-based NFAs** (`arena.rs`) - regex-automata doesn't have this
+2. **SegmentsTree** - Skip JSON fields not in any pattern
+3. **SmallTable ceiling/steps** - Similar to regex-automata sparse transitions
+
+---
+
+## Rejected Patterns (Parse-Time Errors)
 
 | Pattern | Error |
 |---------|-------|
-| `(.)~1` | "backreferences (~1) are not supported" |
-| `(.)(.)~2` | "backreferences (~2) are not supported" |
-| `(?=...(?=...))` | "nested lookaround not supported" |
-| `(?<=a+)b` | "variable-length lookbehind not supported" |
-
-Backreferences cannot be implemented with standard automata or multi-condition patterns.
+| `(.)~1` | backreferences not supported |
+| `(?=(?=...))` | nested lookaround not supported |
+| `(?<=a+)b` | variable-length lookbehind not supported |
 
 ---
 
 ## Behavioral Differences from Go
 
-1. **anything-but single string**: Rust accepts `{"anything-but": "foo"}`, Go requires array
-2. **Flattener early termination**: Rust stops parsing once all pattern fields found
+1. `{"anything-but": "foo"}` - Rust accepts single string, Go requires array
+2. Flattener stops parsing once all pattern fields found
 
 ---
 
 ## Commands
 
 ```bash
-cargo test                    # run all tests (332)
-cargo bench                   # all benchmarks
+cargo test                    # 332 tests
+cargo bench                   # benchmarks
 cargo clippy -- -D warnings   # lint
-gh run list                   # check CI
+gh run list                   # CI status
 ```
 
 ---
@@ -142,17 +182,16 @@ gh run list                   # check CI
 ## Session Checklist
 
 1. Read this spec
-2. For Go behavior, read Go source directly (../quamina)
-3. Push often, check CI (`gh run list`)
-4. Run `cargo test` after each phase
+2. For Go behavior: `../quamina`
+3. For regex-automata patterns: `../regex/regex-automata/src/`
+4. Run `cargo test` after each change
+5. Push often, check CI
 
-**Key files for lookaround:**
-- `src/json.rs` - `MultiConditionPattern`, `transform_lookaround_pattern()`
-- `src/regexp/parser.rs` - `LookaroundType`, lookaround parsing
-- `src/automaton/mutable_matcher.rs` - `ConditionNfa`, `MultiConditionNfa`, `add_multi_condition_transition()`
-- `src/automaton/thread_safe.rs` - Condition verification in `transition_on()`
+**Key optimization files:**
+- `src/automaton/nfa.rs` - epsilon closure, traversal
+- `src/automaton/small_table.rs` - byte transitions
+- `src/automaton/arena.rs` - cyclic NFA (already good)
 
-**References:**
-- `../fancy-regex` - Lookaround implementation reference
-- `../regex` - Performance patterns
-- `src/numbits.rs` - Transform-to-automaton philosophy
+**Reference repos:**
+- `../regex` - regex-automata performance patterns
+- `../quamina` - Go reference implementation
