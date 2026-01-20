@@ -141,11 +141,10 @@ Rather than a completely separate HashMap eval path, explore hybrid approaches i
 1. **Character class subtraction** `[a-[b]]` - XSD regex feature, unimplemented
 2. **Word boundaries** `~b/~B` - Not in I-Regexp spec, unimplemented
 3. **Simple lookahead transformation** - Convert `A(?=B)` to automaton intersection
-4. **Single-char backreference** - Expand `(.)\1` to character class union
 
 ## Status
 
-**316 tests passing.** Rust 1.5-2x faster. Synced with Go commit 74475a4 (Jan 2026).
+**321 tests passing.** Rust 1.5-2x faster. Synced with Go commit 74475a4 (Jan 2026).
 
 | Benchmark | Go (ns) | Rust (ns) | Speedup |
 |-----------|---------|-----------|---------|
@@ -263,27 +262,36 @@ cargo fmt && git push         # format and push
 
 **Goal:** Reduce HashMap fallback usage by converting simple lookahead/backreference patterns to automaton-compatible forms.
 
-### Implementation Order (easiest first)
+### Completed: Single-Char Backreference Enumeration
 
-#### 1. Single-Char Backreference Enumeration (~4 hours)
-Convert `(.)\1` patterns to character class union.
+Implemented in `src/regexp/parser.rs`. Patterns like `(.)~1` are transformed at parse time:
 
 ```
-Input:  (.)\1
-Output: aa|bb|cc|...|zz|00|...|99|ÀÀ|...
+Input:  (.)~1
+Output: aa|bb|cc|...|~~ (95 branches for printable ASCII)
+
+Input:  ([abc])~1
+Output: aa|bb|cc (character class branches)
+
+Input:  x(.)~1y
+Output: xaay|xbby|...x~~y (with prefix/suffix)
 ```
 
-**Where to implement:**
-- `src/regexp/parser.rs` - Detect `(.)\1` pattern during parsing
-- Transform to alternation of repeated chars before NFA construction
-- Limit to printable ASCII initially, expand to unicode if needed
+**Supported:**
+- `(.)~1` - dot repeated (printable ASCII)
+- `([...])~1` - character class repeated
+- Prefix/suffix like `x(.)~1y`
 
-**Test cases:**
-- `(.)\1` matches "aa", "bb", not "ab"
-- `(.)\1+` matches "aaa", "bbb"
-- `x(.)\1y` matches "xaay", "xbby"
+**Not supported (fails with error):**
+- Multiple backrefs: `(.)~1~1`
+- Group > 1: `(.)(.)~2`
+- Multi-char groups: `(abc)~1`
+- Quantified groups: `(.)+~1`
+- Nested backrefs: `((.)~1)`
 
-#### 2. Lookahead at Pattern End (~8 hours)
+### Implementation Order (remaining)
+
+#### 1. Lookahead at Pattern End
 Convert `prefix(?=suffix)` to two-automaton check.
 
 ```
@@ -301,7 +309,7 @@ Logic:  Match "foo", then verify "bar" follows (without consuming)
 - `src/json.rs` - New `Matcher::LookaheadPair(Automaton, Automaton)` variant
 - `src/lib.rs` - Matching logic for pair
 
-#### 3. Negative Lookahead at End (~8 hours)
+#### 2. Negative Lookahead at End
 Convert `prefix(?!suffix)` to automaton + exclusion.
 
 ```
@@ -314,7 +322,7 @@ Logic:  Match "foo" where "bar" does NOT follow
 - Build automaton for `foobar`
 - Match `foo` positions that don't have `foobar` match
 
-#### 4. Password-Style Multi-Lookahead (~12 hours)
+#### 3. Password-Style Multi-Lookahead
 Convert `(?=.*A)(?=.*B).*` to multi-condition AND.
 
 ```
@@ -328,10 +336,6 @@ Logic:  Contains uppercase AND contains digit AND length >= 8
 - Match requires ALL conditions satisfied
 
 ### Research References
-
-- **Schmid 2024** (backreferences): https://arxiv.org/abs/1903.05896
-  - Active Variable Degree determines polynomial tractability
-  - avd=1 for `(.)\1`, computable in O(|X||α|²)
 
 - **POPL 2024** (lookaheads): https://dl.acm.org/doi/10.1145/3632934
   - Oracle-NFA achieves O(m×n) for lookarounds
