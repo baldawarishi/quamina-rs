@@ -1,6 +1,9 @@
 //! Minimal JSON parser for flattening events and patterns
 
-use crate::regexp::{parse_regexp, RegexpRoot};
+use crate::regexp::{
+    collect_lookarounds, has_top_level_lookaround, parse_regexp, LookaroundType, RegexpBranch,
+    RegexpRoot,
+};
 use crate::segments_tree::SEGMENT_SEPARATOR;
 use crate::QuaminaError;
 use std::collections::HashMap;
@@ -311,6 +314,180 @@ impl MultiConditionPattern {
     }
 }
 
+// ============================================================================
+// Lookaround Pattern Transformation
+// ============================================================================
+
+/// Transform a regexp tree with lookarounds into a MultiConditionPattern.
+///
+/// This function extracts lookaround atoms from the tree and constructs:
+/// - A primary pattern (the non-lookaround parts)
+/// - A list of conditions derived from each lookaround
+///
+/// # Transformation Rules
+/// - `A(?=B)` → primary=A, conditions=[PositiveLookahead(AB)]
+/// - `A(?!B)` → primary=A, conditions=[NegativeLookahead(AB)]
+/// - `(?<=B)A` → primary=A, conditions=[PositiveLookbehind(B, byte_length)]
+/// - `(?<!B)A` → primary=A, conditions=[NegativeLookbehind(B, byte_length)]
+///
+/// Returns `Ok(MultiConditionPattern)` if transformation succeeds,
+/// or `Err(message)` if the pattern structure is not supported.
+pub fn transform_lookaround_pattern(tree: &RegexpRoot) -> Result<MultiConditionPattern, String> {
+    // Collect all lookarounds with their positions
+    let lookarounds = collect_lookarounds(tree);
+
+    if lookarounds.is_empty() {
+        return Err("no lookarounds found in pattern".into());
+    }
+
+    // For now, only support patterns with a single branch
+    // (no alternation at the top level with mixed lookarounds)
+    if tree.len() != 1 {
+        return Err("lookaround patterns with top-level alternation not yet supported".into());
+    }
+
+    let branch = &tree[0];
+    let mut conditions = Vec::new();
+    let mut primary_atoms: RegexpBranch = Vec::new();
+
+    for (i, atom) in branch.iter().enumerate() {
+        if let Some(la_type) = atom.lookaround {
+            let la_subtree = atom
+                .subtree
+                .as_ref()
+                .ok_or("lookaround atom missing subtree")?;
+
+            match la_type {
+                LookaroundType::PositiveLookahead => {
+                    // A(?=B) → condition checks that AB matches
+                    // Build combined pattern: primary atoms so far + lookahead content
+                    let combined = build_combined_pattern(&primary_atoms, la_subtree);
+                    conditions.push(LookaroundCondition::PositiveLookahead(combined));
+                }
+                LookaroundType::NegativeLookahead => {
+                    // A(?!B) → condition checks that AB does NOT match
+                    let combined = build_combined_pattern(&primary_atoms, la_subtree);
+                    conditions.push(LookaroundCondition::NegativeLookahead(combined));
+                }
+                LookaroundType::PositiveLookbehind => {
+                    // (?<=B)A → condition checks B before A
+                    // For lookbehind at position 0, it means B must precede A
+                    // Byte length is computed from the lookbehind pattern
+                    let byte_length = compute_lookbehind_byte_length(la_subtree)?;
+                    conditions.push(LookaroundCondition::PositiveLookbehind {
+                        pattern: la_subtree.clone(),
+                        byte_length,
+                    });
+                }
+                LookaroundType::NegativeLookbehind => {
+                    // (?<!B)A → condition checks B does NOT precede A
+                    let byte_length = compute_lookbehind_byte_length(la_subtree)?;
+                    conditions.push(LookaroundCondition::NegativeLookbehind {
+                        pattern: la_subtree.clone(),
+                        byte_length,
+                    });
+                }
+            }
+        } else {
+            // Non-lookaround atom - add to primary pattern
+            primary_atoms.push(atom.clone());
+        }
+
+        // For lookaheads at the end, we need to track position
+        // This is handled by the combined pattern approach
+        let _ = i; // suppress unused warning for now
+    }
+
+    // If no primary atoms, the pattern is just lookarounds (e.g., (?=foo))
+    // In this case, the primary matches empty string
+    let primary = if primary_atoms.is_empty() {
+        vec![] // Empty pattern matches empty string
+    } else {
+        vec![primary_atoms]
+    };
+
+    Ok(MultiConditionPattern::new(primary, conditions))
+}
+
+/// Build a combined pattern from primary atoms and a lookahead subtree.
+/// For A(?=B), this builds AB as a single pattern.
+fn build_combined_pattern(primary_atoms: &RegexpBranch, lookahead: &RegexpRoot) -> RegexpRoot {
+    if lookahead.is_empty() {
+        // Lookahead is empty - just return primary
+        return vec![primary_atoms.clone()];
+    }
+
+    // Combine each lookahead branch with the primary atoms
+    let mut combined_branches = Vec::new();
+    for la_branch in lookahead {
+        let mut combined: RegexpBranch = primary_atoms.clone();
+        combined.extend(la_branch.clone());
+        combined_branches.push(combined);
+    }
+
+    combined_branches
+}
+
+/// Compute the fixed byte length of a lookbehind pattern.
+/// Lookbehind patterns must have a fixed length (validated during parsing).
+/// This computes the UTF-8 byte length for the pattern.
+fn compute_lookbehind_byte_length(tree: &RegexpRoot) -> Result<usize, String> {
+    if tree.is_empty() {
+        return Ok(0);
+    }
+
+    // For single branch, compute length
+    if tree.len() == 1 {
+        return compute_branch_byte_length(&tree[0]);
+    }
+
+    // For alternation, all branches must have same length (already validated)
+    let first_len = compute_branch_byte_length(&tree[0])?;
+    for branch in tree.iter().skip(1) {
+        let len = compute_branch_byte_length(branch)?;
+        if len != first_len {
+            return Err("variable-length lookbehind not supported".into());
+        }
+    }
+    Ok(first_len)
+}
+
+/// Compute the byte length of a single branch.
+/// Each atom contributes based on its character class and quantifier.
+fn compute_branch_byte_length(branch: &RegexpBranch) -> Result<usize, String> {
+    let mut total = 0usize;
+    for atom in branch {
+        // Must be singleton (no variable quantifiers)
+        if atom.quant_min != atom.quant_max {
+            return Err("variable quantifier in lookbehind not supported".into());
+        }
+        let count = atom.quant_min as usize;
+
+        // Compute per-atom byte length
+        let atom_len = if atom.is_dot {
+            // Dot can match any char, but for byte length we need worst case
+            // For simplicity, assume UTF-8 max (4 bytes) - this is conservative
+            // A more precise implementation would track actual character ranges
+            4
+        } else if !atom.runes.is_empty() {
+            // Character class - compute max UTF-8 length of any char in range
+            let mut max_len = 1;
+            for rp in &atom.runes {
+                max_len = max_len.max(rp.hi.len_utf8());
+            }
+            max_len
+        } else if let Some(subtree) = &atom.subtree {
+            // Nested group - recurse
+            compute_lookbehind_byte_length(subtree)?
+        } else {
+            0
+        };
+
+        total += atom_len * count;
+    }
+    Ok(total)
+}
+
 impl Matcher {
     /// Check if this matcher is supported by the automaton-based matching engine.
     ///
@@ -541,7 +718,21 @@ fn value_to_matcher(value: &Value) -> Result<Matcher, QuaminaError> {
                         if let Value::String(s) = val {
                             // Try our custom parser first (automaton-compatible)
                             match parse_regexp(s) {
-                                Ok(tree) => return Ok(Matcher::ParsedRegexp(tree)),
+                                Ok(tree) => {
+                                    // Check if pattern has lookarounds - transform to multi-condition
+                                    if has_top_level_lookaround(&tree) {
+                                        match transform_lookaround_pattern(&tree) {
+                                            Ok(mc) => return Ok(Matcher::MultiCondition(mc)),
+                                            Err(e) => {
+                                                return Err(QuaminaError::InvalidPattern(format!(
+                                                    "lookaround transformation failed: {}",
+                                                    e
+                                                )))
+                                            }
+                                        }
+                                    }
+                                    return Ok(Matcher::ParsedRegexp(tree));
+                                }
                                 Err(_) => {
                                     // Fall back to regex crate for unsupported features
                                     match regex::Regex::new(s) {
