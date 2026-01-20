@@ -37,6 +37,43 @@ pub fn traverse_dfa(table: &SmallTable, val: &[u8], transitions: &mut Vec<Arc<Fi
 ///
 /// This handles epsilon transitions, multiple active states, and spinout (wildcard) states.
 /// Appends transitions to bufs.transitions (assumes it's already cleared by caller).
+///
+/// # Epsilon Closure Optimization Notes
+///
+/// The epsilon closure computation uses FxHashSet for O(1) membership testing. This was changed
+/// from O(n) Vec scanning (using `.any()`) to fix O(n²) worst-case behavior on patterns with
+/// many epsilon transitions (regexp alternations, bounded quantifiers, lookarounds).
+///
+/// **Tradeoff**: This adds ~6% overhead on patterns with very small epsilon closures (1-2 states),
+/// such as simple shellstyle patterns like `"A*"`. The HashSet's fixed overhead (~15-25 cycles
+/// for hash + lookup) exceeds the cost of scanning 1-2 pointers (~3-6 cycles). However, for
+/// patterns with larger epsilon closures (n > 4-5), the O(1) lookup is significantly faster.
+///
+/// **Potential optimization - hybrid approach**: A future optimization could use Vec scanning
+/// for small closures and HashSet for larger ones:
+/// ```ignore
+/// let contained = if bufs.epsilon_closure.len() < 4 {
+///     bufs.epsilon_closure.iter().any(|s| Arc::ptr_eq(s, eps))
+/// } else {
+///     !bufs.epsilon_seen.insert(StatePtr::new(Arc::as_ptr(eps)))
+/// };
+/// ```
+/// This would recover the ~6% shellstyle regression while keeping O(1) behavior for complex
+/// patterns. The threshold of 4 is approximate - the crossover point where HashSet becomes
+/// faster depends on CPU cache behavior. This was deemed not worth the added code complexity
+/// since shellstyle remains 1.6x faster than Go even with the overhead.
+///
+/// **Cleaner architectural fix**: Shellstyle patterns (e.g., `"A*"`, `"*foo*"`) create spinout
+/// states with minimal epsilon transitions - they're essentially DFA-compatible. A cleaner fix
+/// would be to detect shellstyle-only ValueMatchers at pattern-add time and route them through
+/// `traverse_dfa` instead of `traverse_nfa`. This would require:
+/// 1. A flag on ValueMatcher indicating DFA-compatibility (no epsilon transitions needed)
+/// 2. Logic in the matching path to choose DFA vs NFA traversal
+/// 3. Ensuring merged patterns (shellstyle + regexp on same field) fall back to NFA
+///
+/// This architectural change would eliminate NFA overhead entirely for pure shellstyle patterns,
+/// but requires changes to pattern building and the ValueMatcher API. See Go quamina's approach
+/// to spinout states in nfa.go for related design discussion.
 #[inline]
 pub fn traverse_nfa(table: &SmallTable, val: &[u8], bufs: &mut NfaBuffers) {
     // Clear state buffers but NOT transitions (caller manages that)
