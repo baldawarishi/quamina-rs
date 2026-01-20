@@ -259,6 +259,99 @@ gh run list                   # check CI
 cargo fmt && git push         # format and push
 ```
 
+## Next Session: Graceful Regex Integration
+
+**Goal:** Reduce HashMap fallback usage by converting simple lookahead/backreference patterns to automaton-compatible forms.
+
+### Implementation Order (easiest first)
+
+#### 1. Single-Char Backreference Enumeration (~4 hours)
+Convert `(.)\1` patterns to character class union.
+
+```
+Input:  (.)\1
+Output: aa|bb|cc|...|zz|00|...|99|ÀÀ|...
+```
+
+**Where to implement:**
+- `src/regexp/parser.rs` - Detect `(.)\1` pattern during parsing
+- Transform to alternation of repeated chars before NFA construction
+- Limit to printable ASCII initially, expand to unicode if needed
+
+**Test cases:**
+- `(.)\1` matches "aa", "bb", not "ab"
+- `(.)\1+` matches "aaa", "bbb"
+- `x(.)\1y` matches "xaay", "xbby"
+
+#### 2. Lookahead at Pattern End (~8 hours)
+Convert `prefix(?=suffix)` to two-automaton check.
+
+```
+Input:  foo(?=bar)
+Logic:  Match "foo", then verify "bar" follows (without consuming)
+```
+
+**Approach:**
+- Detect lookahead at end of pattern: `A(?=B)$` or `A(?=B)` where nothing follows
+- Build two automata: one for A, one for AB
+- Match reports A's position if AB also matches at same start
+
+**Where to implement:**
+- `src/regexp/parser.rs` - Detect simple lookahead patterns
+- `src/json.rs` - New `Matcher::LookaheadPair(Automaton, Automaton)` variant
+- `src/lib.rs` - Matching logic for pair
+
+#### 3. Negative Lookahead at End (~8 hours)
+Convert `prefix(?!suffix)` to automaton + exclusion.
+
+```
+Input:  foo(?!bar)
+Logic:  Match "foo" where "bar" does NOT follow
+```
+
+**Approach:**
+- Build automaton for `foo`
+- Build automaton for `foobar`
+- Match `foo` positions that don't have `foobar` match
+
+#### 4. Password-Style Multi-Lookahead (~12 hours)
+Convert `(?=.*A)(?=.*B).*` to multi-condition AND.
+
+```
+Input:  (?=.*[A-Z])(?=.*[0-9]).{8,}
+Logic:  Contains uppercase AND contains digit AND length >= 8
+```
+
+**Approach:**
+- Detect pattern of multiple lookaheads at start
+- Extract conditions as separate automata
+- Match requires ALL conditions satisfied
+
+### Research References
+
+- **Schmid 2024** (backreferences): https://arxiv.org/abs/1903.05896
+  - Active Variable Degree determines polynomial tractability
+  - avd=1 for `(.)\1`, computable in O(|X||α|²)
+
+- **POPL 2024** (lookaheads): https://dl.acm.org/doi/10.1145/3632934
+  - Oracle-NFA achieves O(m×n) for lookarounds
+  - Pre-compute oracle table of match positions
+
+- **EPFL** (rust implementation): https://systemf.epfl.ch/blog/rust-regex-lookbehinds/
+  - Added linear-time lookbehinds to rust-lang/regex
+  - Two-pass approach: compute lookbehind table, then match
+
+### Key Files to Modify
+
+| File | Purpose |
+|------|---------|
+| `src/regexp/parser.rs` | Pattern detection + transformation |
+| `src/json.rs` | New Matcher variants |
+| `src/lib.rs:is_automaton_compatible()` | Route transformed patterns to automaton |
+| `src/automaton/fa_builders.rs` | Build automata for transformed patterns |
+
+---
+
 ## Session Checklist
 
 1. Read this spec (especially "Next Session" section)
