@@ -312,8 +312,8 @@ impl<X: Clone + Eq + Hash + Send + Sync> Default for QuaminaBuilder<X> {
 /// The main pattern matcher
 ///
 /// Quamina uses a hybrid matching approach:
-/// - Automaton-based matching for patterns using supported operators (exact, prefix, suffix, wildcard, numeric comparisons, I-Regexp, etc.)
-/// - HashMap-based fallback for patterns with unsupported features (regex lookaheads/lookbehinds, backreferences, CIDR, anything-but-numeric)
+/// - Automaton-based matching for patterns using supported operators (exact, prefix, suffix, wildcard, numeric comparisons, I-Regexp with lookarounds, etc.)
+/// - HashMap-based fallback for patterns with unsupported features (CIDR, anything-but-numeric)
 ///
 /// Quamina is Clone, allowing you to create snapshots for concurrent use:
 /// ```
@@ -5836,8 +5836,8 @@ mod tests {
                         }
                     }
                     Err(_) => {
-                        // Pattern uses unimplemented features - skip
-                        // (This is expected for patterns with \p{}, backrefs, etc.)
+                        // Pattern uses unsupported features - skip
+                        // (This is expected for patterns with backrefs, etc.)
                     }
                 }
             } else {
@@ -7045,13 +7045,12 @@ mod tests {
             result
         );
 
-        // Multi-char backreference fails in our parser, but falls back to regex crate
-        // which treats ~1 as literal characters. Test the parser directly.
+        // Backreferences are not supported
         use crate::regexp::parse_regexp;
         let result = parse_regexp("(abc)~1");
         assert!(
             result.is_err(),
-            "Multi-char backreference should fail in I-Regexp parser: {:?}",
+            "Backreferences should fail: {:?}",
             result
         );
     }

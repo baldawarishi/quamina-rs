@@ -55,8 +55,6 @@ pub struct QuantifiedAtom {
     /// Cache key for large Unicode categories (e.g., "L", "Lu", "-L" for negated)
     /// Used to cache pre-built FA shells for performance.
     pub cache_key: Option<String>,
-    /// Backreference to a capturing group (e.g., ~1 refers to group 1)
-    pub backref_group: Option<u8>,
     /// Lookaround assertion type (if this atom is a lookaround group)
     pub lookaround: Option<LookaroundType>,
 }
@@ -70,7 +68,6 @@ impl Default for QuantifiedAtom {
             quant_max: 1,
             subtree: None,
             cache_key: None,
-            backref_group: None,
             lookaround: None,
         }
     }
@@ -154,8 +151,6 @@ pub enum RegexpFeature {
     Class,
     NegatedClass,
     OrBar,
-    /// Backreference (~1, ~2, etc.) - may be transformed for simple patterns
-    Backref,
     /// Lookaround assertion (?=, ?!, ?<=, ?<!)
     Lookaround,
 }
@@ -295,89 +290,6 @@ impl RegexpParse {
     }
 }
 
-/// Transform backreference patterns into automaton-compatible forms.
-///
-/// Currently supports:
-/// - `(.)~1` → `aa|bb|cc|...` (single-char backreference for any char)
-/// - `([...])~1` → `aa|bb|cc|...` for each char in the class
-/// - Patterns with prefix/suffix like `x(.)~1y`
-///
-/// Returns Ok(transformed_tree) if transformation succeeds,
-/// Err(message) if backreference pattern is not supported.
-fn transform_backrefs(tree: &RegexpRoot) -> Result<RegexpRoot, String> {
-    // First, check for nested backrefs (inside groups) which we don't support
-    if has_nested_backref(tree) {
-        return Err("backreference inside capturing group not supported".into());
-    }
-
-    // Process each branch to find and transform backreferences
-    let mut new_branches: Vec<RegexpBranch> = Vec::new();
-    let mut any_transformed = false;
-
-    for branch in tree {
-        // Check if this branch contains backreferences at the top level
-        let has_backref = branch.iter().any(|qa| qa.backref_group.is_some());
-
-        if !has_backref {
-            // No backreferences, keep as-is
-            new_branches.push(branch.clone());
-            continue;
-        }
-
-        // Try to transform this branch
-        let transformed = transform_branch_backrefs(branch)?;
-        new_branches.extend(transformed);
-        any_transformed = true;
-    }
-
-    // Only return Ok if we actually transformed something
-    if !any_transformed && tree.iter().any(branch_has_backref) {
-        return Err("backreference pattern could not be transformed".into());
-    }
-
-    Ok(new_branches)
-}
-
-/// Check if any backreference exists inside a subtree (nested group).
-fn has_nested_backref(tree: &RegexpRoot) -> bool {
-    for branch in tree {
-        for atom in branch {
-            // Check if this atom has a subtree with backrefs
-            if let Some(subtree) = &atom.subtree {
-                if subtree_has_backref(subtree) {
-                    return true;
-                }
-            }
-        }
-    }
-    false
-}
-
-/// Recursively check if a subtree contains any backreference.
-fn subtree_has_backref(tree: &RegexpRoot) -> bool {
-    for branch in tree {
-        if branch_has_backref(branch) {
-            return true;
-        }
-    }
-    false
-}
-
-/// Check if a branch contains any backreference (direct or nested).
-fn branch_has_backref(branch: &RegexpBranch) -> bool {
-    for atom in branch {
-        if atom.backref_group.is_some() {
-            return true;
-        }
-        if let Some(subtree) = &atom.subtree {
-            if subtree_has_backref(subtree) {
-                return true;
-            }
-        }
-    }
-    false
-}
-
 // ============================================================================
 // Lookaround Validation
 // ============================================================================
@@ -508,7 +420,7 @@ fn branch_fixed_length(branch: &RegexpBranch) -> Option<usize> {
                 first_len
             }
         } else {
-            0 // Empty atom (backrefs etc.)
+            0 // Empty atom
         };
 
         // Multiply by quantifier
@@ -545,146 +457,6 @@ pub fn has_top_level_lookaround(tree: &RegexpRoot) -> bool {
     false
 }
 
-/// Transform a single branch with backreferences.
-/// Returns multiple branches (alternation) for successful transformation.
-fn transform_branch_backrefs(branch: &RegexpBranch) -> Result<Vec<RegexpBranch>, String> {
-    // Collect capturing groups and find backreference positions
-    let mut groups: Vec<&QuantifiedAtom> = Vec::new();
-    let mut backref_indices: Vec<(usize, u8)> = Vec::new(); // (position, group_number)
-
-    for (i, atom) in branch.iter().enumerate() {
-        // Check for capturing group (subtree present)
-        if atom.subtree.is_some() {
-            groups.push(atom);
-        }
-        // Check for backreference
-        if let Some(group_num) = atom.backref_group {
-            backref_indices.push((i, group_num));
-        }
-    }
-
-    // For now, only support simple patterns with one backreference to group 1
-    if backref_indices.len() != 1 {
-        return Err(format!(
-            "backreference patterns with {} backrefs not supported",
-            backref_indices.len()
-        ));
-    }
-
-    let (backref_pos, backref_group) = backref_indices[0];
-
-    if backref_group != 1 {
-        return Err(format!(
-            "backreference to group {} not supported (only ~1)",
-            backref_group
-        ));
-    }
-
-    if groups.is_empty() {
-        return Err("backreference ~1 without capturing group".into());
-    }
-
-    // Get group 1's content
-    let group1 = groups[0];
-    let group_subtree = group1.subtree.as_ref().unwrap();
-
-    // Check if group 1 is a single-char pattern (dot or character class)
-    let char_range = get_single_char_range(group_subtree)?;
-
-    // Check if group has quantifier (not supported yet)
-    if !group1.is_singleton() {
-        return Err("backreference to quantified group not supported".into());
-    }
-
-    // Generate alternation: one branch for each character in the range
-    let mut result_branches: Vec<RegexpBranch> = Vec::new();
-
-    for rp in &char_range {
-        let mut code = rp.lo as u32;
-        while code <= rp.hi as u32 {
-            if let Some(c) = char::from_u32(code) {
-                // Create a branch: prefix + char + char + suffix
-                let mut new_branch: RegexpBranch = Vec::new();
-
-                // Add prefix atoms (before group 1)
-                for atom in branch.iter().take_while(|a| a.subtree.is_none()) {
-                    new_branch.push(atom.clone());
-                }
-
-                // Add the character twice (once for the group, once for the backref)
-                let char_atom = QuantifiedAtom {
-                    runes: vec![RunePair { lo: c, hi: c }],
-                    quant_min: 1,
-                    quant_max: 1,
-                    ..Default::default()
-                };
-                new_branch.push(char_atom.clone());
-                new_branch.push(char_atom);
-
-                // Add suffix atoms (after backref)
-                for atom in branch.iter().skip(backref_pos + 1) {
-                    new_branch.push(atom.clone());
-                }
-
-                result_branches.push(new_branch);
-            }
-            code += 1;
-        }
-    }
-
-    if result_branches.is_empty() {
-        return Err("backreference pattern produced no matches".into());
-    }
-
-    Ok(result_branches)
-}
-
-/// Extract the character range from a single-char capturing group.
-/// Returns Ok(RuneRange) for groups that match exactly one character per match.
-/// Returns Err for complex patterns.
-fn get_single_char_range(subtree: &RegexpRoot) -> Result<RuneRange, String> {
-    // Should be a single branch
-    if subtree.len() != 1 {
-        return Err("backreference to alternation group not supported".into());
-    }
-
-    let branch = &subtree[0];
-
-    // Should be a single atom
-    if branch.len() != 1 {
-        return Err("backreference to multi-atom group not supported".into());
-    }
-
-    let atom = &branch[0];
-
-    // Should match exactly once (no quantifier)
-    if !atom.is_singleton() {
-        return Err("backreference to quantified atom not supported".into());
-    }
-
-    // Check if it's a dot (any char) - use printable ASCII
-    if atom.is_dot {
-        // Generate printable ASCII range (space to ~, excluding DEL)
-        // For full Unicode support, this would be much larger
-        return Ok(vec![RunePair {
-            lo: ' ', // 0x20
-            hi: '~', // 0x7E (126 characters)
-        }]);
-    }
-
-    // Check if it's a character class
-    if !atom.runes.is_empty() {
-        return Ok(atom.runes.clone());
-    }
-
-    // Nested groups not supported
-    if atom.subtree.is_some() {
-        return Err("nested groups in backreference not supported".into());
-    }
-
-    Err("backreference to empty group not supported".into())
-}
-
 /// Parse a regexp string into a tree structure.
 pub fn parse_regexp(re: &str) -> Result<RegexpRoot, RegexpError> {
     let mut parse = RegexpParse::new(re);
@@ -698,25 +470,7 @@ pub fn parse_regexp(re: &str) -> Result<RegexpRoot, RegexpError> {
         });
     }
 
-    // Try to transform backreference patterns before checking unimplemented features
-    let mut tree = std::mem::take(&mut parse.tree);
-    if parse.found_features.contains(&RegexpFeature::Backref) {
-        match transform_backrefs(&tree) {
-            Ok(transformed) => {
-                tree = transformed;
-                // Remove Backref from found_features since we handled it
-                parse
-                    .found_features
-                    .retain(|f| *f != RegexpFeature::Backref);
-            }
-            Err(msg) => {
-                return Err(RegexpError {
-                    message: msg,
-                    offset: 0,
-                });
-            }
-        }
-    }
+    let tree = std::mem::take(&mut parse.tree);
 
     // Validate lookaround constructs (nested, variable-length lookbehind)
     if parse.found_features.contains(&RegexpFeature::Lookaround) {
@@ -1160,15 +914,12 @@ fn read_atom(parse: &mut RegexpParse) -> Result<QuantifiedAtom, RegexpError> {
                 });
             }
 
-            // Check for backreference (~1 through ~9)
+            // Backreferences (~1 through ~9) are not supported
             if let Some(digit) = next.to_digit(10) {
                 if (1..=9).contains(&digit) {
-                    parse.record_feature(RegexpFeature::Backref);
-                    return Ok(QuantifiedAtom {
-                        backref_group: Some(digit as u8),
-                        quant_min: 1,
-                        quant_max: 1,
-                        ..Default::default()
+                    return Err(RegexpError {
+                        message: format!("backreferences (~{}) are not supported", digit),
+                        offset: parse.last_index,
                     });
                 }
             }

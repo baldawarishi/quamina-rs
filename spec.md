@@ -71,22 +71,22 @@ src/
 
 ## Next Session: Cleanup
 
-### Phase 8: Remove HashMap Fallback + regex Dependency (~50 lines deleted)
+### Phase 8: Remove HashMap Fallback + regex Dependency
 Files: `src/json.rs`, `src/lib.rs`, `Cargo.toml`
 
 **Goal:** Remove `Matcher::Regex(regex::Regex)` variant, all fallback code, and `regex` crate dependency.
 
 1. Remove `Matcher::Regex` enum variant from `src/json.rs`
 2. Remove fallback path in `parse_regexp_value()`
-3. Remove `regex = "1"` from `Cargo.toml`
+3. Remove `regex = "1"` from `Cargo.toml` (or move to dev-dependencies for benchmarking)
 4. Update `is_automaton_compatible()` (can simplify or remove)
-5. Single-char backrefs `(.)~1` stay (enumeration-based, no regex needed)
-6. Multi-char backrefs become hard errors
 
 **Breaking changes:**
 - Patterns that relied on regex fallback will now fail at parse time
 - This is acceptable - the fallback had wrong semantics for most patterns anyway
-- Removes `regex` crate dependency (only used for fallback)
+
+**Performance comparison (before removal):**
+- Compare quamina-rs vs `regex` crate vs quamina (Go) on equivalent patterns
 
 ---
 
@@ -133,12 +133,12 @@ pub enum Matcher {
 
 | Pattern | Error |
 |---------|-------|
-| `(.+)\1` | "backreference to multi-char group not supported" |
-| `(.)(.)~2` | "backreference to group > 1 not supported" |
+| `(.)~1` | "backreferences (~1) are not supported" |
+| `(.)(.)~2` | "backreferences (~2) are not supported" |
 | `(?=...(?=...))` | "nested lookaround not supported" |
 | `(?<=a+)b` | "variable-length lookbehind not supported" |
 
-Single-char backrefs `(.)~1` work via enumeration (95 branches for `.`, 3 for `[abc]`).
+Backreferences cannot be implemented with standard automata or multi-condition patterns.
 
 ---
 
