@@ -256,101 +256,227 @@ gh run list                   # check CI
 cargo fmt && git push         # format and push
 ```
 
-## Next Session: Graceful Regex Integration
+## Next Session: Multi-Condition Automaton for Lookaround
 
-**Goal:** Reduce HashMap fallback usage by converting simple lookahead/backreference patterns to automaton-compatible forms.
+**Goal:** Native lookahead/lookbehind support via multi-condition automata. No backtracking, no regex crate fallback.
 
-### Completed: Single-Char Backreference Enumeration
+### Design Philosophy
 
-Implemented in `src/regexp/parser.rs`. Patterns like `(.)~1` are transformed at parse time:
+Inspired by **numbits**: transform the problem domain into something automata can handle.
+
+- Lookarounds are regular languages (unlike backrefs) - they CAN be done with automata
+- Use multiple automata + set operations (intersection, difference)
+- Match in phases: easy checks first, then verify conditions
+- Reject patterns that require unbounded memory (arbitrary backrefs)
+
+### Supported Patterns
+
+| Pattern | Semantics | Implementation |
+|---------|-----------|----------------|
+| `A(?=B)` | A followed by B | Match A where AB matches |
+| `A(?!B)` | A not followed by B | Match A where AB doesn't match |
+| `(?<=B)A` | A preceded by B | Match A, verify B before |
+| `(?<!B)A` | A not preceded by B | Match A, verify B not before |
+| `(?=X)(?=Y)Z` | Multi-condition | All automata must match |
+| `(?=.*X)Y` | Contains X and matches Y | Intersection |
+
+### Rejected Patterns (Error at Parse Time)
+
+| Pattern | Error Message |
+|---------|---------------|
+| `(.+)\1` | "backreference to multi-char group not supported" |
+| `(.)(.)~2` | "backreference to group > 1 not supported" |
+| `(?P<x>.+)(?P=x)` | "named backreference not supported" |
+| Nested lookaround | "nested lookaround not supported" |
+
+Single-char backrefs `(.)~1` remain supported via enumeration (existing).
+
+### Data Structures
+
+```rust
+// src/json.rs - New Matcher variant
+enum Matcher {
+    // ... existing variants ...
+
+    /// Multi-condition matcher: all conditions must be satisfied
+    /// Conditions are evaluated in order (fast-fail on first mismatch)
+    MultiCondition(MultiConditionMatcher),
+}
+
+/// A condition in a multi-condition matcher
+enum Condition {
+    /// Value must match this automaton
+    MustMatch(SmallTable),
+
+    /// Value must NOT match this automaton
+    MustNotMatch(SmallTable),
+
+    /// Lookbehind: N bytes before current position must match
+    LookBehind { pattern: SmallTable, offset: usize },
+
+    /// Negative lookbehind: N bytes before must NOT match
+    NegLookBehind { pattern: SmallTable, offset: usize },
+}
+
+struct MultiConditionMatcher {
+    /// Primary pattern (what we're actually matching)
+    primary: SmallTable,
+
+    /// Additional conditions to verify (evaluated after primary matches)
+    conditions: Vec<Condition>,
+}
+```
+
+### Matching Algorithm
+
+```rust
+// src/lib.rs - Matching logic
+fn match_multi_condition(matcher: &MultiConditionMatcher, value: &[u8]) -> bool {
+    // Phase 1: Check primary pattern (fast path)
+    let primary_matches = traverse_nfa(&matcher.primary, value, bufs);
+    if primary_matches.is_empty() {
+        return false;
+    }
+
+    // Phase 2: Verify all conditions
+    for condition in &matcher.conditions {
+        match condition {
+            Condition::MustMatch(automaton) => {
+                if !traverse_nfa(automaton, value, bufs).is_empty() {
+                    continue;
+                }
+                return false;
+            }
+            Condition::MustNotMatch(automaton) => {
+                if traverse_nfa(automaton, value, bufs).is_empty() {
+                    continue;
+                }
+                return false;
+            }
+            Condition::LookBehind { pattern, offset } => {
+                // Check bytes before match position
+                // Implementation depends on match position tracking
+            }
+            Condition::NegLookBehind { pattern, offset } => {
+                // Verify pattern does NOT match before position
+            }
+        }
+    }
+    true
+}
+```
+
+### Parser Changes
+
+```rust
+// src/regexp/parser.rs - Pattern analysis
+
+/// Analyze pattern for lookaround constructs
+fn analyze_lookaround(pattern: &str) -> Result<LookaroundAnalysis, RegexpError> {
+    // Detect: (?=...), (?!...), (?<=...), (?<!...)
+    // Return: primary pattern + conditions
+}
+
+/// Transform lookaround pattern to multi-condition form
+fn transform_lookaround(analysis: LookaroundAnalysis) -> Result<MultiConditionMatcher, RegexpError> {
+    match analysis {
+        // A(?=B) -> primary=A, conditions=[MustMatch(AB)]
+        // A(?!B) -> primary=A, conditions=[MustNotMatch(AB)]
+        // (?<=B)A -> primary=A, conditions=[LookBehind(B, len(B))]
+        // (?=X)(?=Y)Z -> primary=Z, conditions=[MustMatch(X), MustMatch(Y)]
+    }
+}
+```
+
+### Implementation Order
+
+#### Phase 1: Parser Detection (~100 lines)
+File: `src/regexp/parser.rs`
+
+1. Add `LookaroundType` enum: `LookAhead`, `NegLookAhead`, `LookBehind`, `NegLookBehind`
+2. Add `parse_lookaround()` to detect `(?=`, `(?!`, `(?<=`, `(?<!`
+3. Track lookaround positions during parsing
+4. Reject nested/unsupported patterns with clear errors
+
+Reference: `fancy-regex/src/parse.rs:895-901` for lookaround detection
+
+#### Phase 2: Data Structures (~50 lines)
+File: `src/json.rs`
+
+1. Add `Condition` enum
+2. Add `MultiConditionMatcher` struct
+3. Add `Matcher::MultiCondition` variant
+4. Update `is_automaton_compatible()` to return true for MultiCondition
+
+#### Phase 3: Pattern Transformation (~100 lines)
+File: `src/regexp/parser.rs`
+
+1. `transform_positive_lookahead(prefix, suffix)` -> primary + MustMatch
+2. `transform_negative_lookahead(prefix, suffix)` -> primary + MustNotMatch
+3. `transform_lookbehind(prefix, behind)` -> primary + LookBehind
+4. `transform_multi_lookahead(conditions, pattern)` -> primary + Vec<Condition>
+
+Reference: `fancy-regex/src/compile.rs:413-471` for transformation logic
+
+#### Phase 4: Matching Logic (~80 lines)
+File: `src/lib.rs`
+
+1. Add `match_multi_condition()` function
+2. Integrate into `value_matches()` path
+3. Ensure conditions are evaluated in order (fast-fail)
+
+#### Phase 5: Tests (~100 lines)
+File: `src/lib.rs` (test module)
+
+```rust
+#[test] fn test_positive_lookahead() // foo(?=bar) matches "foobar" at "foo"
+#[test] fn test_negative_lookahead() // foo(?!bar) matches "foobaz" not "foobar"
+#[test] fn test_lookbehind()         // (?<=foo)bar matches "foobar" at "bar"
+#[test] fn test_neg_lookbehind()     // (?<!foo)bar matches "xxxbar" not "foobar"
+#[test] fn test_multi_lookahead()    // (?=.*[A-Z])(?=.*[0-9]).+ password style
+#[test] fn test_rejected_backref()   // (.+)\1 returns error
+```
+
+### Performance Targets
+
+Benchmark against `regex` crate (in `../regex`):
+
+| Pattern | Target | Notes |
+|---------|--------|-------|
+| Simple lookahead | <2x regex | Most common case |
+| Multi-condition (3) | <3x regex | Linear in conditions |
+| Negative lookahead | <2x regex | Single extra check |
+
+Run: `cargo bench lookahead` (to be added)
+
+### Error Messages
+
+Clear, actionable errors for unsupported patterns:
 
 ```
-Input:  (.)~1
-Output: aa|bb|cc|...|~~ (95 branches for printable ASCII)
-
-Input:  ([abc])~1
-Output: aa|bb|cc (character class branches)
-
-Input:  x(.)~1y
-Output: xaay|xbby|...x~~y (with prefix/suffix)
+"backreference `\\1` to multi-character group not supported; only single-char groups like `(.)\1` work"
+"nested lookaround not supported: `(?=...(?=...)...)`"
+"variable-length lookbehind not yet supported: `(?<=a+)`; use fixed-length like `(?<=aaa)`"
 ```
 
-**Supported:**
-- `(.)~1` - dot repeated (printable ASCII)
-- `([...])~1` - character class repeated
-- Prefix/suffix like `x(.)~1y`
+### Already Implemented: Single-Char Backreference Enumeration
 
-**Not supported (fails with error):**
-- Multiple backrefs: `(.)~1~1`
-- Group > 1: `(.)(.)~2`
-- Multi-char groups: `(abc)~1`
-- Quantified groups: `(.)+~1`
-- Nested backrefs: `((.)~1)`
-
-### Implementation Order (remaining)
-
-#### 1. Lookahead at Pattern End
-Convert `prefix(?=suffix)` to two-automaton check.
+Patterns like `(.)~1` are transformed at parse time in `src/regexp/parser.rs`:
 
 ```
-Input:  foo(?=bar)
-Logic:  Match "foo", then verify "bar" follows (without consuming)
+(.)~1      -> aa|bb|cc|...|~~ (95 branches)
+([abc])~1  -> aa|bb|cc (3 branches)
+x(.)~1y    -> xaay|xbby|...x~~y
 ```
 
-**Approach:**
-- Detect lookahead at end of pattern: `A(?=B)$` or `A(?=B)` where nothing follows
-- Build two automata: one for A, one for AB
-- Match reports A's position if AB also matches at same start
+This remains the only backref support - multi-char backrefs are rejected.
 
-**Where to implement:**
-- `src/regexp/parser.rs` - Detect simple lookahead patterns
-- `src/json.rs` - New `Matcher::LookaheadPair(Automaton, Automaton)` variant
-- `src/lib.rs` - Matching logic for pair
+### References
 
-#### 2. Negative Lookahead at End
-Convert `prefix(?!suffix)` to automaton + exclusion.
-
-```
-Input:  foo(?!bar)
-Logic:  Match "foo" where "bar" does NOT follow
-```
-
-**Approach:**
-- Build automaton for `foo`
-- Build automaton for `foobar`
-- Match `foo` positions that don't have `foobar` match
-
-#### 3. Password-Style Multi-Lookahead
-Convert `(?=.*A)(?=.*B).*` to multi-condition AND.
-
-```
-Input:  (?=.*[A-Z])(?=.*[0-9]).{8,}
-Logic:  Contains uppercase AND contains digit AND length >= 8
-```
-
-**Approach:**
-- Detect pattern of multiple lookaheads at start
-- Extract conditions as separate automata
-- Match requires ALL conditions satisfied
-
-### Research References
-
-- **POPL 2024** (lookaheads): https://dl.acm.org/doi/10.1145/3632934
-  - Oracle-NFA achieves O(m×n) for lookarounds
-  - Pre-compute oracle table of match positions
-
-- **EPFL** (rust implementation): https://systemf.epfl.ch/blog/rust-regex-lookbehinds/
-  - Added linear-time lookbehinds to rust-lang/regex
-  - Two-pass approach: compute lookbehind table, then match
-
-### Key Files to Modify
-
-| File | Purpose |
-|------|---------|
-| `src/regexp/parser.rs` | Pattern detection + transformation |
-| `src/json.rs` | New Matcher variants |
-| `src/lib.rs:is_automaton_compatible()` | Route transformed patterns to automaton |
-| `src/automaton/fa_builders.rs` | Build automata for transformed patterns |
+- **fancy-regex** (`../fancy-regex`): Parser structure, lookaround detection
+- **regex** (`../regex`): Performance baseline, automaton patterns
+- **POPL 2024**: Oracle-NFA for O(m×n) lookarounds
+- **numbits** (`src/numbits.rs`): Transform-to-automaton philosophy
 
 ---
 
