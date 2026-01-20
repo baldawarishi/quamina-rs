@@ -1745,4 +1745,188 @@ mod tests {
             "Second ~p{{L}} should NOT match '5'"
         );
     }
+
+    // =====================================================================
+    // Backreference transformation tests
+    // =====================================================================
+
+    #[test]
+    fn test_parse_backreference_dot() {
+        // (.)~1 should parse successfully and be transformed
+        let result = parse_regexp("(.)~1");
+        assert!(
+            result.is_ok(),
+            "Pattern (.)~1 should parse: {:?}",
+            result.err()
+        );
+
+        let root = result.unwrap();
+        // Should be transformed to alternation of all printable ASCII chars doubled
+        // 95 chars from ' ' (0x20) to '~' (0x7E)
+        assert_eq!(
+            root.len(),
+            95,
+            "Should have 95 branches for printable ASCII"
+        );
+
+        // Each branch should have exactly 2 atoms (char + char)
+        for (i, branch) in root.iter().enumerate() {
+            assert_eq!(
+                branch.len(),
+                2,
+                "Branch {} should have 2 atoms, has {}",
+                i,
+                branch.len()
+            );
+            // Both atoms should be the same character
+            assert_eq!(
+                branch[0].runes, branch[1].runes,
+                "Branch {} should have identical chars",
+                i
+            );
+        }
+    }
+
+    #[test]
+    fn test_parse_backreference_char_class() {
+        // ([abc])~1 should match aa, bb, cc
+        let result = parse_regexp("([abc])~1");
+        assert!(
+            result.is_ok(),
+            "Pattern ([abc])~1 should parse: {:?}",
+            result.err()
+        );
+
+        let root = result.unwrap();
+        assert_eq!(root.len(), 3, "Should have 3 branches for [abc]");
+
+        // Verify the branches are for 'a', 'b', 'c'
+        let chars: Vec<char> = root.iter().map(|b| b[0].runes[0].lo).collect();
+        assert!(chars.contains(&'a'), "Should have branch for 'a'");
+        assert!(chars.contains(&'b'), "Should have branch for 'b'");
+        assert!(chars.contains(&'c'), "Should have branch for 'c'");
+    }
+
+    #[test]
+    fn test_parse_backreference_with_prefix_suffix() {
+        // x(.)~1y should transform correctly
+        let result = parse_regexp("x(.)~1y");
+        assert!(
+            result.is_ok(),
+            "Pattern x(.)~1y should parse: {:?}",
+            result.err()
+        );
+
+        let root = result.unwrap();
+        assert_eq!(root.len(), 95, "Should have 95 branches");
+
+        // Each branch should have 4 atoms: x, char, char, y
+        for (i, branch) in root.iter().enumerate() {
+            assert_eq!(
+                branch.len(),
+                4,
+                "Branch {} should have 4 atoms (x, char, char, y), has {}",
+                i,
+                branch.len()
+            );
+            // First should be 'x'
+            assert_eq!(branch[0].runes[0].lo, 'x', "First atom should be 'x'");
+            // Middle two should be identical
+            assert_eq!(
+                branch[1].runes, branch[2].runes,
+                "Middle atoms should be identical"
+            );
+            // Last should be 'y'
+            assert_eq!(branch[3].runes[0].lo, 'y', "Last atom should be 'y'");
+        }
+    }
+
+    #[test]
+    fn test_backreference_matching() {
+        use crate::automaton::{traverse_nfa, NfaBuffers, VALUE_TERMINATOR};
+
+        // Test that (.)~1 matches "aa" but not "ab"
+        let root = parse_regexp("(.)~1").unwrap();
+        let (table, field_matcher) = make_regexp_nfa(root, false);
+        let mut bufs = NfaBuffers::new();
+
+        // Should match "aa"
+        let value_aa = vec![b'a', b'a', VALUE_TERMINATOR];
+        bufs.clear();
+        traverse_nfa(&table, &value_aa, &mut bufs);
+        assert!(
+            bufs.transitions
+                .iter()
+                .any(|m| Arc::ptr_eq(m, &field_matcher)),
+            "Pattern (.)~1 should match 'aa'"
+        );
+
+        // Should match "bb"
+        let value_bb = vec![b'b', b'b', VALUE_TERMINATOR];
+        bufs.clear();
+        traverse_nfa(&table, &value_bb, &mut bufs);
+        assert!(
+            bufs.transitions
+                .iter()
+                .any(|m| Arc::ptr_eq(m, &field_matcher)),
+            "Pattern (.)~1 should match 'bb'"
+        );
+
+        // Should NOT match "ab"
+        let value_ab = vec![b'a', b'b', VALUE_TERMINATOR];
+        bufs.clear();
+        traverse_nfa(&table, &value_ab, &mut bufs);
+        assert!(
+            !bufs
+                .transitions
+                .iter()
+                .any(|m| Arc::ptr_eq(m, &field_matcher)),
+            "Pattern (.)~1 should NOT match 'ab'"
+        );
+
+        // Should NOT match "a" (single char)
+        let value_a = vec![b'a', VALUE_TERMINATOR];
+        bufs.clear();
+        traverse_nfa(&table, &value_a, &mut bufs);
+        assert!(
+            !bufs
+                .transitions
+                .iter()
+                .any(|m| Arc::ptr_eq(m, &field_matcher)),
+            "Pattern (.)~1 should NOT match 'a' (single char)"
+        );
+    }
+
+    #[test]
+    fn test_backreference_unsupported_patterns() {
+        // Multiple backreferences not supported
+        assert!(
+            parse_regexp("(.)~1~1").is_err(),
+            "Multiple backreferences should fail"
+        );
+
+        // Backreference to non-existent group
+        assert!(
+            parse_regexp("~1").is_err(),
+            "Backreference without group should fail"
+        );
+
+        // Backreference to group > 1 not supported
+        assert!(
+            parse_regexp("(.)(.)~2").is_err(),
+            "Backreference to group 2 should fail"
+        );
+
+        // Complex group patterns not supported (multi-char)
+        assert!(
+            parse_regexp("(abc)~1").is_err(),
+            "Backreference to multi-char group should fail"
+        );
+
+        // Quantified group not supported
+        assert!(
+            parse_regexp("(.)+~1").is_err(),
+            "Backreference to quantified group should fail"
+        );
+    }
 }
