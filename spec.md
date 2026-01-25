@@ -4,7 +4,7 @@ Rust port of [quamina](https://github.com/timbray/quamina) - fast pattern-matchi
 
 ## Status
 
-**337 tests passing.** Rust 1.5-2x faster than Go. Synced with Go commit 74475a4 (Jan 2026).
+**349 tests passing.** Rust 1.5-2x faster than Go. Synced with Go commit 74475a4 (Jan 2026).
 
 | Benchmark | Go (ns) | Rust (ns) | Speedup |
 |-----------|---------|-----------|---------|
@@ -52,30 +52,34 @@ Based on analysis of `../regex` (regex-automata crate). See that repo for implem
 
 **Tradeoff:** Shellstyle patterns regressed ~6% (small epsilon closures where HashSet overhead > Vec scan). Still 1.6x faster than Go. See `nfa.rs` comments for hybrid approach and architectural fix options.
 
-### Phase 2: Byte Classes (3-5 days)
+### Phase 2: Byte Classes (Not Implemented)
 
 **Problem:** SmallTable uses up to 256 ceiling/step entries.
-**Solution:** Compute byte equivalence classes at pattern compile time.
+**Proposed solution:** Compute byte equivalence classes at pattern compile time.
 
-Pattern `[a-z]+` only needs 3 classes: `[0-96]`, `[97-122]`, `[123-255]`
+Pattern `[a-z]+` would only need 3 classes: `[0-96]`, `[97-122]`, `[123-255]`
 
 ```rust
-// New struct
-pub struct ByteClasses([u8; 256]);  // maps byte → class ID (0-255)
-
-impl ByteClasses {
-    fn get(&self, byte: u8) -> u8 { self.0[byte as usize] }
-}
-
-// SmallTable changes
-pub struct SmallTable {
-    byte_classes: ByteClasses,      // shared across all tables
-    ceilings: Vec<u8>,              // now indexes into classes, not raw bytes
-    steps: Vec<Option<Arc<FaState>>>,
+// Proposed approach (not implemented)
+pub struct ByteClasses([u8; 256]);  // maps byte → class ID
+impl SmallTable {
+    fn dense_step(&self, byte: u8);  // O(1) lookup via byte_classes[byte]
 }
 ```
 
-**Impact:** 50-90% memory reduction, better cache locality.
+**Why not implemented?** Benchmarking showed adding the dense lookup check to `SmallTable::step()` caused ~6% regression for shellstyle patterns. The overhead of `if let Some(ref dense) = self.dense_steps` on every step hurt simple patterns with 1-3 transitions per state. The current ceiling scan is already O(n) where n is typically 1-5 for most patterns.
+
+**When would it help?** Patterns with many transitions per state:
+- Character classes like `[a-zA-Z0-9]`
+- Merged automata with many overlapping patterns
+- Unicode category patterns
+
+**Future approaches if needed:**
+1. Adaptive based on table complexity (e.g., only densify if >4 transitions)
+2. Compile-time feature flag to opt-in
+3. Build separate DFA with dense tables for specific hot paths
+4. Use byte classes only for DFA construction, not runtime lookup
+
 **Reference:** `regex-automata/src/util/alphabet.rs:185-230`
 
 ### Phase 3: State Acceleration (1 week)
