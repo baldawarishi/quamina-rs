@@ -5005,7 +5005,10 @@ mod tests {
     /// Port of Go's TestConcurrency
     /// Tests concurrent pattern addition during active matching
     /// The key test is that concurrent updates don't crash and all patterns are functional
+    // MIRI SKIP RATIONALE: Opens citylots2.json.gz file - Miri isolation blocks file I/O.
+    // Coverage: test_concurrent_miri_friendly exercises same thread-safety code paths.
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_concurrent_update_during_matching() {
         use flate2::read::GzDecoder;
         use std::fs::File;
@@ -6927,7 +6930,10 @@ mod tests {
         }
     }
 
+    // MIRI SKIP RATIONALE: Concurrent stress test with multiple threads and many iterations.
+    // Coverage: test_concurrent_miri_friendly exercises same thread-safety code paths.
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_concurrent_citylots_stress() {
         // Based on Go's TestConcurrency - Pattern adds during concurrent event matching
         use std::sync::Arc;
