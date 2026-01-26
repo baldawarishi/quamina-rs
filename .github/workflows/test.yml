@@ -28,5 +28,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@nightly
         with:
           components: miri
-      - name: Run Miri
-        run: cargo +nightly miri test
+      - name: Run Miri on unsafe code (flatten_json, thread_safe, small_table)
+        run: |
+          cargo +nightly miri test flatten_json
+          cargo +nightly miri test thread_safe
+          cargo +nightly miri test small_table

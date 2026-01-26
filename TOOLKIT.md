@@ -41,6 +41,10 @@ Miri detects undefined behavior in unsafe Rust code. Gold standard for UB detect
 - [x] Fix any UB detected (especially transmute and Send/Sync impls) - None found
 - [x] Add Miri job to `.github/workflows/test.yml`
 
+**Note:** CI runs Miri only on modules with unsafe code (flatten_json, thread_safe, small_table) because the full test suite is too slow under Miri interpretation. Negated regex class tests create large automata that timeout.
+
+**Future:** Make regex tests Miri-friendly (smaller automata or split tests) to enable full Miri coverage.
+
 **CI Addition:**
 ```yaml
 miri:
@@ -221,7 +225,7 @@ transmute_ptr_to_ptr = "warn"
 
 | Date | Phase | Action | Result |
 |------|-------|--------|--------|
-| 2026-01-25 | 1 | Miri integration | Complete - no UB detected in 100+ tests |
+| 2026-01-25 | 1 | Miri integration | Complete - targeted tests on unsafe code pass (flatten_json, thread_safe, small_table) |
 
 ---
 
