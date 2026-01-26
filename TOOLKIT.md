@@ -43,7 +43,19 @@ Miri detects undefined behavior in unsafe Rust code. Gold standard for UB detect
 
 **Note:** CI runs Miri only on modules with unsafe code (flatten_json, thread_safe, small_table) because the full test suite is too slow under Miri interpretation. Negated regex class tests create large automata that timeout.
 
-**Future:** Make regex tests Miri-friendly (smaller automata or split tests) to enable full Miri coverage.
+---
+
+### Phase 1b: Miri Full Coverage
+**Status:** NOT STARTED
+**Priority:** Critical (do this next)
+
+Make regex tests Miri-friendly to enable full test suite under Miri.
+
+**Tasks:**
+- [ ] Investigate why negated class tests are slow (large automata?)
+- [ ] Split or simplify regex tests for Miri compatibility
+- [ ] Update CI to run full `cargo +nightly miri test`
+- [ ] Remove targeted test workaround
 
 **CI Addition:**
 ```yaml
