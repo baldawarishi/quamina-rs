@@ -49,30 +49,27 @@ Miri detects undefined behavior in unsafe Rust code. Gold standard for UB detect
 **Status:** COMPLETE
 **Priority:** Critical
 
-Enabled full test suite under Miri by marking slow tests to skip.
+Full Miri coverage with explicit rationale for each skipped test.
 
-**Tasks:**
-- [x] Investigate why negated class tests are slow (large automata?)
-- [x] Add Miri-friendly alternatives for slow tests (positive character classes)
-- [x] Skip tests incompatible with Miri (large Unicode ranges, file I/O, multi-threading)
-- [x] Update CI to run full `cargo +nightly miri test` with 20-minute timeout
-- [x] Remove targeted test workaround
+**Key Insight:** Quamina uses I-Regexp (RFC 9485). Unicode category patterns like `~p{L}` are valid I-Regexp but create automata covering ~130K codepoints, which is slow under Miri interpretation.
 
-**Tests skipped under Miri:**
-- Negated character classes (`[^abc]`, `~P{C}`) - expand to huge Unicode ranges
-- Unicode category patterns (`~p{L}`, `~i`, `~c`) - large character ranges
-- File I/O tests - Miri isolation doesn't support filesystem
-- Multi-threaded tests - too slow under Miri interpretation
-- Large integration tests (100+ patterns) - too slow
+**Miri-Friendly Tests Added:**
+| Test | Exercises | Replaces |
+|------|-----------|----------|
+| `test_arena_nfa_star_plus_miri_friendly` | Arena NFA cycles | `test_negated_category_star_edge_cases` |
+| `test_nfa_positive_class_miri_friendly` | SmallTable NFA | `test_negated_class_nfa` |
+| `test_cidr_miri_friendly` | CIDR matching | `test_cidr_ipv4_various_prefixes` |
+| `test_concurrent_miri_friendly` | Thread safety | `test_arc_concurrent_read_write` |
+| `test_memory_cleanup_miri_friendly` | Add/delete/rebuild | `test_arc_memory_cleanup` |
 
-**Coverage maintained via:**
-- `test_arena_nfa_star_plus_miri_friendly` - arena NFA with positive classes
-- `test_nfa_positive_class_miri_friendly` - non-arena NFA path
-- All unsafe code in `flatten_json`, `thread_safe`, `small_table` still tested
+**Skipped Tests with Rationale (in code comments):**
+- Pattern-size tests: Cannot be broken down - automaton size IS the issue
+- File I/O test: Miri isolation blocks filesystem access
+- Full concurrency/memory tests: Miri-friendly versions cover same code paths
 
 **References:**
+- [RFC 9485 I-Regexp](https://datatracker.ietf.org/doc/rfc9485/)
 - [Miri GitHub](https://github.com/rust-lang/miri)
-- [Miri POPL 2026 Paper](https://dl.acm.org/doi/10.1145/3776690)
 
 ---
 
@@ -237,8 +234,8 @@ transmute_ptr_to_ptr = "warn"
 
 | Date | Phase | Action | Result |
 |------|-------|--------|--------|
-| 2026-01-25 | 1 | Miri integration | Complete - targeted tests on unsafe code pass (flatten_json, thread_safe, small_table) |
-| 2026-01-25 | 1b | Miri full coverage | Complete - full test suite runs, slow tests skipped via cfg_attr |
+| 2026-01-25 | 1 | Miri integration | Complete - CI runs Miri on unsafe modules |
+| 2026-01-25 | 1b | Miri full coverage | Complete - 5 Miri-friendly tests added, rationale documented in code |
 
 ---
 

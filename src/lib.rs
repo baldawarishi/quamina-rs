@@ -3328,8 +3328,12 @@ mod tests {
         }
     }
 
+    // MIRI SKIP RATIONALE: This test reads testdata/wwords.txt from disk.
+    // Miri runs with isolation enabled by default, blocking filesystem access.
+    // Cannot be broken down - the test's purpose is to validate against real word list.
+    // Coverage: test_anything_but_* tests exercise same anything-but matching without file I/O.
     #[test]
-    #[cfg_attr(miri, ignore)] // File I/O not supported under Miri isolation
+    #[cfg_attr(miri, ignore)]
     fn test_anything_but_wordle_words() {
         // Based on Go quamina's TestAnythingButMatching (anything_but_test.go:150)
         // Tests anything-but against wordle word list with edge case "problem words"
@@ -5871,8 +5875,34 @@ mod tests {
         assert!(m4.is_empty(), "192.168.1.1 should not match 10.0.0.0/24");
     }
 
+    /// Miri-friendly CIDR test - exercises same CIDR matching code with minimal patterns.
+    /// Full test below covers more prefix lengths and edge cases.
     #[test]
-    #[cfg_attr(miri, ignore)] // Many patterns and iterations, too slow for Miri
+    fn test_cidr_miri_friendly() {
+        let mut q = Quamina::new();
+
+        // Single CIDR pattern - exercises CIDR parsing and matching
+        q.add_pattern("net", r#"{"ip": [{"cidr": "10.0.0.0/8"}]}"#)
+            .unwrap();
+
+        // Match within range
+        let m1 = q
+            .matches_for_event(r#"{"ip": "10.1.2.3"}"#.as_bytes())
+            .unwrap();
+        assert!(m1.contains(&"net"), "10.1.2.3 should match 10.0.0.0/8");
+
+        // No match outside range
+        let m2 = q
+            .matches_for_event(r#"{"ip": "11.0.0.1"}"#.as_bytes())
+            .unwrap();
+        assert!(!m2.contains(&"net"), "11.0.0.1 should not match 10.0.0.0/8");
+    }
+
+    // MIRI SKIP RATIONALE: Tests 4 CIDR patterns with 6 match operations. While not huge,
+    // CIDR matching involves IP parsing and range checks that are slow under Miri.
+    // Coverage: test_cidr_miri_friendly above exercises same CIDR code path with 1 pattern.
+    #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_cidr_ipv4_various_prefixes() {
         // Test different prefix lengths
         let mut q = Quamina::new();
@@ -6575,8 +6605,56 @@ mod tests {
         assert_eq!(q2.pattern_count(), 1); // p2 remains after p1 deleted
     }
 
+    /// Miri-friendly concurrency test - 2 threads, minimal iterations.
+    /// Exercises thread-safety of Arc<RwLock<Quamina>> with reduced overhead.
     #[test]
-    #[cfg_attr(miri, ignore)] // Multi-threaded tests are too slow under Miri interpretation
+    fn test_concurrent_miri_friendly() {
+        use std::sync::Arc;
+        use std::thread;
+
+        let q: Arc<std::sync::RwLock<Quamina<String>>> =
+            Arc::new(std::sync::RwLock::new(Quamina::new()));
+
+        // Add one initial pattern
+        {
+            let mut guard = q.write().unwrap();
+            guard
+                .add_pattern("init".to_string(), r#"{"f": ["v"]}"#)
+                .unwrap();
+        }
+
+        let q_reader = Arc::clone(&q);
+        let q_writer = Arc::clone(&q);
+
+        // One reader, one writer - minimal but exercises thread safety
+        let reader = thread::spawn(move || {
+            for _ in 0..3 {
+                let guard = q_reader.read().unwrap();
+                let _ = guard.matches_for_event(r#"{"f": "v"}"#.as_bytes());
+            }
+        });
+
+        let writer = thread::spawn(move || {
+            for i in 0..3 {
+                let mut guard = q_writer.write().unwrap();
+                let pattern = format!(r#"{{"f{}": ["v"]}}"#, i);
+                guard.add_pattern(format!("p{}", i), &pattern).unwrap();
+            }
+        });
+
+        reader.join().expect("Reader panicked");
+        writer.join().expect("Writer panicked");
+
+        // Verify final state
+        let guard = q.read().unwrap();
+        assert_eq!(guard.pattern_count(), 4); // 1 init + 3 added
+    }
+
+    // MIRI SKIP RATIONALE: Full concurrent test uses 4 threads with 1000+ iterations each.
+    // Miri interprets each thread operation, making this prohibitively slow.
+    // Coverage: test_concurrent_miri_friendly above exercises same thread-safety code paths.
+    #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_arc_concurrent_read_write() {
         // Based on Go's TestConcurrencyCore - 4 threads: 2 readers + 2 writers, no data races
         use std::sync::Arc;
@@ -6747,8 +6825,47 @@ mod tests {
         assert_eq!(matches3, vec!["id1", "id3"]);
     }
 
+    /// Miri-friendly memory cleanup test - 6 patterns instead of 100.
+    /// Exercises add → delete → rebuild lifecycle with minimal overhead.
     #[test]
-    #[cfg_attr(miri, ignore)] // Large number of patterns makes this too slow for Miri
+    fn test_memory_cleanup_miri_friendly() {
+        let mut q = Quamina::new();
+
+        // Add 6 patterns
+        for i in 0..6 {
+            let pattern = format!(r#"{{"f{}": ["v{}"]}}"#, i, i);
+            q.add_pattern(format!("p{}", i), &pattern).unwrap();
+        }
+        assert_eq!(q.pattern_count(), 6);
+
+        // Delete first 3
+        for i in 0..3 {
+            q.delete_patterns(&format!("p{}", i)).unwrap();
+        }
+        assert_eq!(q.pattern_count(), 3);
+
+        // Verify deleted don't match
+        for i in 0..3 {
+            let event = format!(r#"{{"f{}": "v{}"}}"#, i, i);
+            assert!(q.matches_for_event(event.as_bytes()).unwrap().is_empty());
+        }
+
+        // Verify remaining still match
+        for i in 3..6 {
+            let event = format!(r#"{{"f{}": "v{}"}}"#, i, i);
+            assert_eq!(q.matches_for_event(event.as_bytes()).unwrap().len(), 1);
+        }
+
+        // Rebuild via clone
+        let q2 = q.clone();
+        assert_eq!(q2.pattern_count(), 3);
+    }
+
+    // MIRI SKIP RATIONALE: Full test uses 100 patterns with add/delete/match/rebuild cycles.
+    // Each pattern operation is slow under Miri interpretation.
+    // Coverage: test_memory_cleanup_miri_friendly above exercises same lifecycle with 6 patterns.
+    #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_arc_memory_cleanup() {
         // Based on Go's TestTriggerRebuild - After delete+rebuild, memory is cleaned
         let mut q = Quamina::new();

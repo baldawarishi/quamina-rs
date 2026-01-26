@@ -908,8 +908,12 @@ mod tests {
         }
     }
 
+    // MIRI SKIP RATIONALE: Pattern `[^abc]` expands to ~1.1M Unicode codepoints (all minus 3).
+    // This creates a massive automaton that times out under Miri interpretation.
+    // Cannot be broken down - the pattern size IS the issue, not test complexity.
+    // Coverage: test_nfa_positive_class_miri_friendly exercises same SmallTable/NFA code paths.
     #[test]
-    #[cfg_attr(miri, ignore)] // Negated classes expand to huge Unicode ranges, too slow for Miri
+    #[cfg_attr(miri, ignore)]
     fn test_negated_class_nfa() {
         use crate::automaton::{traverse_nfa, NfaBuffers, VALUE_TERMINATOR};
 
@@ -1091,8 +1095,12 @@ mod tests {
         assert!(!matches("[a-z]+@[a-z]+", "foo@"), "incomplete email should not match");
     }
 
+    // MIRI SKIP RATIONALE: Patterns like `~P{C}*` and `~p{Lo}*` expand to tens of thousands
+    // of Unicode codepoints. Per Go quamina docs: "The cost in computation and memory...can be
+    // very high." Cannot be broken down - the pattern size IS the issue.
+    // Coverage: test_arena_nfa_star_plus_miri_friendly exercises same arena NFA cyclic paths.
     #[test]
-    #[cfg_attr(miri, ignore)] // Unicode category ranges are too large for Miri interpretation
+    #[cfg_attr(miri, ignore)]
     fn test_negated_category_star_edge_cases() {
         use crate::automaton::arena::{traverse_arena_nfa, ArenaNfaBuffers};
 
@@ -1581,8 +1589,12 @@ mod tests {
         assert!(parse_regexp("~C").is_ok());
     }
 
+    // MIRI SKIP RATIONALE: XML escapes `~i` (NameStartChar) and `~c` (NameChar) have 16-22 Unicode
+    // ranges including large spans like U+C0-D6, U+D8-F6, U+370-37D, etc. Creates large automata.
+    // Cannot be broken down - the escape definition IS the issue.
+    // Coverage: test_nfa_positive_class_miri_friendly exercises same NFA construction paths.
     #[test]
-    #[cfg_attr(miri, ignore)] // XML escapes ~i/~c have large Unicode ranges, too slow for Miri
+    #[cfg_attr(miri, ignore)]
     fn test_xml_escapes_nfa() {
         use crate::automaton::{traverse_nfa, NfaBuffers, VALUE_TERMINATOR};
 
@@ -1918,8 +1930,12 @@ mod tests {
         );
     }
 
+    // MIRI SKIP RATIONALE: Pattern `~p{L}` (Unicode Letter category) covers ~130K codepoints.
+    // This test verifies caching behavior which requires building the full automaton twice.
+    // Cannot be broken down - testing cache requires the expensive pattern.
+    // Coverage: Caching is a performance optimization; NFA correctness tested via simpler patterns.
     #[test]
-    #[cfg_attr(miri, ignore)] // Unicode category ~p{L} creates huge automaton, too slow for Miri
+    #[cfg_attr(miri, ignore)]
     fn test_shell_caching_nfa_correctness() {
         use crate::automaton::{traverse_nfa, NfaBuffers, VALUE_TERMINATOR};
 
