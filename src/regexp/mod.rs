@@ -849,7 +849,67 @@ mod tests {
         );
     }
 
+    /// Miri-friendly test for non-arena NFA paths. Uses positive character classes
+    /// which are fast, while still exercising SmallTable construction and traverse_nfa.
     #[test]
+    fn test_nfa_positive_class_miri_friendly() {
+        use crate::automaton::{traverse_nfa, NfaBuffers, VALUE_TERMINATOR};
+
+        // Test various positive character class patterns - these exercise the same
+        // SmallTable code paths as negated classes but without the huge Unicode ranges.
+        let root = parse_regexp("[a-z]").unwrap();
+        let (table, field_matcher) = make_regexp_nfa(root, false);
+        let mut bufs = NfaBuffers::new();
+
+        // Should match lowercase letters
+        for ch in b"abc" {
+            let value = vec![*ch, VALUE_TERMINATOR];
+            bufs.clear();
+            traverse_nfa(&table, &value, &mut bufs);
+            assert!(
+                bufs.transitions
+                    .iter()
+                    .any(|m| Arc::ptr_eq(m, &field_matcher)),
+                "Pattern [a-z] should match '{}'",
+                *ch as char
+            );
+        }
+
+        // Should NOT match uppercase or digits
+        for ch in b"ABC123" {
+            let value = vec![*ch, VALUE_TERMINATOR];
+            bufs.clear();
+            traverse_nfa(&table, &value, &mut bufs);
+            assert!(
+                !bufs
+                    .transitions
+                    .iter()
+                    .any(|m| Arc::ptr_eq(m, &field_matcher)),
+                "Pattern [a-z] should NOT match '{}'",
+                *ch as char
+            );
+        }
+
+        // Test multiple ranges: [a-zA-Z0-9]
+        let root = parse_regexp("[a-zA-Z0-9]").unwrap();
+        let (table, field_matcher) = make_regexp_nfa(root, false);
+
+        for ch in b"aZ5" {
+            let value = vec![*ch, VALUE_TERMINATOR];
+            bufs.clear();
+            traverse_nfa(&table, &value, &mut bufs);
+            assert!(
+                bufs.transitions
+                    .iter()
+                    .any(|m| Arc::ptr_eq(m, &field_matcher)),
+                "Pattern [a-zA-Z0-9] should match '{}'",
+                *ch as char
+            );
+        }
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)] // Negated classes expand to huge Unicode ranges, too slow for Miri
     fn test_negated_class_nfa() {
         use crate::automaton::{traverse_nfa, NfaBuffers, VALUE_TERMINATOR};
 
@@ -979,7 +1039,60 @@ mod tests {
         );
     }
 
+    /// Fast test for arena NFA with star/plus - uses positive character classes only.
+    /// Negated classes (including [^abc]) expand to full Unicode range and are too slow for Miri.
     #[test]
+    fn test_arena_nfa_star_plus_miri_friendly() {
+        use crate::automaton::arena::{
+            traverse_arena_nfa, ArenaNfaBuffers, ARENA_VALUE_TERMINATOR,
+        };
+
+        // Helper to test if a pattern matches a string
+        fn matches(pattern: &str, input: &str) -> bool {
+            let root = parse_regexp(pattern).expect(&format!("Failed to parse: {}", pattern));
+            let (arena, start, field_matcher) = make_regexp_nfa_arena(root, false);
+            let mut bufs = ArenaNfaBuffers::with_capacity(arena.len());
+
+            let mut value: Vec<u8> = input.as_bytes().to_vec();
+            value.push(ARENA_VALUE_TERMINATOR);
+            traverse_arena_nfa(&arena, start, &value, &mut bufs);
+
+            bufs.transitions
+                .iter()
+                .any(|m| Arc::ptr_eq(m, &field_matcher))
+        }
+
+        // Test positive class with star - exercises arena NFA cyclic paths
+        assert!(matches("[abc]*", ""), "[abc]* should match empty");
+        assert!(matches("[abc]*", "a"), "[abc]* should match 'a'");
+        assert!(matches("[abc]*", "abc"), "[abc]* should match 'abc'");
+        assert!(matches("[abc]*", "aabbcc"), "[abc]* should match 'aabbcc'");
+        assert!(!matches("[abc]*", "x"), "[abc]* should not match 'x'");
+        assert!(!matches("[abc]*", "abx"), "[abc]* should not match 'abx'");
+
+        // Test positive class with plus
+        assert!(!matches("[abc]+", ""), "[abc]+ should not match empty");
+        assert!(matches("[abc]+", "a"), "[abc]+ should match 'a'");
+        assert!(matches("[abc]+", "abc"), "[abc]+ should match 'abc'");
+        assert!(!matches("[abc]+", "x"), "[abc]+ should not match 'x'");
+
+        // Test range with star
+        assert!(matches("[a-z]*", ""), "[a-z]* should match empty");
+        assert!(matches("[a-z]*", "hello"), "[a-z]* should match 'hello'");
+        assert!(!matches("[a-z]*", "Hello"), "[a-z]* should not match 'Hello'");
+
+        // Test range with plus
+        assert!(!matches("[0-9]+", ""), "[0-9]+ should not match empty");
+        assert!(matches("[0-9]+", "123"), "[0-9]+ should match '123'");
+        assert!(!matches("[0-9]+", "12a"), "[0-9]+ should not match '12a'");
+
+        // Test combined patterns with quantifiers
+        assert!(matches("[a-z]+@[a-z]+", "foo@bar"), "email-like should match");
+        assert!(!matches("[a-z]+@[a-z]+", "foo@"), "incomplete email should not match");
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)] // Unicode category ranges are too large for Miri interpretation
     fn test_negated_category_star_edge_cases() {
         use crate::automaton::arena::{traverse_arena_nfa, ArenaNfaBuffers};
 
@@ -1469,6 +1582,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)] // XML escapes ~i/~c have large Unicode ranges, too slow for Miri
     fn test_xml_escapes_nfa() {
         use crate::automaton::{traverse_nfa, NfaBuffers, VALUE_TERMINATOR};
 
@@ -1805,6 +1919,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)] // Unicode category ~p{L} creates huge automaton, too slow for Miri
     fn test_shell_caching_nfa_correctness() {
         use crate::automaton::{traverse_nfa, NfaBuffers, VALUE_TERMINATOR};
 

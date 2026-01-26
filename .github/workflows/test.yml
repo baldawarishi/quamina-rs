@@ -23,13 +23,11 @@ jobs:
 
   miri:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@nightly
         with:
           components: miri
-      - name: Run Miri on unsafe code (flatten_json, thread_safe, small_table)
-        run: |
-          cargo +nightly miri test flatten_json
-          cargo +nightly miri test thread_safe
-          cargo +nightly miri test small_table
+      - name: Run Miri
+        run: cargo +nightly miri test

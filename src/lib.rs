@@ -3329,6 +3329,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)] // File I/O not supported under Miri isolation
     fn test_anything_but_wordle_words() {
         // Based on Go quamina's TestAnythingButMatching (anything_but_test.go:150)
         // Tests anything-but against wordle word list with edge case "problem words"
@@ -5871,6 +5872,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)] // Many patterns and iterations, too slow for Miri
     fn test_cidr_ipv4_various_prefixes() {
         // Test different prefix lengths
         let mut q = Quamina::new();
@@ -6574,6 +6576,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)] // Multi-threaded tests are too slow under Miri interpretation
     fn test_arc_concurrent_read_write() {
         // Based on Go's TestConcurrencyCore - 4 threads: 2 readers + 2 writers, no data races
         use std::sync::Arc;
@@ -6745,6 +6748,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)] // Large number of patterns makes this too slow for Miri
     fn test_arc_memory_cleanup() {
         // Based on Go's TestTriggerRebuild - After delete+rebuild, memory is cleaned
         let mut q = Quamina::new();
