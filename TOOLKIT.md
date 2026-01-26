@@ -1,7 +1,8 @@
 # Quality Assurance Toolkit
 
-This document tracks the implementation of quality tools for quamina-rs.
-Keep under 300 lines. Update as work progresses.
+This document tracks the implementation of quality tools for quamina-rs. 
+The tools listed are probably the right ones but we haven't gone enough in depth to be certain.
+Keep under 300 lines, refactoring / rephrasing / reorganizing as needed when you learn more. Update as work progresses. 
 
 ## Workflow Principles
 
@@ -9,7 +10,7 @@ Keep under 300 lines. Update as work progresses.
 - **Use todos** - Manage context window, track progress across sessions
 - **Read code directly** - Don't trust past interpretations
 - **Refactor as appropriate** - Mirror external code when needed
-- **Algorithmic parity matters** - Both CPU and memory; ask on tradeoffs
+- **Algorithmic parity matters** - Both CPU and memory; ask the human for input when tradeoffs need to be made.
 
 Reference: [Ralph Wiggum Loop](https://linearb.io/dev-interrupted/podcast/inventing-the-ralph-wiggum-loop)
 
@@ -29,16 +30,16 @@ Reference: [Ralph Wiggum Loop](https://linearb.io/dev-interrupted/podcast/invent
 ## Tool Implementation Plan
 
 ### Phase 1: Miri Integration
-**Status:** NOT STARTED
+**Status:** COMPLETE
 **Priority:** Critical
 
 Miri detects undefined behavior in unsafe Rust code. Gold standard for UB detection.
 
 **Tasks:**
-- [ ] Add Miri to CI workflow (nightly toolchain required)
-- [ ] Run `cargo +nightly miri test` locally first
-- [ ] Fix any UB detected (especially transmute and Send/Sync impls)
-- [ ] Add Miri job to `.github/workflows/test.yml`
+- [x] Add Miri to CI workflow (nightly toolchain required)
+- [x] Run `cargo +nightly miri test` locally first
+- [x] Fix any UB detected (especially transmute and Send/Sync impls) - None found
+- [x] Add Miri job to `.github/workflows/test.yml`
 
 **CI Addition:**
 ```yaml
@@ -220,7 +221,7 @@ transmute_ptr_to_ptr = "warn"
 
 | Date | Phase | Action | Result |
 |------|-------|--------|--------|
-| TBD | 1 | Miri integration | - |
+| 2026-01-25 | 1 | Miri integration | Complete - no UB detected in 100+ tests |
 
 ---
 

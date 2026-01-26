@@ -20,3 +20,13 @@ jobs:
         run: cargo fmt --check
       - name: Run clippy
         run: cargo clippy -- -D warnings
+
+  miri:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: miri
+      - name: Run Miri
+        run: cargo +nightly miri test
