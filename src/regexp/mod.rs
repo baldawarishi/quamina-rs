@@ -1083,7 +1083,10 @@ mod tests {
         // Test range with star
         assert!(matches("[a-z]*", ""), "[a-z]* should match empty");
         assert!(matches("[a-z]*", "hello"), "[a-z]* should match 'hello'");
-        assert!(!matches("[a-z]*", "Hello"), "[a-z]* should not match 'Hello'");
+        assert!(
+            !matches("[a-z]*", "Hello"),
+            "[a-z]* should not match 'Hello'"
+        );
 
         // Test range with plus
         assert!(!matches("[0-9]+", ""), "[0-9]+ should not match empty");
@@ -1091,8 +1094,14 @@ mod tests {
         assert!(!matches("[0-9]+", "12a"), "[0-9]+ should not match '12a'");
 
         // Test combined patterns with quantifiers
-        assert!(matches("[a-z]+@[a-z]+", "foo@bar"), "email-like should match");
-        assert!(!matches("[a-z]+@[a-z]+", "foo@"), "incomplete email should not match");
+        assert!(
+            matches("[a-z]+@[a-z]+", "foo@bar"),
+            "email-like should match"
+        );
+        assert!(
+            !matches("[a-z]+@[a-z]+", "foo@"),
+            "incomplete email should not match"
+        );
     }
 
     // MIRI SKIP RATIONALE: Patterns like `~P{C}*` and `~p{Lo}*` expand to tens of thousands

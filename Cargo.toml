@@ -18,6 +18,11 @@ flate2 = "1.0"
 rand = "0.8"
 regex = "1"  # For benchmarking comparisons
 
+[dev-dependencies.cargo-husky]
+version = "1"
+default-features = false
+features = ["precommit-hook", "run-cargo-fmt", "run-cargo-test", "run-cargo-clippy"]
+
 [[bench]]
 name = "matching"
 harness = false
