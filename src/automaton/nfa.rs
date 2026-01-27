@@ -6,7 +6,9 @@
 
 use std::sync::Arc;
 
-use super::small_table::{FaState, FieldMatcher, NfaBuffers, SmallTable, StatePtr, VALUE_TERMINATOR};
+use super::small_table::{
+    FaState, FieldMatcher, NfaBuffers, SmallTable, StatePtr, VALUE_TERMINATOR,
+};
 
 /// Traverse a DFA (deterministic finite automaton) on a value.
 ///
