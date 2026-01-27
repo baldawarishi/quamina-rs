@@ -363,7 +363,11 @@ mod tests {
         );
     }
 
+    // MIRI SKIP RATIONALE: [abc]+ NFA construction and traversal takes ~25s under Miri.
+    // Coverage: test_parse_plus verifies plus quantifier parsing; arena NFA tests cover
+    // plus semantics via test_arena_nfa_plus_simple.
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_nfa_plus_quantifier() {
         use crate::automaton::{traverse_nfa, NfaBuffers, VALUE_TERMINATOR};
 
@@ -419,7 +423,11 @@ mod tests {
         );
     }
 
+    // MIRI SKIP RATIONALE: [abc]* NFA construction and traversal takes ~25s under Miri.
+    // Coverage: test_parse_star verifies star quantifier parsing; arena NFA tests cover
+    // star semantics via test_traverse_arena_nfa_star_cyclic.
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_nfa_star_quantifier() {
         use crate::automaton::{traverse_nfa, NfaBuffers, VALUE_TERMINATOR};
 
@@ -459,6 +467,50 @@ mod tests {
                 .iter()
                 .any(|m| Arc::ptr_eq(m, &field_matcher)),
             "Pattern [abc]* should match 'abc'"
+        );
+    }
+
+    /// Miri-only: exercises standard (non-arena) make_regexp_nfa + traverse_nfa for plus
+    /// and star quantifiers using single-char patterns (a+, a*) to avoid character-class
+    /// expansion overhead. Covers the gap left by skipping test_nfa_plus_quantifier and
+    /// test_nfa_star_quantifier.
+    #[test]
+    #[cfg(miri)]
+    fn test_nfa_plus_star_miri_minimal() {
+        use crate::automaton::{traverse_nfa, NfaBuffers, VALUE_TERMINATOR};
+
+        let mut bufs = NfaBuffers::new();
+
+        // Plus: a+ should match "a" but not empty
+        let root = parse_regexp("a+").unwrap();
+        let (table, fm) = make_regexp_nfa(root, false);
+        bufs.clear();
+        traverse_nfa(&table, &[b'a', VALUE_TERMINATOR], &mut bufs);
+        assert!(
+            bufs.transitions.iter().any(|m| Arc::ptr_eq(m, &fm)),
+            "a+ should match 'a'"
+        );
+        bufs.clear();
+        traverse_nfa(&table, &[VALUE_TERMINATOR], &mut bufs);
+        assert!(
+            !bufs.transitions.iter().any(|m| Arc::ptr_eq(m, &fm)),
+            "a+ should NOT match empty"
+        );
+
+        // Star: a* should match empty and "a"
+        let root = parse_regexp("a*").unwrap();
+        let (table, fm) = make_regexp_nfa(root, false);
+        bufs.clear();
+        traverse_nfa(&table, &[VALUE_TERMINATOR], &mut bufs);
+        assert!(
+            bufs.transitions.iter().any(|m| Arc::ptr_eq(m, &fm)),
+            "a* should match empty"
+        );
+        bufs.clear();
+        traverse_nfa(&table, &[b'a', VALUE_TERMINATOR], &mut bufs);
+        assert!(
+            bufs.transitions.iter().any(|m| Arc::ptr_eq(m, &fm)),
+            "a* should match 'a'"
         );
     }
 
@@ -985,9 +1037,13 @@ mod tests {
         }
     }
 
+    // MIRI SKIP RATIONALE: Even with single [a-z]* pattern, NFA construction for character
+    // class with star quantifier takes ~28s under Miri. Star matching is covered by
+    // test_nfa_star_quantifier (also skipped) and parse-level tests.
     /// Miri-friendly version of test_star_matches_empty — 1 pattern ([a-z]*) instead of 4.
     /// Avoids `.*` which expands to full Unicode range.
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_star_matches_empty_miri_friendly() {
         use crate::automaton::{traverse_nfa, NfaBuffers, VALUE_TERMINATOR};
 
@@ -1384,9 +1440,13 @@ mod tests {
         }
     }
 
+    // MIRI SKIP RATIONALE: Building 4 NFAs with quantifiers (star/plus via range syntax)
+    // takes ~101s under Miri. Coverage: test_range_quantifier_exact_one and parse-level
+    // tests verify range quantifier semantics without NFA traversal overhead.
     /// Miri-friendly combined test for star and plus range quantifier equivalence.
     /// Tests a{0,} == a* and a{1,} == a+ with 2 inputs each instead of 4-5.
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_range_quantifier_equivalence_miri_friendly() {
         use crate::automaton::{traverse_nfa, NfaBuffers, VALUE_TERMINATOR};
 
@@ -1936,7 +1996,11 @@ mod tests {
         assert!(root[0][0].runes.len() >= 2);
     }
 
+    // MIRI SKIP RATIONALE: Multi-char escape (~d = [0-9]) with quantifier expands to NFA
+    // with many transitions, taking ~28s under Miri. Coverage: test_multi_char_escapes_parse
+    // and test_multi_char_escapes_nfa test escapes without quantifiers.
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_multi_char_escape_with_quantifier() {
         use crate::automaton::{traverse_nfa, NfaBuffers, VALUE_TERMINATOR};
 
@@ -1979,6 +2043,34 @@ mod tests {
                 .iter()
                 .any(|m| Arc::ptr_eq(m, &field_matcher)),
             "a~s{{0,3}}b should match 'a  b'"
+        );
+    }
+
+    /// Miri-only: exercises multi-char escape (~d) combined with a quantifier through
+    /// make_regexp_nfa + traverse_nfa. Uses ~d{1} (exactly-1, no star/plus expansion)
+    /// to stay fast. Covers the gap left by skipping test_multi_char_escape_with_quantifier.
+    #[test]
+    #[cfg(miri)]
+    fn test_multi_char_escape_quantifier_miri_minimal() {
+        use crate::automaton::{traverse_nfa, NfaBuffers, VALUE_TERMINATOR};
+
+        // ~d{1} = exactly one digit — exercises escape expansion + range quantifier path
+        let root = parse_regexp("~d{1}").unwrap();
+        let (table, fm) = make_regexp_nfa(root, false);
+        let mut bufs = NfaBuffers::new();
+
+        bufs.clear();
+        traverse_nfa(&table, &[b'5', VALUE_TERMINATOR], &mut bufs);
+        assert!(
+            bufs.transitions.iter().any(|m| Arc::ptr_eq(m, &fm)),
+            "~d{{1}} should match '5'"
+        );
+
+        bufs.clear();
+        traverse_nfa(&table, &[b'x', VALUE_TERMINATOR], &mut bufs);
+        assert!(
+            !bufs.transitions.iter().any(|m| Arc::ptr_eq(m, &fm)),
+            "~d{{1}} should NOT match 'x'"
         );
     }
 

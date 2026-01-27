@@ -2216,7 +2216,11 @@ mod tests {
         );
     }
 
+    // MIRI SKIP RATIONALE: 18 regexp patterns each built into full Quamina instances with
+    // JSON parsing. Takes ~75s under Miri. Coverage: regexp unit tests in regexp/mod.rs
+    // cover NFA construction and matching.
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_regexp_end2end() {
         // Comprehensive regexp tests ported from Go's TestRegexpEnd2End
         use crate::regexp_samples::RegexpSample;
@@ -4943,9 +4947,12 @@ mod tests {
         }
     }
 
+    // MIRI SKIP RATIONALE: Reads citylots2.json.gz from filesystem; Miri blocks file I/O
+    // by default. Also processes ~213K events which would be extremely slow under Miri.
     /// Port of Go's TestRulerCl2
     /// Tests multiple operators against citylots2 dataset (~213K events)
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_stress_citylots2_operators() {
         use flate2::read::GzDecoder;
         use std::fs::File;
@@ -5664,7 +5671,10 @@ mod tests {
         );
     }
 
+    // MIRI SKIP RATIONALE: Iterates over 992 REGEXP_SAMPLES, building and traversing NFAs for
+    // each. Under Miri this takes 8+ minutes and causes the CI job to time out.
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_regexp_validity() {
         use crate::automaton::arena::{
             traverse_arena_nfa, ArenaNfaBuffers, ARENA_VALUE_TERMINATOR,
@@ -5926,6 +5936,82 @@ mod tests {
         );
     }
 
+    /// Miri-only: exercises parse_regexp + make_regexp_nfa + traverse_nfa on a handful of
+    /// representative patterns (alternation, group, char range, dot) without iterating
+    /// REGEXP_SAMPLES. Covers the critical gap left by skipping test_regexp_validity.
+    #[test]
+    #[cfg(miri)]
+    fn test_regexp_validity_miri_minimal() {
+        use crate::automaton::{traverse_nfa, NfaBuffers, VALUE_TERMINATOR};
+        use crate::regexp::{make_regexp_nfa, parse_regexp};
+        use std::sync::Arc;
+
+        let mut bufs = NfaBuffers::new();
+
+        // Alternation
+        let root = parse_regexp("a|b").unwrap();
+        let (table, fm) = make_regexp_nfa(root, false);
+        bufs.clear();
+        traverse_nfa(&table, &[b'a', VALUE_TERMINATOR], &mut bufs);
+        assert!(bufs.transitions.iter().any(|m| Arc::ptr_eq(m, &fm)));
+        bufs.clear();
+        traverse_nfa(&table, &[b'x', VALUE_TERMINATOR], &mut bufs);
+        assert!(!bufs.transitions.iter().any(|m| Arc::ptr_eq(m, &fm)));
+
+        // Group
+        let root = parse_regexp("a(h|i)z").unwrap();
+        let (table, fm) = make_regexp_nfa(root, false);
+        bufs.clear();
+        traverse_nfa(&table, &[b'a', b'h', b'z', VALUE_TERMINATOR], &mut bufs);
+        assert!(bufs.transitions.iter().any(|m| Arc::ptr_eq(m, &fm)));
+
+        // Char range
+        let root = parse_regexp("[a-c]").unwrap();
+        let (table, fm) = make_regexp_nfa(root, false);
+        bufs.clear();
+        traverse_nfa(&table, &[b'b', VALUE_TERMINATOR], &mut bufs);
+        assert!(bufs.transitions.iter().any(|m| Arc::ptr_eq(m, &fm)));
+        bufs.clear();
+        traverse_nfa(&table, &[b'z', VALUE_TERMINATOR], &mut bufs);
+        assert!(!bufs.transitions.iter().any(|m| Arc::ptr_eq(m, &fm)));
+
+        // Dot
+        let root = parse_regexp("a.b").unwrap();
+        let (table, fm) = make_regexp_nfa(root, false);
+        bufs.clear();
+        traverse_nfa(&table, &[b'a', b'x', b'b', VALUE_TERMINATOR], &mut bufs);
+        assert!(bufs.transitions.iter().any(|m| Arc::ptr_eq(m, &fm)));
+    }
+
+    /// Miri-only: exercises regexp end-to-end through Quamina (add_pattern + matches_for_event)
+    /// with 3 diverse patterns covering alternation, groups, and char ranges.
+    /// Covers the gap left by skipping test_regexp_end2end.
+    #[test]
+    #[cfg(miri)]
+    fn test_regexp_end2end_miri_minimal() {
+        let mut q = Quamina::new();
+
+        // Alternation
+        q.add_pattern("p0", r#"{"a": [{"regexp": "abc|def"}]}"#)
+            .unwrap();
+        let m = q.matches_for_event(r#"{"a": "abc"}"#.as_bytes()).unwrap();
+        assert!(m.contains(&"p0"));
+        let m = q.matches_for_event(r#"{"a": "xyz"}"#.as_bytes()).unwrap();
+        assert!(!m.contains(&"p0"));
+
+        // Group with alternatives
+        q.add_pattern("p1", r#"{"a": [{"regexp": "a(h|i)z"}]}"#)
+            .unwrap();
+        let m = q.matches_for_event(r#"{"a": "ahz"}"#.as_bytes()).unwrap();
+        assert!(m.contains(&"p1"));
+
+        // Character range
+        q.add_pattern("p2", r#"{"a": [{"regexp": "[a-c]"}]}"#)
+            .unwrap();
+        let m = q.matches_for_event(r#"{"a": "b"}"#.as_bytes()).unwrap();
+        assert!(m.contains(&"p2"));
+    }
+
     // ============= CIDR Matching Tests =============
 
     // MIRI SKIP RATIONALE: CIDR matching involves IP parsing and automaton traversal that
@@ -5961,9 +6047,12 @@ mod tests {
         assert!(m4.is_empty(), "192.168.1.1 should not match 10.0.0.0/24");
     }
 
+    // MIRI SKIP RATIONALE: Even this "lightweight" CIDR test takes ~104s under Miri due to
+    // CIDR IP parsing overhead. Coverage: test_cidr_invalid_patterns exercises CIDR validation.
     /// Miri-friendly CIDR test - exercises CIDR parsing, matching, and invalid-IP rejection
     /// with a single /8 pattern. Covers what the slower CIDR tests do with minimal overhead.
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_cidr_miri_lightweight() {
         let mut q = Quamina::new();
 
@@ -6534,7 +6623,11 @@ mod tests {
         }
     }
 
+    // MIRI SKIP RATIONALE: Generates 10K random floats and validates Q-number encoding for
+    // each. Takes ~69s under Miri. Coverage: test_numbits_boundary_values covers encoding
+    // correctness with representative values.
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_numbits_to_qnumber_utf8() {
         // Test that Q-numbers are valid for automaton processing
         // Q-numbers use base-128 encoding (bytes 0-127), which is ASCII-compatible
