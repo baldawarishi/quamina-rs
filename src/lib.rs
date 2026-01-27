@@ -4803,9 +4803,12 @@ mod tests {
     // Stress Tests - Ported from Go quamina
     // ========================================================================
 
+    // MIRI SKIP RATIONALE: Adds 10,000 patterns and matches against 10,000 events.
+    // Takes 2+ min in normal mode, would take hours under Miri interpretation.
     /// Port of Go's TestFuzzValueMatcher
     /// Tests 10,000 random 12-character strings as patterns
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_stress_fuzz_strings() {
         use rand::{Rng, SeedableRng};
         use std::collections::HashSet;
@@ -4877,9 +4880,12 @@ mod tests {
         }
     }
 
+    // MIRI SKIP RATIONALE: Adds 10,000 numeric patterns and matches against 10,000 events.
+    // Takes 2+ min in normal mode, would take hours under Miri interpretation.
     /// Port of Go's TestFuzzWithNumbers
     /// Tests 10,000 random numbers as patterns
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_stress_fuzz_numbers() {
         use rand::{Rng, SeedableRng};
         use std::collections::HashSet;
