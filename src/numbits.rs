@@ -200,7 +200,10 @@ mod tests {
         }
     }
 
+    // MIRI SKIP RATIONALE: 10,000 random floats with sort + Q-number conversion is slow
+    // under Miri (~90s). Coverage: test_ordering_random_miri_friendly uses 50 floats.
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_ordering_random() {
         // Sort random floats and verify their Q-numbers maintain the same order
         use std::cmp::Ordering;
@@ -210,6 +213,40 @@ mod tests {
 
         // Simple LCG for reproducibility
         for _ in 0..10000 {
+            rng_state = rng_state.wrapping_mul(6364136223846793005).wrapping_add(1);
+            let random_u64 = rng_state;
+            let f = ((random_u64 as f64) / (u64::MAX as f64)) * 2_000_000_000.0 - 1_000_000_000.0;
+            floats.push(f);
+        }
+
+        floats.sort_by(|a, b| a.partial_cmp(b).unwrap_or(Ordering::Equal));
+
+        let q_nums: Vec<QNumber> = floats.iter().map(|&f| q_num_from_f64(f)).collect();
+
+        for i in 1..q_nums.len() {
+            assert!(
+                q_nums[i - 1] <= q_nums[i],
+                "Q-number ordering failed at index {}: {:?} > {:?} (floats: {} > {})",
+                i,
+                q_nums[i - 1],
+                q_nums[i],
+                floats[i - 1],
+                floats[i]
+            );
+        }
+    }
+
+    /// Miri-friendly version of test_ordering_random — 50 random floats instead of 10,000.
+    /// Same LCG algorithm, same ordering verification logic.
+    #[test]
+    fn test_ordering_random_miri_friendly() {
+        use std::cmp::Ordering;
+
+        let mut floats: Vec<f64> = Vec::new();
+        let mut rng_state = 12345u64;
+
+        // Simple LCG for reproducibility — 50 floats instead of 10,000
+        for _ in 0..50 {
             rng_state = rng_state.wrapping_mul(6364136223846793005).wrapping_add(1);
             let random_u64 = rng_state;
             let f = ((random_u64 as f64) / (u64::MAX as f64)) * 2_000_000_000.0 - 1_000_000_000.0;

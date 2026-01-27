@@ -1866,7 +1866,10 @@ mod tests {
         assert!(!q.should_rebuild());
     }
 
+    // MIRI SKIP RATIONALE: 2000 iterations of matches_for_event is slow under Miri (~100s).
+    // Coverage: test_auto_rebuild_disabled_miri_friendly exercises same logic with 5 iterations.
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_auto_rebuild_disabled() {
         let mut q = Quamina::new();
         q.set_auto_rebuild(false);
@@ -1886,6 +1889,29 @@ mod tests {
         assert!(q.should_rebuild());
 
         // maybe_rebuild returns 0 when disabled
+        let purged = q.maybe_rebuild();
+        assert_eq!(purged, 0);
+    }
+
+    /// Miri-friendly version of test_auto_rebuild_disabled — same logic, 5 iterations instead of 2000.
+    /// Verifies that auto-rebuild stays disabled regardless of activity volume.
+    #[test]
+    fn test_auto_rebuild_disabled_miri_friendly() {
+        let mut q = Quamina::new();
+        q.set_auto_rebuild(false);
+
+        q.add_pattern("p1", r#"{"x": ["a"]}"#).unwrap();
+        q.add_pattern("p2", r#"{"x": ["a"]}"#).unwrap();
+
+        q.delete_patterns(&"p1").unwrap();
+
+        // Small number of iterations — enough to exercise the code path
+        let event = br#"{"x": "a"}"#;
+        for _ in 0..5 {
+            let _ = q.matches_for_event(event).unwrap();
+        }
+
+        // maybe_rebuild returns 0 when disabled, regardless of activity
         let purged = q.maybe_rebuild();
         assert_eq!(purged, 0);
     }
@@ -3634,7 +3660,11 @@ mod tests {
         );
     }
 
+    // MIRI SKIP RATIONALE: 16 matcher types each building a separate Quamina instance plus a
+    // combined instance is slow under Miri (~71s).
+    // Coverage: test_exercise_matching_miri_friendly exercises 4 core matcher types.
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_exercise_matching_comprehensive() {
         // Based on Go quamina's TestExerciseMatching
         // Tests many different pattern types against a complex JSON event
@@ -3790,6 +3820,56 @@ mod tests {
             should_match.len(),
             "All should_match patterns should match when combined"
         );
+    }
+
+    /// Miri-friendly version of test_exercise_matching_comprehensive — tests 4 core matcher types
+    /// (exact, exists, prefix, shellstyle) instead of 16.
+    #[test]
+    fn test_exercise_matching_miri_friendly() {
+        let event = r#"{
+            "Image": {
+                "Width":  800,
+                "Height": 600,
+                "Title":  "View from 15th Floor",
+                "Thumbnail": {
+                    "Url":    "https://www.example.com/image/481989943",
+                    "Height": 125,
+                    "Width":  100
+                },
+                "Animated" : false,
+                "IDs": [116, 943, 234, 38793]
+            }
+        }"#;
+
+        let patterns: Vec<(&str, &str)> = vec![
+            (r#"{"Image": {"Width": [800]}}"#, "exact number match"),
+            (
+                r#"{"Image": {"Title": [{"exists": true}]}}"#,
+                "exists true on Title",
+            ),
+            (
+                r#"{"Image": {"Thumbnail": {"Url": [{"prefix": "https:"}]}}}"#,
+                "prefix",
+            ),
+            (
+                r#"{"Image": {"Thumbnail": {"Url": [{"shellstyle": "*9943"}]}}}"#,
+                "shellstyle suffix",
+            ),
+        ];
+
+        for (pattern, desc) in &patterns {
+            let mut q = Quamina::new();
+            q.add_pattern(*desc, pattern)
+                .unwrap_or_else(|e| panic!("Pattern should parse: {} - {}", desc, e));
+
+            let matches = q.matches_for_event(event.as_bytes()).unwrap();
+            assert!(
+                !matches.is_empty(),
+                "Pattern '{}' should match: {}",
+                desc,
+                pattern
+            );
+        }
     }
 
     #[test]
@@ -5848,7 +5928,10 @@ mod tests {
 
     // ============= CIDR Matching Tests =============
 
+    // MIRI SKIP RATIONALE: CIDR matching involves IP parsing and automaton traversal that
+    // is slow under Miri interpretation (~37s). Coverage: test_cidr_miri_lightweight.
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_cidr_ipv4_basic() {
         // Test basic IPv4 CIDR matching
         let mut q = Quamina::new();
@@ -5878,10 +5961,10 @@ mod tests {
         assert!(m4.is_empty(), "192.168.1.1 should not match 10.0.0.0/24");
     }
 
-    /// Miri-friendly CIDR test - exercises same CIDR matching code with minimal patterns.
-    /// Full test below covers more prefix lengths and edge cases.
+    /// Miri-friendly CIDR test - exercises CIDR parsing, matching, and invalid-IP rejection
+    /// with a single /8 pattern. Covers what the slower CIDR tests do with minimal overhead.
     #[test]
-    fn test_cidr_miri_friendly() {
+    fn test_cidr_miri_lightweight() {
         let mut q = Quamina::new();
 
         // Single CIDR pattern - exercises CIDR parsing and matching
@@ -5899,11 +5982,17 @@ mod tests {
             .matches_for_event(r#"{"ip": "11.0.0.1"}"#.as_bytes())
             .unwrap();
         assert!(!m2.contains(&"net"), "11.0.0.1 should not match 10.0.0.0/8");
+
+        // Invalid IP should not match (covers test_cidr_non_ip_values path)
+        let m3 = q
+            .matches_for_event(r#"{"ip": "not-an-ip"}"#.as_bytes())
+            .unwrap();
+        assert!(m3.is_empty(), "Non-IP string should not match CIDR");
     }
 
     // MIRI SKIP RATIONALE: Tests 4 CIDR patterns with 6 match operations. While not huge,
     // CIDR matching involves IP parsing and range checks that are slow under Miri.
-    // Coverage: test_cidr_miri_friendly above exercises same CIDR code path with 1 pattern.
+    // Coverage: test_cidr_miri_lightweight above exercises same CIDR code path with 1 pattern.
     #[test]
     #[cfg_attr(miri, ignore)]
     fn test_cidr_ipv4_various_prefixes() {
@@ -6014,7 +6103,10 @@ mod tests {
         assert!(m2.is_empty(), "Non-loopback should not match /128");
     }
 
+    // MIRI SKIP RATIONALE: CIDR matching with invalid IP values is slow under Miri (~35s).
+    // Coverage: test_cidr_miri_lightweight covers the invalid-IP rejection path.
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_cidr_non_ip_values() {
         // Non-IP values should not match CIDR patterns
         let mut q = Quamina::new();
@@ -6059,7 +6151,10 @@ mod tests {
         assert!(r4.is_err(), "Invalid IP should fail");
     }
 
+    // MIRI SKIP RATIONALE: Multiple CIDR patterns with combined matching is slow under Miri (~185s).
+    // Coverage: test_cidr_miri_lightweight covers CIDR matching with a single pattern.
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_cidr_with_other_matchers() {
         // CIDR can be combined with other matchers on the same field
         let mut q = Quamina::new();

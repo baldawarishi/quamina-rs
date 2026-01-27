@@ -954,7 +954,11 @@ mod tests {
         }
     }
 
+    // MIRI SKIP RATIONALE: 4 star patterns each building an NFA including `.*` which expands to
+    // full Unicode range, slow under Miri (~87s).
+    // Coverage: test_star_matches_empty_miri_friendly exercises 1 pattern ([a-z]*).
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_star_matches_empty() {
         use crate::automaton::{traverse_nfa, NfaBuffers, VALUE_TERMINATOR};
 
@@ -979,6 +983,27 @@ mod tests {
                 pattern
             );
         }
+    }
+
+    /// Miri-friendly version of test_star_matches_empty — 1 pattern ([a-z]*) instead of 4.
+    /// Avoids `.*` which expands to full Unicode range.
+    #[test]
+    fn test_star_matches_empty_miri_friendly() {
+        use crate::automaton::{traverse_nfa, NfaBuffers, VALUE_TERMINATOR};
+
+        let root = parse_regexp("[a-z]*").unwrap();
+        let (table, field_matcher) = make_regexp_nfa(root, false);
+        let mut bufs = NfaBuffers::new();
+
+        let empty = vec![VALUE_TERMINATOR];
+        bufs.clear();
+        traverse_nfa(&table, &empty, &mut bufs);
+        assert!(
+            bufs.transitions
+                .iter()
+                .any(|m| Arc::ptr_eq(m, &field_matcher)),
+            "Pattern [a-z]* should match empty string"
+        );
     }
 
     #[test]
@@ -1264,7 +1289,11 @@ mod tests {
         }
     }
 
+    // MIRI SKIP RATIONALE: Building two NFAs (a{1,} and a+) with REGEXP_QUANTIFIER_MAX expansion
+    // is slow under Miri (~51s).
+    // Coverage: test_range_quantifier_equivalence_miri_friendly covers star+plus equivalence.
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_range_quantifier_equivalence_plus() {
         use crate::automaton::{traverse_nfa, NfaBuffers, VALUE_TERMINATOR};
 
@@ -1308,7 +1337,11 @@ mod tests {
         }
     }
 
+    // MIRI SKIP RATIONALE: Building two NFAs (a{0,} and a*) with REGEXP_QUANTIFIER_MAX expansion
+    // is slow under Miri (~51s).
+    // Coverage: test_range_quantifier_equivalence_miri_friendly covers star+plus equivalence.
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_range_quantifier_equivalence_star() {
         use crate::automaton::{traverse_nfa, NfaBuffers, VALUE_TERMINATOR};
 
@@ -1346,6 +1379,65 @@ mod tests {
                 should_match,
                 "Pattern should {} match '{}'",
                 if should_match { "" } else { "NOT" },
+                desc
+            );
+        }
+    }
+
+    /// Miri-friendly combined test for star and plus range quantifier equivalence.
+    /// Tests a{0,} == a* and a{1,} == a+ with 2 inputs each instead of 4-5.
+    #[test]
+    fn test_range_quantifier_equivalence_miri_friendly() {
+        use crate::automaton::{traverse_nfa, NfaBuffers, VALUE_TERMINATOR};
+
+        let mut bufs = NfaBuffers::new();
+
+        // Star equivalence: a{0,} should behave like a*
+        let root_range = parse_regexp("a{0,}").unwrap();
+        let root_star = parse_regexp("a*").unwrap();
+        let (table_range, fm_range) = make_regexp_nfa(root_range, false);
+        let (table_star, fm_star) = make_regexp_nfa(root_star, false);
+
+        for (value, desc) in [
+            (vec![VALUE_TERMINATOR], "empty"),
+            (vec![b'a', VALUE_TERMINATOR], "a"),
+        ] {
+            bufs.clear();
+            traverse_nfa(&table_range, &value, &mut bufs);
+            let range_matched = bufs.transitions.iter().any(|m| Arc::ptr_eq(m, &fm_range));
+
+            bufs.clear();
+            traverse_nfa(&table_star, &value, &mut bufs);
+            let star_matched = bufs.transitions.iter().any(|m| Arc::ptr_eq(m, &fm_star));
+
+            assert_eq!(
+                range_matched, star_matched,
+                "a{{0,}} and a* should agree on '{}'",
+                desc
+            );
+        }
+
+        // Plus equivalence: a{1,} should behave like a+
+        let root_range = parse_regexp("a{1,}").unwrap();
+        let root_plus = parse_regexp("a+").unwrap();
+        let (table_range, fm_range) = make_regexp_nfa(root_range, false);
+        let (table_plus, fm_plus) = make_regexp_nfa(root_plus, false);
+
+        for (value, desc) in [
+            (vec![VALUE_TERMINATOR], "empty"),
+            (vec![b'a', VALUE_TERMINATOR], "a"),
+        ] {
+            bufs.clear();
+            traverse_nfa(&table_range, &value, &mut bufs);
+            let range_matched = bufs.transitions.iter().any(|m| Arc::ptr_eq(m, &fm_range));
+
+            bufs.clear();
+            traverse_nfa(&table_plus, &value, &mut bufs);
+            let plus_matched = bufs.transitions.iter().any(|m| Arc::ptr_eq(m, &fm_plus));
+
+            assert_eq!(
+                range_matched, plus_matched,
+                "a{{1,}} and a+ should agree on '{}'",
                 desc
             );
         }
