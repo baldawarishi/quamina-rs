@@ -48,3 +48,9 @@ jobs:
         run: cargo +nightly fuzz run fuzz_add_pattern -- -max_total_time=30
       - name: Fuzz match_event (30s)
         run: cargo +nightly fuzz run fuzz_match_event -- -max_total_time=30
+      - name: Upload crash artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-artifacts
+          path: fuzz/artifacts/
