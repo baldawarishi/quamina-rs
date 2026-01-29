@@ -178,29 +178,18 @@ Bounded model checking for verifiable unsafe code properties.
 ---
 
 ### Phase 4.5: Quality Coverage Tracking
-**Status:** NOT STARTED
+**Status:** SKIPPED
 **Priority:** Medium
 
-Ensure new unsafe code and critical paths get appropriate coverage from Kani/Miri/Fuzz.
+**Decision:** No automated tooling exists to verify unsafe code coverage across Miri/Fuzz/Kani. Miri and Kani don't support coverage instrumentation; fuzz coverage is non-deterministic. Manual code review with the coverage matrix below remains the practical approach.
 
-**Tasks:**
-- [ ] Add clippy lint for undocumented unsafe blocks
-- [ ] Create checklist for new unsafe code (which tool covers it?)
-- [ ] Document coverage gaps and rationale in code comments
-- [ ] Consider pre-commit hook or CI check for new `unsafe` without test coverage
-
-**Coverage Matrix (Current):**
+**Coverage Matrix (Reference):**
 | Unsafe Code | Miri | Fuzz | Kani | Notes |
 |-------------|------|------|------|-------|
 | `from_utf8_unchecked` | ✓ | ✓ | ✓ (ASCII) | Full path via Miri tests |
 | `transmute` lifetime | ✓ | ✓ | ✗ | Encapsulation-based, documented |
 | `Send/Sync` impls | ✓ | - | ✗ | Miri threading tests |
 | `StatePtr` raw ptr | ✓ | - | ✓ | Equality/hash verified |
-
-**Future Considerations:**
-- Require safety comments for all new `unsafe` blocks
-- Run extended fuzz campaigns periodically (hours not seconds)
-- Track Kani/Miri compatibility with new Rust versions
 
 ---
 
@@ -280,6 +269,7 @@ transmute_ptr_to_ptr = "warn"
 | 2026-01-27 | 2 | Memory profiling | Complete - dhat benchmarks added, CI checks bench compilation |
 | 2026-01-28 | 3 | Fuzzing | Complete - 3 fuzz targets, CI runs 30s smoke tests |
 | 2026-01-28 | 4 | Kani proofs | Complete - 8 proofs in `src/kani_proofs.rs`, CI runs all harnesses |
+| 2026-01-28 | 4.5 | Coverage tracking | Skipped - No automated tooling exists for cross-tool coverage |
 
 ---
 
