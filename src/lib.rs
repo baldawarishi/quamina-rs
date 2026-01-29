@@ -16,6 +16,9 @@ mod unicode_categories;
 #[cfg(test)]
 mod regexp_samples;
 
+#[cfg(kani)]
+mod kani_proofs;
+
 // Re-export flattener types for custom implementations
 pub use crate::flatten_json::ArrayPos;
 pub use crate::flattener::{Flattener, JsonFlattener, OwnedField, SegmentsTreeTracker};

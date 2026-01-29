@@ -56,3 +56,13 @@ jobs:
             echo "=== $f ==="
             base64 < "$f"
           done
+
+  kani:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run Kani proofs
+        uses: model-checking/kani-github-action@v1
+        with:
+          args: --output-format terse

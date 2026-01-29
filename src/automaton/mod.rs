@@ -28,7 +28,8 @@ pub mod trie;
 
 // Re-export from small_table
 pub use small_table::{
-    FaState, FieldMatcher, NfaBuffers, SmallTable, ValueMatcher, BYTE_CEILING, VALUE_TERMINATOR,
+    FaState, FieldMatcher, NfaBuffers, SmallTable, StatePtr, ValueMatcher, BYTE_CEILING,
+    VALUE_TERMINATOR,
 };
 
 // Re-export from nfa
