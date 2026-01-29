@@ -137,6 +137,77 @@ if let Some(prefilter) = value_matcher.prefilter() {
 
 ---
 
+## Go-Inspired Optimizations
+
+Reviewed Go commits from Jan 2026. These are algorithmic improvements from the Go codebase.
+
+### Phase 5: Batch ArrayPos Allocation ✅ EVALUATED - NOT NEEDED
+
+**Problem:** In Go, each field clones `arrayTrail` slice, causing heap allocations per array element.
+Go profiler identified `storeArrayElementField` as "the most expensive function in the whole matchesForJSONEvent universe."
+
+**Go solution (commit 4cf827d):** Single growing buffer, slice into it per field.
+
+**Why not needed in Rust:** The Rust implementation uses `SmallVec<[ArrayPos; 4]>` which stores up to 4 elements inline (32 bytes, no heap). For typical JSON (≤4 levels of array nesting), `clone()` is just a memcpy with no allocation. This is fundamentally different from Go's slice semantics where every clone allocates.
+
+**Benchmark results (Jan 2026):**
+- `array_heavy_100_elements`: 2.89 µs (100 array elements, ~29 ns/element)
+- `deep_nesting_with_arrays`: 322 ns (4 array elements in nested structure)
+- Both faster than equivalent Go operations
+
+**When to reconsider:** If profiling shows array_trail cloning as a hotspot for deeply nested arrays (>4 levels). The optimization would require significant API changes to Field struct.
+
+### Phase 6: SkinnyRuneTree (Experiment)
+
+**Problem:** Rune range FA building uses dense 256-entry `Vec<Option<RuneTreeEntry>>` per UTF-8 byte level.
+
+**Go solution (commit cc81a11):** Sparse byte/entry pairs instead of dense array.
+
+```rust
+// Current (dense):
+type RuneTreeNode = Vec<Option<RuneTreeEntry>>;  // 256 entries
+
+// Proposed (sparse):
+struct SkinnyRuneTreeNode {
+    byte_vals: Vec<u8>,
+    entries: Vec<SkinnyRuneTreeEntry>,
+}
+```
+
+**Tradeoff:** Go comment says "runs much slower than the memory burner" - memory vs speed tradeoff.
+**When useful:** Large Unicode categories like `~p{L}` (all letters).
+**Status:** Experiment in fresh session to measure Rust impact.
+**File:** `src/regexp/nfa.rs`
+
+### Phase 7: Comprehensive Shellstyle Benchmark ✅ COMPLETE
+
+**Problem:** Current `bench_shellstyle_alphabet` uses 26 letter patterns and one event. Go's `BenchmarkShellstyleMultiMatch` is much more thorough.
+
+**Implemented in `benches/matching.rs`:**
+- 16 letter patterns (A* through P*)
+- 4 "funky" multi-wildcard patterns (`*E*E*E*`, `*A*B*`, `*N*P*`, `*O*O*O*`)
+- 5 CJK patterns (`*東京*`, `新*`, `*北京*`, `上海*`, `*서울*`)
+- 4 emoji patterns (`*🎉*`, `🚀*`, `*❤️*`, `*🌟*🎯*`)
+- 31 events: ASCII streets, CJK streets, emoji streets, mixed
+
+**Benchmark results (Jan 2026):**
+- `shellstyle_multi_match`: 92.5 µs (31 events, ~3 µs/event avg)
+- `shellstyle_26_patterns`: 452 ns (single ASCII event)
+
+**Reference:** `../quamina/shellstyle_bench_test.go`
+
+### Reviewed but Not Applicable
+
+| Go Change | Why Not Applicable |
+|-----------|-------------------|
+| `sync.Pool` for nfaBuffers | Rust uses `Mutex<NfaBuffers>` per Quamina instance - already reuses |
+| Lazy nfaBuffers init | Minor benefit; all fields typically used |
+| Transmap preallocation | Different architecture (Vec<Arc<FieldMatcher>>) |
+| Flattener loop micro-opts | Rust iterators handle differently; would need profiling |
+| MatchSet reuse | Already done via FrozenMatchSet pattern |
+
+---
+
 ## What quamina-rs Already Does Well
 
 1. **Arena-based NFAs** (`arena.rs`) - regex-automata doesn't have this

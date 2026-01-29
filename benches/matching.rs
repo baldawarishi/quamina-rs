@@ -286,6 +286,127 @@ fn bench_shellstyle_alphabet(c: &mut Criterion) {
     });
 }
 
+/// Comprehensive shellstyle benchmark (comparable to Go's BenchmarkShellstyleMultiMatch)
+/// Tests multiple character sets including ASCII, CJK, and emoji
+fn bench_shellstyle_multi_match(c: &mut Criterion) {
+    let mut q = Quamina::new();
+
+    // Add 16 letter patterns (A* through P*)
+    for letter in [
+        "A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P",
+    ] {
+        q.add_pattern(
+            letter.to_string(),
+            &format!(r#"{{"STREET": [{{"shellstyle": "{}*"}}]}}"#, letter),
+        )
+        .unwrap();
+    }
+
+    // Add funky patterns with multiple wildcards (trigger complex NFA traversal)
+    let funky_patterns = [
+        ("funky1", "*E*E*E*"),
+        ("funky2", "*A*B*"),
+        ("funky3", "*N*P*"),
+        ("funky4", "*O*O*O*"),
+    ];
+    for (name, shellstyle) in funky_patterns {
+        q.add_pattern(
+            name.to_string(),
+            &format!(r#"{{"STREET": [{{"shellstyle": "{}"}}]}}"#, shellstyle),
+        )
+        .unwrap();
+    }
+
+    // Add CJK patterns to test Unicode handling
+    let cjk_patterns = [
+        ("jp1", "*東京*"),
+        ("jp2", "新*"),
+        ("cn1", "*北京*"),
+        ("cn2", "上海*"),
+        ("kr1", "*서울*"),
+    ];
+    for (name, shellstyle) in cjk_patterns {
+        q.add_pattern(
+            name.to_string(),
+            &format!(r#"{{"STREET": [{{"shellstyle": "{}"}}]}}"#, shellstyle),
+        )
+        .unwrap();
+    }
+
+    // Add emoji patterns to test multi-byte UTF-8 sequences
+    let emoji_patterns = [
+        ("emoji1", "*🎉*"),
+        ("emoji2", "🚀*"),
+        ("emoji3", "*❤️*"),
+        ("emoji4", "*🌟*🎯*"),
+    ];
+    for (name, shellstyle) in emoji_patterns {
+        q.add_pattern(
+            name.to_string(),
+            &format!(r#"{{"STREET": [{{"shellstyle": "{}"}}]}}"#, shellstyle),
+        )
+        .unwrap();
+    }
+
+    // Events that will match and require NFA traversal
+    let events: Vec<Vec<u8>> = vec![
+        // English streets
+        r#"{"STREET": "ASHBURY"}"#.into(),
+        r#"{"STREET": "BELVEDERE"}"#.into(),
+        r#"{"STREET": "CRANLEIGH"}"#.into(),
+        r#"{"STREET": "DEER PARK"}"#.into(),
+        r#"{"STREET": "EMBARCADERO"}"#.into(),
+        r#"{"STREET": "FULTON"}"#.into(),
+        r#"{"STREET": "GEARY"}"#.into(),
+        r#"{"STREET": "HAIGHT"}"#.into(),
+        r#"{"STREET": "IRVING"}"#.into(),
+        r#"{"STREET": "JUDAH"}"#.into(),
+        r#"{"STREET": "KEARNY"}"#.into(),
+        r#"{"STREET": "LOMBARD"}"#.into(),
+        r#"{"STREET": "MARKET"}"#.into(),
+        r#"{"STREET": "NORIEGA"}"#.into(),
+        r#"{"STREET": "OCTAVIA"}"#.into(),
+        r#"{"STREET": "POLK"}"#.into(),
+        // Streets with multiple vowels for funky patterns
+        r#"{"STREET": "EMBARCADERO STREET"}"#.into(),
+        r#"{"STREET": "ALABAMA"}"#.into(),
+        r#"{"STREET": "NAPOLEON"}"#.into(),
+        r#"{"STREET": "COLORADO"}"#.into(),
+        // CJK streets
+        r#"{"STREET": "東京タワー通り"}"#.into(),
+        r#"{"STREET": "新宿駅前"}"#.into(),
+        r#"{"STREET": "北京路"}"#.into(),
+        r#"{"STREET": "上海南京路"}"#.into(),
+        r#"{"STREET": "서울대로"}"#.into(),
+        // Emoji streets
+        r#"{"STREET": "Party Street 🎉"}"#.into(),
+        r#"{"STREET": "🚀 Rocket Road"}"#.into(),
+        r#"{"STREET": "Love ❤️ Lane"}"#.into(),
+        r#"{"STREET": "Star 🌟 Plaza 🎯"}"#.into(),
+        // Mixed
+        r#"{"STREET": "Tokyo 東京 Street"}"#.into(),
+        r#"{"STREET": "Happy 😊 Avenue"}"#.into(),
+    ];
+
+    // Verify all events match at least one pattern
+    for event in &events {
+        let matches = q.matches_for_event(event).unwrap();
+        assert!(
+            !matches.is_empty(),
+            "no matches for event: {}",
+            String::from_utf8_lossy(event)
+        );
+    }
+
+    c.bench_function("shellstyle_multi_match", |b| {
+        b.iter(|| {
+            for event in &events {
+                let _ = q.matches_for_event(black_box(event)).unwrap();
+            }
+        })
+    });
+}
+
 /// Prefix patterns benchmark
 fn bench_prefix_patterns(c: &mut Criterion) {
     let mut q = Quamina::new();
@@ -816,6 +937,62 @@ fn bench_citylots_core(c: &mut Criterion) {
     });
 }
 
+/// Array-heavy JSON benchmark to measure array_trail cloning overhead
+/// This specifically exercises the code path where array_trail is cloned per element
+fn bench_array_heavy(c: &mut Criterion) {
+    let mut q = Quamina::new();
+    // Pattern matching a value in an array
+    q.add_pattern("tags", r#"{"tags": ["important"]}"#).unwrap();
+
+    // Event with many array elements to stress array_trail cloning
+    let many_tags = (0..100)
+        .map(|i| {
+            if i == 50 {
+                "important".to_string()
+            } else {
+                format!("tag{}", i)
+            }
+        })
+        .map(|t| format!(r#""{}""#, t))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let event_many_tags = format!(r#"{{"tags": [{}]}}"#, many_tags);
+
+    // Verify match
+    let matches = q.matches_for_event(event_many_tags.as_bytes()).unwrap();
+    assert!(!matches.is_empty());
+
+    c.bench_function("array_heavy_100_elements", |b| {
+        b.iter(|| {
+            q.matches_for_event(black_box(event_many_tags.as_bytes()))
+                .unwrap()
+        })
+    });
+}
+
+/// Deeply nested object benchmark with arrays at each level
+fn bench_deep_nesting_with_arrays(c: &mut Criterion) {
+    let mut q = Quamina::new();
+    // Pattern matching a value in a deeply nested structure with arrays
+    q.add_pattern(
+        "deep",
+        r#"{"level1": {"level2": {"level3": {"values": ["target"]}}}}"#,
+    )
+    .unwrap();
+
+    // Build an event with arrays at different nesting levels
+    // Each array has multiple elements to exercise array_trail
+    let event = r#"{"level1": {"level2": {"level3": {"values": ["a", "b", "target", "c"]}}}}"#;
+
+    // Verify match
+    let matches = q.matches_for_event(event.as_bytes()).unwrap();
+    assert_eq!(matches.len(), 1);
+
+    c.bench_function("deep_nesting_with_arrays", |b| {
+        b.iter(|| q.matches_for_event(black_box(event.as_bytes())).unwrap())
+    });
+}
+
 // Configure longer benchmarks with reduced sample count
 fn configure_bulk_benchmarks() -> Criterion {
     Criterion::default()
@@ -851,6 +1028,7 @@ criterion_group!(
     bench_status_all_patterns,
     // Pattern type benchmarks
     bench_shellstyle_alphabet,
+    bench_shellstyle_multi_match,
     bench_prefix_patterns,
     bench_anything_but,
     bench_multi_field_and,
@@ -873,5 +1051,8 @@ criterion_group!(
     // CityLots benchmarks (comparable to Go)
     bench_citylots,
     bench_citylots_core,
+    // Array-heavy benchmarks (for Phase 5 evaluation)
+    bench_array_heavy,
+    bench_deep_nesting_with_arrays,
 );
 criterion_main!(benches, bulk_benches);
