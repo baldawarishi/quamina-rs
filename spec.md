@@ -4,7 +4,7 @@ Rust port of [quamina](https://github.com/timbray/quamina) - fast pattern-matchi
 
 ## Status
 
-**349 tests passing.** Rust 1.5-2x faster than Go. Synced with Go commit 74475a4 (Jan 2026).
+**347 tests passing.** Rust 1.5-2x faster than Go. Synced with Go commit e3d13cd (Jan 2026).
 
 | Benchmark | Go (ns) | Rust (ns) | Speedup |
 |-----------|---------|-----------|---------|
@@ -165,7 +165,7 @@ if let Some(prefilter) = value_matcher.prefilter() {
 ## Commands
 
 ```bash
-cargo test                    # 337 tests
+cargo test                    # 347 tests
 cargo bench                   # benchmarks
 cargo clippy -- -D warnings   # lint
 gh run list                   # CI status
