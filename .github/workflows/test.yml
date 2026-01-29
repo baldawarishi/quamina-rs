@@ -36,18 +36,18 @@ jobs:
 
   fuzz:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@nightly
       - name: Install cargo-fuzz
         run: cargo install cargo-fuzz
-      - name: Fuzz flatten_json (30s)
-        run: cargo +nightly fuzz run fuzz_flatten_json -- -max_total_time=30
-      - name: Fuzz add_pattern (30s)
-        run: cargo +nightly fuzz run fuzz_add_pattern -- -max_total_time=30
-      - name: Fuzz match_event (30s)
-        run: cargo +nightly fuzz run fuzz_match_event -- -max_total_time=30
+      - name: Fuzz flatten_json (200s)
+        run: cargo +nightly fuzz run fuzz_flatten_json -- -max_total_time=200
+      - name: Fuzz add_pattern (200s)
+        run: cargo +nightly fuzz run fuzz_add_pattern -- -max_total_time=200
+      - name: Fuzz match_event (200s)
+        run: cargo +nightly fuzz run fuzz_match_event -- -max_total_time=200
       - name: Log crash inputs (if any)
         if: failure()
         run: |
