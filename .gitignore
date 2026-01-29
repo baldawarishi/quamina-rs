@@ -1,2 +1,7 @@
 /target/
 Cargo.lock
+
+# Fuzzing artifacts (regenerated on each run)
+fuzz/target/
+fuzz/corpus/
+fuzz/artifacts/

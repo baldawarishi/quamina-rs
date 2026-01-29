@@ -1,0 +1,43 @@
+[package]
+name = "quamina-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+once_cell = "1.19"
+
+[dependencies.quamina]
+path = ".."
+
+# Prevent this from interfering with workspaces
+[workspace]
+members = ["."]
+
+# Define fuzz targets
+# Each target explores different attack surfaces in the crate
+
+[[bin]]
+name = "fuzz_flatten_json"
+path = "fuzz_targets/fuzz_flatten_json.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_add_pattern"
+path = "fuzz_targets/fuzz_add_pattern.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_match_event"
+path = "fuzz_targets/fuzz_match_event.rs"
+test = false
+doc = false
+bench = false

@@ -109,33 +109,37 @@ Profiles: pattern add (simple, multivalue, regex, numeric), steady-state (1000 p
 
 ---
 
-### Phase 3: Fuzzing with rust-fuzz
-**Status:** NOT STARTED
+### Phase 3: Fuzzing with cargo-fuzz
+**Status:** COMPLETE
 **Priority:** High
 
-Fuzz JSON parsing boundaries - classic attack surface.
+Coverage-guided fuzzing for JSON parsing and pattern matching.
 
 **Tasks:**
-- [ ] Install cargo-fuzz: `cargo install cargo-fuzz`
-- [ ] Create fuzz targets directory: `fuzz/`
-- [ ] Add fuzz target for `flatten_json` module
-- [ ] Add fuzz target for pattern matching
-- [ ] Run initial fuzzing campaign locally
-- [ ] Add fuzzing to CI (optional - can be expensive)
+- [x] Install cargo-fuzz: `cargo install cargo-fuzz`
+- [x] Create fuzz targets directory: `fuzz/`
+- [x] Add fuzz target for `flatten_json` module (JSON parsing)
+- [x] Add fuzz target for `add_pattern` (pattern parsing)
+- [x] Add fuzz target for `match_event` (full integration)
+- [x] Add fuzzing to CI (30s smoke test per target)
 
-**Fuzz Target Structure:**
-```
-fuzz/
-├── Cargo.toml
-└── fuzz_targets/
-    ├── fuzz_flatten_json.rs
-    └── fuzz_pattern_match.rs
+**Fuzz Targets:**
+| Target | Attack Surface | Input |
+|--------|---------------|-------|
+| `fuzz_flatten_json` | JSON parser | Arbitrary bytes |
+| `fuzz_add_pattern` | Pattern parser | UTF-8 strings |
+| `fuzz_match_event` | Full pipeline | Arbitrary bytes vs 17 pre-loaded patterns |
+
+**Usage:**
+```bash
+cargo +nightly fuzz run fuzz_flatten_json           # Run indefinitely
+cargo +nightly fuzz run fuzz_flatten_json -- -max_total_time=60  # 60s run
+cargo +nightly fuzz list                            # List all targets
 ```
 
 **References:**
 - [cargo-fuzz](https://github.com/rust-fuzz/cargo-fuzz)
 - [Rust Fuzz Book](https://rust-fuzz.github.io/book/)
-- [afl.rs](https://github.com/rust-fuzz/afl.rs) (alternative)
 
 ---
 
@@ -240,6 +244,7 @@ transmute_ptr_to_ptr = "warn"
 | 2026-01-25 | 1 | Miri integration | Complete - CI runs Miri on unsafe modules |
 | 2026-01-25 | 1b | Miri full coverage | Complete - 5 Miri-friendly tests added, rationale documented in code |
 | 2026-01-27 | 2 | Memory profiling | Complete - dhat benchmarks added, CI checks bench compilation |
+| 2026-01-28 | 3 | Fuzzing | Complete - 3 fuzz targets, CI runs 30s smoke tests |
 
 ---
 
@@ -266,5 +271,5 @@ cargo deny check
 
 ---
 
-*Last updated: 2026-01-27*
-*Line count target: <300 (currently ~240)*
+*Last updated: 2026-01-28*
+*Line count target: <300 (currently ~250)*

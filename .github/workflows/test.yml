@@ -20,6 +20,8 @@ jobs:
         run: cargo fmt --check
       - name: Run clippy
         run: cargo clippy -- -D warnings
+      - name: Check benchmarks compile
+        run: cargo bench --no-run
 
   miri:
     runs-on: ubuntu-latest
@@ -31,3 +33,18 @@ jobs:
           components: miri
       - name: Run Miri
         run: cargo +nightly miri test
+
+  fuzz:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+      - name: Install cargo-fuzz
+        run: cargo install cargo-fuzz
+      - name: Fuzz flatten_json (30s)
+        run: cargo +nightly fuzz run fuzz_flatten_json -- -max_total_time=30
+      - name: Fuzz add_pattern (30s)
+        run: cargo +nightly fuzz run fuzz_add_pattern -- -max_total_time=30
+      - name: Fuzz match_event (30s)
+        run: cargo +nightly fuzz run fuzz_match_event -- -max_total_time=30
