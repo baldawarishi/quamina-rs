@@ -8,8 +8,9 @@ use quamina::automaton::arena::{
     traverse_arena_nfa, ArenaNfaBuffers, ArenaSmallTable, StateArena, StateId,
     ARENA_VALUE_TERMINATOR,
 };
-use quamina::automaton::FieldMatcher;
+use quamina::automaton::{EventField, FieldMatcher, ThreadSafeCoreMatcher};
 use quamina::flatten_json::FlattenJsonState;
+use quamina::json::Matcher;
 use quamina::segments_tree::SegmentsTree;
 use quamina::Quamina;
 use std::io::{BufRead, BufReader};
@@ -391,6 +392,53 @@ fn bench_numeric_range_multiple(c: &mut Criterion) {
     });
 }
 
+/// Exact float matching benchmark (comparable to Go's BenchmarkNumberMatching)
+/// Tests matching exact float literals like {"x": [0.123456, 0.789012, ...]}
+fn bench_number_matching(c: &mut Criterion) {
+    use rand::prelude::*;
+
+    // Use fixed seed for reproducibility (Go uses 2325)
+    let mut rng = rand::rngs::StdRng::seed_from_u64(2325);
+
+    // Generate 10 random float values for the pattern
+    let targets: Vec<f64> = (0..10).map(|_| rng.gen::<f64>()).collect();
+
+    // Build pattern with 10 exact float values
+    let values: String = targets
+        .iter()
+        .map(|f| format!("{:.6}", f))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let pattern = format!(r#"{{"x": [{}]}}"#, values);
+
+    let mut q = Quamina::new();
+    q.add_pattern("P", &pattern).unwrap();
+
+    // Pre-generate events: alternating between matching (target value) and non-matching (random)
+    let events: Vec<Vec<u8>> = (0..100)
+        .map(|i| {
+            if i % 2 == 0 {
+                // Matching event - use one of the target values
+                let val = format!("{:.6}", targets[i % 10]);
+                format!(r#"{{"x": {}}}"#, val).into_bytes()
+            } else {
+                // Non-matching event - use a different random value
+                let val = format!("{:.6}", rng.gen::<f64>() + 10.0); // +10 ensures no collision
+                format!(r#"{{"x": {}}}"#, val).into_bytes()
+            }
+        })
+        .collect();
+
+    c.bench_function("number_matching", |b| {
+        let mut i = 0;
+        b.iter(|| {
+            let event = &events[i % events.len()];
+            i += 1;
+            q.matches_for_event(black_box(event)).unwrap()
+        })
+    });
+}
+
 /// Regexp with + quantifier on short string
 fn bench_regexp_plus_short(c: &mut Criterion) {
     let mut q = Quamina::new();
@@ -668,6 +716,106 @@ fn bench_citylots(c: &mut Criterion) {
     });
 }
 
+/// CityLots core benchmark - matches Go's BenchmarkCityLotsCore
+/// Uses ThreadSafeCoreMatcher directly (no Quamina wrapper overhead)
+fn bench_citylots_core(c: &mut Criterion) {
+    // Same patterns as Go benchmark, but we need to parse them into Matcher format
+    let pattern_fields: Vec<(&str, Vec<(String, Vec<Matcher>)>)> = vec![
+        (
+            "CRANLEIGH",
+            vec![(
+                "properties.STREET".to_string(),
+                vec![Matcher::Exact("CRANLEIGH".to_string())],
+            )],
+        ),
+        (
+            "17TH Even",
+            vec![
+                (
+                    "properties.STREET".to_string(),
+                    vec![Matcher::Exact("17TH".to_string())],
+                ),
+                (
+                    "properties.ODD_EVEN".to_string(),
+                    vec![Matcher::Exact("E".to_string())],
+                ),
+            ],
+        ),
+        (
+            "Geometry",
+            vec![(
+                "geometry.coordinates".to_string(),
+                vec![Matcher::Exact("37.807807921694092".to_string())],
+            )],
+        ),
+        (
+            "0011008",
+            vec![
+                (
+                    "properties.MAPBLKLOT".to_string(),
+                    vec![Matcher::Exact("0011008".to_string())],
+                ),
+                (
+                    "properties.BLKLOT".to_string(),
+                    vec![Matcher::Exact("0011008".to_string())],
+                ),
+                (
+                    "geometry.coordinates".to_string(),
+                    vec![Matcher::Exact("37.807807921694092".to_string())],
+                ),
+            ],
+        ),
+    ];
+
+    // Build the core matcher directly
+    let matcher: ThreadSafeCoreMatcher<&str> = ThreadSafeCoreMatcher::new();
+    let mut segments_tree = SegmentsTree::new();
+
+    for (name, fields) in &pattern_fields {
+        for (path, _) in fields {
+            segments_tree.add(&path.replace('.', "\n"));
+        }
+        matcher.add_pattern(*name, fields);
+    }
+
+    // Pre-flatten all lines to avoid flattening overhead in the benchmark
+    let lines = load_citylots_lines();
+    let mut flattener = FlattenJsonState::new();
+    let pre_flattened: Vec<Vec<EventField>> = lines
+        .iter()
+        .map(|line| {
+            flattener
+                .flatten(line, &segments_tree)
+                .unwrap()
+                .iter()
+                .map(|f| EventField {
+                    path: f.path_str().to_string(),
+                    value: String::from_utf8_lossy(f.value_bytes()).to_string(),
+                    array_trail: f
+                        .array_trail
+                        .iter()
+                        .map(|a| quamina::json::ArrayPos {
+                            array: a.array,
+                            pos: a.pos,
+                        })
+                        .collect(),
+                    is_number: f.is_number,
+                })
+                .collect()
+        })
+        .collect();
+    let num_lines = pre_flattened.len();
+
+    c.bench_function("citylots_core", |b| {
+        let mut i = 0;
+        b.iter(|| {
+            let line_index = i % num_lines;
+            i += 1;
+            matcher.matches_for_fields(black_box(&pre_flattened[line_index]))
+        })
+    });
+}
+
 // Configure longer benchmarks with reduced sample count
 fn configure_bulk_benchmarks() -> Criterion {
     Criterion::default()
@@ -710,6 +858,8 @@ criterion_group!(
     bench_numeric_range_single,
     bench_numeric_range_two_sided,
     bench_numeric_range_multiple,
+    // Exact float matching (comparable to Go's BenchmarkNumberMatching)
+    bench_number_matching,
     // Regexp benchmarks (quantifier performance)
     bench_regexp_plus_short,
     bench_regexp_plus_long,
@@ -720,7 +870,8 @@ criterion_group!(
     // Arena NFA benchmarks
     bench_arena_nfa_traversal,
     bench_arena_nfa_short,
-    // CityLots benchmark (comparable to Go)
+    // CityLots benchmarks (comparable to Go)
     bench_citylots,
+    bench_citylots_core,
 );
 criterion_main!(benches, bulk_benches);

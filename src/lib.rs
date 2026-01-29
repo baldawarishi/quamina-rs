@@ -5,7 +5,8 @@ mod case_folding;
 #[doc(hidden)]
 pub mod flatten_json;
 mod flattener;
-mod json;
+#[doc(hidden)]
+pub mod json;
 pub mod numbits;
 pub mod regexp;
 #[doc(hidden)]

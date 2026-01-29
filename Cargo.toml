@@ -12,11 +12,15 @@ parking_lot = "0.12"
 smallvec = "1.13"
 rustc-hash = "2.1"
 
+[features]
+dhat-heap = []  # Enable heap profiling with dhat
+
 [dev-dependencies]
 criterion = "0.5"
 flate2 = "1.0"
 rand = "0.8"
 regex = "1"  # For benchmarking comparisons
+dhat = "0.3"
 
 [dev-dependencies.cargo-husky]
 version = "1"
@@ -25,4 +29,8 @@ features = ["precommit-hook", "run-cargo-fmt", "run-cargo-test", "run-cargo-clip
 
 [[bench]]
 name = "matching"
+harness = false
+
+[[bench]]
+name = "memory"
 harness = false
