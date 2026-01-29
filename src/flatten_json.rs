@@ -6,6 +6,12 @@
 //! - Early termination when all needed fields are found
 //! - Zero-copy field values as slices of the original event bytes
 //! - Reusable state with reset() pattern (like Go's flattenJSON)
+//!
+//! # Safety
+//! This module uses unsafe for:
+//! - `from_utf8_unchecked`: JSON field names are guaranteed valid UTF-8 by spec
+//! - `transmute`: Lifetime extension for borrowed fields (verified by Miri)
+#![allow(unsafe_code)]
 
 use crate::segments_tree::SegmentsTree;
 use crate::QuaminaError;
@@ -47,7 +53,7 @@ impl Field<'_> {
     /// to be valid UTF-8 by the JSON specification.
     #[inline]
     pub fn path_str(&self) -> &str {
-        // SAFETY: JSON field names are valid UTF-8
+        // SAFETY: JSON field names are valid UTF-8 per JSON spec (RFC 8259).
         unsafe { std::str::from_utf8_unchecked(&self.path) }
     }
 
@@ -210,8 +216,6 @@ struct FlattenContext<'a, 'b> {
 
 impl<'a> FlattenContext<'a, '_> {
     /// Push a field to the storage, transmuting the lifetime.
-    /// SAFETY: The field borrows from self.event which has lifetime 'a.
-    /// We store as 'static but the FlattenJsonState will return the correct lifetime.
     #[inline]
     fn push_field(&mut self, field: Field<'a>) {
         // SAFETY: Field<'a> and Field<'static> have the same layout.

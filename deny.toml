@@ -1,0 +1,38 @@
+# cargo-deny configuration for quamina-rs
+# https://embarkstudios.github.io/cargo-deny/
+
+[graph]
+all-features = true
+
+[advisories]
+# Advisories are handled by cargo-audit in CI, skip here to avoid CVSS 4.0 parsing issues
+# with older cargo-deny versions
+
+[licenses]
+# Allowed licenses (permissive open source)
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "CC0-1.0",
+    "Unlicense",
+    "MPL-2.0",
+]
+confidence-threshold = 0.8
+
+[licenses.private]
+ignore = true  # Ignore unpublished workspace crates
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+highlight = "all"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

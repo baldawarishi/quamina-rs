@@ -6,6 +6,11 @@
 //! - `FieldMatcher`: Matches field names and dispatches to value matchers
 //! - `ValueMatcher`: Matches field values using the automaton
 //! - `NfaBuffers`: Reusable buffers for NFA traversal
+//!
+//! # Safety
+//! This module contains unsafe Send/Sync implementations for StatePtr.
+//! These are verified by Miri tests in CI.
+#![allow(unsafe_code)]
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -21,6 +26,7 @@ pub struct StatePtr(*const FaState);
 // The NfaBuffers are protected by a Mutex in Quamina, so concurrent access is prevented.
 // The pointers point to Arc<FaState> data which has its own thread-safety guarantees.
 unsafe impl Send for StatePtr {}
+// SAFETY: Same as Send - protected by Mutex, pointers to Arc data.
 unsafe impl Sync for StatePtr {}
 
 impl StatePtr {

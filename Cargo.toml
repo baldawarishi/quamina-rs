@@ -37,3 +37,8 @@ harness = false
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)'] }
+unsafe_code = "warn"
+
+[lints.clippy]
+undocumented_unsafe_blocks = "warn"
+transmute_ptr_to_ptr = "warn"

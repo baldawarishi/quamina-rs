@@ -5,6 +5,11 @@
 //! - `FrozenValueMatcher`: Immutable value matcher for concurrent reads
 //! - `ThreadSafeCoreMatcher`: Thread-safe wrapper with lock-free matching
 //! - `AutomatonValueMatcher`: A working value matcher that uses automata
+//!
+//! # Safety
+//! This module contains unsafe Send/Sync implementations for frozen matchers and BuildState.
+//! These are verified by Miri threading tests in CI.
+#![allow(unsafe_code)]
 
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
@@ -68,8 +73,9 @@ pub struct FrozenFieldMatcher<X: Clone + Eq + Hash> {
     pub exists_false: HashMap<String, Arc<FrozenFieldMatcher<X>>>,
 }
 
-// Safety: FrozenFieldMatcher only contains Arc, HashMap, and Vec - all Send+Sync when X is
+// SAFETY: FrozenFieldMatcher only contains Arc, HashMap, and Vec - all Send+Sync when X is.
 unsafe impl<X: Clone + Eq + Hash + Send + Sync> Send for FrozenFieldMatcher<X> {}
+// SAFETY: Same as Send - all fields (Arc, HashMap, Vec) are Send+Sync when X is.
 unsafe impl<X: Clone + Eq + Hash + Send + Sync> Sync for FrozenFieldMatcher<X> {}
 
 impl<X: Clone + Eq + Hash> FrozenFieldMatcher<X> {
@@ -122,8 +128,9 @@ pub struct FrozenValueMatcher<X: Clone + Eq + Hash> {
     multi_condition_nfas: Vec<MultiConditionNfa>,
 }
 
-// Safety: FrozenValueMatcher only contains Arc, FxHashMap, Option, and primitives
+// SAFETY: FrozenValueMatcher only contains Arc, FxHashMap, Option, and primitives - all Send+Sync.
 unsafe impl<X: Clone + Eq + Hash + Send + Sync> Send for FrozenValueMatcher<X> {}
+// SAFETY: Same as Send - all fields (Arc, FxHashMap, Option, primitives) are Send+Sync when X is.
 unsafe impl<X: Clone + Eq + Hash + Send + Sync> Sync for FrozenValueMatcher<X> {}
 
 impl<X: Clone + Eq + Hash> FrozenValueMatcher<X> {
@@ -278,7 +285,7 @@ struct BuildState<X: Clone + Eq + Hash> {
     root: Rc<MutableFieldMatcher<X>>,
 }
 
-// Safety: BuildState is only ever accessed through a Mutex lock in ThreadSafeCoreMatcher.
+// SAFETY: BuildState is only ever accessed through a Mutex lock in ThreadSafeCoreMatcher.
 // The Rc<MutableFieldMatcher> is never shared between threads - it's always accessed
 // while holding the mutex lock. This makes it safe to implement Send.
 unsafe impl<X: Clone + Eq + Hash + Send> Send for BuildState<X> {}
