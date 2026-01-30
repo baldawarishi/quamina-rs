@@ -893,15 +893,33 @@ impl<'a> FlattenContext<'a, '_> {
         // Optional minus
         if self.ch() == b'-' {
             self.index += 1;
+            if self.index >= self.event.len() {
+                return Err(FlattenError::Error(
+                    self.error("number truncated after minus"),
+                ));
+            }
         }
 
-        // Integer part
+        // Integer part - must have at least one digit
+        let digit_start = self.index;
         while self.index < self.event.len() {
             let ch = self.event[self.index];
             if !ch.is_ascii_digit() {
                 break;
             }
             self.index += 1;
+        }
+
+        // Validate we read at least one digit
+        if self.index == digit_start {
+            let ch = if self.index < self.event.len() {
+                self.event[self.index] as char
+            } else {
+                '?'
+            };
+            return Err(FlattenError::Error(
+                self.error(&format!("illegal character '{}' in number", ch)),
+            ));
         }
 
         // Fractional part
@@ -1273,6 +1291,7 @@ mod tests {
             r#"{"a": xx}"#,    // Invalid value
             r#"{"a": tru}"#,   // Truncated true
             r#"{"a": truse}"#, // Invalid boolean
+            r#"{"a": -z}"#,    // Invalid negative number (Go TestFJErrorCases)
         ];
 
         for bad in &bad_cases {
@@ -1296,6 +1315,22 @@ mod tests {
             let result = state.flatten(bad.as_bytes(), &tree);
             assert!(result.is_err(), "Should reject invalid structure: {}", bad);
         }
+    }
+
+    #[test]
+    fn test_error_invalid_nested_object() {
+        // Based on Go TestFJErrorCases - need to track nested field "a\nx" to force
+        // parsing of nested object (otherwise the object is skipped without validation)
+        let tree = make_tree(&["a", "a\nx"]);
+        let mut state = FlattenJsonState::new();
+
+        let bad = r#"{"a": { x }}"#; // Invalid: x is not a valid JSON value
+        let result = state.flatten(bad.as_bytes(), &tree);
+        assert!(
+            result.is_err(),
+            "Should reject invalid nested object: {}",
+            bad
+        );
     }
 
     #[test]
