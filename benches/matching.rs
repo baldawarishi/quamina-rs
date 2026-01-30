@@ -643,6 +643,89 @@ fn bench_regexp_dot_star(c: &mut Criterion) {
     });
 }
 
+// === Unicode Category Benchmarks ===
+
+/// Unicode category pattern ~p{L} - matches any Unicode letter
+fn bench_unicode_category_letter(c: &mut Criterion) {
+    let mut q = Quamina::new();
+    q.add_pattern("letter", r#"{"value": [{"regex": "~p{L}"}]}"#)
+        .unwrap();
+
+    // Test with various inputs
+    let events = vec![
+        r#"{"value": "a"}"#.as_bytes().to_vec(),
+        r#"{"value": "Z"}"#.as_bytes().to_vec(),
+        r#"{"value": "α"}"#.as_bytes().to_vec(),
+        r#"{"value": "日"}"#.as_bytes().to_vec(),
+        r#"{"value": "5"}"#.as_bytes().to_vec(), // non-match
+    ];
+
+    c.bench_function("unicode_category_letter", |b| {
+        let mut i = 0;
+        b.iter(|| {
+            let event = &events[i % events.len()];
+            i += 1;
+            q.matches_for_event(black_box(event)).unwrap()
+        })
+    });
+}
+
+/// Unicode category compilation time (pattern add, not cached)
+fn bench_unicode_category_compile(c: &mut Criterion) {
+    c.bench_function("unicode_category_compile", |b| {
+        b.iter(|| {
+            let mut q = Quamina::new();
+            q.add_pattern("letter", r#"{"value": [{"regex": "~p{L}"}]}"#)
+                .unwrap();
+        })
+    });
+}
+
+/// Negated character class [^abc] - tests large rune range handling
+fn bench_negated_char_class(c: &mut Criterion) {
+    let mut q = Quamina::new();
+    q.add_pattern("not_abc", r#"{"value": [{"regex": "[^abc]"}]}"#)
+        .unwrap();
+
+    let events = vec![
+        r#"{"value": "x"}"#.as_bytes().to_vec(),
+        r#"{"value": "日"}"#.as_bytes().to_vec(),
+        r#"{"value": "a"}"#.as_bytes().to_vec(), // non-match
+    ];
+
+    c.bench_function("negated_char_class", |b| {
+        let mut i = 0;
+        b.iter(|| {
+            let event = &events[i % events.len()];
+            i += 1;
+            q.matches_for_event(black_box(event)).unwrap()
+        })
+    });
+}
+
+/// Multiple Unicode categories combined - tests merging large FAs
+fn bench_unicode_categories_combined(c: &mut Criterion) {
+    let mut q = Quamina::new();
+    // Match letter followed by digit
+    q.add_pattern("letter_digit", r#"{"value": [{"regex": "~p{L}~p{Nd}"}]}"#)
+        .unwrap();
+
+    let events = vec![
+        r#"{"value": "a1"}"#.as_bytes().to_vec(),
+        r#"{"value": "日5"}"#.as_bytes().to_vec(),
+        r#"{"value": "12"}"#.as_bytes().to_vec(), // non-match
+    ];
+
+    c.bench_function("unicode_categories_combined", |b| {
+        let mut i = 0;
+        b.iter(|| {
+            let event = &events[i % events.len()];
+            i += 1;
+            q.matches_for_event(black_box(event)).unwrap()
+        })
+    });
+}
+
 // === Arena NFA benchmarks ===
 
 /// Helper: Build arena-based NFA for [a-z]+ (cyclic, ~4 states)
@@ -1045,6 +1128,11 @@ criterion_group!(
     bench_regexp_star_long,
     bench_regexp_complex,
     bench_regexp_dot_star,
+    // Unicode category benchmarks
+    bench_unicode_category_letter,
+    bench_unicode_category_compile,
+    bench_negated_char_class,
+    bench_unicode_categories_combined,
     // Arena NFA benchmarks
     bench_arena_nfa_traversal,
     bench_arena_nfa_short,

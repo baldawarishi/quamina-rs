@@ -157,27 +157,34 @@ Go profiler identified `storeArrayElementField` as "the most expensive function 
 
 **When to reconsider:** If profiling shows array_trail cloning as a hotspot for deeply nested arrays (>4 levels). The optimization would require significant API changes to Field struct.
 
-### Phase 6: SkinnyRuneTree (Experiment)
+### Phase 6: SkinnyRuneTree ✅ EVALUATED - NOT NEEDED
 
 **Problem:** Rune range FA building uses dense 256-entry `Vec<Option<RuneTreeEntry>>` per UTF-8 byte level.
 
 **Go solution (commit cc81a11):** Sparse byte/entry pairs instead of dense array.
 
 ```rust
-// Current (dense):
-type RuneTreeNode = Vec<Option<RuneTreeEntry>>;  // 256 entries
-
-// Proposed (sparse):
+// Go approach (sparse):
 struct SkinnyRuneTreeNode {
-    byte_vals: Vec<u8>,
+    byteVals: Vec<u8>,
     entries: Vec<SkinnyRuneTreeEntry>,
 }
+
+// Rust keeps (dense):
+type RuneTreeNode = Vec<Option<RuneTreeEntry>>;  // 256 entries per node
 ```
 
-**Tradeoff:** Go comment says "runs much slower than the memory burner" - memory vs speed tradeoff.
-**When useful:** Large Unicode categories like `~p{L}` (all letters).
-**Status:** Experiment in fresh session to measure Rust impact.
-**File:** `src/regexp/nfa.rs`
+**Experiment results (Jan 2026):**
+| Metric | Dense | Skinny | Diff |
+|--------|-------|--------|------|
+| Unicode ~p{L} compile | 848 µs | 865 µs | +2% slower |
+| Matching performance | same | same | — |
+
+**Why not needed in Rust:** Rust's range-based building (`add_rune_pair_tree_entry`) adds entire character ranges to the tree without iterating through individual code points. This creates O(log(ranges)) tree entries regardless of storage format. Go iterates individual runes, creating O(n) entries where sparse storage helps.
+
+Both implementations produce **identical SmallTables** after packing, so matching performance is identical. The memory difference is only in transient tree construction, which is dwarfed by final SmallTable allocation.
+
+**Decision:** Dense tree only. Sparse approach not beneficial in Rust due to range-based building.
 
 ### Phase 7: Comprehensive Shellstyle Benchmark ✅ COMPLETE
 

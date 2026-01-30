@@ -133,6 +133,35 @@ fn profile_regex_patterns() -> MemoryStats {
     stats
 }
 
+/// Profile: Unicode category pattern compilation
+fn profile_unicode_category() -> MemoryStats {
+    #[cfg(feature = "dhat-heap")]
+    let _profiler = dhat::Profiler::builder().testing().build();
+
+    let mut q = Quamina::<usize>::new();
+    // ~p{L} matches any Unicode letter (~131k code points across many ranges)
+    q.add_pattern(0, r#"{"value": [{"regex": "~p{L}"}]}"#)
+        .unwrap();
+
+    let stats = MemoryStats::capture("pattern_add_unicode_category_L");
+    drop(q);
+    stats
+}
+
+/// Profile: Negated character class compilation
+fn profile_negated_char_class() -> MemoryStats {
+    #[cfg(feature = "dhat-heap")]
+    let _profiler = dhat::Profiler::builder().testing().build();
+
+    let mut q = Quamina::<usize>::new();
+    q.add_pattern(0, r#"{"value": [{"regex": "[^abc]"}]}"#)
+        .unwrap();
+
+    let stats = MemoryStats::capture("pattern_add_negated_char_class");
+    drop(q);
+    stats
+}
+
 /// Profile: Adding 100 numeric range patterns
 fn profile_numeric_patterns() -> MemoryStats {
     #[cfg(feature = "dhat-heap")]
@@ -389,6 +418,8 @@ fn main() {
             profile_pattern_add_multivalue(),
         ),
         ("Pattern Add: 10 regex patterns", profile_regex_patterns()),
+        ("Pattern Add: Unicode ~p{L}", profile_unicode_category()),
+        ("Pattern Add: Negated [^abc]", profile_negated_char_class()),
         (
             "Pattern Add: 100 numeric ranges",
             profile_numeric_patterns(),
