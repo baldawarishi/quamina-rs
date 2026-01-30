@@ -22,7 +22,7 @@ Rust port of [quamina](https://github.com/timbray/quamina) - fast pattern-matchi
 
 1. **Profile** - Run `cargo bench` and `cargo flamegraph` to find actual hot-spots
 2. **Measure baseline** - Record exact numbers for the workload you're targeting
-3. **Research** - Find reputable implementations (ripgrep, Hyperscan, regex-automata)
+3. **Research** - Find reputable implementations from populare OSS libraries, research papers, and other reputable sources.
 4. **Prototype** - Implement minimal version, measure impact
 5. **Evaluate tradeoff** - Is the complexity worth the perf/memory gain?
 6. **Verify coverage** - No loss in tests, miri, fuzz, or kani
@@ -30,9 +30,10 @@ Rust port of [quamina](https://github.com/timbray/quamina) - fast pattern-matchi
 
 **Rules:**
 - No feature toggles - code is either in or out
-- Mirror Go behavior for algorithmic parity
-- Read actual Go source/tests, not notes
+- When in doubt, mirror Go behavior for algorithmic and performance parity
+- Read actual source/tests, not notes
 - Push often, check CI
+- Keep Spec.md under 300 lines
 
 ---
 
@@ -96,6 +97,7 @@ memchr acceleration for `[^x]+`, `[^/]+`, `[^"]+`. Detects at parse time.
 | SkinnyRuneTree (sparse) | Rust's range-based building already efficient |
 | Arena NFA accel (Unicode) | UTF-8 validation = too many exit bytes |
 | Literal prefiltering (basic) | Only helps narrow case (pure literals, non-matching). Most patterns use +/* which routes to arena NFA. Added ~10ns overhead for matching inputs. |
+| memchr for JSON string scan | 10-15% regression. memchr setup cost > benefit for short strings (typical JSON values < 20 bytes). Byte-by-byte loop is faster. |
 
 ---
 
@@ -115,6 +117,10 @@ cargo clippy -- -D warnings   # lint
 cargo +nightly miri test      # memory safety
 cargo fuzz run <target>       # fuzzing
 gh run list                   # CI status
+
+# Flamegraph (requires terminal for sudo password)
+CARGO_PROFILE_BENCH_DEBUG=true cargo flamegraph --root --bench matching -- --bench
+open flamegraph.svg           # view in browser
 ```
 
 ---
@@ -125,3 +131,5 @@ gh run list                   # CI status
 - [Hyperscan paper](https://www.usenix.org/system/files/nsdi19-wang-xiang.pdf)
 - [regex-automata](https://docs.rs/regex-automata/latest/regex_automata/)
 - [ripgrep internals](https://blog.burntsushi.net/ripgrep/)
+
+append more as you find them here. 
