@@ -962,6 +962,8 @@ fn create_arena_plus_star_loop(
     // Store accel on both start and loopback states:
     // - On start for the first iteration
     // - On loopback for subsequent iterations (since we're at loopback after matching)
+    // Only ASCII-only negated patterns can be accelerated.
+    // Unicode patterns have too many exit bytes (68+) for memchr to help.
     let accel = if let Some(ref bytes) = qa.ascii_negated_bytes {
         // ASCII-only negated pattern: use the negated bytes as exit bytes directly
         // Since JSON input is valid UTF-8, we don't need UTF-8 validation during matching
@@ -974,9 +976,7 @@ fn create_arena_plus_star_loop(
         }
         Some(accel)
     } else {
-        // Fall back to computing exit bytes from the transition table
-        // (This rarely produces usable acceleration due to UTF-8 validation bytes)
-        compute_loop_accel(&arena[start].table, start)
+        None
     };
 
     if let Some(accel) = accel {
@@ -985,59 +985,6 @@ fn create_arena_plus_star_loop(
     }
 
     start
-}
-
-/// Compute acceleration info for a loop state.
-///
-/// For +/* patterns, finds bytes that would exit the loop (i.e., bytes that
-/// don't transition to the loopback state). If there are 1-3 such bytes,
-/// returns AccelInfo for memchr acceleration.
-fn compute_loop_accel(
-    table: &ArenaSmallTable,
-    _self_id: StateId,
-) -> Option<crate::automaton::AccelInfo> {
-    if table.ceilings.is_empty() || table.steps.is_empty() {
-        return None;
-    }
-
-    // Find bytes that don't have transitions (exit the loop)
-    let mut exit_bytes = Vec::new();
-    let mut byte_idx: usize = 0;
-
-    for (i, &ceiling) in table.ceilings.iter().enumerate() {
-        let ceiling = ceiling as usize;
-        let step = table.steps[i];
-
-        // If this step is NONE, these bytes exit the loop
-        if step.is_none() {
-            for b in byte_idx..ceiling.min(BYTE_CEILING) {
-                // Skip VALUE_TERMINATOR (0xF5) - it's handled specially
-                if b as u8 == ARENA_VALUE_TERMINATOR {
-                    continue;
-                }
-                exit_bytes.push(b as u8);
-                if exit_bytes.len() > 3 {
-                    return None; // Too many exit bytes for acceleration
-                }
-            }
-        }
-        byte_idx = ceiling;
-    }
-
-    // Need 1-3 exit bytes for acceleration
-    if exit_bytes.is_empty() || exit_bytes.len() > 3 {
-        return None;
-    }
-
-    let mut accel = crate::automaton::AccelInfo {
-        exit_bytes: [0; 3],
-        len: exit_bytes.len() as u8,
-    };
-    for (i, &b) in exit_bytes.iter().enumerate() {
-        accel.exit_bytes[i] = b;
-    }
-
-    Some(accel)
 }
 
 /// Build arena FA for a single quantified atom.
