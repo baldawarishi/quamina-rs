@@ -4,7 +4,7 @@ Rust port of [quamina](https://github.com/timbray/quamina) - fast pattern-matchi
 
 ## Status
 
-**362 tests passing.** Rust 1.5-2x faster than Go. Synced with Go commit e3d13cd (Jan 2026).
+**375 tests passing.** Rust 1.5-2x faster than Go. Synced with Go commit e3d13cd (Jan 2026).
 
 | Benchmark | Go (ns) | Rust (ns) | Speedup |
 |-----------|---------|-----------|---------|
@@ -65,56 +65,39 @@ Implemented memchr acceleration for ASCII-only negated character classes (`[^x]+
 
 ---
 
-## Optimization Roadmap
+### Literal Prefiltering ✅
 
-### Phase 2: Literal Prefiltering 🎯 NEXT
+Implemented basic literal prefiltering for regexp patterns. Extracts literal prefix, suffix, and required substrings at parse time, then checks before NFA traversal to quickly reject non-matching inputs.
 
-**Problem:** Full automaton runs on every field value.
+**Results (pattern `"example"` vs non-matching input):**
+| Scenario | Time |
+|----------|------|
+| Matching input (full traversal) | 482 ns |
+| Non-matching input (prefilter reject) | 146 ns |
+| Long non-matching (1000 chars) | 568 ns |
 
-**Solution:** Extract literal substrings from patterns, use fast multi-string search to find candidates, only run NFA around match positions.
+**Speedup:** ~3.3x for non-matching inputs via quick rejection.
 
-From [Hyperscan paper](https://www.usenix.org/system/files/nsdi19-wang-xiang.pdf):
-> "Complex regular expressions contain literal strings. It's cheaper to match literals than do full regex."
-
-**Example:** Pattern `[a-z]+@example\.com`
-1. Extract literal: `@example.com`
-2. Use memchr to find `@` positions in input
-3. Only run `[a-z]+` NFA backwards from `@`
-4. Verify `example.com` suffix forwards
-
-```rust
-pub enum Prefilter {
-    None,
-    Memchr(u8),                    // Single byte literal
-    Memchr2(u8, u8),               // Two alternatives
-    Memmem(Vec<u8>),               // Literal string
-    AhoCorasick(AhoCorasick),      // Multiple literals
-}
-```
-
-**Impact:** 2-10x speedup for patterns with literals.
-
-**Testing:** Fuzz literal extraction, verify prefilter never misses matches (superset property).
-
-**Validation:** Benchmark with/without prefilter, measure false positive rate, memory overhead of Aho-Corasick.
-
-**Reference:** [regex-filtered crate](https://docs.rs/regex-filtered/latest/regex_filtered/), [Hyperscan Rose subsystem](https://deepwiki.com/intel/hyperscan/1.1-architecture-overview)
+**Implementation:**
+- `LiteralInfo` struct captures prefix, suffix, required, longest_literal
+- `extract_literals()` walks parsed RegexpRoot
+- Prefilter check at start of `traverse_nfa`/`traverse_dfa`
+- Only active for non-arena patterns (arena support is future work)
 
 ---
 
-### Phase 3: Teddy Multi-String Matching
+## Optimization Roadmap
 
-**Problem:** Aho-Corasick is slower than SIMD-accelerated alternatives for small literal sets.
+### Phase 3: Advanced Literal Prefiltering 🎯 NEXT
 
-**Solution:** Use [Teddy algorithm](https://dl.acm.org/doi/10.1145/3472456.3473512) (already in `aho-corasick` crate) for fast multi-pattern literal search.
+**Current state:** Basic prefiltering implemented. Further improvements possible:
 
-> "Teddy matches up to 64 characters with only 16 SIMD operations."
+1. **Arena NFA support** - Add prefilter to arena-based NFA (patterns with `+`/`*`)
+2. **Alternation literals** - Extract common prefix/suffix from alternation branches
+3. **Aho-Corasick** - Multi-pattern literal matching for multiple regexp patterns
+4. **Position-aware matching** - Only run NFA around literal match positions
 
-Used by ripgrep, Hyperscan. Available via `aho-corasick` crate's packed searchers.
-
-**When:** After literal prefiltering is implemented, as the prefilter backend.
-
-**Validation:** Benchmark Teddy vs NFA baseline, compare memory usage.
+**Reference:** [Hyperscan Rose subsystem](https://deepwiki.com/intel/hyperscan/1.1-architecture-overview)
 
 ---
 

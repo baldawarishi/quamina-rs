@@ -691,6 +691,67 @@ fn bench_regexp_dot_star(c: &mut Criterion) {
     });
 }
 
+// === Prefilter Benchmarks ===
+// These test literal prefiltering - quick rejection of non-matching inputs.
+
+/// Prefilter benchmark: literal pattern with matching input
+fn bench_prefilter_literal_match(c: &mut Criterion) {
+    let mut q = Quamina::new();
+    // Pure literal pattern "example" - should have full prefilter
+    q.add_pattern("literal", r#"{"value": [{"regex": "example"}]}"#)
+        .unwrap();
+
+    let event = r#"{"value": "example"}"#.as_bytes();
+
+    c.bench_function("prefilter_literal_match", |b| {
+        b.iter(|| q.matches_for_event(black_box(event)).unwrap())
+    });
+}
+
+/// Prefilter benchmark: literal pattern with non-matching input (prefilter rejection)
+fn bench_prefilter_literal_nomatch(c: &mut Criterion) {
+    let mut q = Quamina::new();
+    // Pure literal pattern "example" - prefilter should quickly reject "other"
+    q.add_pattern("literal", r#"{"value": [{"regex": "example"}]}"#)
+        .unwrap();
+
+    let event = r#"{"value": "other"}"#.as_bytes();
+
+    c.bench_function("prefilter_literal_nomatch", |b| {
+        b.iter(|| q.matches_for_event(black_box(event)).unwrap())
+    });
+}
+
+/// Prefilter benchmark: prefix pattern with non-matching input
+fn bench_prefilter_prefix_nomatch(c: &mut Criterion) {
+    let mut q = Quamina::new();
+    // Pattern with literal prefix "user_" - prefilter checks prefix
+    q.add_pattern("user", r#"{"value": [{"regex": "user_"}]}"#)
+        .unwrap();
+
+    let event = r#"{"value": "admin_123"}"#.as_bytes();
+
+    c.bench_function("prefilter_prefix_nomatch", |b| {
+        b.iter(|| q.matches_for_event(black_box(event)).unwrap())
+    });
+}
+
+/// Prefilter benchmark: long non-matching input (prefilter avoids full NFA traversal)
+fn bench_prefilter_long_nomatch(c: &mut Criterion) {
+    let mut q = Quamina::new();
+    // Pattern "needle" - test against long input without "needle"
+    q.add_pattern("needle", r#"{"value": [{"regex": "needle"}]}"#)
+        .unwrap();
+
+    // Create a long string that doesn't contain "needle"
+    let long_value = "a".repeat(1000);
+    let event = format!(r#"{{"value": "{}"}}"#, long_value).into_bytes();
+
+    c.bench_function("prefilter_long_nomatch", |b| {
+        b.iter(|| q.matches_for_event(black_box(&event)).unwrap())
+    });
+}
+
 // === Unicode Category Benchmarks ===
 
 /// Unicode category pattern ~p{L} - matches any Unicode letter
@@ -1237,6 +1298,11 @@ criterion_group!(
     bench_regexp_negated_short,
     bench_regexp_negated_long,
     bench_regexp_negated_1k,
+    // Prefilter benchmarks (Phase 2)
+    bench_prefilter_literal_match,
+    bench_prefilter_literal_nomatch,
+    bench_prefilter_prefix_nomatch,
+    bench_prefilter_long_nomatch,
     // Unicode category benchmarks
     bench_unicode_category_letter,
     bench_unicode_category_compile,

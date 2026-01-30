@@ -20,7 +20,9 @@ use crate::automaton::{
     merge_fas, FaState, FieldMatcher, SmallTable, BYTE_CEILING, VALUE_TERMINATOR,
 };
 
-use super::parser::{QuantifiedAtom, RegexpBranch, RegexpRoot, RuneRange, REGEXP_QUANTIFIER_MAX};
+use super::parser::{
+    extract_literals, QuantifiedAtom, RegexpBranch, RegexpRoot, RuneRange, REGEXP_QUANTIFIER_MAX,
+};
 
 // ============================================================================
 // Shell Caching for Unicode Categories
@@ -70,6 +72,7 @@ fn copy_shell_table(
         epsilons: shell.epsilons.clone(),
         spinout: shell.spinout.clone(),
         accel: None,
+        prefilter: None,
     }
 }
 
@@ -137,6 +140,9 @@ pub fn make_regexp_nfa(root: RegexpRoot, for_field: bool) -> (SmallTable, Arc<Fi
         return (table, next_field);
     }
 
+    // Extract literals for prefiltering (before consuming root)
+    let literals = extract_literals(&root);
+
     let next_step = make_nfa_trailer(next_field.clone());
 
     let mut next_step_state = next_step;
@@ -145,7 +151,13 @@ pub fn make_regexp_nfa(root: RegexpRoot, for_field: bool) -> (SmallTable, Arc<Fi
         next_step_state = Arc::new(FaState::with_table(table));
     }
 
-    let table = make_nfa_from_branches(&root, &next_step_state, for_field);
+    let mut table = make_nfa_from_branches(&root, &next_step_state, for_field);
+
+    // Store prefilter info if any literals were extracted
+    if literals.has_literals() {
+        table.prefilter = Some(literals);
+    }
+
     (table, next_field)
 }
 
@@ -248,6 +260,7 @@ fn create_plus_star_loop(
             epsilons: loopback_epsilons,
             spinout: None,
             accel: None,
+            prefilter: None,
         }));
 
         let mut loop_table = make_atom_fa(qa, &loopback);
@@ -631,6 +644,7 @@ pub fn make_dot_fa(dest: &Arc<FaState>) -> SmallTable {
         epsilons: Vec::new(),
         spinout: None,
         accel: None,
+        prefilter: None,
     };
     let target_last = Arc::new(FaState::with_table(s_last));
 
@@ -640,6 +654,7 @@ pub fn make_dot_fa(dest: &Arc<FaState>) -> SmallTable {
         epsilons: Vec::new(),
         spinout: None,
         accel: None,
+        prefilter: None,
     };
     let target_last_inter = Arc::new(FaState::with_table(s_last_inter));
 
@@ -649,6 +664,7 @@ pub fn make_dot_fa(dest: &Arc<FaState>) -> SmallTable {
         epsilons: Vec::new(),
         spinout: None,
         accel: None,
+        prefilter: None,
     };
     let target_first_inter = Arc::new(FaState::with_table(s_first_inter));
 
@@ -659,6 +675,7 @@ pub fn make_dot_fa(dest: &Arc<FaState>) -> SmallTable {
         epsilons: Vec::new(),
         spinout: None,
         accel: None,
+        prefilter: None,
     };
     let target_e0 = Arc::new(FaState::with_table(s_e0));
 
@@ -669,6 +686,7 @@ pub fn make_dot_fa(dest: &Arc<FaState>) -> SmallTable {
         epsilons: Vec::new(),
         spinout: None,
         accel: None,
+        prefilter: None,
     };
     let target_ed = Arc::new(FaState::with_table(s_ed));
 
@@ -679,6 +697,7 @@ pub fn make_dot_fa(dest: &Arc<FaState>) -> SmallTable {
         epsilons: Vec::new(),
         spinout: None,
         accel: None,
+        prefilter: None,
     };
     let target_f0 = Arc::new(FaState::with_table(s_f0));
 
@@ -689,6 +708,7 @@ pub fn make_dot_fa(dest: &Arc<FaState>) -> SmallTable {
         epsilons: Vec::new(),
         spinout: None,
         accel: None,
+        prefilter: None,
     };
     let target_f4 = Arc::new(FaState::with_table(s_f4));
 
@@ -723,6 +743,7 @@ pub fn make_dot_fa(dest: &Arc<FaState>) -> SmallTable {
         epsilons: Vec::new(),
         spinout: None,
         accel: None,
+        prefilter: None,
     }
 }
 

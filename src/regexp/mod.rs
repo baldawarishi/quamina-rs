@@ -19,9 +19,9 @@ mod parser;
 // Re-export public API
 pub use nfa::{make_dot_fa, make_regexp_nfa, make_regexp_nfa_arena, regexp_has_plus_star};
 pub use parser::{
-    collect_lookarounds, has_top_level_lookaround, invert_rune_range, parse_regexp,
-    simplify_rune_range, LookaroundType, QuantifiedAtom, RegexpBranch, RegexpError, RegexpRoot,
-    RunePair, RuneRange, REGEXP_QUANTIFIER_MAX, RUNE_MAX,
+    collect_lookarounds, extract_literals, has_top_level_lookaround, invert_rune_range,
+    parse_regexp, simplify_rune_range, LiteralInfo, LookaroundType, QuantifiedAtom, RegexpBranch,
+    RegexpError, RegexpRoot, RunePair, RuneRange, REGEXP_QUANTIFIER_MAX, RUNE_MAX,
 };
 
 #[cfg(test)]
