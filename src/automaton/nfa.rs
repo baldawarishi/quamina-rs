@@ -16,13 +16,6 @@ use super::small_table::{
 /// Like Go, accepts a Vec to append to for reduced allocations.
 #[inline]
 pub fn traverse_dfa(table: &SmallTable, val: &[u8], transitions: &mut Vec<Arc<FieldMatcher>>) {
-    // Prefilter check: quick rejection based on literal requirements
-    if let Some(ref prefilter) = table.prefilter {
-        if !prefilter.prefilter_matches(val) {
-            return;
-        }
-    }
-
     let mut current_table = table;
 
     for i in 0..=val.len() {
@@ -85,13 +78,6 @@ pub fn traverse_dfa(table: &SmallTable, val: &[u8], transitions: &mut Vec<Arc<Fi
 /// to spinout states in nfa.go for related design discussion.
 #[inline]
 pub fn traverse_nfa(table: &SmallTable, val: &[u8], bufs: &mut NfaBuffers) {
-    // Prefilter check: quick rejection based on literal requirements
-    if let Some(ref prefilter) = table.prefilter {
-        if !prefilter.prefilter_matches(val) {
-            return;
-        }
-    }
-
     // Clear state buffers but NOT transitions (caller manages that)
     bufs.current_states.clear();
     bufs.next_states.clear();

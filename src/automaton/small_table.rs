@@ -17,8 +17,6 @@ use std::sync::Arc;
 
 use rustc_hash::FxHashSet;
 
-use crate::regexp::LiteralInfo;
-
 /// Wrapper for raw pointers that implements Send+Sync.
 /// Safe because these pointers are only used within NfaBuffers which is mutex-protected.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -120,9 +118,6 @@ pub struct SmallTable {
     pub spinout: Option<Arc<FaState>>,
     /// Acceleration info for spinout states (exit bytes for memchr skip)
     pub accel: Option<AccelInfo>,
-    /// Literal prefilter info for quick rejection of non-matching values.
-    /// Only set on the start table of regexp patterns.
-    pub prefilter: Option<LiteralInfo>,
 }
 
 impl SmallTable {
@@ -134,7 +129,6 @@ impl SmallTable {
             epsilons: Vec::new(),
             spinout: None,
             accel: None,
-            prefilter: None,
         }
     }
 
@@ -149,7 +143,6 @@ impl SmallTable {
             epsilons: Vec::new(),
             spinout: None,
             accel: None,
-            prefilter: None,
         }
     }
 
@@ -192,7 +185,6 @@ impl SmallTable {
             epsilons: Vec::new(),
             spinout: None,
             accel: None,
-            prefilter: None,
         }
     }
 

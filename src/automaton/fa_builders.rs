@@ -1333,7 +1333,6 @@ fn merge_fa_states(
                 epsilons: vec![state1.clone(), state2.clone()],
                 spinout: None,
                 accel: None,
-                prefilter: None,
             },
             field_transitions: vec![],
         });
@@ -1438,7 +1437,6 @@ fn merge_tables_packed(
         epsilons: Vec::new(),
         spinout: None,
         accel: None,
-        prefilter: None,
     }
 }
 
