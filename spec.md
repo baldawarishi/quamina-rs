@@ -90,18 +90,42 @@ Implemented basic literal prefiltering for regexp patterns. Extracts literal pre
 
 ### Phase 3: Advanced Literal Prefiltering 🎯 NEXT
 
-**Current state:** Basic prefiltering implemented. Further improvements possible:
+**Current state:** Basic prefiltering implemented with limitations:
+- Only works for non-arena patterns (no `+` or `*` quantifiers)
+- Only single-branch patterns (no alternation)
+- Simple `windows().any()` substring check (not SIMD-accelerated)
+- Adds ~10ns overhead for matching inputs
+
+**Real-world impact:** The 3.3x speedup only applies to non-matching inputs on pure literal patterns. Most regexp patterns use quantifiers (`+`, `*`) which route to arena NFA (no prefilter). Benefit is narrow but helps rejection-heavy workloads.
+
+**Further improvements:**
 
 1. **Arena NFA support** - Add prefilter to arena-based NFA (patterns with `+`/`*`)
 2. **Alternation literals** - Extract common prefix/suffix from alternation branches
-3. **Aho-Corasick** - Multi-pattern literal matching for multiple regexp patterns
+3. **SIMD substring search** - Replace `windows().any()` with `memchr::memmem`
 4. **Position-aware matching** - Only run NFA around literal match positions
 
 **Reference:** [Hyperscan Rose subsystem](https://deepwiki.com/intel/hyperscan/1.1-architecture-overview)
 
 ---
 
-### Phase 4: Pattern Decomposition
+### Phase 4: Teddy Multi-String Matching
+
+**Problem:** When multiple patterns share literal requirements, checking each separately is slow.
+
+**Solution:** Use [Teddy algorithm](https://dl.acm.org/doi/10.1145/3472456.3473512) (already in `aho-corasick` crate) for fast multi-pattern literal search.
+
+> "Teddy matches up to 64 characters with only 16 SIMD operations."
+
+Used by ripgrep, Hyperscan. Available via `aho-corasick` crate's packed searchers.
+
+**When:** After Phase 3 improvements, as a prefilter backend for multiple patterns.
+
+**Validation:** Benchmark Teddy vs per-pattern prefilter, compare memory usage.
+
+---
+
+### Phase 5: Pattern Decomposition
 
 **Problem:** Long patterns run entire NFA even when literals could short-circuit.
 
@@ -122,7 +146,7 @@ From [Hyperscan](https://branchfree.org/2019/02/28/paper-hyperscan-a-fast-multi-
 
 ---
 
-### Phase 5: Lazy/Hybrid DFA
+### Phase 6: Lazy/Hybrid DFA
 
 **Problem:** NFA simulation visits multiple states per byte.
 
@@ -137,7 +161,7 @@ From [regex-automata](https://docs.rs/regex-automata/latest/regex_automata/hybri
 
 ---
 
-### Phase 6: Bit-Parallel NFA (Research)
+### Phase 7: Bit-Parallel NFA (Research)
 
 **Problem:** NFA state tracking uses pointer-chasing.
 
