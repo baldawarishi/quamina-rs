@@ -23,7 +23,7 @@
 
 use std::sync::Arc;
 
-use super::small_table::{FieldMatcher, BYTE_CEILING};
+use super::small_table::{AccelInfo, FieldMatcher, BYTE_CEILING};
 
 /// A state identifier - just an index into the arena.
 ///
@@ -88,6 +88,8 @@ pub struct ArenaSmallTable {
     pub epsilons: Vec<StateId>,
     /// Special state for handling wildcard patterns
     pub spinout: StateId,
+    /// Acceleration info for self-loop states (exit bytes for memchr skip)
+    pub accel: Option<AccelInfo>,
 }
 
 impl Default for ArenaSmallTable {
@@ -104,6 +106,7 @@ impl ArenaSmallTable {
             steps: vec![StateId::NONE],
             epsilons: Vec::new(),
             spinout: StateId::NONE,
+            accel: None,
         }
     }
 
@@ -162,6 +165,55 @@ impl ArenaSmallTable {
     #[inline]
     pub fn step(&self, byte: u8) -> (StateId, &[StateId]) {
         (self.dstep(byte), &self.epsilons)
+    }
+
+    /// Compute acceleration info for a self-loop state.
+    ///
+    /// For states that loop back to themselves on most bytes, this finds the
+    /// "exit" bytes that cause different transitions. If there are 1-3 such
+    /// bytes, returns AccelInfo for use with memchr SIMD acceleration.
+    pub fn compute_accel(&self, self_id: StateId) -> Option<AccelInfo> {
+        if self.ceilings.is_empty() || self.steps.is_empty() {
+            return None;
+        }
+
+        // For self-loop states, we want to find bytes that exit the loop.
+        // The "default" is the self-loop (transition to self_id).
+        // Exit bytes are those that go somewhere else.
+
+        let mut exit_bytes = Vec::new();
+        let mut byte_idx: usize = 0;
+
+        for (i, &ceiling) in self.ceilings.iter().enumerate() {
+            let ceiling = ceiling as usize;
+            let step = self.steps[i];
+
+            // If this step doesn't go back to self, these are exit bytes
+            if step != self_id {
+                for b in byte_idx..ceiling.min(BYTE_CEILING) {
+                    exit_bytes.push(b as u8);
+                    if exit_bytes.len() > 3 {
+                        return None; // Too many exit bytes for acceleration
+                    }
+                }
+            }
+            byte_idx = ceiling;
+        }
+
+        // Need 1-3 exit bytes for acceleration
+        if exit_bytes.is_empty() || exit_bytes.len() > 3 {
+            return None;
+        }
+
+        let mut accel = AccelInfo {
+            exit_bytes: [0; 3],
+            len: exit_bytes.len() as u8,
+        };
+        for (i, &b) in exit_bytes.iter().enumerate() {
+            accel.exit_bytes[i] = b;
+        }
+
+        Some(accel)
     }
 }
 
@@ -304,6 +356,35 @@ impl ArenaNfaBuffers {
 /// Value terminator (same as in small_table)
 pub const ARENA_VALUE_TERMINATOR: u8 = 0xF5;
 
+/// Try to accelerate through a self-loop state using memchr.
+///
+/// When a state has acceleration info (1-3 exit bytes), we can use
+/// SIMD-optimized memchr to skip directly to the next exit byte instead of
+/// processing byte-by-byte.
+///
+/// Returns Some(skip) if acceleration found an exit byte at position `skip`,
+/// or None if acceleration is not applicable.
+///
+/// Note: Currently not used because Unicode-aware patterns have too many exit bytes.
+/// See spec.md Phase 3b for details.
+#[allow(dead_code)]
+#[inline]
+fn try_accelerate_arena(table: &ArenaSmallTable, remaining: &[u8]) -> Option<usize> {
+    let accel = table.accel.as_ref()?;
+
+    match accel.len {
+        1 => memchr::memchr(accel.exit_bytes[0], remaining),
+        2 => memchr::memchr2(accel.exit_bytes[0], accel.exit_bytes[1], remaining),
+        3 => memchr::memchr3(
+            accel.exit_bytes[0],
+            accel.exit_bytes[1],
+            accel.exit_bytes[2],
+            remaining,
+        ),
+        _ => None,
+    }
+}
+
 /// Traverse an arena-based NFA on a value.
 ///
 /// This is the arena equivalent of `traverse_nfa` but uses index-based
@@ -328,12 +409,34 @@ pub fn traverse_arena_nfa(
     let mut seen_transitions: std::collections::HashSet<*const FieldMatcher> =
         std::collections::HashSet::new();
 
-    for i in 0..=val.len() {
+    let len = val.len();
+    let mut i = 0;
+
+    while i <= len {
         if bufs.current_states.is_empty() {
             break;
         }
 
-        let byte = if i < val.len() {
+        // State acceleration: Currently disabled because Unicode-aware patterns have too many
+        // "exit bytes" due to UTF-8 validation requirements. The check added overhead without
+        // benefit for typical regexp patterns. See test_negated_single_char_no_acceleration_utf8.
+        //
+        // Acceleration could help for patterns with very specific exit bytes (1-3 bytes),
+        // but such patterns are rare in practice with full Unicode support.
+        //
+        // To re-enable, uncomment this block:
+        // if i < len && bufs.current_states.len() == 1 {
+        //     let state_id = bufs.current_states[0];
+        //     let state = &arena[state_id];
+        //     if let Some(skip) = try_accelerate_arena(&state.table, &val[i..]) {
+        //         if skip > 0 {
+        //             i += skip;
+        //             continue;
+        //         }
+        //     }
+        // }
+
+        let byte = if i < len {
             val[i]
         } else {
             ARENA_VALUE_TERMINATOR
@@ -371,6 +474,7 @@ pub fn traverse_arena_nfa(
         // Swap buffers
         std::mem::swap(&mut bufs.current_states, &mut bufs.next_states);
         bufs.next_states.clear();
+        i += 1;
     }
 
     // Check final states for matches
@@ -706,5 +810,56 @@ mod tests {
         let mut bufs = ArenaNfaBuffers::with_capacity(arena.len());
         traverse_arena_nfa(&arena, start, b"aaaaaaaaaa", &mut bufs);
         assert_eq!(bufs.transitions.len(), 1);
+    }
+
+    #[test]
+    fn test_arena_small_table_compute_accel() {
+        // Test compute_accel for a table that matches most bytes except one
+        // This simulates [^x] where only 'x' doesn't match
+        let mut table = ArenaSmallTable::new();
+        let mut unpacked = [StateId::NONE; BYTE_CEILING];
+
+        // Set all bytes to transition to state 0 (self), except 'x' (0x78)
+        let self_id = StateId(0);
+        for (byte, slot) in unpacked.iter_mut().enumerate() {
+            if byte != b'x' as usize {
+                *slot = self_id;
+            }
+            // 'x' stays as NONE (exit byte)
+        }
+        table.pack(&unpacked);
+
+        // Compute accel - should find 'x' as the only exit byte
+        let accel = table.compute_accel(self_id);
+        assert!(
+            accel.is_some(),
+            "Should compute accel for [^x]-like pattern"
+        );
+
+        let accel = accel.unwrap();
+        assert_eq!(accel.len, 1, "Should have 1 exit byte");
+        assert_eq!(accel.exit_bytes[0], b'x', "Exit byte should be 'x'");
+    }
+
+    #[test]
+    fn test_arena_small_table_compute_accel_too_many_exit_bytes() {
+        // Test that accel is None when there are too many exit bytes
+        // This simulates [abc] where most bytes don't match
+        let mut table = ArenaSmallTable::new();
+        let mut unpacked = [StateId::NONE; BYTE_CEILING];
+
+        // Only 'a', 'b', 'c' transition to self
+        let self_id = StateId(0);
+        unpacked[b'a' as usize] = self_id;
+        unpacked[b'b' as usize] = self_id;
+        unpacked[b'c' as usize] = self_id;
+        table.pack(&unpacked);
+
+        // Compute accel - should be None because there are too many exit bytes
+        let accel = table.compute_accel(self_id);
+        assert!(
+            accel.is_none(),
+            "Should not compute accel when too many exit bytes"
+        );
     }
 }

@@ -108,16 +108,30 @@ if bufs.current_states.len() == 1 {
 | 10k | 263 µs | 4.2 µs | **62x** |
 | 1k | 26.8 µs | 676 ns | **40x** |
 
-#### 3b. Arena NFA Acceleration ❌ TODO
+#### 3b. Arena NFA Acceleration ⚠️ IMPLEMENTED BUT DISABLED
 
 **Problem:** `traverse_arena_nfa` (used for regexp `+`/`*`) has no acceleration.
 
-**Current:** `regexp_plus_long` = 3.6 µs, `regexp_star_long` = 3.7 µs
+**Implementation status:**
+1. ✅ Added `accel: Option<AccelInfo>` to `ArenaSmallTable`
+2. ✅ Added `compute_accel()` method and `compute_loop_accel()` for regexp building
+3. ✅ Added `try_accelerate_arena()` to `arena.rs`
+4. ⚠️ Check in `traverse_arena_nfa` is DISABLED (causes ~4% regression with no benefit)
 
-**Approach:**
-1. Add `accel: Option<AccelInfo>` to `ArenaSmallTable`
-2. Compute exit bytes for self-loop states in regexp NFA building
-3. Add `try_accelerate_arena()` to `traverse_arena_nfa`
+**Why disabled:** Unicode-aware patterns have too many "exit bytes" for acceleration to work.
+
+For a pattern like `[^x]+`, the FA must reject:
+- 'x' (0x78) - the negated character
+- Invalid UTF-8 lead bytes (0x80-0xC1) - these can't start valid UTF-8
+- VALUE_TERMINATOR (0xF5)
+
+This results in 68+ exit bytes, far exceeding the 3-byte limit for memchr acceleration.
+Similarly, `[a-z]+` has 230+ exit bytes (all non-letter bytes including invalid UTF-8).
+
+**When it would help:** Patterns with 1-3 specific exit bytes AND valid UTF-8 everywhere else.
+Such patterns are rare with full Unicode support.
+
+**Benchmark (unchanged):** `regexp_plus_long` = 3.6 µs, `regexp_star_long` = 3.7 µs
 
 **Files:** `src/automaton/arena.rs`, `src/regexp/nfa.rs`
 

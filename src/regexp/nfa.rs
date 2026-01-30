@@ -954,7 +954,71 @@ fn create_arena_plus_star_loop(
         arena[start].table.epsilons.push(exit_state);
     }
 
+    // Compute acceleration for the loop. The exit bytes are bytes that would NOT
+    // match the atom (i.e., bytes that exit the loop). This is useful for patterns
+    // like [^x]+ where 'x' is the only exit byte.
+    // Store accel on both start and loopback states:
+    // - On start for the first iteration
+    // - On loopback for subsequent iterations (since we're at loopback after matching)
+    if let Some(accel) = compute_loop_accel(&arena[start].table, start) {
+        arena[start].table.accel = Some(accel.clone());
+        arena[loopback].table.accel = Some(accel);
+    }
+
     start
+}
+
+/// Compute acceleration info for a loop state.
+///
+/// For +/* patterns, finds bytes that would exit the loop (i.e., bytes that
+/// don't transition to the loopback state). If there are 1-3 such bytes,
+/// returns AccelInfo for memchr acceleration.
+fn compute_loop_accel(
+    table: &ArenaSmallTable,
+    _self_id: StateId,
+) -> Option<crate::automaton::AccelInfo> {
+    if table.ceilings.is_empty() || table.steps.is_empty() {
+        return None;
+    }
+
+    // Find bytes that don't have transitions (exit the loop)
+    let mut exit_bytes = Vec::new();
+    let mut byte_idx: usize = 0;
+
+    for (i, &ceiling) in table.ceilings.iter().enumerate() {
+        let ceiling = ceiling as usize;
+        let step = table.steps[i];
+
+        // If this step is NONE, these bytes exit the loop
+        if step.is_none() {
+            for b in byte_idx..ceiling.min(BYTE_CEILING) {
+                // Skip VALUE_TERMINATOR (0xF5) - it's handled specially
+                if b as u8 == ARENA_VALUE_TERMINATOR {
+                    continue;
+                }
+                exit_bytes.push(b as u8);
+                if exit_bytes.len() > 3 {
+                    return None; // Too many exit bytes for acceleration
+                }
+            }
+        }
+        byte_idx = ceiling;
+    }
+
+    // Need 1-3 exit bytes for acceleration
+    if exit_bytes.is_empty() || exit_bytes.len() > 3 {
+        return None;
+    }
+
+    let mut accel = crate::automaton::AccelInfo {
+        exit_bytes: [0; 3],
+        len: exit_bytes.len() as u8,
+    };
+    for (i, &b) in exit_bytes.iter().enumerate() {
+        accel.exit_bytes[i] = b;
+    }
+
+    Some(accel)
 }
 
 /// Build arena FA for a single quantified atom.

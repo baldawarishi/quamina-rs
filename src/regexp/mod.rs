@@ -1235,6 +1235,54 @@ mod tests {
         );
     }
 
+    /// Test that acceleration info is NOT computed for Unicode-aware patterns
+    /// because UTF-8 validation creates too many "exit" bytes (invalid lead bytes).
+    ///
+    /// For [^x]+, the FA must reject:
+    /// - 'x' (0x78) - the negated character
+    /// - Invalid UTF-8 lead bytes (0x80-0xC1) - continuation bytes can't be lead bytes
+    /// - VALUE_TERMINATOR (0xF5) - handled specially
+    /// This is more than 3 exit bytes, so acceleration doesn't apply.
+    #[test]
+    fn test_negated_single_char_no_acceleration_utf8() {
+        use crate::automaton::arena::{traverse_arena_nfa, ArenaNfaBuffers};
+
+        // Pattern [^x]+ - Unicode-aware, so won't have acceleration
+        let pattern = "[^x]+";
+        let root = parse_regexp(pattern).expect(&format!("Failed to parse: {}", pattern));
+        let (arena, start, field_matcher) = make_regexp_nfa_arena(root, false);
+
+        // Check that accel is None (too many exit bytes due to UTF-8 validation)
+        let start_state = &arena[start];
+        assert!(
+            start_state.table.accel.is_none(),
+            "[^x]+ should NOT have acceleration due to UTF-8 validation exit bytes"
+        );
+
+        // Verify the pattern still works correctly
+        let mut bufs = ArenaNfaBuffers::with_capacity(arena.len());
+        traverse_arena_nfa(&arena, start, b"abc", &mut bufs);
+        assert!(
+            bufs.transitions
+                .iter()
+                .any(|m| Arc::ptr_eq(m, &field_matcher)),
+            "[^x]+ should match 'abc'"
+        );
+
+        // Should not match string starting with 'x'
+        bufs.clear();
+        traverse_arena_nfa(&arena, start, b"xabc", &mut bufs);
+        assert!(bufs.transitions.is_empty(), "[^x]+ should not match 'xabc'");
+
+        // Should not match empty string (+ requires at least one)
+        bufs.clear();
+        traverse_arena_nfa(&arena, start, b"", &mut bufs);
+        assert!(
+            bufs.transitions.is_empty(),
+            "[^x]+ should not match empty string"
+        );
+    }
+
     // ============= Range Quantifier Edge Case Tests =============
 
     #[test]
