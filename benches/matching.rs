@@ -630,6 +630,54 @@ fn bench_regexp_complex(c: &mut Criterion) {
     });
 }
 
+/// Regexp with negated character class [^x]+ - exit byte at end
+/// Pattern: prefix[^x]+suffix where memchr can skip to 'x'
+fn bench_regexp_negated_short(c: &mut Criterion) {
+    let mut q = Quamina::new();
+    // Pattern: "a" followed by [^x]+ followed by "x" followed by more text
+    q.add_pattern("not_x", r#"{"value": [{"regex": "a[^x]+x"}]}"#)
+        .unwrap();
+
+    // String with 'x' at position 10 - memchr should skip to it
+    let event = r#"{"value": "aaaaaaaaaxend"}"#.as_bytes();
+
+    c.bench_function("regexp_negated_short", |b| {
+        b.iter(|| q.matches_for_event(black_box(event)).unwrap())
+    });
+}
+
+/// Regexp with negated character class [^x]+ on long string
+/// memchr should skip 100 chars to find 'x'
+fn bench_regexp_negated_long(c: &mut Criterion) {
+    let mut q = Quamina::new();
+    q.add_pattern("not_x", r#"{"value": [{"regex": "a[^x]+x"}]}"#)
+        .unwrap();
+
+    // 100 'a's followed by 'x' - memchr skips to position 100
+    let long_value = format!("{}x", "a".repeat(100));
+    let event = format!(r#"{{"value": "{}"}}"#, long_value).into_bytes();
+
+    c.bench_function("regexp_negated_long", |b| {
+        b.iter(|| q.matches_for_event(black_box(&event)).unwrap())
+    });
+}
+
+/// Regexp with negated character class [^x]+ on very long string (1000 chars)
+/// memchr should skip 1000 chars to find 'x'
+fn bench_regexp_negated_1k(c: &mut Criterion) {
+    let mut q = Quamina::new();
+    q.add_pattern("not_x", r#"{"value": [{"regex": "a[^x]+x"}]}"#)
+        .unwrap();
+
+    // 1000 'a's followed by 'x' - memchr skips to position 1000
+    let long_value = format!("{}x", "a".repeat(1000));
+    let event = format!(r#"{{"value": "{}"}}"#, long_value).into_bytes();
+
+    c.bench_function("regexp_negated_1k", |b| {
+        b.iter(|| q.matches_for_event(black_box(&event)).unwrap())
+    });
+}
+
 /// Regexp with dot-star pattern (match anything)
 fn bench_regexp_dot_star(c: &mut Criterion) {
     let mut q = Quamina::new();
@@ -1185,6 +1233,10 @@ criterion_group!(
     bench_regexp_star_long,
     bench_regexp_complex,
     bench_regexp_dot_star,
+    // Regexp negated class benchmarks (ASCII fast path - Phase 1)
+    bench_regexp_negated_short,
+    bench_regexp_negated_long,
+    bench_regexp_negated_1k,
     // Unicode category benchmarks
     bench_unicode_category_letter,
     bench_unicode_category_compile,

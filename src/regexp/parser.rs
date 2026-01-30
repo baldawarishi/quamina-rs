@@ -57,6 +57,10 @@ pub struct QuantifiedAtom {
     pub cache_key: Option<String>,
     /// Lookaround assertion type (if this atom is a lookaround group)
     pub lookaround: Option<LookaroundType>,
+    /// For ASCII-only negated patterns like `[^x]`, stores the negated bytes (1-3).
+    /// Used for memchr acceleration - since JSON input is valid UTF-8, we don't
+    /// need UTF-8 validation during matching, so these are the only exit bytes.
+    pub ascii_negated_bytes: Option<Vec<u8>>,
 }
 
 impl Default for QuantifiedAtom {
@@ -69,6 +73,7 @@ impl Default for QuantifiedAtom {
             subtree: None,
             cache_key: None,
             lookaround: None,
+            ascii_negated_bytes: None,
         }
     }
 }
@@ -854,11 +859,12 @@ fn read_atom(parse: &mut RegexpParse) -> Result<QuantifiedAtom, RegexpError> {
         }
         '[' => {
             parse.record_feature(RegexpFeature::Class);
-            let rr = read_char_class_expr(parse)?;
+            let (rr, ascii_negated_bytes) = read_char_class_expr(parse)?;
             Ok(QuantifiedAtom {
                 runes: rr,
                 quant_min: 1,
                 quant_max: 1,
+                ascii_negated_bytes,
                 ..Default::default()
             })
         }
@@ -951,7 +957,11 @@ fn read_atom(parse: &mut RegexpParse) -> Result<QuantifiedAtom, RegexpError> {
 }
 
 /// Read a character class expression [...]
-fn read_char_class_expr(parse: &mut RegexpParse) -> Result<RuneRange, RegexpError> {
+/// Returns (RuneRange, Option<Vec<u8>>) where the second element contains
+/// ASCII negated bytes for patterns like [^x] that can use memchr acceleration.
+fn read_char_class_expr(
+    parse: &mut RegexpParse,
+) -> Result<(RuneRange, Option<Vec<u8>>), RegexpError> {
     // Check for unclosed bracket (EOF immediately after '[')
     if parse.is_empty() {
         return Err(RegexpError {
@@ -975,12 +985,50 @@ fn read_char_class_expr(parse: &mut RegexpParse) -> Result<RuneRange, RegexpErro
 
     parse.require(']')?;
 
+    // Detect ASCII-only negated patterns for memchr acceleration
+    // For patterns like [^x], [^/], [^"], we can accelerate by searching for exit bytes
+    let ascii_negated_bytes = if is_negated {
+        detect_ascii_negated_bytes(&rr)
+    } else {
+        None
+    };
+
     // Apply negation if needed
     if is_negated {
         rr = invert_rune_range(rr);
     }
 
-    Ok(rr)
+    Ok((rr, ascii_negated_bytes))
+}
+
+/// Detect if a rune range (BEFORE inversion) represents an ASCII-only character set
+/// with 1-3 characters. Used for memchr acceleration of negated patterns.
+///
+/// For patterns like `[^x]`, the pre-inversion runes are just `[{x, x}]`.
+/// We return Some(vec![b'x']) which can be used for memchr acceleration.
+fn detect_ascii_negated_bytes(rr: &RuneRange) -> Option<Vec<u8>> {
+    let mut bytes = Vec::new();
+
+    for pair in rr {
+        // Check if both lo and hi are ASCII
+        if pair.lo as u32 >= 128 || pair.hi as u32 >= 128 {
+            return None; // Non-ASCII character in negated set
+        }
+
+        // Expand the range and collect bytes
+        for c in (pair.lo as u8)..=(pair.hi as u8) {
+            bytes.push(c);
+            if bytes.len() > 3 {
+                return None; // Too many exit bytes for memchr acceleration
+            }
+        }
+    }
+
+    if bytes.is_empty() || bytes.len() > 3 {
+        return None;
+    }
+
+    Some(bytes)
 }
 
 /// Read CCE1 elements
@@ -1497,5 +1545,118 @@ fn read_range_quantifier(
                 offset: parse.last_index,
             });
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_detect_ascii_negated_bytes_single_char() {
+        // [^x] -> should detect 'x' as exit byte
+        let rr = vec![RunePair { lo: 'x', hi: 'x' }];
+        let result = detect_ascii_negated_bytes(&rr);
+        assert_eq!(result, Some(vec![b'x']));
+    }
+
+    #[test]
+    fn test_detect_ascii_negated_bytes_multiple_chars() {
+        // [^abc] -> should detect a, b, c as exit bytes
+        let rr = vec![
+            RunePair { lo: 'a', hi: 'a' },
+            RunePair { lo: 'b', hi: 'b' },
+            RunePair { lo: 'c', hi: 'c' },
+        ];
+        let result = detect_ascii_negated_bytes(&rr);
+        assert_eq!(result, Some(vec![b'a', b'b', b'c']));
+    }
+
+    #[test]
+    fn test_detect_ascii_negated_bytes_range() {
+        // [^a-c] -> should detect a, b, c as exit bytes
+        let rr = vec![RunePair { lo: 'a', hi: 'c' }];
+        let result = detect_ascii_negated_bytes(&rr);
+        assert_eq!(result, Some(vec![b'a', b'b', b'c']));
+    }
+
+    #[test]
+    fn test_detect_ascii_negated_bytes_too_many() {
+        // [^a-z] -> too many exit bytes (26), should return None
+        let rr = vec![RunePair { lo: 'a', hi: 'z' }];
+        let result = detect_ascii_negated_bytes(&rr);
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_detect_ascii_negated_bytes_non_ascii() {
+        // [^ü] -> non-ASCII, should return None
+        let rr = vec![RunePair { lo: 'ü', hi: 'ü' }];
+        let result = detect_ascii_negated_bytes(&rr);
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_detect_ascii_negated_bytes_mixed() {
+        // [^aü] -> contains non-ASCII, should return None
+        let rr = vec![RunePair { lo: 'a', hi: 'a' }, RunePair { lo: 'ü', hi: 'ü' }];
+        let result = detect_ascii_negated_bytes(&rr);
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_parse_negated_char_class_stores_ascii_bytes() {
+        // Parse [^x]+ and verify ascii_negated_bytes is set
+        let tree = parse_regexp("[^x]+").unwrap();
+        assert_eq!(tree.len(), 1);
+        assert_eq!(tree[0].len(), 1);
+
+        let qa = &tree[0][0];
+        assert_eq!(qa.ascii_negated_bytes, Some(vec![b'x']));
+    }
+
+    #[test]
+    fn test_parse_non_negated_class_no_ascii_bytes() {
+        // Parse [abc]+ - not negated, so no ascii_negated_bytes
+        let tree = parse_regexp("[abc]+").unwrap();
+        assert_eq!(tree.len(), 1);
+        assert_eq!(tree[0].len(), 1);
+
+        let qa = &tree[0][0];
+        assert_eq!(qa.ascii_negated_bytes, None);
+    }
+
+    #[test]
+    fn test_parse_negated_unicode_class_no_ascii_bytes() {
+        // Parse [^ü]+ - negated but non-ASCII, so no ascii_negated_bytes
+        let tree = parse_regexp("[^ü]+").unwrap();
+        assert_eq!(tree.len(), 1);
+        assert_eq!(tree[0].len(), 1);
+
+        let qa = &tree[0][0];
+        assert_eq!(qa.ascii_negated_bytes, None);
+    }
+
+    #[test]
+    fn test_parse_negated_slash_class() {
+        // Parse [^/]+ - common pattern for path parsing
+        let tree = parse_regexp("[^/]+").unwrap();
+        assert_eq!(tree.len(), 1);
+        assert_eq!(tree[0].len(), 1);
+
+        let qa = &tree[0][0];
+        assert_eq!(qa.ascii_negated_bytes, Some(vec![b'/']));
+    }
+
+    #[test]
+    fn test_parse_negated_quote_class() {
+        // Parse [^"]+ - common pattern for quoted string parsing
+        // Note: in I-Regexp, " is a normal character, no escaping needed
+        let tree = parse_regexp("[^\"]+").unwrap();
+        assert_eq!(tree.len(), 1);
+        assert_eq!(tree[0].len(), 1);
+
+        let qa = &tree[0][0];
+        assert_eq!(qa.ascii_negated_bytes, Some(vec![b'"']));
     }
 }

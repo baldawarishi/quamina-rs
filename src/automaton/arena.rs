@@ -365,9 +365,8 @@ pub const ARENA_VALUE_TERMINATOR: u8 = 0xF5;
 /// Returns Some(skip) if acceleration found an exit byte at position `skip`,
 /// or None if acceleration is not applicable.
 ///
-/// Note: Currently not used because Unicode-aware patterns have too many exit bytes.
-/// See spec.md Phase 3b for details.
-#[allow(dead_code)]
+/// Used for ASCII-only negated patterns like `[^x]+` where the exit bytes
+/// are just the negated ASCII characters (not all invalid UTF-8 bytes).
 #[inline]
 fn try_accelerate_arena(table: &ArenaSmallTable, remaining: &[u8]) -> Option<usize> {
     let accel = table.accel.as_ref()?;
@@ -417,24 +416,22 @@ pub fn traverse_arena_nfa(
             break;
         }
 
-        // State acceleration: Currently disabled because Unicode-aware patterns have too many
-        // "exit bytes" due to UTF-8 validation requirements. The check added overhead without
-        // benefit for typical regexp patterns. See test_negated_single_char_no_acceleration_utf8.
+        // State acceleration: For ASCII-only negated patterns like [^x]+, use memchr
+        // to skip directly to exit bytes. This is enabled when patterns have 1-3 exit bytes.
         //
-        // Acceleration could help for patterns with very specific exit bytes (1-3 bytes),
-        // but such patterns are rare in practice with full Unicode support.
-        //
-        // To re-enable, uncomment this block:
-        // if i < len && bufs.current_states.len() == 1 {
-        //     let state_id = bufs.current_states[0];
-        //     let state = &arena[state_id];
-        //     if let Some(skip) = try_accelerate_arena(&state.table, &val[i..]) {
-        //         if skip > 0 {
-        //             i += skip;
-        //             continue;
-        //         }
-        //     }
-        // }
+        // Note: Generic Unicode patterns still have too many exit bytes due to UTF-8 validation,
+        // but ASCII-only negated patterns (detected at parse time) work well because JSON input
+        // is valid UTF-8 and doesn't need re-validation during matching.
+        if i < len && bufs.current_states.len() == 1 {
+            let state_id = bufs.current_states[0];
+            let state = &arena[state_id];
+            if let Some(skip) = try_accelerate_arena(&state.table, &val[i..]) {
+                if skip > 0 {
+                    i += skip;
+                    continue;
+                }
+            }
+        }
 
         let byte = if i < len {
             val[i]
@@ -861,5 +858,121 @@ mod tests {
             accel.is_none(),
             "Should not compute accel when too many exit bytes"
         );
+    }
+
+    #[test]
+    fn test_ascii_fast_path_acceleration() {
+        // Test that ASCII-only negated patterns can be accelerated.
+        // This builds a [^x]+ style loop with explicit AccelInfo.
+        let mut arena = StateArena::new();
+        let field_matcher = Arc::new(FieldMatcher::new());
+
+        // Create exit/final states
+        let final_state = arena.alloc();
+        arena[final_state]
+            .field_transitions
+            .push(field_matcher.clone());
+
+        let exit_state = arena.alloc_with_table(ArenaSmallTable::with_mappings(
+            StateId::NONE,
+            &[ARENA_VALUE_TERMINATOR],
+            &[final_state],
+        ));
+
+        // Create loopback state
+        let loopback = arena.alloc();
+
+        // Create start state that matches everything except 'x' (like [^x]+)
+        // Build transition table that accepts all ASCII except 'x'
+        let mut unpacked = [StateId::NONE; BYTE_CEILING];
+        for byte in 0..BYTE_CEILING {
+            if byte != b'x' as usize {
+                unpacked[byte] = loopback;
+            }
+        }
+
+        let mut start_table = ArenaSmallTable::new();
+        start_table.pack(&unpacked);
+        // Add acceleration info - exit byte is just 'x'
+        start_table.accel = Some(super::super::AccelInfo {
+            exit_bytes: [b'x', 0, 0],
+            len: 1,
+        });
+
+        let start = arena.alloc_with_table(start_table);
+
+        // Set up loopback
+        arena[loopback].table.epsilons = vec![exit_state, start];
+        arena[loopback].table.accel = Some(super::super::AccelInfo {
+            exit_bytes: [b'x', 0, 0],
+            len: 1,
+        });
+
+        let mut bufs = ArenaNfaBuffers::with_capacity(arena.len());
+
+        // Test with a long string where 'x' is at the end
+        // The acceleration should skip directly to 'x'
+        let test_value = b"aaaaaaaaaaaaaaaaaaaaaaaaax";
+        traverse_arena_nfa(&arena, start, test_value, &mut bufs);
+        // Should NOT match because 'x' is at the end and breaks the pattern
+        assert!(
+            bufs.transitions.is_empty(),
+            "[^x]+ should NOT match string ending with 'x'"
+        );
+
+        // Test with string without 'x' - should match
+        bufs.clear();
+        let test_value2 = b"aaaaaaaaaaaaaaaaaaaaaaaa";
+        traverse_arena_nfa(&arena, start, test_value2, &mut bufs);
+        assert_eq!(
+            bufs.transitions.len(),
+            1,
+            "[^x]+ should match string without 'x'"
+        );
+
+        // Test with 'x' in the middle - should NOT match
+        bufs.clear();
+        let test_value3 = b"aaaaaaxaaaaaa";
+        traverse_arena_nfa(&arena, start, test_value3, &mut bufs);
+        assert!(
+            bufs.transitions.is_empty(),
+            "[^x]+ should NOT match string with 'x' in middle"
+        );
+    }
+
+    #[test]
+    fn test_try_accelerate_arena() {
+        // Test the try_accelerate_arena function directly
+        let mut table = ArenaSmallTable::new();
+
+        // No accel info - should return None
+        assert!(try_accelerate_arena(&table, b"hello").is_none());
+
+        // With 1 exit byte
+        table.accel = Some(super::super::AccelInfo {
+            exit_bytes: [b'x', 0, 0],
+            len: 1,
+        });
+        assert_eq!(try_accelerate_arena(&table, b"helloxworld"), Some(5)); // finds 'x' at position 5
+        assert!(try_accelerate_arena(&table, b"hello").is_none()); // no 'x'
+
+        // With 2 exit bytes
+        table.accel = Some(super::super::AccelInfo {
+            exit_bytes: [b'x', b'y', 0],
+            len: 2,
+        });
+        assert!(try_accelerate_arena(&table, b"helloworld").is_none()); // neither 'x' nor 'y'
+        assert_eq!(try_accelerate_arena(&table, b"hellxyworld"), Some(4)); // finds 'x' at position 4
+        assert_eq!(try_accelerate_arena(&table, b"hellyxworld"), Some(4)); // finds 'y' at position 4
+        assert_eq!(try_accelerate_arena(&table, b"helloxyw"), Some(5)); // finds 'x' at position 5
+
+        // With 3 exit bytes
+        table.accel = Some(super::super::AccelInfo {
+            exit_bytes: [b'x', b'y', b'z'],
+            len: 3,
+        });
+        assert_eq!(try_accelerate_arena(&table, b"abcdefghijz"), Some(10)); // finds 'z' at position 10
+        assert_eq!(try_accelerate_arena(&table, b"abcxyz"), Some(3)); // finds 'x' at position 3
+        assert!(try_accelerate_arena(&table, b"abcdefghij").is_none()); // none of x, y, z
     }
 }

@@ -1235,29 +1235,33 @@ mod tests {
         );
     }
 
-    /// Test that acceleration info is NOT computed for Unicode-aware patterns
-    /// because UTF-8 validation creates too many "exit" bytes (invalid lead bytes).
+    /// Test ASCII fast path acceleration for patterns like [^x]+.
     ///
-    /// For [^x]+, the FA must reject:
-    /// - 'x' (0x78) - the negated character
-    /// - Invalid UTF-8 lead bytes (0x80-0xC1) - continuation bytes can't be lead bytes
-    /// - VALUE_TERMINATOR (0xF5) - handled specially
-    /// This is more than 3 exit bytes, so acceleration doesn't apply.
+    /// With the ASCII fast path optimization, patterns like [^x]+ that negate only
+    /// ASCII characters (1-3 bytes) can use memchr acceleration. The exit bytes
+    /// are just the negated characters, not the UTF-8 validation bytes.
+    ///
+    /// For [^x]+:
+    /// - Previously: no acceleration (68+ exit bytes from UTF-8 validation)
+    /// - Now: acceleration with exit_bytes = [b'x'] (just the negated char)
     #[test]
-    fn test_negated_single_char_no_acceleration_utf8() {
+    fn test_negated_single_char_ascii_fast_path() {
         use crate::automaton::arena::{traverse_arena_nfa, ArenaNfaBuffers};
 
-        // Pattern [^x]+ - Unicode-aware, so won't have acceleration
+        // Pattern [^x]+ - ASCII-only negated, so WILL have acceleration
         let pattern = "[^x]+";
         let root = parse_regexp(pattern).expect(&format!("Failed to parse: {}", pattern));
         let (arena, start, field_matcher) = make_regexp_nfa_arena(root, false);
 
-        // Check that accel is None (too many exit bytes due to UTF-8 validation)
+        // Check that accel IS set with just 'x' as the exit byte
         let start_state = &arena[start];
         assert!(
-            start_state.table.accel.is_none(),
-            "[^x]+ should NOT have acceleration due to UTF-8 validation exit bytes"
+            start_state.table.accel.is_some(),
+            "[^x]+ should have acceleration with ASCII fast path"
         );
+        let accel = start_state.table.accel.as_ref().unwrap();
+        assert_eq!(accel.len, 1, "Should have 1 exit byte");
+        assert_eq!(accel.exit_bytes[0], b'x', "Exit byte should be 'x'");
 
         // Verify the pattern still works correctly
         let mut bufs = ArenaNfaBuffers::with_capacity(arena.len());
@@ -1280,6 +1284,32 @@ mod tests {
         assert!(
             bufs.transitions.is_empty(),
             "[^x]+ should not match empty string"
+        );
+
+        // Test with Unicode characters - should still work
+        bufs.clear();
+        traverse_arena_nfa(&arena, start, "αβγ".as_bytes(), &mut bufs);
+        assert!(
+            bufs.transitions
+                .iter()
+                .any(|m| Arc::ptr_eq(m, &field_matcher)),
+            "[^x]+ should match Unicode 'αβγ'"
+        );
+    }
+
+    /// Test that Unicode-aware negated patterns do NOT get ASCII fast path acceleration.
+    #[test]
+    fn test_negated_unicode_char_no_ascii_fast_path() {
+        // Pattern [^ü]+ - non-ASCII negated char, so NO acceleration
+        let pattern = "[^ü]+";
+        let root = parse_regexp(pattern).expect(&format!("Failed to parse: {}", pattern));
+        let (arena, start, _field_matcher) = make_regexp_nfa_arena(root, false);
+
+        // Check that accel is NOT set (non-ASCII negated char)
+        let start_state = &arena[start];
+        assert!(
+            start_state.table.accel.is_none(),
+            "[^ü]+ should NOT have ASCII fast path acceleration"
         );
     }
 

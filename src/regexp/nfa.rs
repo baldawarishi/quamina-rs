@@ -954,13 +954,32 @@ fn create_arena_plus_star_loop(
         arena[start].table.epsilons.push(exit_state);
     }
 
-    // Compute acceleration for the loop. The exit bytes are bytes that would NOT
-    // match the atom (i.e., bytes that exit the loop). This is useful for patterns
-    // like [^x]+ where 'x' is the only exit byte.
+    // Compute acceleration for the loop.
+    // For ASCII-only negated patterns like [^x]+, use the pre-computed exit bytes
+    // directly. This avoids the problem where UTF-8 validation creates too many
+    // exit bytes (68+ for Unicode-aware patterns).
+    //
     // Store accel on both start and loopback states:
     // - On start for the first iteration
     // - On loopback for subsequent iterations (since we're at loopback after matching)
-    if let Some(accel) = compute_loop_accel(&arena[start].table, start) {
+    let accel = if let Some(ref bytes) = qa.ascii_negated_bytes {
+        // ASCII-only negated pattern: use the negated bytes as exit bytes directly
+        // Since JSON input is valid UTF-8, we don't need UTF-8 validation during matching
+        let mut accel = crate::automaton::AccelInfo {
+            exit_bytes: [0; 3],
+            len: bytes.len() as u8,
+        };
+        for (i, &b) in bytes.iter().enumerate() {
+            accel.exit_bytes[i] = b;
+        }
+        Some(accel)
+    } else {
+        // Fall back to computing exit bytes from the transition table
+        // (This rarely produces usable acceleration due to UTF-8 validation bytes)
+        compute_loop_accel(&arena[start].table, start)
+    };
+
+    if let Some(accel) = accel {
         arena[start].table.accel = Some(accel.clone());
         arena[loopback].table.accel = Some(accel);
     }
