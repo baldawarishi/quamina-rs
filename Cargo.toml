@@ -11,6 +11,7 @@ arc-swap = "1.7"
 parking_lot = "0.12"
 smallvec = "1.13"
 rustc-hash = "2.1"
+memchr = "2.7"
 
 [features]
 dhat-heap = []  # Enable heap profiling with dhat

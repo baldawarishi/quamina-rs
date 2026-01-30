@@ -244,6 +244,7 @@ fn make_wildcard_fa_step(
             let mut result = SmallTable::new();
             result.epsilons = vec![spinout_final.clone()];
             result.spinout = Some(spinout_final);
+            result.accel = result.compute_accel();
             return result;
         }
 
@@ -281,6 +282,7 @@ fn make_wildcard_fa_step(
         let mut result = SmallTable::new();
         result.epsilons = vec![spinout_final.clone()];
         result.spinout = Some(spinout_final);
+        result.accel = result.compute_accel();
         return result;
     }
 
@@ -1330,6 +1332,7 @@ fn merge_fa_states(
                 steps: vec![None],
                 epsilons: vec![state1.clone(), state2.clone()],
                 spinout: None,
+                accel: None,
             },
             field_transitions: vec![],
         });
@@ -1433,6 +1436,7 @@ fn merge_tables_packed(
         steps,
         epsilons: Vec::new(),
         spinout: None,
+        accel: None,
     }
 }
 

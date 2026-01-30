@@ -1076,6 +1076,63 @@ fn bench_deep_nesting_with_arrays(c: &mut Criterion) {
     });
 }
 
+/// State acceleration benchmark with wildcard patterns on long strings.
+/// Tests the memchr optimization for suffix patterns like `*X` where
+/// X appears late in a long string.
+fn bench_state_acceleration(c: &mut Criterion) {
+    let mut q = Quamina::new();
+
+    // Pattern `*X` - matches any string ending with X
+    q.add_pattern("suffix_X", r#"{"value": [{"wildcard": "*X"}]}"#)
+        .unwrap();
+
+    // Long string with X near the end (acceleration should skip most bytes)
+    let long_value = "A".repeat(10000) + "X";
+    let event_long = format!(r#"{{"value": "{}"}}"#, long_value);
+
+    // Medium string with X near the end
+    let medium_value = "A".repeat(1000) + "X";
+    let event_medium = format!(r#"{{"value": "{}"}}"#, medium_value);
+
+    // Short string
+    let event_short = r#"{"value": "AAAAAX"}"#;
+
+    // Verify matches
+    assert!(!q
+        .matches_for_event(event_long.as_bytes())
+        .unwrap()
+        .is_empty());
+    assert!(!q
+        .matches_for_event(event_medium.as_bytes())
+        .unwrap()
+        .is_empty());
+    assert!(!q
+        .matches_for_event(event_short.as_bytes())
+        .unwrap()
+        .is_empty());
+
+    c.bench_function("accel_suffix_10k_chars", |b| {
+        b.iter(|| {
+            q.matches_for_event(black_box(event_long.as_bytes()))
+                .unwrap()
+        })
+    });
+
+    c.bench_function("accel_suffix_1k_chars", |b| {
+        b.iter(|| {
+            q.matches_for_event(black_box(event_medium.as_bytes()))
+                .unwrap()
+        })
+    });
+
+    c.bench_function("accel_suffix_short", |b| {
+        b.iter(|| {
+            q.matches_for_event(black_box(event_short.as_bytes()))
+                .unwrap()
+        })
+    });
+}
+
 // Configure longer benchmarks with reduced sample count
 fn configure_bulk_benchmarks() -> Criterion {
     Criterion::default()
@@ -1142,5 +1199,7 @@ criterion_group!(
     // Array-heavy benchmarks (for Phase 5 evaluation)
     bench_array_heavy,
     bench_deep_nesting_with_arrays,
+    // State acceleration benchmark (Phase 3)
+    bench_state_acceleration,
 );
 criterion_main!(benches, bulk_benches);

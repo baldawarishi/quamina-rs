@@ -87,16 +87,29 @@ pub fn traverse_nfa(table: &SmallTable, val: &[u8], bufs: &mut NfaBuffers) {
     let initial = Arc::new(FaState::with_table(table.clone()));
     bufs.current_states.push(initial);
 
-    for i in 0..=val.len() {
+    let len = val.len();
+    let mut i = 0;
+
+    while i <= len {
         if bufs.current_states.is_empty() {
             break;
         }
 
-        let byte = if i < val.len() {
-            val[i]
-        } else {
-            VALUE_TERMINATOR
-        };
+        // State acceleration: when we have a single spinout state with accel info,
+        // use memchr to skip directly to the next exit byte instead of processing
+        // byte-by-byte. This provides significant speedup for wildcard patterns
+        // matching long strings with sparse exit characters.
+        if i < len && bufs.current_states.len() == 1 {
+            if let Some(skip) = try_accelerate(&bufs.current_states[0].table, &val[i..]) {
+                if skip > 0 {
+                    // Skip ahead - the spinout state stays active for all skipped bytes
+                    i += skip;
+                    continue;
+                }
+            }
+        }
+
+        let byte = if i < len { val[i] } else { VALUE_TERMINATOR };
 
         // Process each current state - avoid clone by iterating with index
         let num_current = bufs.current_states.len();
@@ -154,6 +167,7 @@ pub fn traverse_nfa(table: &SmallTable, val: &[u8], bufs: &mut NfaBuffers) {
         // Swap buffers
         std::mem::swap(&mut bufs.current_states, &mut bufs.next_states);
         bufs.next_states.clear();
+        i += 1;
     }
 
     // Check final states for matches
@@ -190,4 +204,31 @@ pub fn traverse_nfa(table: &SmallTable, val: &[u8], bufs: &mut NfaBuffers) {
         }
     }
     bufs.current_states = final_states;
+}
+
+/// Try to accelerate through a spinout state using memchr.
+///
+/// When a spinout state has acceleration info (1-3 exit bytes), we can use
+/// SIMD-optimized memchr to skip directly to the next exit byte instead of
+/// processing byte-by-byte.
+///
+/// Returns Some(skip) if acceleration found an exit byte at position `skip`,
+/// or None if acceleration is not applicable.
+#[inline]
+fn try_accelerate(table: &SmallTable, remaining: &[u8]) -> Option<usize> {
+    // Only accelerate spinout states with accel info
+    let accel = table.accel.as_ref()?;
+
+    // Use memchr to find the next exit byte
+    match accel.len {
+        1 => memchr::memchr(accel.exit_bytes[0], remaining),
+        2 => memchr::memchr2(accel.exit_bytes[0], accel.exit_bytes[1], remaining),
+        3 => memchr::memchr3(
+            accel.exit_bytes[0],
+            accel.exit_bytes[1],
+            accel.exit_bytes[2],
+            remaining,
+        ),
+        _ => None,
+    }
 }

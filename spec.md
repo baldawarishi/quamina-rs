@@ -82,32 +82,40 @@ impl SmallTable {
 
 **Reference:** `regex-automata/src/util/alphabet.rs:185-230`
 
-### Phase 3: State Acceleration (1 week)
+### Phase 3: State Acceleration ✅ COMPLETE
 
-**Problem:** Wildcard patterns like `[^,]+` check every byte.
-**Solution:** Use memchr SIMD to skip to exit bytes.
+**Problem:** Wildcard patterns like `*X` check every byte even when most bytes don't cause transitions.
+
+**Solution:** Use memchr SIMD to skip directly to exit bytes in spinout (wildcard) states.
+
+**Implementation:**
+- Added `AccelInfo` struct to `SmallTable` storing 1-3 exit bytes
+- Compute acceleration info when building wildcard patterns
+- In `traverse_nfa`, when single spinout state has accel, use memchr to skip ahead
 
 ```rust
-pub struct AccelInfo {
-    exit_bytes: [u8; 3],  // bytes that leave this state
-    len: u8,              // 0 = not accelerated, 1-3 = use memchr
-}
-
 // In traverse_nfa, when state is accelerated:
-if let Some(accel) = state.accel() {
-    let skip = match accel.len {
-        1 => memchr::memchr(accel.exit_bytes[0], &val[pos..]),
-        2 => memchr::memchr2(accel.exit_bytes[0], accel.exit_bytes[1], &val[pos..]),
-        3 => memchr::memchr3(...),
-        _ => None,
-    };
-    if let Some(n) = skip { pos += n; }
+if bufs.current_states.len() == 1 {
+    if let Some(skip) = try_accelerate(&table, &val[i..]) {
+        i += skip;
+        continue;
+    }
 }
 ```
 
-**Impact:** 5-100x speedup on repetitive patterns.
+**Benchmark results (Jan 2026):**
+| String Length | Without Accel | With Accel | Speedup |
+|---------------|---------------|------------|---------|
+| 10k chars | 263 µs | 4.2 µs | **62x** |
+| 1k chars | 26.8 µs | 676 ns | **40x** |
+| 6 chars | 413 ns | 256 ns | **1.6x** |
+
+**When it helps:** Wildcard patterns (`*X`, `*foo*bar`) matching long strings with sparse exit characters.
+
+**Limitation:** Only applies when single spinout state is active. Multiple active states (merged patterns) fall back to byte-by-byte.
+
 **Reference:** `regex-automata/src/dfa/accel.rs:90-130`
-**Dependency:** Add `memchr` crate.
+**Dependency:** `memchr` crate (2.7)
 
 ### Phase 4: Prefilter Infrastructure (2 weeks)
 

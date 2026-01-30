@@ -43,6 +43,21 @@ pub const BYTE_CEILING: usize = 0xF6;
 /// vs prefix matches - we always add this terminator to both the pattern and the value.
 pub const VALUE_TERMINATOR: u8 = 0xF5;
 
+/// Acceleration info for spinout (wildcard) states.
+///
+/// Stores 1-3 exit bytes that would cause a transition out of the spin state.
+/// This enables using memchr SIMD to skip directly to relevant bytes instead
+/// of processing byte-by-byte.
+#[derive(Clone, Debug, Default)]
+pub struct AccelInfo {
+    /// Exit bytes that leave this state (up to 3 bytes).
+    /// VALUE_TERMINATOR is always an implicit exit byte.
+    pub exit_bytes: [u8; 3],
+    /// Number of valid exit bytes (0 = not accelerated, 1-3 = use memchr).
+    /// Note: VALUE_TERMINATOR is handled separately, these are the "escape" bytes.
+    pub len: u8,
+}
+
 /// A state in the finite automaton.
 ///
 /// Each state has a transition table and optionally field transitions for when
@@ -101,6 +116,8 @@ pub struct SmallTable {
     pub epsilons: Vec<Arc<FaState>>,
     /// Special state for handling wildcard patterns (escape from spin state)
     pub spinout: Option<Arc<FaState>>,
+    /// Acceleration info for spinout states (exit bytes for memchr skip)
+    pub accel: Option<AccelInfo>,
 }
 
 impl SmallTable {
@@ -111,6 +128,7 @@ impl SmallTable {
             steps: vec![None],
             epsilons: Vec::new(),
             spinout: None,
+            accel: None,
         }
     }
 
@@ -124,6 +142,7 @@ impl SmallTable {
             steps: vec![default_step],
             epsilons: Vec::new(),
             spinout: None,
+            accel: None,
         }
     }
 
@@ -165,7 +184,66 @@ impl SmallTable {
             steps,
             epsilons: Vec::new(),
             spinout: None,
+            accel: None,
         }
+    }
+
+    /// Compute acceleration info for a spinout state.
+    ///
+    /// For spinout states, the exit bytes are in the spinout target's table.
+    /// This finds bytes that would cause a transition different from the default
+    /// (staying in spinout). If there are 1-3 such bytes, returns AccelInfo.
+    pub fn compute_accel(&self) -> Option<AccelInfo> {
+        // For spinout states, look at the spinout target's table for exit bytes
+        if let Some(ref spinout_target) = self.spinout {
+            return Self::compute_accel_from_table(&spinout_target.table);
+        }
+        None
+    }
+
+    /// Compute acceleration info from a table's step transitions.
+    fn compute_accel_from_table(table: &SmallTable) -> Option<AccelInfo> {
+        // Only accelerate if there's a default step (spinout behavior)
+        if table.ceilings.is_empty() || table.steps.is_empty() {
+            return None;
+        }
+
+        // Find the default step (the one that covers most bytes)
+        // For spinout states, this is typically the first step
+        let default_step = &table.steps[0];
+
+        // Collect bytes that have different transitions
+        let mut exit_bytes = Vec::new();
+        let mut byte_idx: usize = 0;
+
+        for (i, &ceiling) in table.ceilings.iter().enumerate() {
+            let ceiling = ceiling as usize;
+            if !arc_option_eq(&table.steps[i], default_step) {
+                // All bytes in range [byte_idx, ceiling) exit the default
+                for b in byte_idx..ceiling.min(BYTE_CEILING) {
+                    exit_bytes.push(b as u8);
+                    if exit_bytes.len() > 3 {
+                        return None; // Too many exit bytes
+                    }
+                }
+            }
+            byte_idx = ceiling;
+        }
+
+        // Need 1-3 exit bytes for acceleration
+        if exit_bytes.is_empty() || exit_bytes.len() > 3 {
+            return None;
+        }
+
+        let mut accel = AccelInfo {
+            exit_bytes: [0; 3],
+            len: exit_bytes.len() as u8,
+        };
+        for (i, &b) in exit_bytes.iter().enumerate() {
+            accel.exit_bytes[i] = b;
+        }
+
+        Some(accel)
     }
 
     /// Take a step through the automaton on the given byte.

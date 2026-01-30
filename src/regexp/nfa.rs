@@ -69,6 +69,7 @@ fn copy_shell_table(
             .collect(),
         epsilons: shell.epsilons.clone(),
         spinout: shell.spinout.clone(),
+        accel: None,
     }
 }
 
@@ -246,6 +247,7 @@ fn create_plus_star_loop(
             steps: Vec::new(),
             epsilons: loopback_epsilons,
             spinout: None,
+            accel: None,
         }));
 
         let mut loop_table = make_atom_fa(qa, &loopback);
@@ -628,6 +630,7 @@ pub fn make_dot_fa(dest: &Arc<FaState>) -> SmallTable {
         steps: vec![None, Some(dest.clone()), None],
         epsilons: Vec::new(),
         spinout: None,
+        accel: None,
     };
     let target_last = Arc::new(FaState::with_table(s_last));
 
@@ -636,6 +639,7 @@ pub fn make_dot_fa(dest: &Arc<FaState>) -> SmallTable {
         steps: vec![None, Some(target_last.clone()), None],
         epsilons: Vec::new(),
         spinout: None,
+        accel: None,
     };
     let target_last_inter = Arc::new(FaState::with_table(s_last_inter));
 
@@ -644,6 +648,7 @@ pub fn make_dot_fa(dest: &Arc<FaState>) -> SmallTable {
         steps: vec![None, Some(target_last_inter.clone()), None],
         epsilons: Vec::new(),
         spinout: None,
+        accel: None,
     };
     let target_first_inter = Arc::new(FaState::with_table(s_first_inter));
 
@@ -653,6 +658,7 @@ pub fn make_dot_fa(dest: &Arc<FaState>) -> SmallTable {
         steps: vec![None, Some(target_last.clone()), None],
         epsilons: Vec::new(),
         spinout: None,
+        accel: None,
     };
     let target_e0 = Arc::new(FaState::with_table(s_e0));
 
@@ -662,6 +668,7 @@ pub fn make_dot_fa(dest: &Arc<FaState>) -> SmallTable {
         steps: vec![None, Some(target_last.clone()), None],
         epsilons: Vec::new(),
         spinout: None,
+        accel: None,
     };
     let target_ed = Arc::new(FaState::with_table(s_ed));
 
@@ -671,6 +678,7 @@ pub fn make_dot_fa(dest: &Arc<FaState>) -> SmallTable {
         steps: vec![None, Some(target_last_inter.clone()), None],
         epsilons: Vec::new(),
         spinout: None,
+        accel: None,
     };
     let target_f0 = Arc::new(FaState::with_table(s_f0));
 
@@ -680,6 +688,7 @@ pub fn make_dot_fa(dest: &Arc<FaState>) -> SmallTable {
         steps: vec![None, Some(target_last_inter.clone()), None],
         epsilons: Vec::new(),
         spinout: None,
+        accel: None,
     };
     let target_f4 = Arc::new(FaState::with_table(s_f4));
 
@@ -713,6 +722,7 @@ pub fn make_dot_fa(dest: &Arc<FaState>) -> SmallTable {
         ],
         epsilons: Vec::new(),
         spinout: None,
+        accel: None,
     }
 }
 
