@@ -26,7 +26,7 @@ dhat = "0.3"
 [dev-dependencies.cargo-husky]
 version = "1"
 default-features = false
-features = ["precommit-hook", "run-cargo-fmt", "run-cargo-test", "run-cargo-clippy"]
+features = ["user-hooks"]
 
 [[bench]]
 name = "matching"

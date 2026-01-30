@@ -1,0 +1,20 @@
+#!/bin/sh
+#
+# Pre-commit hook: runs fast tests, clippy, and format check
+# Full test suite (including slow tests) runs in CI
+#
+# MAINTAINER NOTE: If you add new slow tests (>5s), add them to --skip below.
+# Current skips: stress (fuzz tests ~80s), citylots (large data ~10s), regexp_validity (~8s)
+#
+
+set -e
+
+echo '+cargo test --lib -- --skip stress --skip citylots --skip regexp_validity'
+echo '  (skipping slow tests - full suite runs in CI; update .cargo-husky/hooks/pre-commit if adding slow tests)'
+cargo test --lib -- --skip stress --skip citylots --skip regexp_validity
+
+echo '+cargo clippy -- -D warnings'
+cargo clippy -- -D warnings
+
+echo '+cargo fmt -- --check'
+cargo fmt -- --check
