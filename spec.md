@@ -82,19 +82,18 @@ impl SmallTable {
 
 **Reference:** `regex-automata/src/util/alphabet.rs:185-230`
 
-### Phase 3: State Acceleration ✅ COMPLETE
+### Phase 3: State Acceleration ⚡ PARTIAL
 
-**Problem:** Wildcard patterns like `*X` check every byte even when most bytes don't cause transitions.
+**Problem:** Wildcard/regexp patterns check every byte even when most don't cause transitions.
 
-**Solution:** Use memchr SIMD to skip directly to exit bytes in spinout (wildcard) states.
+**Solution:** Use memchr SIMD to skip directly to exit bytes.
 
-**Implementation:**
-- Added `AccelInfo` struct to `SmallTable` storing 1-3 exit bytes
-- Compute acceleration info when building wildcard patterns
-- In `traverse_nfa`, when single spinout state has accel, use memchr to skip ahead
+#### 3a. Wildcard Acceleration ✅ COMPLETE
+
+Implemented for `traverse_nfa` with single spinout state.
 
 ```rust
-// In traverse_nfa, when state is accelerated:
+// In traverse_nfa:
 if bufs.current_states.len() == 1 {
     if let Some(skip) = try_accelerate(&table, &val[i..]) {
         i += skip;
@@ -103,19 +102,40 @@ if bufs.current_states.len() == 1 {
 }
 ```
 
-**Benchmark results (Jan 2026):**
-| String Length | Without Accel | With Accel | Speedup |
-|---------------|---------------|------------|---------|
-| 10k chars | 263 µs | 4.2 µs | **62x** |
-| 1k chars | 26.8 µs | 676 ns | **40x** |
-| 6 chars | 413 ns | 256 ns | **1.6x** |
+**Results (suffix pattern `*X`):**
+| String | Without | With | Speedup |
+|--------|---------|------|---------|
+| 10k | 263 µs | 4.2 µs | **62x** |
+| 1k | 26.8 µs | 676 ns | **40x** |
 
-**When it helps:** Wildcard patterns (`*X`, `*foo*bar`) matching long strings with sparse exit characters.
+#### 3b. Arena NFA Acceleration ❌ TODO
 
-**Limitation:** Only applies when single spinout state is active. Multiple active states (merged patterns) fall back to byte-by-byte.
+**Problem:** `traverse_arena_nfa` (used for regexp `+`/`*`) has no acceleration.
 
-**Reference:** `regex-automata/src/dfa/accel.rs:90-130`
-**Dependency:** `memchr` crate (2.7)
+**Current:** `regexp_plus_long` = 3.6 µs, `regexp_star_long` = 3.7 µs
+
+**Approach:**
+1. Add `accel: Option<AccelInfo>` to `ArenaSmallTable`
+2. Compute exit bytes for self-loop states in regexp NFA building
+3. Add `try_accelerate_arena()` to `traverse_arena_nfa`
+
+**Files:** `src/automaton/arena.rs`, `src/regexp/nfa.rs`
+
+#### 3c. Multi-State Acceleration ❌ TODO (lower priority)
+
+**Problem:** Current acceleration requires `current_states.len() == 1`.
+
+**Approach:** When all active states have same exit bytes, can still accelerate.
+
+```rust
+// Proposed:
+fn common_exit_bytes(states: &[Arc<FaState>]) -> Option<AccelInfo> {
+    // Return Some if all states share same exit bytes
+}
+```
+
+**Reference:** `regex-automata/src/dfa/accel.rs`
+**Dependency:** `memchr` crate (2.7) ✅ added
 
 ### Phase 4: Prefilter Infrastructure (2 weeks)
 
