@@ -1207,4 +1207,120 @@ mod tests {
             assert_eq!(fields2[0].val.as_bytes(), b"\"pending\"");
         }
     }
+
+    // Error handling tests - based on Go quamina's TestFJErrorCases
+    #[test]
+    fn test_error_truncated_object() {
+        let tree = make_tree(&["a", "b"]);
+        let mut state = FlattenJsonState::new();
+
+        let bad_cases = [
+            r#"{"a"#,        // Truncated key
+            r#"{"a""#,       // Missing colon
+            r#"{"a":"#,      // Missing value
+            r#"{"a": "#,     // Missing value after space
+            r#"{"#,          // Just open brace
+            r#"{"a": 1"#,    // Missing close brace
+            r#"{"a": 2 2}"#, // Double value
+        ];
+
+        for bad in &bad_cases {
+            let result = state.flatten(bad.as_bytes(), &tree);
+            assert!(result.is_err(), "Should reject truncated JSON: {}", bad);
+        }
+    }
+
+    #[test]
+    fn test_error_truncated_array() {
+        let tree = make_tree(&["a"]);
+        let mut state = FlattenJsonState::new();
+
+        let bad_cases = [
+            r#"{"a": ["#,    // Just open bracket
+            r#"{"a": [  "#,  // Open bracket with space
+            r#"{"a": [1, "#, // Truncated after comma
+        ];
+
+        for bad in &bad_cases {
+            let result = state.flatten(bad.as_bytes(), &tree);
+            assert!(result.is_err(), "Should reject truncated array: {}", bad);
+        }
+    }
+
+    #[test]
+    fn test_error_truncated_string() {
+        let tree = make_tree(&["k"]);
+        let mut state = FlattenJsonState::new();
+
+        let bad_cases = [
+            r#"{"k": ""#,  // Unterminated string
+            r#"{"k": "t"#, // Unterminated string
+            r#"{"k": "\"#, // Unterminated escape
+        ];
+
+        for bad in &bad_cases {
+            let result = state.flatten(bad.as_bytes(), &tree);
+            assert!(result.is_err(), "Should reject truncated string: {}", bad);
+        }
+    }
+
+    #[test]
+    fn test_error_invalid_value() {
+        let tree = make_tree(&["a"]);
+        let mut state = FlattenJsonState::new();
+
+        let bad_cases = [
+            r#"{"a": xx}"#,    // Invalid value
+            r#"{"a": tru}"#,   // Truncated true
+            r#"{"a": truse}"#, // Invalid boolean
+        ];
+
+        for bad in &bad_cases {
+            let result = state.flatten(bad.as_bytes(), &tree);
+            assert!(result.is_err(), "Should reject invalid value: {}", bad);
+        }
+    }
+
+    #[test]
+    fn test_error_invalid_json_structure() {
+        let tree = make_tree(&["a"]);
+        let mut state = FlattenJsonState::new();
+
+        let bad_cases = [
+            r#""xx""#,            // Not an object at top level
+            "",                   // Empty input
+            r#"{"a" : [ foo ]}"#, // Invalid array element
+        ];
+
+        for bad in &bad_cases {
+            let result = state.flatten(bad.as_bytes(), &tree);
+            assert!(result.is_err(), "Should reject invalid structure: {}", bad);
+        }
+    }
+
+    #[test]
+    fn test_error_skipping_never_ending_string() {
+        // Tests from Go TestFJSkippingErrors
+        let tree = make_tree(&["non_existing_value"]);
+        let mut state = FlattenJsonState::new();
+
+        let bad_cases = [
+            r#"{ "a": { "v": "hello"#, // Block with string that never ends
+            r#"{ "a": ["hello"#,       // Array with string that never ends
+            r#"{ "k": ""#,             // String that never ends
+            r#"{ "k": { "a":"#,        // Truncated block
+            r#"{ "k": {"#,             // Truncated block
+            r#"{ "k": [1, "#,          // Truncated array
+            r#"{ "k": ["#,             // Truncated array
+        ];
+
+        for bad in &bad_cases {
+            let result = state.flatten(bad.as_bytes(), &tree);
+            assert!(
+                result.is_err(),
+                "Should reject never-ending string: {}",
+                bad
+            );
+        }
+    }
 }
