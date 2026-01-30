@@ -166,55 +166,6 @@ impl ArenaSmallTable {
     pub fn step(&self, byte: u8) -> (StateId, &[StateId]) {
         (self.dstep(byte), &self.epsilons)
     }
-
-    /// Compute acceleration info for a self-loop state.
-    ///
-    /// For states that loop back to themselves on most bytes, this finds the
-    /// "exit" bytes that cause different transitions. If there are 1-3 such
-    /// bytes, returns AccelInfo for use with memchr SIMD acceleration.
-    pub fn compute_accel(&self, self_id: StateId) -> Option<AccelInfo> {
-        if self.ceilings.is_empty() || self.steps.is_empty() {
-            return None;
-        }
-
-        // For self-loop states, we want to find bytes that exit the loop.
-        // The "default" is the self-loop (transition to self_id).
-        // Exit bytes are those that go somewhere else.
-
-        let mut exit_bytes = Vec::new();
-        let mut byte_idx: usize = 0;
-
-        for (i, &ceiling) in self.ceilings.iter().enumerate() {
-            let ceiling = ceiling as usize;
-            let step = self.steps[i];
-
-            // If this step doesn't go back to self, these are exit bytes
-            if step != self_id {
-                for b in byte_idx..ceiling.min(BYTE_CEILING) {
-                    exit_bytes.push(b as u8);
-                    if exit_bytes.len() > 3 {
-                        return None; // Too many exit bytes for acceleration
-                    }
-                }
-            }
-            byte_idx = ceiling;
-        }
-
-        // Need 1-3 exit bytes for acceleration
-        if exit_bytes.is_empty() || exit_bytes.len() > 3 {
-            return None;
-        }
-
-        let mut accel = AccelInfo {
-            exit_bytes: [0; 3],
-            len: exit_bytes.len() as u8,
-        };
-        for (i, &b) in exit_bytes.iter().enumerate() {
-            accel.exit_bytes[i] = b;
-        }
-
-        Some(accel)
-    }
 }
 
 /// Arena for allocating NFA states.
@@ -807,57 +758,6 @@ mod tests {
         let mut bufs = ArenaNfaBuffers::with_capacity(arena.len());
         traverse_arena_nfa(&arena, start, b"aaaaaaaaaa", &mut bufs);
         assert_eq!(bufs.transitions.len(), 1);
-    }
-
-    #[test]
-    fn test_arena_small_table_compute_accel() {
-        // Test compute_accel for a table that matches most bytes except one
-        // This simulates [^x] where only 'x' doesn't match
-        let mut table = ArenaSmallTable::new();
-        let mut unpacked = [StateId::NONE; BYTE_CEILING];
-
-        // Set all bytes to transition to state 0 (self), except 'x' (0x78)
-        let self_id = StateId(0);
-        for (byte, slot) in unpacked.iter_mut().enumerate() {
-            if byte != b'x' as usize {
-                *slot = self_id;
-            }
-            // 'x' stays as NONE (exit byte)
-        }
-        table.pack(&unpacked);
-
-        // Compute accel - should find 'x' as the only exit byte
-        let accel = table.compute_accel(self_id);
-        assert!(
-            accel.is_some(),
-            "Should compute accel for [^x]-like pattern"
-        );
-
-        let accel = accel.unwrap();
-        assert_eq!(accel.len, 1, "Should have 1 exit byte");
-        assert_eq!(accel.exit_bytes[0], b'x', "Exit byte should be 'x'");
-    }
-
-    #[test]
-    fn test_arena_small_table_compute_accel_too_many_exit_bytes() {
-        // Test that accel is None when there are too many exit bytes
-        // This simulates [abc] where most bytes don't match
-        let mut table = ArenaSmallTable::new();
-        let mut unpacked = [StateId::NONE; BYTE_CEILING];
-
-        // Only 'a', 'b', 'c' transition to self
-        let self_id = StateId(0);
-        unpacked[b'a' as usize] = self_id;
-        unpacked[b'b' as usize] = self_id;
-        unpacked[b'c' as usize] = self_id;
-        table.pack(&unpacked);
-
-        // Compute accel - should be None because there are too many exit bytes
-        let accel = table.compute_accel(self_id);
-        assert!(
-            accel.is_none(),
-            "Should not compute accel when too many exit bytes"
-        );
     }
 
     #[test]
