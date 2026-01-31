@@ -19,7 +19,7 @@ After changes, update the spec:
 - Move file to "Completed" with summary of changes
 - Add any new files discovered to "Pending Review"
 
-Start with src/segments_tree.rs or src/flattener.rs (smaller files first).
+Start with src/flattener.rs or src/json.rs.
 ```
 
 ## Guiding Principles
@@ -73,14 +73,14 @@ Is it only used in tests?
 | `src/regexp/mod.rs` | 2026-01-31 | Removed `make_dot_fa`, `invert_rune_range`, `simplify_rune_range` from public re-exports |
 | `src/regexp/nfa.rs` | 2026-01-31 | Changed `make_dot_fa` to `pub(crate)` |
 | `src/regexp/parser.rs` | 2026-01-31 | Changed `invert_rune_range`, `simplify_rune_range` to `pub(crate)` |
+| `src/segments_tree.rs` | 2026-01-31 | Made `SEGMENT_SEPARATOR` `pub(crate)` (only used within crate). Struct/methods stay `pub` since module is `#[doc(hidden)]` and benchmarks need access |
+| `src/flatten_json.rs` | 2026-01-31 | Removed unused `len()` and `is_empty()` methods from `FlattenJsonState` |
 
 ### Pending Review
 | File | Notes |
 |------|-------|
 | `src/regexp_samples.rs` | Test data file - already `#[cfg(test)]`, looks clean |
 | `src/unicode_categories.rs` | All categories used via match statement - OK as-is |
-| `src/segments_tree.rs` | Public module, needs visibility audit |
-| `src/flatten_json.rs` | `#[doc(hidden)]` - review if should stay public |
 | `src/json.rs` | `#[doc(hidden)]` - review if should stay public |
 | `src/flattener.rs` | Has public re-exports in lib.rs - review what's actually needed |
 | `src/automaton/*.rs` | Large module, audit incrementally |

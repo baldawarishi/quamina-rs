@@ -7,7 +7,7 @@ use rustc_hash::FxHashMap;
 use std::sync::Arc;
 
 /// Separator used between path segments (e.g., "context\nuser\nid")
-pub const SEGMENT_SEPARATOR: char = '\n';
+pub(crate) const SEGMENT_SEPARATOR: char = '\n';
 
 /// A tree structure tracking which field paths appear in patterns.
 ///

@@ -187,18 +187,6 @@ impl FlattenJsonState {
 
         Ok(fields_slice)
     }
-
-    /// Number of fields from the last flatten call.
-    #[inline]
-    pub fn len(&self) -> usize {
-        self.fields.len()
-    }
-
-    /// Returns true if no fields were found in the last flatten call.
-    #[inline]
-    pub fn is_empty(&self) -> bool {
-        self.fields.is_empty()
-    }
 }
 
 /// Internal context for a single flatten operation.
