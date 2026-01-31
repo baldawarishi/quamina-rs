@@ -17,6 +17,17 @@ use crate::case_folding::case_fold_char;
 
 use super::small_table::{FaState, FieldMatcher, SmallTable, BYTE_CEILING, VALUE_TERMINATOR};
 
+/// Create a match state that transitions to the next field matcher.
+///
+/// This is the terminal state for successful pattern matches.
+#[inline]
+fn make_match_state(next_field: Arc<FieldMatcher>) -> Arc<FaState> {
+    Arc::new(FaState {
+        table: SmallTable::new(),
+        field_transitions: vec![next_field],
+    })
+}
+
 /// Build a string-matching FA from a byte sequence.
 ///
 /// Creates a chain of states where each byte transitions to the next,
@@ -28,10 +39,7 @@ pub fn make_string_fa(val: &[u8], next_field: Arc<FieldMatcher>) -> SmallTable {
 fn make_string_fa_step(val: &[u8], index: usize, next_field: Arc<FieldMatcher>) -> SmallTable {
     if index >= val.len() {
         // Final step: transition on value terminator to match state
-        let last_step = Arc::new(FaState {
-            table: SmallTable::new(),
-            field_transitions: vec![next_field],
-        });
+        let last_step = make_match_state(next_field);
         return SmallTable::with_mappings(None, &[VALUE_TERMINATOR], &[last_step]);
     }
 
@@ -51,11 +59,7 @@ pub fn make_prefix_fa(prefix: &[u8], next_field: Arc<FieldMatcher>) -> SmallTabl
 fn make_prefix_fa_step(prefix: &[u8], index: usize, next_field: Arc<FieldMatcher>) -> SmallTable {
     if index >= prefix.len() {
         // End of prefix: match state that accepts anything
-        let match_state = Arc::new(FaState {
-            table: SmallTable::new(),
-            field_transitions: vec![next_field],
-        });
-        return SmallTable::with_mappings(Some(match_state), &[], &[]);
+        return SmallTable::with_mappings(Some(make_match_state(next_field)), &[], &[]);
     }
 
     let next_table = make_prefix_fa_step(prefix, index + 1, next_field);
@@ -114,18 +118,18 @@ fn build_shellstyle_from_segments(
 ) -> SmallTable {
     if index >= segments.len() {
         // End - transition on value terminator
-        let match_state = Arc::new(FaState {
-            table: SmallTable::new(),
-            field_transitions: vec![next_field],
-        });
-        return SmallTable::with_mappings(None, &[VALUE_TERMINATOR], &[match_state]);
+        return SmallTable::with_mappings(
+            None,
+            &[VALUE_TERMINATOR],
+            &[make_match_state(next_field)],
+        );
     }
 
     match &segments[index] {
         ShellSegment::Literal(bytes) => {
             // Build literal sequence
             let next = build_shellstyle_from_segments(segments, index + 1, next_field);
-            build_literal_chain(bytes, next)
+            build_literal_chain(bytes, &next)
         }
         ShellSegment::Wildcard => {
             // Build wildcard (spinout) structure
@@ -135,14 +139,17 @@ fn build_shellstyle_from_segments(
     }
 }
 
-/// Build a chain of states for a literal byte sequence
-fn build_literal_chain(bytes: &[u8], continuation: SmallTable) -> SmallTable {
+/// Build a chain of states for a literal byte sequence.
+///
+/// Creates a linear FA that matches the given bytes in sequence,
+/// then continues to the provided continuation table.
+fn build_literal_chain(bytes: &[u8], continuation: &SmallTable) -> SmallTable {
     if bytes.is_empty() {
-        return continuation;
+        return continuation.clone();
     }
 
     // Build from end to start
-    let mut current = continuation;
+    let mut current = continuation.clone();
     for &byte in bytes.iter().rev() {
         let next_state = Arc::new(FaState::with_table(current));
         current = SmallTable::with_mappings(None, &[byte], &[next_state]);
@@ -198,11 +205,11 @@ fn make_wildcard_fa_step(
 ) -> SmallTable {
     if index >= pattern.len() {
         // End of pattern - transition on value terminator to match
-        let last_step = Arc::new(FaState {
-            table: SmallTable::new(),
-            field_transitions: vec![next_field],
-        });
-        return SmallTable::with_mappings(None, &[VALUE_TERMINATOR], &[last_step]);
+        return SmallTable::with_mappings(
+            None,
+            &[VALUE_TERMINATOR],
+            &[make_match_state(next_field)],
+        );
     }
 
     let ch = pattern[index];
@@ -220,10 +227,7 @@ fn make_wildcard_fa_step(
         // Wildcard - similar to shellstyle
         if index + 1 >= pattern.len() {
             // * at end
-            let match_state = Arc::new(FaState {
-                table: SmallTable::new(),
-                field_transitions: vec![next_field],
-            });
+            let match_state = make_match_state(next_field);
 
             let spinout = Arc::new(FaState {
                 table: SmallTable::new(),
@@ -325,11 +329,7 @@ pub fn make_anything_but_numeric_fa(excluded: &[f64], next_field: Arc<FieldMatch
 /// * `next_field` - The field matcher to transition to on success
 pub fn make_anything_but_fa(excluded: &[Vec<u8>], next_field: Arc<FieldMatcher>) -> SmallTable {
     // Success state - we match if we get here
-    let success = Arc::new(FaState {
-        table: SmallTable::new(),
-        field_transitions: vec![next_field],
-    });
-
+    let success = make_match_state(next_field);
     make_anything_but_step(excluded, 0, &success)
 }
 
@@ -431,11 +431,11 @@ fn make_anything_but_step(vals: &[Vec<u8>], index: usize, success: &Arc<FaState>
 pub fn make_monocase_fa(val: &[u8], next_field: Arc<FieldMatcher>) -> SmallTable {
     // Empty string - match on value terminator only
     if val.is_empty() {
-        let match_state = Arc::new(FaState {
-            table: SmallTable::new(),
-            field_transitions: vec![next_field],
-        });
-        return SmallTable::with_mappings(None, &[VALUE_TERMINATOR], &[match_state]);
+        return SmallTable::with_mappings(
+            None,
+            &[VALUE_TERMINATOR],
+            &[make_match_state(next_field)],
+        );
     }
 
     // Convert to string for character iteration
@@ -481,11 +481,11 @@ fn make_monocase_recursive(
 ) -> SmallTable {
     if idx >= chars.len() {
         // End of string - create state that matches on VALUE_TERMINATOR
-        let match_state = Arc::new(FaState {
-            table: SmallTable::new(),
-            field_transitions: vec![next_field],
-        });
-        return SmallTable::with_mappings(None, &[VALUE_TERMINATOR], &[match_state]);
+        return SmallTable::with_mappings(
+            None,
+            &[VALUE_TERMINATOR],
+            &[make_match_state(next_field)],
+        );
     }
 
     let (orig, alt) = &chars[idx];
@@ -581,10 +581,7 @@ fn make_fa_fragment(val: &[u8], end_at: Arc<FaState>) -> Arc<FaState> {
 
 /// Fallback byte-by-byte monocase FA for invalid UTF-8 (ASCII-only case folding)
 fn make_monocase_fa_ascii(val: &[u8], next_field: Arc<FieldMatcher>) -> SmallTable {
-    let final_state = Arc::new(FaState {
-        table: SmallTable::new(),
-        field_transitions: vec![next_field],
-    });
+    let final_state = make_match_state(next_field);
     let mut current_next = Arc::new(FaState {
         table: SmallTable::with_mappings(None, &[VALUE_TERMINATOR], &[final_state]),
         field_transitions: vec![],
@@ -650,10 +647,7 @@ fn make_less_fa_step(
     // "Accept rest" state: when we know input < bound, accept and match
     // This has field_transitions to mark the match
     // Empty table causes traversal to stop after collecting field_transitions
-    let accept_rest = Arc::new(FaState {
-        table: SmallTable::new(),
-        field_transitions: vec![next_field.clone()],
-    });
+    let accept_rest = make_match_state(next_field.clone());
 
     if index >= bound_q.len() {
         // All bound bytes consumed
@@ -754,10 +748,7 @@ fn make_range_fa_step(
     next_field: Arc<FieldMatcher>,
 ) -> SmallTable {
     // Accept state - reached when we know input is within range
-    let accept_rest = Arc::new(FaState {
-        table: SmallTable::new(),
-        field_transitions: vec![next_field.clone()],
-    });
+    let accept_rest = make_match_state(next_field.clone());
 
     let lower_done = index >= lower_q.len();
     let upper_done = index >= upper_q.len();
@@ -859,10 +850,7 @@ fn make_greater_fa_step(
     next_field: Arc<FieldMatcher>,
 ) -> SmallTable {
     // "Accept rest" state: when we know input > bound, accept and match
-    let accept_rest = Arc::new(FaState {
-        table: SmallTable::new(),
-        field_transitions: vec![next_field.clone()],
-    });
+    let accept_rest = make_match_state(next_field.clone());
 
     if index >= bound_q.len() {
         // All bound bytes consumed
@@ -958,11 +946,8 @@ fn make_ipv4_cidr_fa(
 ) -> SmallTable {
     // Build the FA from right to left (last octet first)
     // Start with the match state (VALUE_TERMINATOR transition)
-    let match_state = Arc::new(FaState {
-        table: SmallTable::new(),
-        field_transitions: vec![next_field],
-    });
-    let end_table = SmallTable::with_mappings(None, &[VALUE_TERMINATOR], &[match_state]);
+    let end_table =
+        SmallTable::with_mappings(None, &[VALUE_TERMINATOR], &[make_match_state(next_field)]);
 
     // Build each octet from right to left
     let mut current_table = end_table;
@@ -1012,11 +997,8 @@ fn make_ipv6_cidr_fa(
     next_field: Arc<FieldMatcher>,
 ) -> SmallTable {
     // Build the FA from right to left (last group first)
-    let match_state = Arc::new(FaState {
-        table: SmallTable::new(),
-        field_transitions: vec![next_field],
-    });
-    let end_table = SmallTable::with_mappings(None, &[VALUE_TERMINATOR], &[match_state]);
+    let end_table =
+        SmallTable::with_mappings(None, &[VALUE_TERMINATOR], &[make_match_state(next_field)]);
 
     let mut current_table = end_table;
 
@@ -1069,7 +1051,7 @@ fn make_octet_range_fa(min_val: u8, max_val: u8, continuation: SmallTable) -> Sm
     for val in min_val..=max_val {
         let val_str = val.to_string();
         let val_bytes = val_str.as_bytes();
-        let val_fa = build_literal_chain_with_continuation(val_bytes, &continuation);
+        let val_fa = build_literal_chain(val_bytes, &continuation);
         fa_tables.push(val_fa);
     }
 
@@ -1099,13 +1081,13 @@ fn make_ipv6_group_range_fa(min_val: u16, max_val: u16, continuation: SmallTable
         // Also match uppercase variant
         let val_upper = format!("{:X}", min_val);
 
-        let lower_fa = build_literal_chain_with_continuation(val_bytes, &continuation);
+        let lower_fa = build_literal_chain(val_bytes, &continuation);
 
         if val_str == val_upper {
             return lower_fa;
         }
 
-        let upper_fa = build_literal_chain_with_continuation(val_upper.as_bytes(), &continuation);
+        let upper_fa = build_literal_chain(val_upper.as_bytes(), &continuation);
         return merge_fas(&lower_fa, &upper_fa);
     }
 
@@ -1129,13 +1111,12 @@ fn make_ipv6_group_range_fa(min_val: u16, max_val: u16, continuation: SmallTable
 
     for val in min_val..=max_val {
         let val_str = format!("{:x}", val);
-        let val_fa = build_literal_chain_with_continuation(val_str.as_bytes(), &continuation);
+        let val_fa = build_literal_chain(val_str.as_bytes(), &continuation);
 
         // Also match uppercase
         let val_upper = format!("{:X}", val);
         if val_str != val_upper {
-            let upper_fa =
-                build_literal_chain_with_continuation(val_upper.as_bytes(), &continuation);
+            let upper_fa = build_literal_chain(val_upper.as_bytes(), &continuation);
             fa_tables.push(merge_fas(&val_fa, &upper_fa));
         } else {
             fa_tables.push(val_fa);
@@ -1236,20 +1217,6 @@ fn make_hex_digit_table_start(
     let mut table = SmallTable::new();
     table.pack(&unpacked);
     table
-}
-
-/// Build a literal chain FA that ends with the given continuation table.
-fn build_literal_chain_with_continuation(bytes: &[u8], continuation: &SmallTable) -> SmallTable {
-    if bytes.is_empty() {
-        return continuation.clone();
-    }
-
-    let mut current = continuation.clone();
-    for &byte in bytes.iter().rev() {
-        let next_state = Arc::new(FaState::with_table(current));
-        current = SmallTable::with_mappings(None, &[byte], &[next_state]);
-    }
-    current
 }
 
 /// Merge two finite automata into one that matches either pattern.
