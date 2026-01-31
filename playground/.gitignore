@@ -1,0 +1,7 @@
+# Build artifacts
+/target/
+/pkg/
+/web/pkg/
+
+# Cargo lock (use main workspace lock)
+Cargo.lock

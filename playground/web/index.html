@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Interactive playground for quamina-rs, a fast pattern matching library for JSON events">
+    <title>quamina-rs playground</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Raleway:wght@300;400;600&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="playground.css">
+</head>
+<body>
+    <header class="header">
+        <h1>quamina-rs playground</h1>
+        <p>Rust-based Fast pattern matching for JSON events</p>
+    </header>
+
+    <main class="container">
+        <section class="panel" aria-labelledby="rules-heading">
+            <div class="panel-header">
+                <span id="rules-heading">Rules</span>
+                <button id="clear-rules" class="header-btn" type="button" aria-label="Clear all rules">Clear</button>
+            </div>
+            <div class="panel-content">
+                <div id="rules-list" role="list" aria-label="Pattern rules"></div>
+                <label for="rule-pattern" class="visually-hidden">Add new rule pattern</label>
+                <textarea
+                    id="rule-pattern"
+                    placeholder='Add rule: {"field": ["value"]}'
+                    aria-describedby="rule-hint"
+                    spellcheck="false"
+                ></textarea>
+                <span id="rule-hint" class="visually-hidden">Type valid JSON pattern and it will be added automatically</span>
+            </div>
+        </section>
+
+        <section class="panel" aria-labelledby="events-heading">
+            <div class="panel-header">
+                <span id="events-heading">Events</span>
+                <button id="clear-events" class="header-btn" type="button" aria-label="Clear all events">Clear</button>
+            </div>
+            <div class="panel-content">
+                <div id="events-list" role="list" aria-label="Test events"></div>
+                <label for="event-json" class="visually-hidden">Add new test event</label>
+                <textarea
+                    id="event-json"
+                    placeholder='Add event: {"field": "value"}'
+                    aria-describedby="event-hint"
+                    spellcheck="false"
+                ></textarea>
+                <span id="event-hint" class="visually-hidden">Type valid JSON event and it will be added automatically</span>
+            </div>
+        </section>
+    </main>
+
+    <footer>
+        <a href="https://rishi.baldawa.com/" target="_blank" rel="noopener">Rishi Baldawa</a> ·| 
+        <a href="https://github.com/baldawarishi/quamina-rs" target="_blank" rel="noopener">GitHub</a>
+    </footer>
+
+    <script type="module" src="app.js"></script>
+</body>
+</html>
