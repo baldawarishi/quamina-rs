@@ -1,0 +1,15 @@
+{
+  "name": "quamina-playground",
+  "type": "module",
+  "version": "0.1.0",
+  "files": [
+    "quamina_playground_bg.wasm",
+    "quamina_playground.js",
+    "quamina_playground.d.ts"
+  ],
+  "main": "quamina_playground.js",
+  "types": "quamina_playground.d.ts",
+  "sideEffects": [
+    "./snippets/*"
+  ]
+}
