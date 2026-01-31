@@ -25,7 +25,7 @@ pub use crate::flattener::{Flattener, JsonFlattener, OwnedField, SegmentsTreeTra
 
 use automaton::{NfaBuffers, ThreadSafeCoreMatcher};
 use flatten_json::FlattenJsonState;
-use json::{Field, Matcher};
+use json::Matcher;
 use parking_lot::Mutex;
 use segments_tree::SegmentsTree;
 use std::collections::{HashMap, HashSet};
@@ -293,9 +293,6 @@ impl<X: Clone + Eq + Hash + Send + Sync> QuaminaBuilder<X> {
         Ok(Quamina {
             automaton: ThreadSafeCoreMatcher::new(),
             pattern_defs: HashMap::new(),
-            fallback_patterns: HashMap::new(),
-            fallback_field_index: HashMap::new(),
-            fallback_exists_false: HashSet::new(),
             deleted_patterns: HashSet::new(),
             segments_tree: SegmentsTree::new(),
             flattener: Mutex::new(FlattenJsonState::new()),
@@ -315,9 +312,8 @@ impl<X: Clone + Eq + Hash + Send + Sync> Default for QuaminaBuilder<X> {
 
 /// The main pattern matcher
 ///
-/// Quamina uses a hybrid matching approach:
-/// - Automaton-based matching for patterns using supported operators (exact, prefix, suffix, wildcard, numeric comparisons, I-Regexp with lookarounds, etc.)
-/// - HashMap-based fallback for patterns with unsupported features (CIDR, anything-but-numeric)
+/// Quamina uses automaton-based matching for all supported operators (exact, prefix, suffix,
+/// wildcard, numeric comparisons, CIDR, I-Regexp with lookarounds, etc.)
 ///
 /// Quamina is Clone, allowing you to create snapshots for concurrent use:
 /// ```
@@ -339,16 +335,10 @@ impl<X: Clone + Eq + Hash + Send + Sync> Default for QuaminaBuilder<X> {
 /// // Both can now be used for concurrent matching
 /// ```
 pub struct Quamina<X: Clone + Eq + Hash + Send + Sync = String> {
-    /// Automaton-based matcher for patterns with supported operators
+    /// Automaton-based matcher
     automaton: ThreadSafeCoreMatcher<X>,
     /// All pattern definitions (source of truth for cloning)
     pattern_defs: HashMap<X, Vec<PatternDef>>,
-    /// Fallback patterns that use unsupported operators (suffix, regex, numeric comparisons)
-    fallback_patterns: HashMap<X, Vec<Pattern>>,
-    /// Index mapping field paths to fallback pattern IDs
-    fallback_field_index: HashMap<String, HashSet<X>>,
-    /// Fallback pattern IDs that have exists:false matchers
-    fallback_exists_false: HashSet<X>,
     /// Deleted patterns (filtered from automaton results since automaton doesn't support deletion)
     deleted_patterns: HashSet<X>,
     /// Segments tree for fast field skipping during event parsing
@@ -363,12 +353,6 @@ pub struct Quamina<X: Clone + Eq + Hash + Send + Sync = String> {
     pruner_stats: PrunerStats,
     /// Whether auto-rebuild is enabled (default: true)
     auto_rebuild_enabled: bool,
-}
-
-/// Internal representation of a compiled pattern
-#[derive(Clone)]
-struct Pattern {
-    fields: HashMap<String, Vec<Matcher>>,
 }
 
 impl<X: Clone + Eq + Hash + Send + Sync> Clone for Quamina<X> {
@@ -396,9 +380,6 @@ impl<X: Clone + Eq + Hash + Send + Sync> Clone for Quamina<X> {
         Quamina {
             automaton,
             pattern_defs: self.pattern_defs.clone(),
-            fallback_patterns: self.fallback_patterns.clone(),
-            fallback_field_index: self.fallback_field_index.clone(),
-            fallback_exists_false: self.fallback_exists_false.clone(),
             deleted_patterns: self.deleted_patterns.clone(),
             segments_tree: self.segments_tree.clone(),
             flattener: Mutex::new(FlattenJsonState::new()),
@@ -416,9 +397,6 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
         Quamina {
             automaton: ThreadSafeCoreMatcher::new(),
             pattern_defs: HashMap::new(),
-            fallback_patterns: HashMap::new(),
-            fallback_field_index: HashMap::new(),
-            fallback_exists_false: HashSet::new(),
             deleted_patterns: HashSet::new(),
             segments_tree: SegmentsTree::new(),
             flattener: Mutex::new(FlattenJsonState::new()),
@@ -471,7 +449,7 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
         streaming_fields.sort_unstable_by(|a, b| a.path.cmp(&b.path));
 
         // Get matches from automaton using fields directly (no intermediate EventFieldRef)
-        let mut matches: Vec<X> = {
+        let matches: Vec<X> = {
             let mut bufs = self.nfa_bufs.lock();
             let raw_matches = self
                 .automaton
@@ -494,49 +472,6 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
                 filtered
             }
         };
-
-        // Slow path: fallback matching still needs legacy Field format (with String values)
-        if !self.fallback_patterns.is_empty() {
-            // Only build legacy fields if we have fallback patterns
-            let event_fields: Vec<Field> = streaming_fields
-                .iter()
-                .map(|f| {
-                    let path_str = String::from_utf8_lossy(&f.path).into_owned();
-                    let raw_bytes = f.val.as_bytes();
-                    let value = if raw_bytes.starts_with(b"\"") && raw_bytes.ends_with(b"\"") {
-                        String::from_utf8_lossy(&raw_bytes[1..raw_bytes.len() - 1]).into_owned()
-                    } else {
-                        String::from_utf8_lossy(raw_bytes).into_owned()
-                    };
-                    let array_trail = f
-                        .array_trail
-                        .iter()
-                        .map(|ap| json::ArrayPos {
-                            array: ap.array,
-                            pos: ap.pos,
-                        })
-                        .collect();
-                    Field {
-                        path: path_str,
-                        value,
-                        array_trail,
-                        is_number: f.is_number,
-                    }
-                })
-                .collect();
-
-            // Build multimap for fallback matching
-            let mut event_map: HashMap<&str, Vec<&Field>> = HashMap::new();
-            for field in &event_fields {
-                event_map
-                    .entry(field.path.as_str())
-                    .or_default()
-                    .push(field);
-            }
-
-            let fallback_matches = self.fallback_matches(&event_map);
-            matches.extend(fallback_matches);
-        }
 
         Ok(matches)
     }
@@ -569,7 +504,7 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
         streaming_fields.sort_unstable_by(|a, b| a.path.cmp(&b.path));
 
         // Get matches from automaton
-        let mut matches: Vec<X> = {
+        let matches: Vec<X> = {
             let mut bufs = self.nfa_bufs.lock();
             let raw_matches = self
                 .automaton
@@ -592,47 +527,6 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
             }
         };
 
-        // Fallback matching
-        if !self.fallback_patterns.is_empty() {
-            let event_fields: Vec<Field> = streaming_fields
-                .iter()
-                .map(|f| {
-                    let path_str = String::from_utf8_lossy(&f.path).into_owned();
-                    let raw_bytes = f.val.as_bytes();
-                    let value = if raw_bytes.starts_with(b"\"") && raw_bytes.ends_with(b"\"") {
-                        String::from_utf8_lossy(&raw_bytes[1..raw_bytes.len() - 1]).into_owned()
-                    } else {
-                        String::from_utf8_lossy(raw_bytes).into_owned()
-                    };
-                    let array_trail = f
-                        .array_trail
-                        .iter()
-                        .map(|ap| json::ArrayPos {
-                            array: ap.array,
-                            pos: ap.pos,
-                        })
-                        .collect();
-                    Field {
-                        path: path_str,
-                        value,
-                        array_trail,
-                        is_number: f.is_number,
-                    }
-                })
-                .collect();
-
-            let mut event_map: HashMap<&str, Vec<&Field>> = HashMap::new();
-            for field in &event_fields {
-                event_map
-                    .entry(field.path.as_str())
-                    .or_default()
-                    .push(field);
-            }
-
-            let fallback_matches = self.fallback_matches(&event_map);
-            matches.extend(fallback_matches);
-        }
-
         Ok(matches)
     }
 
@@ -644,208 +538,6 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
         Ok(fields.len())
     }
 
-    /// Get matches from fallback patterns
-    fn fallback_matches(&self, event_map: &HashMap<&str, Vec<&Field>>) -> Vec<X> {
-        // Heuristic: field indexing helps when patterns have diverse fields
-        let use_field_index = self.fallback_patterns.len() >= 10
-            && self.fallback_field_index.len() * 2 > self.fallback_patterns.len();
-
-        if use_field_index {
-            self.fallback_matches_via_field_index(event_map)
-        } else {
-            self.fallback_matches_via_direct_iteration(event_map)
-        }
-    }
-
-    /// Match fallback patterns using field index
-    fn fallback_matches_via_field_index(&self, event_map: &HashMap<&str, Vec<&Field>>) -> Vec<X> {
-        let mut seen: HashSet<&X> = HashSet::new();
-        let mut matches = Vec::new();
-
-        // Check patterns from field index
-        for event_field_path in event_map.keys() {
-            if let Some(pattern_ids) = self.fallback_field_index.get(*event_field_path) {
-                for id in pattern_ids {
-                    if !seen.insert(id) {
-                        continue;
-                    }
-                    if let Some(patterns) = self.fallback_patterns.get(id) {
-                        for pattern in patterns {
-                            if self.pattern_matches(&pattern.fields, event_map) {
-                                matches.push(id.clone());
-                                break;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        // Also check patterns with exists:false
-        for id in &self.fallback_exists_false {
-            if !seen.insert(id) {
-                continue;
-            }
-            if let Some(patterns) = self.fallback_patterns.get(id) {
-                for pattern in patterns {
-                    if self.pattern_matches(&pattern.fields, event_map) {
-                        matches.push(id.clone());
-                        break;
-                    }
-                }
-            }
-        }
-
-        matches
-    }
-
-    /// Match fallback patterns using direct iteration
-    fn fallback_matches_via_direct_iteration(
-        &self,
-        event_map: &HashMap<&str, Vec<&Field>>,
-    ) -> Vec<X> {
-        let mut matches = Vec::new();
-        for (id, patterns) in &self.fallback_patterns {
-            for pattern in patterns {
-                if self.pattern_matches(&pattern.fields, event_map) {
-                    matches.push(id.clone());
-                    break;
-                }
-            }
-        }
-        matches
-    }
-
-    fn pattern_matches(
-        &self,
-        pattern_fields: &HashMap<String, Vec<Matcher>>,
-        event_map: &HashMap<&str, Vec<&Field>>,
-    ) -> bool {
-        // Empty pattern matches everything
-        if pattern_fields.is_empty() {
-            return true;
-        }
-
-        // Fast path: single-field patterns don't need backtracking for array trail consistency
-        if pattern_fields.len() == 1 {
-            let (field_path, matchers) = pattern_fields.iter().next().unwrap();
-            return self.single_field_matches(field_path, matchers, event_map);
-        }
-
-        // Multi-field patterns: use backtracking for array trail consistency
-        let pattern_field_list: Vec<_> = pattern_fields.iter().collect();
-        let mut trails = Vec::with_capacity(pattern_field_list.len());
-        self.backtrack_match(&pattern_field_list, 0, &mut trails, event_map)
-    }
-
-    /// Fast path for single-field pattern matching (no backtracking needed)
-    fn single_field_matches(
-        &self,
-        field_path: &str,
-        matchers: &[Matcher],
-        event_map: &HashMap<&str, Vec<&Field>>,
-    ) -> bool {
-        let event_fields = event_map.get(field_path);
-
-        // Try each matcher (OR semantics)
-        for matcher in matchers {
-            if let Matcher::Exists(should_exist) = matcher {
-                let exists = event_fields.map(|v| !v.is_empty()).unwrap_or(false);
-                if exists == *should_exist {
-                    return true;
-                }
-                continue;
-            }
-
-            // For other matchers, check if any event value matches
-            if let Some(fields) = event_fields {
-                if fields.iter().any(|f| self.value_matches(matcher, &f.value)) {
-                    return true;
-                }
-            }
-        }
-
-        false
-    }
-
-    /// Backtracking match that ensures array trail compatibility across all matched fields.
-    /// Uses push/pop on trails Vec to avoid allocations during recursion.
-    fn backtrack_match<'a>(
-        &self,
-        pattern_fields: &[(&String, &Vec<Matcher>)],
-        field_idx: usize,
-        current_trails: &mut Vec<&'a [json::ArrayPos]>,
-        event_map: &HashMap<&str, Vec<&'a Field>>,
-    ) -> bool {
-        if field_idx >= pattern_fields.len() {
-            return true; // All fields matched successfully
-        }
-
-        let (field_path, matchers) = pattern_fields[field_idx];
-        let event_fields = event_map.get(field_path.as_str());
-
-        // Try each matcher (OR semantics within a field)
-        for matcher in matchers.iter() {
-            // Handle exists patterns specially - they don't require specific field values
-            if let Matcher::Exists(should_exist) = matcher {
-                let exists = event_fields.map(|v| !v.is_empty()).unwrap_or(false);
-                if exists == *should_exist {
-                    // exists:true/false doesn't constrain array trails, just recurse
-                    if self.backtrack_match(
-                        pattern_fields,
-                        field_idx + 1,
-                        current_trails,
-                        event_map,
-                    ) {
-                        return true;
-                    }
-                }
-                continue;
-            }
-
-            // For other matchers, find all matching event values
-            if let Some(fields) = event_fields {
-                for event_field in fields.iter() {
-                    if self.value_matches(matcher, &event_field.value) {
-                        // Check array trail compatibility with already-matched fields
-                        let compatible = current_trails.iter().all(|prev_trail| {
-                            no_array_trail_conflict(prev_trail, &event_field.array_trail)
-                        });
-
-                        if compatible {
-                            // Add this field's trail, recurse, then pop (avoids allocation)
-                            current_trails.push(&event_field.array_trail);
-                            let matched = self.backtrack_match(
-                                pattern_fields,
-                                field_idx + 1,
-                                current_trails,
-                                event_map,
-                            );
-                            current_trails.pop();
-
-                            if matched {
-                                return true;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        false
-    }
-
-    /// Legacy fallback path - should never be reached.
-    /// All matchers now go through the automaton path.
-    fn value_matches(&self, matcher: &Matcher, _value: &str) -> bool {
-        debug_assert!(
-            false,
-            "Matcher should use automaton path, not fallback: {:?}",
-            std::mem::discriminant(matcher)
-        );
-        false
-    }
-
     /// Delete all patterns with the given identifier
     pub fn delete_patterns(&mut self, x: &X) -> Result<(), QuaminaError> {
         // Check if pattern exists
@@ -853,21 +545,7 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
             return Ok(()); // Pattern doesn't exist or already deleted
         }
 
-        // If this was a fallback pattern, remove from fallback structures
-        if let Some(patterns) = self.fallback_patterns.get(x) {
-            for pattern in patterns {
-                for field_path in pattern.fields.keys() {
-                    if let Some(ids) = self.fallback_field_index.get_mut(field_path) {
-                        ids.remove(x);
-                    }
-                }
-            }
-        }
-        self.fallback_field_index.retain(|_, ids| !ids.is_empty());
-        self.fallback_exists_false.remove(x);
-        self.fallback_patterns.remove(x);
-
-        // For automaton patterns, add to deleted set (automaton doesn't support deletion)
+        // Add to deleted set (automaton doesn't support deletion)
         // This will filter the pattern from automaton results
         self.deleted_patterns.insert(x.clone());
 
@@ -971,9 +649,6 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
     pub fn clear(&mut self) {
         self.automaton = ThreadSafeCoreMatcher::new();
         self.pattern_defs.clear();
-        self.fallback_patterns.clear();
-        self.fallback_field_index.clear();
-        self.fallback_exists_false.clear();
         self.deleted_patterns.clear();
         self.pruner_stats.reset();
     }
@@ -1022,21 +697,6 @@ impl<X: Clone + Eq + Hash + Send + Sync> Default for Quamina<X> {
         Self::new()
     }
 }
-
-/// Check if two array trails are compatible (no conflict).
-/// Two trails conflict if they reference different positions in the same array.
-/// This prevents matching across different elements of the same array.
-fn no_array_trail_conflict(from: &[json::ArrayPos], to: &[json::ArrayPos]) -> bool {
-    for from_pos in from {
-        for to_pos in to {
-            if from_pos.array == to_pos.array && from_pos.pos != to_pos.pos {
-                return false;
-            }
-        }
-    }
-    true
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

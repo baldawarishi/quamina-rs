@@ -282,8 +282,7 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
                 }
                 self.add_cidr_transition(cidr)
             }
-            // For Regex fallback, we create a simple next state
-            // These would need runtime checking
+            // Catch-all for any future matcher types
             _ => Rc::new(MutableFieldMatcher::new()),
         }
     }
