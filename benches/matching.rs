@@ -924,6 +924,111 @@ fn bench_bulk_100x10_multifield(c: &mut Criterion) {
     });
 }
 
+// === 10K+ Pattern Stress Benchmarks ===
+
+/// Benchmark for adding 10,000 patterns (single value each)
+/// Tests scaling behavior beyond typical workloads
+fn bench_bulk_10000x1(c: &mut Criterion) {
+    c.bench_function("bulk_10000x1", |b| {
+        b.iter(|| {
+            let mut q = Quamina::<usize>::new();
+            for i in 0..10_000 {
+                let pattern = format!(r#"{{"field": ["value_{}"]}}"#, i);
+                q.add_pattern(i, &pattern).unwrap();
+            }
+        })
+    });
+}
+
+/// Benchmark for matching against 10,000 patterns on same field
+/// Tests automaton traversal at scale
+fn bench_10k_patterns_match(c: &mut Criterion) {
+    let mut q = Quamina::<usize>::new();
+    for i in 0..10_000 {
+        q.add_pattern(i, &format!(r#"{{"status": ["status_{}"]}}"#, i))
+            .unwrap();
+    }
+
+    // Event that matches pattern 5000 (middle of the set)
+    let event_match = r#"{"status": "status_5000"}"#.as_bytes();
+    // Event that doesn't match any pattern
+    let event_no_match = r#"{"status": "no_match"}"#.as_bytes();
+
+    // Verify
+    let matches = q.matches_for_event(event_match).unwrap();
+    assert_eq!(matches.len(), 1);
+    assert_eq!(matches[0], 5000);
+
+    c.bench_function("10k_patterns_1_match", |b| {
+        b.iter(|| q.matches_for_event(black_box(event_match)).unwrap())
+    });
+
+    c.bench_function("10k_patterns_no_match", |b| {
+        b.iter(|| q.matches_for_event(black_box(event_no_match)).unwrap())
+    });
+}
+
+/// Benchmark for matching against 10,000 diverse patterns (different fields)
+/// Tests field indexing at scale - should be much faster than same-field
+fn bench_10k_diverse_patterns(c: &mut Criterion) {
+    let mut q = Quamina::<usize>::new();
+    for i in 0..10_000 {
+        q.add_pattern(i, &format!(r#"{{"field_{}": ["value_{}"]}}"#, i, i))
+            .unwrap();
+    }
+
+    // Event with only field_5000, so only 1 of 10k patterns could match
+    let event = r#"{"field_5000": "value_5000", "other": "data"}"#.as_bytes();
+
+    // Verify
+    let matches = q.matches_for_event(event).unwrap();
+    assert_eq!(matches.len(), 1);
+
+    c.bench_function("10k_diverse_patterns_1_match", |b| {
+        b.iter(|| q.matches_for_event(black_box(event)).unwrap())
+    });
+}
+
+/// Benchmark for 10,000 patterns with mixed types
+/// Realistic scenario with exact, prefix, and numeric patterns
+fn bench_10k_mixed_patterns(c: &mut Criterion) {
+    let mut q = Quamina::<usize>::new();
+
+    // Add mix of pattern types
+    for i in 0..3_334 {
+        // Exact match patterns
+        q.add_pattern(i, &format!(r#"{{"type": ["exact_{}"]}}"#, i))
+            .unwrap();
+    }
+    for i in 3_334..6_667 {
+        // Prefix patterns
+        q.add_pattern(i, &format!(r#"{{"path": [{{"prefix": "/api/v{}"}}]}}"#, i))
+            .unwrap();
+    }
+    for i in 6_667..10_000 {
+        // Numeric patterns
+        q.add_pattern(i, &format!(r#"{{"score": [{{"numeric": ["=", {}]}}]}}"#, i))
+            .unwrap();
+    }
+
+    // Events for each type
+    let event_exact = r#"{"type": "exact_1000"}"#.as_bytes();
+    let event_prefix = r#"{"path": "/api/v5000/users"}"#.as_bytes();
+    let event_numeric = r#"{"score": 8000}"#.as_bytes();
+
+    c.bench_function("10k_mixed_exact_match", |b| {
+        b.iter(|| q.matches_for_event(black_box(event_exact)).unwrap())
+    });
+
+    c.bench_function("10k_mixed_prefix_match", |b| {
+        b.iter(|| q.matches_for_event(black_box(event_prefix)).unwrap())
+    });
+
+    c.bench_function("10k_mixed_numeric_match", |b| {
+        b.iter(|| q.matches_for_event(black_box(event_numeric)).unwrap())
+    });
+}
+
 // === CityLots benchmarks (comparable to Go's citylots_bench_test.go) ===
 
 fn load_citylots_lines() -> Vec<Vec<u8>> {
@@ -1191,7 +1296,20 @@ fn configure_bulk_benchmarks() -> Criterion {
 criterion_group! {
     name = bulk_benches;
     config = configure_bulk_benchmarks();
-    targets = bench_bulk_100x10, bench_bulk_1000x10, bench_bulk_100x100, bench_bulk_100x10_multifield
+    targets = bench_bulk_100x10, bench_bulk_1000x10, bench_bulk_100x100, bench_bulk_100x10_multifield, bench_bulk_10000x1
+}
+
+// Configure 10k pattern benchmarks with even longer measurement
+fn configure_10k_benchmarks() -> Criterion {
+    Criterion::default()
+        .sample_size(10)
+        .measurement_time(std::time::Duration::from_secs(15))
+}
+
+criterion_group! {
+    name = stress_benches;
+    config = configure_10k_benchmarks();
+    targets = bench_10k_patterns_match, bench_10k_diverse_patterns, bench_10k_mixed_patterns
 }
 
 criterion_group!(
@@ -1254,4 +1372,4 @@ criterion_group!(
     // State acceleration benchmark (Phase 3)
     bench_state_acceleration,
 );
-criterion_main!(benches, bulk_benches);
+criterion_main!(benches, bulk_benches, stress_benches);
