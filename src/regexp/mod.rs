@@ -1248,8 +1248,9 @@ mod tests {
     /// For [^x]+:
     /// - Previously: no acceleration (68+ exit bytes from UTF-8 validation)
     /// - Now: acceleration with exit_bytes = [b'x'] (just the negated char)
+    /// Coverage: regexp::parser::tests::test_detect_ascii_negated_bytes_* tests the detection logic.
     #[test]
-    #[cfg_attr(miri, ignore)] // Arena NFA traversal too slow under miri
+    #[cfg_attr(miri, ignore)] // Arena NFA construction for negated classes too slow under miri
     fn test_negated_single_char_ascii_fast_path() {
         use crate::automaton::arena::{traverse_arena_nfa, ArenaNfaBuffers};
 
@@ -1303,8 +1304,9 @@ mod tests {
     }
 
     /// Test that Unicode-aware negated patterns do NOT get ASCII fast path acceleration.
+    /// Coverage: regexp::parser::tests::test_detect_ascii_negated_bytes_* tests the detection logic.
     #[test]
-    #[cfg_attr(miri, ignore)] // Arena NFA traversal too slow under miri
+    #[cfg_attr(miri, ignore)] // Arena NFA construction for negated classes too slow under miri
     fn test_negated_unicode_char_no_ascii_fast_path() {
         // Pattern [^ü]+ - non-ASCII negated char, so NO acceleration
         let pattern = "[^ü]+";
