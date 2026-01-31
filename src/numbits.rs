@@ -26,14 +26,7 @@
 //! - Numbers within the same sign compare in the correct order
 
 /// Maximum bytes needed for base-128 encoding of a 64-bit value.
-pub const MAX_BYTES_IN_ENCODING: usize = 10;
-
-/// A numbits is an alternative binary representation of float64 numbers.
-/// All possible float64 values are representable as numbits.
-pub type Numbits = u64;
-
-/// Q-number: variable-width byte encoding that preserves ordering.
-pub type QNumber = Vec<u8>;
+const MAX_BYTES_IN_ENCODING: usize = 10;
 
 /// Convert a float64 to its numbits representation.
 ///
@@ -42,7 +35,7 @@ pub type QNumber = Vec<u8>;
 ///
 /// Note: This implementation ignores NaN, -0, and infinities because JSON
 /// rules and Quamina's parsers prevent those values from occurring.
-pub fn numbits_from_f64(f: f64) -> Numbits {
+pub(crate) fn numbits_from_f64(f: f64) -> u64 {
     let u = f.to_bits();
     // Transform without branching:
     // If high bit is 0, xor with sign bit (1 << 63), else negate (xor with !0).
@@ -59,7 +52,7 @@ pub fn numbits_from_f64(f: f64) -> Numbits {
 /// the encoding can be as short as one byte.
 ///
 /// Idea and some code by Axel Wagner.
-pub fn to_q_number(nb: Numbits) -> QNumber {
+pub(crate) fn to_q_number(nb: u64) -> Vec<u8> {
     let mut nb = nb;
 
     // Iterate through the numbits 7 bits at a time, right to left,
@@ -94,30 +87,29 @@ pub fn to_q_number(nb: Numbits) -> QNumber {
 }
 
 /// Convert a float64 to its Q-number representation.
-pub fn q_num_from_f64(f: f64) -> QNumber {
+pub fn q_num_from_f64(f: f64) -> Vec<u8> {
     to_q_number(numbits_from_f64(f))
-}
-
-/// Parse a byte string as a float64 and convert to Q-number.
-///
-/// Returns None if the string cannot be parsed as a float.
-pub fn q_num_from_bytes(bytes: &[u8]) -> Option<QNumber> {
-    let s = std::str::from_utf8(bytes).ok()?;
-    let f: f64 = s.parse().ok()?;
-    Some(q_num_from_f64(f))
-}
-
-/// Format a Q-number for debugging.
-pub fn q_num_to_string(q: &QNumber) -> String {
-    q.iter()
-        .map(|b| format!("{:02x}", b))
-        .collect::<Vec<_>>()
-        .join("-")
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Parse a byte string as a float64 and convert to Q-number.
+    /// Returns None if the string cannot be parsed as a float.
+    fn q_num_from_bytes(bytes: &[u8]) -> Option<Vec<u8>> {
+        let s = std::str::from_utf8(bytes).ok()?;
+        let f: f64 = s.parse().ok()?;
+        Some(q_num_from_f64(f))
+    }
+
+    /// Format a Q-number for debugging.
+    fn q_num_to_string(q: &[u8]) -> String {
+        q.iter()
+            .map(|b| format!("{:02x}", b))
+            .collect::<Vec<_>>()
+            .join("-")
+    }
 
     #[test]
     #[allow(clippy::inconsistent_digit_grouping)]
@@ -167,7 +159,7 @@ mod tests {
     fn test_float_variants() {
         // Different representations of the same value should produce the same Q-number
         let floats: Vec<f64> = vec![350.0, 350.0, 350.0000000000, 3.5e2];
-        let q_nums: Vec<QNumber> = floats.iter().map(|&f| q_num_from_f64(f)).collect();
+        let q_nums: Vec<Vec<u8>> = floats.iter().map(|&f| q_num_from_f64(f)).collect();
 
         for i in 1..q_nums.len() {
             assert_eq!(
@@ -184,7 +176,7 @@ mod tests {
     fn test_byte_variants() {
         // Different string representations of the same value should produce the same Q-number
         let strings: Vec<&str> = vec!["350", "350.0", "350.0000", "3.5e2"];
-        let q_nums: Vec<QNumber> = strings
+        let q_nums: Vec<Vec<u8>> = strings
             .iter()
             .map(|s| q_num_from_bytes(s.as_bytes()).unwrap())
             .collect();
@@ -221,7 +213,7 @@ mod tests {
 
         floats.sort_by(|a, b| a.partial_cmp(b).unwrap_or(Ordering::Equal));
 
-        let q_nums: Vec<QNumber> = floats.iter().map(|&f| q_num_from_f64(f)).collect();
+        let q_nums: Vec<Vec<u8>> = floats.iter().map(|&f| q_num_from_f64(f)).collect();
 
         for i in 1..q_nums.len() {
             assert!(
@@ -255,7 +247,7 @@ mod tests {
 
         floats.sort_by(|a, b| a.partial_cmp(b).unwrap_or(Ordering::Equal));
 
-        let q_nums: Vec<QNumber> = floats.iter().map(|&f| q_num_from_f64(f)).collect();
+        let q_nums: Vec<Vec<u8>> = floats.iter().map(|&f| q_num_from_f64(f)).collect();
 
         for i in 1..q_nums.len() {
             assert!(

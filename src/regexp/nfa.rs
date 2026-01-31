@@ -623,7 +623,7 @@ fn ensure_tree_entry(node: &mut RuneTreeNode, byte: u8) {
 ///
 /// This is more complex than just accepting all bytes because we need to
 /// validate UTF-8 encoding and reject surrogates.
-pub fn make_dot_fa(dest: &Arc<FaState>) -> SmallTable {
+pub(crate) fn make_dot_fa(dest: &Arc<FaState>) -> SmallTable {
     // Tables for continuation bytes
     let s_last = SmallTable {
         ceilings: vec![0x80, 0xc0, BYTE_CEILING as u8],

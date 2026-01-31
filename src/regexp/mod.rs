@@ -17,17 +17,21 @@ mod nfa;
 mod parser;
 
 // Re-export public API
-pub use nfa::{make_dot_fa, make_regexp_nfa, make_regexp_nfa_arena, regexp_has_plus_star};
+pub use nfa::{make_regexp_nfa, make_regexp_nfa_arena, regexp_has_plus_star};
 pub use parser::{
-    collect_lookarounds, has_top_level_lookaround, invert_rune_range, parse_regexp,
-    simplify_rune_range, LookaroundType, QuantifiedAtom, RegexpBranch, RegexpError, RegexpRoot,
-    RunePair, RuneRange, REGEXP_QUANTIFIER_MAX, RUNE_MAX,
+    collect_lookarounds, has_top_level_lookaround, parse_regexp, LookaroundType, QuantifiedAtom,
+    RegexpBranch, RegexpError, RegexpRoot, RunePair, RuneRange, REGEXP_QUANTIFIER_MAX, RUNE_MAX,
 };
+
+// Crate-internal items are accessible via their original modules:
+// - nfa::make_dot_fa (pub(crate))
+// - parser::{invert_rune_range, simplify_rune_range} (pub(crate))
 
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
 
+    use super::parser::{invert_rune_range, simplify_rune_range};
     use super::*;
 
     #[test]

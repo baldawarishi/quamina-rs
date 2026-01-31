@@ -1174,7 +1174,7 @@ fn read_cce1(parse: &mut RegexpParse, first: bool) -> Result<RuneRange, RegexpEr
 }
 
 /// Simplify and merge overlapping rune ranges
-pub fn simplify_rune_range(mut rranges: RuneRange) -> RuneRange {
+pub(crate) fn simplify_rune_range(mut rranges: RuneRange) -> RuneRange {
     if rranges.is_empty() {
         return rranges;
     }
@@ -1242,7 +1242,7 @@ fn add_gap_range(inverted: &mut Vec<RunePair>, start: u32, end: u32) {
 
 /// Invert a rune range (for negated character classes).
 /// Returns a range that matches everything NOT in the input range.
-pub fn invert_rune_range(mut rr: RuneRange) -> RuneRange {
+pub(crate) fn invert_rune_range(mut rr: RuneRange) -> RuneRange {
     rr.sort_by_key(|rp| rp.lo);
 
     // Merge overlapping/adjacent ranges after sorting
