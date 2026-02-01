@@ -1,114 +1,270 @@
 # quamina-rs
 
-Rust port of [quamina](https://github.com/timbray/quamina) - a fast pattern-matching library for filtering JSON events.
+[![CI](https://github.com/baldawarishi/quamina-rs/actions/workflows/test.yml/badge.svg)](https://github.com/baldawarishi/quamina-rs/actions/workflows/test.yml)
+[![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 
-All credit should go to [Tim Bray](https://www.tbray.org/) who designed and maintains the original quamina. Tim also created [aws/event-ruler](https://github.com/aws/event-ruler), the Java library that powers Amazon EventBridge among a staggering amount of Amazon things. For those curious, Tim also has documented the design extensively in his [Quamina Diary](https://www.tbray.org/ongoing/What/Technology/Quamina%20Diary/) Series which I'd highly recommend for understanding the internals of Quamina.
+Rust port of [quamina](https://github.com/timbray/quamina), a pattern-matching library for filtering JSON objects.
 
-## Warning
+In Quamina, uou add Patterns to a quamina instance, then match Events against it. Quamina tells you which Patterns matched. It does this fast—millions of events per second, regardless of how many patterns you have.
 
-This port was 100% "vibecoded" in the background. I don't have a deep understanding of the source code (yet). Use at your own risk ... but if you do find issues, please do report them.
+Try it online in the **[playground](https://baldawarishi.github.io/quamina-rs/)** to test patterns against JSON events in your browser.
 
-## Feature Parity
+## Contents
 
-### Pattern Matchers
+- [Quick Start](#quick-start)
+- [Patterns](#patterns)
+- [APIs](#apis)
+- [Concurrency](#concurrency)
+- [Performance](#performance)
+- [Limitations](#limitations)
+- [Credits](#credits)
 
-| Matcher | Go | Rust | Example |
-|---------|:--:|:----:|---------|
-| Exact string | Yes | Yes | `"value"` |
-| Exact number | Yes | Yes | `35` matches `35.0`, `3.5e1` |
-| Prefix | Yes | Yes | `{"prefix": "https://"}` |
-| Suffix | No | Yes | `{"suffix": ".json"}` |
-| Wildcard | Yes | Yes | `{"wildcard": "*error*"}` |
-| Shellstyle | Yes | Yes | `{"shellstyle": "*.txt"}` |
-| Exists | Yes | Yes | `{"exists": true}` |
-| Anything-but (strings) | Yes | Yes | `{"anything-but": ["error", "warn"]}` |
-| Anything-but (numbers) | No | Yes | `{"anything-but": [404, 500]}` |
-| Equals-ignore-case | Yes | Yes | `{"equals-ignore-case": "ERROR"}` |
-| Numeric comparisons | No | Yes | `{"numeric": [">=", 0, "<", 100]}` |
-| CIDR | No | Yes | `{"cidr": "10.0.0.0/8"}` |
-| Regexp | Yes | Yes | `{"regexp": "[a-z]+"}` |
+## Quick Start
 
-### Regexp Features (I-Regexp / RFC 9485)
+```rust
+use quamina::Quamina;
 
-| Feature | Go | Rust | Example |
-|---------|:--:|:----:|---------|
-| Character classes | Yes | Yes | `[a-z]`, `[^0-9]` |
-| Quantifiers `?`, `*`, `+` | Yes | Yes | `a+b*c?` |
-| Range quantifiers `{n,m}` | No | Yes | `a{2,5}` |
-| Groups `(...)` | Yes | Yes | `(ab)+` |
-| Non-capturing groups `(?:...)` | No | Yes | `(?:ab)+` |
-| Alternation | Yes | Yes | `cat\|dog` |
-| Dot `.` | Yes | Yes | `a.b` |
-| Escapes `~d`, `~w`, `~s` | Yes | Yes | `~d+` (digits) |
-| Unicode categories `~p{L}` | Yes | Yes | `~p{Lu}` (uppercase) |
-| Unicode blocks | Yes | Yes | `~p{IsBasicLatin}` |
-| Lazy quantifiers `*?`, `+?` | No | Yes | `a+?` |
-| XML name chars `~i`, `~c` | Yes | Yes | `~i~c*` |
+let mut q = Quamina::new();
 
-**Regexp test coverage:** Rust passes 652/992 [XSD regexp test samples](https://github.com/qt4cg/xslt40-test) (by Michael Kay) vs Go's 203/992.
+q.add_pattern("p1", r#"{"status": ["error"]}"#).unwrap();
+q.add_pattern("p2", r#"{"level": [1, 2, 3]}"#).unwrap();
 
-## Performance Parity
+let event = r#"{"status": "error", "level": 2}"#;
+let matches = q.matches_for_event(event.as_bytes()).unwrap();
+// matches: ["p1", "p2"]
+```
 
-Benchmarks on Apple M3 Max, January 2026. Lower is better.
+## Patterns
 
-### Comparable Benchmarks (Rust vs Go)
+A Pattern is a JSON object. Field values are arrays—if any element matches, it's a match. All fields mentioned must match (AND), but only one value per field needs to match (OR).
 
-| Benchmark | Go | Rust | Speedup | Description |
-|-----------|---:|-----:|--------:|-------------|
-| citylots | 3,103 ns | 2,025 ns | 1.5x | 4 patterns vs 206k GeoJSON features |
-| status_middle_nested | 6,878 ns | 4,784 ns | 1.4x | Nested field match in 14KB JSON |
-| status_context_fields | 403 ns | 329 ns | 1.2x | Early field match in 14KB JSON |
+Given this event:
+```json
+{
+  "source": "test.app",
+  "detail": {
+    "status": "error",
+    "code": 500
+  },
+  "tags": ["urgent", "backend"]
+}
+```
 
-### Rust-only Benchmarks
+These patterns match though quamina:
+```json
+{"source": ["test.app"]}
+```
+```json
+{"detail": {"status": ["error", "warning"]}}
+```
+```json
+{"tags": ["urgent"]}
+```
+```json
+{"detail": {"code": [{"numeric": [">=", 400]}]}}
+```
+```json
+{"source": [{"prefix": "test."}]}
+```
+```json
+{"source": [{"suffix": ".app"}]}
+```
+```json
+{"source": [{"wildcard": "*.app"}]}
+```
+```json
+{"detail": {"status": [{"exists": true}]}}
+```
+```json
+{"detail": {"status": [{"anything-but": ["ok", "pending"]}]}}
+```
+```json
+{"detail": {"status": [{"equals-ignore-case": "ERROR"}]}}
+```
+```json
+{"source": [{"regexp": "test~.[a-z]+"}]}
+```
+
+### Pattern types
+
+**Exact match** — value must equal exactly:
+```json
+{"status": ["active"]}
+{"count": [100]}
+{"enabled": [true]}
+{"deleted": [null]}
+```
+
+**Prefix/Suffix** — string starts or ends with:
+```json
+{"url": [{"prefix": "https://"}]}
+{"file": [{"suffix": ".json"}]}
+```
+
+**Wildcard** — wild-card matching:
+```json
+{"message": [{"wildcard": "*error*"}]}
+{"id": [{"wildcard": "user-*-prod"}]}
+```
+
+`*` matches any sequence. Use `\*` to match a literal asterisk, `\\` for a literal backslash.   
+
+We also have Quamina's legacy `shellstyle` based matcher but you should avoid it. Shellstyle doesn't support `\*` or `\\` escapes. It may go away entirely in the long run. In fact, prefer to use regex whenever you are comfortable with its performance and syntax. 
+
+**Exists** — field presence:
+```json
+{"email": [{"exists": true}]}
+{"deleted_at": [{"exists": false}]}
+```
+
+**Anything-but** — match unless value is in list:
+```json
+{"status": [{"anything-but": ["pending", "cancelled"]}]}
+{"code": [{"anything-but": [400, 404, 500]}]}
+```
+
+**Equals-ignore-case** — case-insensitive:
+```json
+{"level": [{"equals-ignore-case": "ERROR"}]}
+```
+
+**Numeric** — comparisons:
+```json
+{"price": [{"numeric": [">", 100]}]}
+{"age": [{"numeric": [">=", 18, "<", 65]}]}
+```
+
+**CIDR** — IP address ranges:
+```json
+{"ip": [{"cidr": "10.0.0.0/8"}]}
+{"ip": [{"cidr": "2001:db8::/32"}]}
+```
+
+**Regexp** — I-Regexp (RFC 9485):
+```json
+{"email": [{"regexp": "[a-z]+@[a-z]+\\.[a-z]+"}]}
+{"code": [{"regexp": "[A-Z]{3}-[0-9]{4}"}]}
+```
+
+Regexp uses `~` as the escape character: `~d` for digits, `~p{L}` for Unicode letters to stay in compliant with Quamina.
+
+## APIs
+
+### Creating and configuring
+
+```rust
+use quamina::{Quamina, QuaminaBuilder};
+
+// Simple
+let q = Quamina::new();
+
+// With options
+let q = QuaminaBuilder::<String>::new()
+    .with_media_type("application/json")?
+    .with_auto_rebuild(true)
+    .build()?;
+
+// With custom ID type
+let q = Quamina::<u64>::new();
+```
+
+### Adding and removing patterns
+
+```rust
+q.add_pattern("my-rule", r#"{"x": [1]}"#)?;
+q.delete_patterns(&"my-rule");
+q.clear();
+```
+
+### Matching
+
+```rust
+let matches = q.matches_for_event(event.as_bytes())?;  // Vec of matching IDs
+let matched = q.has_matches(event.as_bytes())?;        // bool, exits early
+let count = q.count_matches(event.as_bytes())?;        // number of matches
+```
+
+### Errors
+
+`add_pattern` returns an error if the pattern JSON is malformed or uses invalid syntax. `matches_for_event` returns an error if the event isn't valid JSON.
+
+```rust
+match q.add_pattern("bad", r#"{"x": "not-an-array"}"#) {
+    Err(QuaminaError::InvalidPattern(msg)) => println!("{}", msg),
+    _ => {}
+}
+```
+
+## Concurrency
+
+A single `Quamina` instance can be safely shared across threads. However, matching uses internal buffers protected by locks, so if multiple threads call `matches_for_event()` on the same instance simultaneously, they'll wait for each other rather than run in parallel.
+
+For truly parallel matching, clone the instance:
+
+```rust
+let q2 = q.clone();
+// q and q2 can now match events in parallel without contention
+```
+
+Note: `clone()` rebuilds the automaton from stored patterns. It's not a cheap operation for instances with many patterns.
+
+For concurrent writes, you can also wrap Quamina in a lock:
+
+```rust
+let q = Arc::new(RwLock::new(Quamina::new()));
+```
+
+## Performance
+
+Matching time is nearly independent of pattern count. All patterns compile into a single automaton, so 10 patterns and 10,000 patterns have similar matching speed.
+
+### Pattern count scaling
+
+On an M3 Max:
+
+| Patterns | Match time |
+|----------|-----------|
+| 100 | 180 ns |
+| 10,000 | 177 ns |
+
+### Comparison with Go quamina
+
+| Benchmark | Go | Rust | Speedup |
+|-----------|---:|-----:|--------:|
+| citylots (4 patterns, 206k GeoJSON) | 3,103 ns | 2,025 ns | 1.5x |
+| nested field match (14KB JSON) | 6,878 ns | 4,784 ns | 1.4x |
+| early field match (14KB JSON) | 403 ns | 329 ns | 1.2x |
+
+### Pattern type benchmarks
 
 | Benchmark | Time | Description |
 |-----------|-----:|-------------|
 | exact_match | 110 ns | Single exact match |
 | nested_match | 148 ns | Nested field exact match |
-| 100_patterns | 183 ns | 100 patterns, 1 match |
-| 100_patterns_no_match | 68 ns | 100 patterns, 0 matches |
 | regex_match | 159 ns | Simple regex pattern |
-| shellstyle_26_patterns | 366 ns | 26 shellstyle patterns (A*-Z*) |
-| 100_prefix_patterns | 194 ns | 100 prefix patterns |
 | anything_but_match | 136 ns | Anything-but with 3 values |
-| numeric_range_single | 136 ns | Single-sided numeric (`< 100`) |
-| numeric_range_two_sided | 137 ns | Two-sided numeric (`>= 0, < 100`) |
-| has_matches_early_exit | 166 ns | Boolean match check (early exit) |
+| numeric_range | 137 ns | Two-sided numeric (`>= 0, < 100`) |
+| 100_prefix_patterns | 194 ns | 100 prefix patterns |
+| shellstyle_26_patterns | 366 ns | 26 shellstyle patterns (A*-Z*) |
 
-### Reproducing Benchmarks
+### What affects performance
 
-**Rust:**
+- **Unique fields**: More unique field paths across patterns = more work per event
+- **Event size**: Larger JSON takes longer to parse and flatten
+- **Pattern complexity**: Regexps with Unicode categories (e.g., `~p{L}`) are slower to compile
+
+### Running benchmarks
+
 ```bash
-cargo bench citylots
-cargo bench status_middle
-cargo bench --bench matching   # all benchmarks
+cargo bench --bench matching              # all benchmarks
+cargo bench --bench matching -- citylots  # specific benchmark
 ```
 
-**Go** (requires quamina source):
-```bash
-cd /path/to/quamina
-go test -bench=BenchmarkCityLots -benchtime=3s
-go test -bench=Benchmark_JsonFlattner_Evaluate_MiddleNestedField -benchtime=3s
-go test -bench=. -benchtime=2s  # all benchmarks
-```
+## Credits
 
-**Cross-comparison script:**
-```bash
-#!/bin/bash
-# Usage: ./scripts/bench-compare.sh /path/to/quamina
-set -e
-QUAMINA_GO="${1:?Usage: $0 /path/to/quamina}"
+All credits should go to [Tim](https://www.tbray.org/). He wrote the [Go original](https://github.com/timbray/quamina) and [event-ruler](https://github.com/aws/event-ruler) before that. His [Quamina Diary](https://www.tbray.org/ongoing/What/Technology/Quamina%20Diary/) explains how it works.
 
-echo "=== Rust ==="
-cargo bench --bench matching -- citylots --noplot 2>/dev/null | grep -E "time:.*\[" | head -1
-cargo bench --bench matching -- status_middle_nested --noplot 2>/dev/null | grep -E "time:.*\[" | head -1
-
-echo ""
-echo "=== Go ==="
-(cd "$QUAMINA_GO" && go test -bench=BenchmarkCityLots -benchtime=3s -count=1 2>/dev/null | grep ns/op)
-(cd "$QUAMINA_GO" && go test -bench=Benchmark_JsonFlattner_Evaluate_MiddleNestedField -benchtime=3s -count=1 2>/dev/null | grep ns/op)
-```
 
 ## License
 
-Apache 2.0, same as the original quamina.
+Apache 2.0
