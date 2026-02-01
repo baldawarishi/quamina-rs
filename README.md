@@ -146,7 +146,7 @@ We also have Quamina's legacy `shellstyle` based matcher but you should avoid it
 {"code": [{"regexp": "[A-Z]{3}-[0-9]{4}"}]}
 ```
 
-Regexp uses `~` as the escape character: `~d` for digits, `~p{L}` for Unicode letters to stay in compliant with Quamina.
+Regexp uses `~` as the escape character to stay in compliant with Quamina. There's also `~d` for digits, `~p{L}` for Unicode letters among other things where you will pay the performance penalty sice they're not automata compatible.
 
 ## APIs
 
