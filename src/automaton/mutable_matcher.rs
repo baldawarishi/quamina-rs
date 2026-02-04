@@ -5,7 +5,6 @@
 //! - `MutableValueMatcher`: Mutable value matcher with singleton optimization
 //! - `CoreMatcher`: Single-threaded core matcher that builds and matches patterns
 
-use std::borrow::Cow;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
@@ -819,20 +818,25 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
         let mut result = Vec::new();
 
         // Try with Q-number conversion if this matcher has numbers and value is numeric
-        // Use Cow to avoid allocation when not converting to Q-number
-        let value_to_match: Cow<'_, [u8]> = if *self.has_numbers.borrow() && is_number {
-            // Try to parse as f64 and convert to Q-number
-            if let Ok(s) = std::str::from_utf8(value) {
-                if let Ok(n) = s.parse::<f64>() {
-                    Cow::Owned(crate::numbits::q_num_from_f64(n))
+        // Use stack-allocated QNumberStack to avoid heap allocation
+        let q_num_storage: Option<crate::numbits::QNumberStack> =
+            if *self.has_numbers.borrow() && is_number {
+                // Try to parse as f64 and convert to Q-number
+                if let Ok(s) = std::str::from_utf8(value) {
+                    if let Ok(n) = s.parse::<f64>() {
+                        Some(crate::numbits::q_num_stack(n))
+                    } else {
+                        None
+                    }
                 } else {
-                    Cow::Borrowed(value)
+                    None
                 }
             } else {
-                Cow::Borrowed(value)
-            }
-        } else {
-            Cow::Borrowed(value)
+                None
+            };
+        let value_to_match: &[u8] = match &q_num_storage {
+            Some(q) => q.as_slice(),
+            None => value,
         };
 
         // Use chain-based automaton if present
@@ -841,9 +845,9 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
             bufs.transitions.clear();
 
             if *self.is_nondeterministic.borrow() {
-                traverse_nfa(table, &value_to_match, bufs);
+                traverse_nfa(table, value_to_match, bufs);
             } else {
-                traverse_dfa(table, &value_to_match, &mut bufs.transitions);
+                traverse_dfa(table, value_to_match, &mut bufs.transitions);
             }
 
             // Map Arc<FieldMatcher> transitions to Rc<MutableFieldMatcher<X>>
@@ -860,7 +864,7 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
         if !arena_nfas.is_empty() {
             let mut arena_bufs = self.arena_bufs.borrow_mut();
             for (arena, start) in arena_nfas.iter() {
-                traverse_arena_nfa(arena, *start, &value_to_match, &mut arena_bufs);
+                traverse_arena_nfa(arena, *start, value_to_match, &mut arena_bufs);
 
                 // Map Arc<FieldMatcher> transitions to Rc<MutableFieldMatcher<X>>
                 for arc_fm in &arena_bufs.transitions {
@@ -894,7 +898,7 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
                     traverse_arena_nfa(
                         &condition.arena,
                         condition.start,
-                        &value_to_match,
+                        value_to_match,
                         &mut condition_bufs,
                     );
 

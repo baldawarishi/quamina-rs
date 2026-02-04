@@ -11,6 +11,7 @@ use quamina::automaton::arena::{
 use quamina::automaton::{EventField, FieldMatcher, ThreadSafeCoreMatcher};
 use quamina::flatten_json::FlattenJsonState;
 use quamina::json::Matcher;
+use quamina::numbits::{q_num_from_f64, q_num_stack};
 use quamina::segments_tree::SegmentsTree;
 use quamina::Quamina;
 use std::io::{BufRead, BufReader};
@@ -1286,6 +1287,453 @@ fn bench_state_acceleration(c: &mut Criterion) {
     });
 }
 
+// === Q-Number Conversion Micro-benchmarks ===
+// Phase 0 of Hybrid Q-Number investigation
+
+/// Generate test values with citylots-representative distribution:
+/// - 23% zero (0.0)
+/// - 17% small int (1-999)
+/// - 13% large int (1000+)
+/// - 47% high-precision float
+fn citylots_representative_values() -> Vec<f64> {
+    let mut values = Vec::with_capacity(100);
+
+    // 23% zero
+    for _ in 0..23 {
+        values.push(0.0);
+    }
+
+    // 17% small int
+    let mut rng = 12345u64;
+    for _ in 0..17 {
+        rng = rng.wrapping_mul(6364136223846793005).wrapping_add(1);
+        values.push((rng % 999 + 1) as f64);
+    }
+
+    // 13% large int
+    for _ in 0..13 {
+        rng = rng.wrapping_mul(6364136223846793005).wrapping_add(1);
+        values.push((rng % 1_000_000 + 1000) as f64);
+    }
+
+    // 47% high-precision float
+    for _ in 0..47 {
+        rng = rng.wrapping_mul(6364136223846793005).wrapping_add(1);
+        let f = (rng as f64) / (u64::MAX as f64) * 1000.0;
+        values.push(f);
+    }
+
+    values
+}
+
+/// Micro-benchmark: Q-number conversion using Vec (baseline)
+fn bench_q_num_conversion_vec(c: &mut Criterion) {
+    let values = citylots_representative_values();
+
+    c.bench_function("q_num_conversion_vec", |b| {
+        let mut i = 0;
+        b.iter(|| {
+            let val = values[i % values.len()];
+            i += 1;
+            black_box(q_num_from_f64(black_box(val)))
+        })
+    });
+}
+
+/// Micro-benchmark: Q-number conversion using stack buffer
+fn bench_q_num_conversion_stack(c: &mut Criterion) {
+    let values = citylots_representative_values();
+
+    c.bench_function("q_num_conversion_stack", |b| {
+        let mut i = 0;
+        b.iter(|| {
+            let val = values[i % values.len()];
+            i += 1;
+            black_box(q_num_stack(black_box(val)))
+        })
+    });
+}
+
+/// Micro-benchmark: Q-number conversion + slice access (simulates real usage)
+fn bench_q_num_vec_with_slice(c: &mut Criterion) {
+    let values = citylots_representative_values();
+
+    c.bench_function("q_num_vec_with_slice", |b| {
+        let mut i = 0;
+        b.iter(|| {
+            let val = values[i % values.len()];
+            i += 1;
+            let q = q_num_from_f64(black_box(val));
+            // Access length to simulate slice usage without borrow issues
+            black_box(q.len())
+        })
+    });
+}
+
+/// Micro-benchmark: Q-number conversion + slice access (stack version)
+fn bench_q_num_stack_with_slice(c: &mut Criterion) {
+    let values = citylots_representative_values();
+
+    c.bench_function("q_num_stack_with_slice", |b| {
+        let mut i = 0;
+        b.iter(|| {
+            let val = values[i % values.len()];
+            i += 1;
+            let q = q_num_stack(black_box(val));
+            black_box(q.len())
+        })
+    });
+}
+
+/// Benchmark comparing all two approaches on zeros only (23% of citylots)
+fn bench_q_num_zeros(c: &mut Criterion) {
+    let mut group = c.benchmark_group("q_num_zeros");
+
+    group.bench_function("vec", |b| {
+        b.iter(|| black_box(q_num_from_f64(black_box(0.0))))
+    });
+
+    group.bench_function("stack", |b| {
+        b.iter(|| black_box(q_num_stack(black_box(0.0))))
+    });
+
+    group.finish();
+}
+
+/// Benchmark: Compare Vec vs Stack Q-number approaches at 100k scale
+/// This directly tests conversion + slice access to isolate Q-number performance
+fn bench_q_num_100k_comparison(c: &mut Criterion) {
+    use rand::prelude::*;
+
+    let mut rng = rand::rngs::StdRng::seed_from_u64(99999);
+
+    // Generate 100k float values with citylots-representative distribution
+    let values: Vec<f64> = (0..100_000)
+        .map(|i| {
+            match i % 100 {
+                0..=22 => 0.0,                                           // 23% zero
+                23..=39 => (rng.gen::<u64>() % 999 + 1) as f64,          // 17% small int
+                40..=52 => (rng.gen::<u64>() % 1_000_000 + 1000) as f64, // 13% large int
+                _ => rng.gen::<f64>() * 1000.0,                          // 47% high-precision
+            }
+        })
+        .collect();
+
+    let mut group = c.benchmark_group("q_num_100k");
+
+    group.bench_function("vec", |b| {
+        b.iter(|| {
+            let mut total_len = 0usize;
+            for &val in &values {
+                let q = q_num_from_f64(val);
+                total_len += q.len();
+            }
+            black_box(total_len)
+        })
+    });
+
+    group.bench_function("stack", |b| {
+        b.iter(|| {
+            let mut total_len = 0usize;
+            for &val in &values {
+                let q = q_num_stack(val);
+                total_len += q.len();
+            }
+            black_box(total_len)
+        })
+    });
+
+    group.finish();
+}
+
+/// Benchmark: 10,000 number matching events to test linear scaling
+fn bench_number_matching_10k(c: &mut Criterion) {
+    use rand::prelude::*;
+
+    let mut rng = rand::rngs::StdRng::seed_from_u64(2325);
+    let targets: Vec<f64> = (0..10).map(|_| rng.gen::<f64>()).collect();
+
+    let values: String = targets
+        .iter()
+        .map(|f| format!("{:.6}", f))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let pattern = format!(r#"{{"x": [{}]}}"#, values);
+
+    let mut q = Quamina::new();
+    q.add_pattern("P", &pattern).unwrap();
+
+    // 10,000 events
+    let events: Vec<Vec<u8>> = (0..10_000)
+        .map(|i| {
+            if i % 2 == 0 {
+                let val = format!("{:.6}", targets[i % 10]);
+                format!(r#"{{"x": {}}}"#, val).into_bytes()
+            } else {
+                let val = format!("{:.6}", rng.gen::<f64>() + 10.0);
+                format!(r#"{{"x": {}}}"#, val).into_bytes()
+            }
+        })
+        .collect();
+
+    c.bench_function("number_matching_10k", |b| {
+        b.iter(|| {
+            for event in &events {
+                let _ = q.matches_for_event(black_box(event)).unwrap();
+            }
+        })
+    });
+}
+
+/// Benchmark comparing Vec vs Stack on high-precision floats (47% of citylots)
+fn bench_q_num_high_precision(c: &mut Criterion) {
+    let mut group = c.benchmark_group("q_num_high_precision");
+
+    // High-precision value that uses all 10 bytes
+    let val = 3.141592653589793;
+
+    group.bench_function("vec", |b| {
+        b.iter(|| black_box(q_num_from_f64(black_box(val))))
+    });
+
+    group.bench_function("stack", |b| {
+        b.iter(|| black_box(q_num_stack(black_box(val))))
+    });
+
+    group.finish();
+}
+
+// === DFA Traversal Micro-benchmarks ===
+// Phase 0 of FA Traversal optimization investigation
+
+use quamina::automaton::{traverse_dfa, FaState, SmallTable, VALUE_TERMINATOR};
+use std::cmp::Ordering;
+
+/// Build a simple string-matching FA for testing dstep performance
+fn build_test_fa(value: &[u8]) -> SmallTable {
+    fn make_step(val: &[u8], index: usize, final_fm: Arc<FieldMatcher>) -> SmallTable {
+        if index >= val.len() {
+            let final_state = Arc::new(FaState {
+                table: SmallTable::new(),
+                field_transitions: vec![final_fm],
+            });
+            return SmallTable::with_mappings(None, &[VALUE_TERMINATOR], &[final_state]);
+        }
+        let next_table = make_step(val, index + 1, final_fm);
+        let next_state = Arc::new(FaState::with_table(next_table));
+        SmallTable::with_mappings(None, &[val[index]], &[next_state])
+    }
+    make_step(value, 0, Arc::new(FieldMatcher::new()))
+}
+
+/// Micro-benchmark: DFA traversal on Q-number bytes
+/// Tests the core FA traversal hot path for numeric matching
+fn bench_dfa_traversal_qnum(c: &mut Criterion) {
+    // Build FA for a specific Q-number
+    let q = q_num_stack(50.0);
+    let q_bytes = q.as_slice();
+    let fa = build_test_fa(q_bytes);
+
+    let mut transitions = Vec::with_capacity(4);
+
+    c.bench_function("dfa_traversal_qnum", |b| {
+        b.iter(|| {
+            transitions.clear();
+            traverse_dfa(black_box(&fa), black_box(q_bytes), &mut transitions);
+            black_box(transitions.len())
+        })
+    });
+}
+
+/// Micro-benchmark: DFA traversal on various Q-number lengths
+fn bench_dfa_traversal_qnum_lengths(c: &mut Criterion) {
+    let mut group = c.benchmark_group("dfa_traversal_lengths");
+
+    // Test different Q-number lengths (1, 3, 5, 10 bytes)
+    let test_values = [
+        (0.0, "1_byte"),                 // Q-number for 0.0 is 1 byte
+        (50.0, "3_bytes"),               // Small int
+        (12345.0, "5_bytes"),            // Medium int
+        (3.141592653589793, "10_bytes"), // High precision float
+    ];
+
+    for (val, name) in test_values {
+        let q = q_num_stack(val);
+        let q_bytes = q.as_slice();
+        let fa = build_test_fa(q_bytes);
+        let mut transitions = Vec::with_capacity(4);
+
+        group.bench_function(name, |b| {
+            b.iter(|| {
+                transitions.clear();
+                traverse_dfa(black_box(&fa), black_box(q_bytes), &mut transitions);
+                black_box(transitions.len())
+            })
+        });
+    }
+
+    group.finish();
+}
+
+/// Micro-benchmark: dstep with typical ceiling sizes
+fn bench_dstep_ceiling_sizes(c: &mut Criterion) {
+    let mut group = c.benchmark_group("dstep_ceilings");
+
+    // Create tables with different ceiling counts
+    // Typical for single-byte mapping: 3 ceilings [byte, byte+1, BYTE_CEILING]
+    let table_3 = SmallTable::with_mappings(
+        None,
+        &[0x50], // Single byte mapping
+        &[Arc::new(FaState::new())],
+    );
+
+    // Multiple byte mappings: more ceilings
+    let table_5 = SmallTable::with_mappings(
+        None,
+        &[0x30, 0x50], // Two byte mappings
+        &[Arc::new(FaState::new()), Arc::new(FaState::new())],
+    );
+
+    // Many mappings (like after merging patterns)
+    let table_9 = SmallTable::with_mappings(
+        None,
+        &[0x20, 0x30, 0x40, 0x50], // Four byte mappings
+        &[
+            Arc::new(FaState::new()),
+            Arc::new(FaState::new()),
+            Arc::new(FaState::new()),
+            Arc::new(FaState::new()),
+        ],
+    );
+
+    group.bench_function("3_ceilings", |b| {
+        b.iter(|| black_box(table_3.dstep(black_box(0x50))))
+    });
+
+    group.bench_function("5_ceilings", |b| {
+        b.iter(|| black_box(table_5.dstep(black_box(0x50))))
+    });
+
+    group.bench_function("9_ceilings", |b| {
+        b.iter(|| black_box(table_9.dstep(black_box(0x50))))
+    });
+
+    group.finish();
+}
+
+// === Direct Byte Comparison vs FA Benchmarks ===
+
+/// Direct byte comparison for numeric less-than
+#[inline]
+fn direct_less_than(value_q: &[u8], bound_q: &[u8], inclusive: bool) -> bool {
+    match value_q.cmp(bound_q) {
+        Ordering::Less => true,
+        Ordering::Equal => inclusive,
+        Ordering::Greater => false,
+    }
+}
+
+/// Direct byte comparison for numeric range
+#[inline]
+fn direct_in_range(
+    value_q: &[u8],
+    lower_q: &[u8],
+    upper_q: &[u8],
+    lower_incl: bool,
+    upper_incl: bool,
+) -> bool {
+    let above_lower = match value_q.cmp(lower_q) {
+        Ordering::Greater => true,
+        Ordering::Equal => lower_incl,
+        Ordering::Less => false,
+    };
+    let below_upper = match value_q.cmp(upper_q) {
+        Ordering::Less => true,
+        Ordering::Equal => upper_incl,
+        Ordering::Greater => false,
+    };
+    above_lower && below_upper
+}
+
+/// Benchmark: Direct byte comparison vs FA for less-than
+fn bench_numeric_comparison_methods(c: &mut Criterion) {
+    let mut group = c.benchmark_group("numeric_cmp_method");
+
+    // Test values
+    let bound = 100.0;
+    let bound_q = q_num_stack(bound);
+    let bound_bytes = bound_q.as_slice();
+
+    // Build FA for comparison
+    let fa = build_test_fa(bound_bytes);
+
+    // Test values: some below, some above
+    let test_values: Vec<f64> = vec![0.0, 50.0, 99.0, 100.0, 101.0, 500.0, 1000.0];
+    let test_qs: Vec<_> = test_values.iter().map(|&v| q_num_stack(v)).collect();
+
+    // Benchmark FA traversal approach
+    group.bench_function("fa_traversal", |b| {
+        let mut transitions = Vec::with_capacity(4);
+        let mut i = 0;
+        b.iter(|| {
+            let q = &test_qs[i % test_qs.len()];
+            i += 1;
+            transitions.clear();
+            traverse_dfa(black_box(&fa), black_box(q.as_slice()), &mut transitions);
+            black_box(!transitions.is_empty())
+        })
+    });
+
+    // Benchmark direct comparison approach
+    group.bench_function("direct_cmp", |b| {
+        let mut i = 0;
+        b.iter(|| {
+            let q = &test_qs[i % test_qs.len()];
+            i += 1;
+            black_box(direct_less_than(
+                black_box(q.as_slice()),
+                black_box(bound_bytes),
+                true,
+            ))
+        })
+    });
+
+    group.finish();
+}
+
+/// Benchmark: Direct range comparison vs FA
+fn bench_numeric_range_methods(c: &mut Criterion) {
+    let mut group = c.benchmark_group("numeric_range_method");
+
+    // Range: 0 <= x <= 100
+    let lower = 0.0;
+    let upper = 100.0;
+    let lower_q = q_num_stack(lower);
+    let upper_q = q_num_stack(upper);
+
+    // Test values
+    let test_values: Vec<f64> = vec![-10.0, 0.0, 50.0, 100.0, 150.0];
+    let test_qs: Vec<_> = test_values.iter().map(|&v| q_num_stack(v)).collect();
+
+    // Benchmark direct comparison
+    group.bench_function("direct_range", |b| {
+        let mut i = 0;
+        b.iter(|| {
+            let q = &test_qs[i % test_qs.len()];
+            i += 1;
+            black_box(direct_in_range(
+                black_box(q.as_slice()),
+                black_box(lower_q.as_slice()),
+                black_box(upper_q.as_slice()),
+                true,
+                true,
+            ))
+        })
+    });
+
+    group.finish();
+}
+
 // Configure longer benchmarks with reduced sample count
 fn configure_bulk_benchmarks() -> Criterion {
     Criterion::default()
@@ -1371,5 +1819,21 @@ criterion_group!(
     bench_deep_nesting_with_arrays,
     // State acceleration benchmark (Phase 3)
     bench_state_acceleration,
+    // Q-number conversion micro-benchmarks
+    bench_q_num_conversion_vec,
+    bench_q_num_conversion_stack,
+    bench_q_num_vec_with_slice,
+    bench_q_num_stack_with_slice,
+    bench_q_num_zeros,
+    bench_q_num_high_precision,
+    bench_q_num_100k_comparison,
+    bench_number_matching_10k,
+    // DFA traversal micro-benchmarks (FA Traversal optimization Phase 0)
+    bench_dfa_traversal_qnum,
+    bench_dfa_traversal_qnum_lengths,
+    bench_dstep_ceiling_sizes,
+    // Direct byte comparison vs FA (Phase 1 investigation)
+    bench_numeric_comparison_methods,
+    bench_numeric_range_methods,
 );
 criterion_main!(benches, bulk_benches, stress_benches);

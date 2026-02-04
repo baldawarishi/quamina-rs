@@ -28,6 +28,80 @@
 /// Maximum bytes needed for base-128 encoding of a 64-bit value.
 const MAX_BYTES_IN_ENCODING: usize = 10;
 
+// =============================================================================
+// Approach B: Stack-allocated Q-number with length
+// =============================================================================
+
+/// Stack-allocated Q-number representation.
+///
+/// Uses a fixed 10-byte buffer with a length field to avoid heap allocation
+/// while preserving minimal FA traversal (only iterates over actual bytes).
+#[derive(Clone, Copy, Debug)]
+pub struct QNumberStack {
+    bytes: [u8; MAX_BYTES_IN_ENCODING],
+    len: u8,
+}
+
+impl QNumberStack {
+    /// Returns the Q-number bytes as a slice.
+    #[inline]
+    pub fn as_slice(&self) -> &[u8] {
+        &self.bytes[..self.len as usize]
+    }
+
+    /// Returns the length of the Q-number.
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.len as usize
+    }
+
+    /// Returns true if the Q-number is empty (should never happen for valid floats).
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+}
+
+/// Convert numbits to a stack-allocated Q-number.
+fn to_q_number_stack(nb: u64) -> QNumberStack {
+    let mut nb = nb;
+    let mut bytes = [0u8; MAX_BYTES_IN_ENCODING];
+
+    // Count trailing zero septets (same algorithm as to_q_number)
+    let mut trailing_zeroes = 0usize;
+    let mut index = MAX_BYTES_IN_ENCODING - 1;
+
+    loop {
+        if nb & 0x7f != 0 {
+            break;
+        }
+        trailing_zeroes += 1;
+        nb >>= 7;
+        if index == 0 {
+            break;
+        }
+        index -= 1;
+    }
+
+    let len = MAX_BYTES_IN_ENCODING - trailing_zeroes;
+
+    // Fill bytes from right to left
+    for i in (0..len).rev() {
+        bytes[i] = (nb & 0x7f) as u8;
+        nb >>= 7;
+    }
+
+    QNumberStack {
+        bytes,
+        len: len as u8,
+    }
+}
+
+/// Convert a float64 to a stack-allocated Q-number.
+pub fn q_num_stack(f: f64) -> QNumberStack {
+    to_q_number_stack(numbits_from_f64(f))
+}
+
 /// Convert a float64 to its numbits representation.
 ///
 /// The resulting u64 can be compared directly to preserve numeric ordering:
@@ -323,5 +397,85 @@ mod tests {
         // Both should produce valid Q-numbers
         assert!(!q_zero.is_empty());
         assert!(!q_neg_zero.is_empty());
+    }
+
+    // =========================================================================
+    // Tests for Q-number variant equivalence
+    // =========================================================================
+
+    #[test]
+    fn test_q_number_variants_equivalence() {
+        // Vec and Stack implementations must produce identical byte sequences
+        let test_values: Vec<f64> = vec![
+            0.0,
+            1.0,
+            -1.0,
+            42.0,
+            -42.0,
+            999.0,
+            1000.0,
+            123456.0,
+            0.000001,
+            -0.000001,
+            3.14159265358979,
+            -3.14159265358979,
+            1e10,
+            -1e10,
+            1e-10,
+            -1e-10,
+            f64::MIN_POSITIVE,
+            f64::MAX,
+            f64::MIN,
+        ];
+
+        for &val in &test_values {
+            let vec_result = q_num_from_f64(val);
+            let stack_result = q_num_stack(val);
+
+            assert_eq!(
+                vec_result.as_slice(),
+                stack_result.as_slice(),
+                "Stack variant differs from Vec for value {}",
+                val
+            );
+        }
+    }
+
+    #[test]
+    fn test_q_number_variants_random() {
+        // Test with random values to ensure equivalence
+        let mut rng_state = 54321u64;
+
+        for _ in 0..100 {
+            rng_state = rng_state.wrapping_mul(6364136223846793005).wrapping_add(1);
+            let f = f64::from_bits(rng_state & 0x7FEFFFFFFFFFFFFF); // Avoid NaN/Inf
+
+            // Skip if not finite
+            if !f.is_finite() {
+                continue;
+            }
+
+            let vec_result = q_num_from_f64(f);
+            let stack_result = q_num_stack(f);
+
+            assert_eq!(
+                vec_result.as_slice(),
+                stack_result.as_slice(),
+                "Stack variant differs from Vec for value {}",
+                f
+            );
+        }
+    }
+
+    #[test]
+    fn test_q_number_stack_length() {
+        // Test that QNumberStack correctly reports length
+        let q0 = q_num_stack(0.0);
+        let q_large = q_num_stack(1e15);
+
+        assert!(q0.len() >= 1);
+        assert!(q0.len() <= MAX_BYTES_IN_ENCODING);
+        assert!(q_large.len() <= MAX_BYTES_IN_ENCODING);
+        assert!(!q0.is_empty());
     }
 }

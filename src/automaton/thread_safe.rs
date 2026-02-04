@@ -11,7 +11,6 @@
 //! These are verified by Miri threading tests in CI.
 #![allow(unsafe_code)]
 
-use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 use std::hash::Hash;
 use std::rc::Rc;
@@ -168,20 +167,24 @@ impl<X: Clone + Eq + Hash> FrozenValueMatcher<X> {
         let mut result = Vec::new();
 
         // Try with Q-number conversion if this matcher has numbers and value is numeric
-        // Use Cow to avoid allocation when not converting to Q-number
-        let value_to_match: Cow<'_, [u8]> = if self.has_numbers && is_number {
+        // Use stack-allocated QNumberStack to avoid heap allocation
+        let q_num_storage: Option<crate::numbits::QNumberStack> = if self.has_numbers && is_number {
             // Try to parse as f64 and convert to Q-number
             if let Ok(s) = std::str::from_utf8(value) {
                 if let Ok(n) = s.parse::<f64>() {
-                    Cow::Owned(crate::numbits::q_num_from_f64(n))
+                    Some(crate::numbits::q_num_stack(n))
                 } else {
-                    Cow::Borrowed(value)
+                    None
                 }
             } else {
-                Cow::Borrowed(value)
+                None
             }
         } else {
-            Cow::Borrowed(value)
+            None
+        };
+        let value_to_match: &[u8] = match &q_num_storage {
+            Some(q) => q.as_slice(),
+            None => value,
         };
 
         // Use chain-based automaton if present
@@ -190,9 +193,9 @@ impl<X: Clone + Eq + Hash> FrozenValueMatcher<X> {
             bufs.transitions.clear();
 
             if self.is_nondeterministic {
-                traverse_nfa(table, &value_to_match, bufs);
+                traverse_nfa(table, value_to_match, bufs);
             } else {
-                traverse_dfa(table, &value_to_match, &mut bufs.transitions);
+                traverse_dfa(table, value_to_match, &mut bufs.transitions);
             }
 
             // Map FieldMatcher transitions to FrozenFieldMatcher using pointer address
@@ -208,7 +211,7 @@ impl<X: Clone + Eq + Hash> FrozenValueMatcher<X> {
         if !self.arena_nfas.is_empty() {
             let mut arena_bufs = ArenaNfaBuffers::new();
             for (arena, start) in self.arena_nfas.iter() {
-                traverse_arena_nfa(arena, *start, &value_to_match, &mut arena_bufs);
+                traverse_arena_nfa(arena, *start, value_to_match, &mut arena_bufs);
 
                 // Map Arc<FieldMatcher> transitions to FrozenFieldMatcher using pointer address
                 for arc_fm in &arena_bufs.transitions {
@@ -241,7 +244,7 @@ impl<X: Clone + Eq + Hash> FrozenValueMatcher<X> {
                     traverse_arena_nfa(
                         &condition.arena,
                         condition.start,
-                        &value_to_match,
+                        value_to_match,
                         &mut condition_bufs,
                     );
 
