@@ -2154,6 +2154,261 @@ fn build_anything_but_step(
     arena.alloc_with_table(ArenaSmallTable::with_mappings(success, &bytes, &states))
 }
 
+/// Build an arena-based FA that matches strings case-insensitively.
+///
+/// This is the arena equivalent of `make_monocase_fa` for chain-based FAs.
+/// For each character with a case-folding alternate, creates two paths that
+/// converge to the same next state.
+///
+/// # Arguments
+/// * `val` - The pattern value to match case-insensitively (UTF-8 bytes)
+/// * `next_field` - The field matcher to transition to on match
+///
+/// # Returns
+/// A new arena containing the FA and its start state
+pub fn make_monocase_arena_fa(val: &[u8], next_field: Arc<FieldMatcher>) -> (StateArena, StateId) {
+    use crate::case_folding::case_fold_char;
+
+    let mut arena = StateArena::new();
+
+    // Create the "match" state - has field_transitions to mark the match
+    let match_state = arena.alloc();
+    arena[match_state].field_transitions.push(next_field);
+
+    // Empty string case
+    if val.is_empty() {
+        let start = arena.alloc_with_table(ArenaSmallTable::with_mappings(
+            StateId::NONE,
+            &[ARENA_VALUE_TERMINATOR],
+            &[match_state],
+        ));
+        return (arena, start);
+    }
+
+    // Try to convert to UTF-8 for proper Unicode case folding
+    let s = match std::str::from_utf8(val) {
+        Ok(s) => s,
+        Err(_) => {
+            // Invalid UTF-8 - fall back to ASCII-only case folding
+            let start = build_monocase_ascii_chain(val, match_state, &mut arena);
+            return (arena, start);
+        }
+    };
+
+    // Collect character info: (original bytes, alternate bytes if any)
+    let chars: Vec<(Vec<u8>, Option<Vec<u8>>)> = s
+        .char_indices()
+        .map(|(offset, ch)| {
+            let next_offset = s[offset..]
+                .chars()
+                .next()
+                .map(|c| offset + c.len_utf8())
+                .unwrap_or(val.len());
+            let orig = val[offset..next_offset].to_vec();
+
+            let alt = case_fold_char(ch).map(|alt_char| {
+                let mut buf = [0u8; 4];
+                alt_char.encode_utf8(&mut buf);
+                buf[..alt_char.len_utf8()].to_vec()
+            });
+
+            (orig, alt)
+        })
+        .collect();
+
+    // Build the FA recursively
+    let start = build_monocase_arena_recursive(&chars, 0, match_state, &mut arena);
+
+    (arena, start)
+}
+
+/// Build ASCII-only monocase chain (fallback for invalid UTF-8)
+fn build_monocase_ascii_chain(val: &[u8], match_state: StateId, arena: &mut StateArena) -> StateId {
+    // First create the terminator state
+    let term_state = arena.alloc_with_table(ArenaSmallTable::with_mappings(
+        StateId::NONE,
+        &[ARENA_VALUE_TERMINATOR],
+        &[match_state],
+    ));
+
+    // Build from end to start
+    let mut current_next = term_state;
+
+    for i in (0..val.len()).rev() {
+        let byte = val[i];
+        let alt_byte = if byte.is_ascii_lowercase() {
+            Some(byte.to_ascii_uppercase())
+        } else if byte.is_ascii_uppercase() {
+            Some(byte.to_ascii_lowercase())
+        } else {
+            None
+        };
+
+        let state = if let Some(alt) = alt_byte {
+            // Two paths to next state
+            if byte < alt {
+                arena.alloc_with_table(ArenaSmallTable::with_mappings(
+                    StateId::NONE,
+                    &[byte, alt],
+                    &[current_next, current_next],
+                ))
+            } else {
+                arena.alloc_with_table(ArenaSmallTable::with_mappings(
+                    StateId::NONE,
+                    &[alt, byte],
+                    &[current_next, current_next],
+                ))
+            }
+        } else {
+            // Single path
+            arena.alloc_with_table(ArenaSmallTable::with_mappings(
+                StateId::NONE,
+                &[byte],
+                &[current_next],
+            ))
+        };
+
+        current_next = state;
+    }
+
+    current_next
+}
+
+/// Recursively build monocase arena FA
+fn build_monocase_arena_recursive(
+    chars: &[(Vec<u8>, Option<Vec<u8>>)],
+    idx: usize,
+    match_state: StateId,
+    arena: &mut StateArena,
+) -> StateId {
+    if idx >= chars.len() {
+        // End of string - create state that matches on VALUE_TERMINATOR
+        return arena.alloc_with_table(ArenaSmallTable::with_mappings(
+            StateId::NONE,
+            &[ARENA_VALUE_TERMINATOR],
+            &[match_state],
+        ));
+    }
+
+    let (orig, alt) = &chars[idx];
+
+    // First, build the state for after this character
+    let next_state = build_monocase_arena_recursive(chars, idx + 1, match_state, arena);
+
+    // Now build the transition(s) for this character
+    if let Some(alt_bytes) = alt {
+        // Two paths to next state - handle common prefix
+        let common_prefix = orig
+            .iter()
+            .zip(alt_bytes.iter())
+            .take_while(|(a, b)| a == b)
+            .count();
+
+        if common_prefix == 0 {
+            // No common prefix - both paths start with different bytes
+            let orig_state = build_arena_fragment(orig, next_state, arena);
+            let alt_state = build_arena_fragment(alt_bytes, next_state, arena);
+
+            if orig[0] < alt_bytes[0] {
+                arena.alloc_with_table(ArenaSmallTable::with_mappings(
+                    StateId::NONE,
+                    &[orig[0], alt_bytes[0]],
+                    &[orig_state, alt_state],
+                ))
+            } else {
+                arena.alloc_with_table(ArenaSmallTable::with_mappings(
+                    StateId::NONE,
+                    &[alt_bytes[0], orig[0]],
+                    &[alt_state, orig_state],
+                ))
+            }
+        } else {
+            // Common prefix - share states for common bytes, then branch
+            let orig_suffix = &orig[common_prefix..];
+            let alt_suffix = &alt_bytes[common_prefix..];
+
+            // Build the divergent part
+            let diverge_state = if orig_suffix.is_empty() && alt_suffix.is_empty() {
+                // Identical after common prefix
+                next_state
+            } else if orig_suffix.is_empty() {
+                // Original is done, alternate has more bytes
+                let alt_state = build_arena_fragment(alt_suffix, next_state, arena);
+                arena.alloc_with_table(ArenaSmallTable::with_mappings(
+                    StateId::NONE,
+                    &[alt_suffix[0]],
+                    &[alt_state],
+                ))
+            } else if alt_suffix.is_empty() {
+                // Alternate is done, original has more bytes
+                let orig_state = build_arena_fragment(orig_suffix, next_state, arena);
+                arena.alloc_with_table(ArenaSmallTable::with_mappings(
+                    StateId::NONE,
+                    &[orig_suffix[0]],
+                    &[orig_state],
+                ))
+            } else {
+                // Both have remaining bytes
+                let orig_state = build_arena_fragment(orig_suffix, next_state, arena);
+                let alt_state = build_arena_fragment(alt_suffix, next_state, arena);
+
+                if orig_suffix[0] < alt_suffix[0] {
+                    arena.alloc_with_table(ArenaSmallTable::with_mappings(
+                        StateId::NONE,
+                        &[orig_suffix[0], alt_suffix[0]],
+                        &[orig_state, alt_state],
+                    ))
+                } else {
+                    arena.alloc_with_table(ArenaSmallTable::with_mappings(
+                        StateId::NONE,
+                        &[alt_suffix[0], orig_suffix[0]],
+                        &[alt_state, orig_state],
+                    ))
+                }
+            };
+
+            // Now build the common prefix chain leading to diverge_state
+            build_arena_fragment(&orig[..common_prefix], diverge_state, arena)
+        }
+    } else {
+        // No case alternate - single path
+        // Build chain from all bytes (including first) to next_state
+        let mut current = next_state;
+        for &byte in orig.iter().rev() {
+            current = arena.alloc_with_table(ArenaSmallTable::with_mappings(
+                StateId::NONE,
+                &[byte],
+                &[current],
+            ));
+        }
+        current
+    }
+}
+
+/// Build an FA fragment for a byte sequence, returning the state to use as target.
+///
+/// For sequences of length <= 1, returns end_at since the caller will
+/// create the transition on the first byte. For longer sequences, builds
+/// a chain from the second byte to end_at.
+fn build_arena_fragment(val: &[u8], end_at: StateId, arena: &mut StateArena) -> StateId {
+    if val.is_empty() || val.len() == 1 {
+        // Caller handles the first (or only) byte
+        return end_at;
+    }
+
+    // Build chain from last byte back to second byte (skip first byte)
+    let mut current = end_at;
+    for &byte in val[1..].iter().rev() {
+        current = arena.alloc_with_table(ArenaSmallTable::with_mappings(
+            StateId::NONE,
+            &[byte],
+            &[current],
+        ));
+    }
+
+    current
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -4489,6 +4744,184 @@ mod anything_but_arena_tests {
         assert!(
             matches_value(&merged, merged_start, b"baz"),
             "Merged should match 'baz'"
+        );
+    }
+}
+
+#[cfg(test)]
+mod monocase_arena_tests {
+    use super::*;
+
+    /// Helper to check if a value matches against an arena FA
+    fn matches_value(arena: &StateArena, start: StateId, value: &[u8]) -> bool {
+        let mut bufs = ArenaNfaBuffers::with_capacity(arena.len());
+        traverse_arena_nfa(arena, start, value, &mut bufs);
+        !bufs.transitions.is_empty()
+    }
+
+    #[test]
+    fn test_monocase_arena_fa_single_char() {
+        let fm = Arc::new(FieldMatcher::with_match_id(1));
+        let (arena, start) = make_monocase_arena_fa(b"A", fm.clone());
+
+        // Should match 'A'
+        assert!(matches_value(&arena, start, b"A"), "Should match 'A'");
+        // Should match 'a'
+        assert!(matches_value(&arena, start, b"a"), "Should match 'a'");
+        // Should NOT match other
+        assert!(!matches_value(&arena, start, b"B"), "Should NOT match 'B'");
+    }
+
+    #[test]
+    fn test_monocase_arena_fa_two_chars() {
+        let fm = Arc::new(FieldMatcher::with_match_id(1));
+        let (arena, start) = make_monocase_arena_fa(b"Ab", fm.clone());
+
+        // Should match all case variants
+        assert!(matches_value(&arena, start, b"Ab"), "Should match 'Ab'");
+        assert!(matches_value(&arena, start, b"ab"), "Should match 'ab'");
+        assert!(matches_value(&arena, start, b"AB"), "Should match 'AB'");
+        assert!(matches_value(&arena, start, b"aB"), "Should match 'aB'");
+        // Should NOT match other
+        assert!(
+            !matches_value(&arena, start, b"Ac"),
+            "Should NOT match 'Ac'"
+        );
+    }
+
+    #[test]
+    fn test_monocase_arena_fa_three_chars() {
+        let fm = Arc::new(FieldMatcher::with_match_id(1));
+        let (arena, start) = make_monocase_arena_fa(b"cat", fm.clone());
+
+        // Should match all case variants
+        assert!(matches_value(&arena, start, b"cat"), "Should match 'cat'");
+        assert!(matches_value(&arena, start, b"CAT"), "Should match 'CAT'");
+        assert!(matches_value(&arena, start, b"Cat"), "Should match 'Cat'");
+    }
+
+    #[test]
+    fn test_monocase_arena_fa_basic_ascii() {
+        let fm = Arc::new(FieldMatcher::with_match_id(1));
+        let (arena, start) = make_monocase_arena_fa(b"Hello", fm.clone());
+
+        // Should match original case
+        assert!(
+            matches_value(&arena, start, b"Hello"),
+            "Should match 'Hello'"
+        );
+
+        // Should match different cases
+        assert!(
+            matches_value(&arena, start, b"hello"),
+            "Should match 'hello'"
+        );
+        assert!(
+            matches_value(&arena, start, b"HELLO"),
+            "Should match 'HELLO'"
+        );
+        assert!(
+            matches_value(&arena, start, b"hElLo"),
+            "Should match 'hElLo'"
+        );
+
+        // Should NOT match different strings
+        assert!(
+            !matches_value(&arena, start, b"world"),
+            "Should NOT match 'world'"
+        );
+        assert!(
+            !matches_value(&arena, start, b"hell"),
+            "Should NOT match 'hell'"
+        );
+    }
+
+    #[test]
+    fn test_monocase_arena_fa_empty() {
+        let fm = Arc::new(FieldMatcher::with_match_id(1));
+        let (arena, start) = make_monocase_arena_fa(b"", fm.clone());
+
+        // Empty should match empty
+        assert!(matches_value(&arena, start, b""), "Should match empty");
+
+        // Should NOT match non-empty
+        assert!(!matches_value(&arena, start, b"a"), "Should NOT match 'a'");
+    }
+
+    #[test]
+    fn test_monocase_arena_fa_no_case_chars() {
+        // Pattern with no case-sensitive chars
+        let fm = Arc::new(FieldMatcher::with_match_id(1));
+        let (arena, start) = make_monocase_arena_fa(b"123", fm.clone());
+
+        // Should match exactly
+        assert!(matches_value(&arena, start, b"123"), "Should match '123'");
+
+        // Should NOT match other
+        assert!(
+            !matches_value(&arena, start, b"456"),
+            "Should NOT match '456'"
+        );
+    }
+
+    #[test]
+    fn test_monocase_arena_fa_mixed_ascii() {
+        let fm = Arc::new(FieldMatcher::with_match_id(1));
+        let (arena, start) = make_monocase_arena_fa(b"Abc123", fm.clone());
+
+        // Should match any case combination
+        assert!(
+            matches_value(&arena, start, b"Abc123"),
+            "Should match 'Abc123'"
+        );
+        assert!(
+            matches_value(&arena, start, b"abc123"),
+            "Should match 'abc123'"
+        );
+        assert!(
+            matches_value(&arena, start, b"ABC123"),
+            "Should match 'ABC123'"
+        );
+
+        // Should NOT match different string
+        assert!(
+            !matches_value(&arena, start, b"Abc124"),
+            "Should NOT match 'Abc124'"
+        );
+    }
+
+    #[test]
+    fn test_monocase_arena_fa_merge() {
+        let fm1 = Arc::new(FieldMatcher::with_match_id(1));
+        let fm2 = Arc::new(FieldMatcher::with_match_id(2));
+
+        let (arena1, start1) = make_monocase_arena_fa(b"Foo", fm1.clone());
+        let (arena2, start2) = make_monocase_arena_fa(b"Bar", fm2.clone());
+
+        let (merged, merged_start) = merge_arena_nfas(&arena1, start1, &arena2, start2);
+
+        // Should match both patterns case-insensitively
+        assert!(
+            matches_value(&merged, merged_start, b"foo"),
+            "Merged should match 'foo'"
+        );
+        assert!(
+            matches_value(&merged, merged_start, b"FOO"),
+            "Merged should match 'FOO'"
+        );
+        assert!(
+            matches_value(&merged, merged_start, b"bar"),
+            "Merged should match 'bar'"
+        );
+        assert!(
+            matches_value(&merged, merged_start, b"BAR"),
+            "Merged should match 'BAR'"
+        );
+
+        // Should NOT match other
+        assert!(
+            !matches_value(&merged, merged_start, b"baz"),
+            "Merged should NOT match 'baz'"
         );
     }
 }
