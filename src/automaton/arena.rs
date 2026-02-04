@@ -445,12 +445,27 @@ pub fn traverse_arena_nfa(
 }
 
 /// Compute the epsilon closure of a state in the arena.
+///
+/// For DFA-only patterns (no epsilon transitions), this is a fast O(1) operation.
+/// For NFA patterns, this computes the full epsilon closure.
 fn get_arena_epsilon_closure(
     arena: &StateArena,
     start: StateId,
     bufs: &mut ArenaNfaBuffers,
-) -> Vec<StateId> {
-    // Reset seen markers for states we'll visit
+) -> smallvec::SmallVec<[StateId; 4]> {
+    if start.is_none() {
+        return smallvec::SmallVec::new();
+    }
+
+    // Fast path: DFA state with no epsilon transitions (common case for numeric patterns)
+    let start_state = &arena[start];
+    if start_state.table.epsilons.is_empty() {
+        let mut result = smallvec::SmallVec::new();
+        result.push(start);
+        return result;
+    }
+
+    // Slow path: compute full epsilon closure
     bufs.closure_result.clear();
     bufs.closure_stack.clear();
 
@@ -458,7 +473,7 @@ fn get_arena_epsilon_closure(
     bufs.closure_stack.push(start);
 
     // Mark start as seen
-    if !start.is_none() && start.index() < bufs.seen_states.len() {
+    if start.index() < bufs.seen_states.len() {
         bufs.seen_states[start.index()] = true;
     }
 
@@ -489,7 +504,8 @@ fn get_arena_epsilon_closure(
         }
     }
 
-    bufs.closure_result.clone()
+    // Copy to SmallVec (stack-allocated for small closures)
+    bufs.closure_result.iter().copied().collect()
 }
 
 /// Merge two arena-based DFAs into one that matches either pattern.
