@@ -1660,6 +1660,58 @@ fn make_string_arena_fa_step(
     ))
 }
 
+/// Build an arena-based FA that matches strings with a given prefix.
+///
+/// This is the arena equivalent of `make_prefix_fa` for chain-based FAs.
+/// After matching all prefix bytes, accepts any remaining bytes (default
+/// transition to match state).
+///
+/// # Arguments
+/// * `prefix` - The prefix bytes to match
+/// * `next_field` - The field matcher to transition to on match
+///
+/// # Returns
+/// A new arena containing the FA and its start state
+pub fn make_prefix_arena_fa(prefix: &[u8], next_field: Arc<FieldMatcher>) -> (StateArena, StateId) {
+    let mut arena = StateArena::new();
+
+    // Create the "match" state - has field_transitions to mark the match
+    let match_state = arena.alloc();
+    arena[match_state].field_transitions.push(next_field);
+
+    // Build the FA chain from end to start
+    let start = make_prefix_arena_fa_step(prefix, 0, match_state, &mut arena);
+
+    (arena, start)
+}
+
+/// Recursive helper for building prefix-matching FA.
+fn make_prefix_arena_fa_step(
+    prefix: &[u8],
+    index: usize,
+    match_state: StateId,
+    arena: &mut StateArena,
+) -> StateId {
+    if index >= prefix.len() {
+        // End of prefix: all bytes should transition to match state (default)
+        // Use match_state as default for all byte values
+        return arena.alloc_with_table(ArenaSmallTable::with_mappings(
+            match_state, // Default transition for all bytes
+            &[],
+            &[],
+        ));
+    }
+
+    // Recursive step: build rest of chain first, then prepend current byte
+    let continuation = make_prefix_arena_fa_step(prefix, index + 1, match_state, arena);
+
+    arena.alloc_with_table(ArenaSmallTable::with_mappings(
+        StateId::NONE,
+        &[prefix[index]],
+        &[continuation],
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3381,6 +3433,154 @@ mod string_arena_tests {
         assert!(
             !matches_value(&merged, merged_start, b"prefix_"),
             "Merged should NOT match 'prefix_'"
+        );
+    }
+}
+
+#[cfg(test)]
+mod prefix_arena_tests {
+    use super::*;
+
+    /// Helper to check if a value matches against an arena FA
+    fn matches_value(arena: &StateArena, start: StateId, value: &[u8]) -> bool {
+        let mut bufs = ArenaNfaBuffers::with_capacity(arena.len());
+        traverse_arena_nfa(arena, start, value, &mut bufs);
+        !bufs.transitions.is_empty()
+    }
+
+    #[test]
+    fn test_prefix_arena_fa_basic() {
+        let fm = Arc::new(FieldMatcher::with_match_id(1));
+        let (arena, start) = make_prefix_arena_fa(b"hello", fm.clone());
+
+        // Should match exact prefix
+        assert!(
+            matches_value(&arena, start, b"hello"),
+            "Should match 'hello'"
+        );
+
+        // Should match longer strings with prefix
+        assert!(
+            matches_value(&arena, start, b"helloworld"),
+            "Should match 'helloworld'"
+        );
+        assert!(
+            matches_value(&arena, start, b"hello_test"),
+            "Should match 'hello_test'"
+        );
+        assert!(
+            matches_value(&arena, start, b"hello123"),
+            "Should match 'hello123'"
+        );
+
+        // Should NOT match prefix substring
+        assert!(
+            !matches_value(&arena, start, b"hell"),
+            "Should NOT match 'hell' (shorter than prefix)"
+        );
+
+        // Should NOT match non-prefix
+        assert!(
+            !matches_value(&arena, start, b"world"),
+            "Should NOT match 'world'"
+        );
+        assert!(
+            !matches_value(&arena, start, b""),
+            "Should NOT match empty string"
+        );
+    }
+
+    #[test]
+    fn test_prefix_arena_fa_empty_prefix() {
+        let fm = Arc::new(FieldMatcher::with_match_id(1));
+        let (arena, start) = make_prefix_arena_fa(b"", fm.clone());
+
+        // Empty prefix should match everything
+        assert!(
+            matches_value(&arena, start, b""),
+            "Should match empty string"
+        );
+        assert!(
+            matches_value(&arena, start, b"anything"),
+            "Should match 'anything'"
+        );
+        assert!(
+            matches_value(&arena, start, b"hello world"),
+            "Should match 'hello world'"
+        );
+    }
+
+    #[test]
+    fn test_prefix_arena_fa_single_char() {
+        let fm = Arc::new(FieldMatcher::with_match_id(1));
+        let (arena, start) = make_prefix_arena_fa(b"a", fm.clone());
+
+        // Should match strings starting with 'a'
+        assert!(matches_value(&arena, start, b"a"), "Should match 'a'");
+        assert!(matches_value(&arena, start, b"abc"), "Should match 'abc'");
+
+        // Should NOT match strings not starting with 'a'
+        assert!(!matches_value(&arena, start, b"b"), "Should NOT match 'b'");
+        assert!(
+            !matches_value(&arena, start, b""),
+            "Should NOT match empty string"
+        );
+    }
+
+    #[test]
+    fn test_prefix_arena_fa_utf8() {
+        let fm = Arc::new(FieldMatcher::with_match_id(1));
+        let (arena, start) = make_prefix_arena_fa("caf".as_bytes(), fm.clone());
+
+        // Should match strings with UTF-8 prefix
+        assert!(
+            matches_value(&arena, start, "café".as_bytes()),
+            "Should match 'café'"
+        );
+        assert!(
+            matches_value(&arena, start, "cafeteria".as_bytes()),
+            "Should match 'cafeteria'"
+        );
+
+        // Should NOT match non-prefix
+        assert!(
+            !matches_value(&arena, start, "ca".as_bytes()),
+            "Should NOT match 'ca'"
+        );
+    }
+
+    #[test]
+    fn test_prefix_arena_fa_merge() {
+        let fm1 = Arc::new(FieldMatcher::with_match_id(1));
+        let fm2 = Arc::new(FieldMatcher::with_match_id(2));
+
+        let (arena1, start1) = make_prefix_arena_fa(b"foo", fm1.clone());
+        let (arena2, start2) = make_prefix_arena_fa(b"bar", fm2.clone());
+
+        let (merged, merged_start) = merge_arena_dfas(&arena1, start1, &arena2, start2);
+
+        // Should match both prefixes
+        assert!(
+            matches_value(&merged, merged_start, b"foo"),
+            "Merged should match 'foo'"
+        );
+        assert!(
+            matches_value(&merged, merged_start, b"foobar"),
+            "Merged should match 'foobar'"
+        );
+        assert!(
+            matches_value(&merged, merged_start, b"bar"),
+            "Merged should match 'bar'"
+        );
+        assert!(
+            matches_value(&merged, merged_start, b"barfoo"),
+            "Merged should match 'barfoo'"
+        );
+
+        // Should NOT match non-prefixed
+        assert!(
+            !matches_value(&merged, merged_start, b"baz"),
+            "Merged should NOT match 'baz'"
         );
     }
 }
