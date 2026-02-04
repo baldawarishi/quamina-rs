@@ -21,7 +21,7 @@ use rustc_hash::FxHashMap;
 use arc_swap::ArcSwap;
 use parking_lot::Mutex;
 
-use super::arena::{traverse_arena_nfa, ArenaNfaBuffers, StateArena, StateId};
+use super::arena::{traverse_arena_nfa, StateArena, StateId};
 use super::fa_builders::{make_prefix_fa, make_shellstyle_fa, make_string_fa, merge_fas};
 use super::mutable_matcher::{
     EventField, EventFieldRef, MultiConditionNfa, MutableFieldMatcher, MutableValueMatcher,
@@ -172,16 +172,10 @@ impl<X: Clone + Eq + Hash> FrozenValueMatcher<X> {
         // Try with Q-number conversion if this matcher has numbers and value is numeric
         // Use stack-allocated QNumberStack to avoid heap allocation
         let q_num_storage: Option<crate::numbits::QNumberStack> = if self.has_numbers && is_number {
-            // Try to parse as f64 and convert to Q-number
-            if let Ok(s) = std::str::from_utf8(value) {
-                if let Ok(n) = s.parse::<f64>() {
-                    Some(crate::numbits::q_num_stack(n))
-                } else {
-                    None
-                }
-            } else {
-                None
-            }
+            // Try to parse as f64 using fast-float (faster than std parse)
+            fast_float2::parse(value)
+                .ok()
+                .map(crate::numbits::q_num_stack)
         } else {
             None
         };
@@ -213,11 +207,11 @@ impl<X: Clone + Eq + Hash> FrozenValueMatcher<X> {
         // Traverse numeric arena FA (if present and value is numeric)
         if q_num_storage.is_some() {
             if let Some((ref arena, start)) = self.numeric_arena {
-                let mut arena_bufs = ArenaNfaBuffers::new();
-                traverse_arena_nfa(arena, start, value_to_match, &mut arena_bufs);
+                bufs.arena_bufs.clear();
+                traverse_arena_nfa(arena, start, value_to_match, &mut bufs.arena_bufs);
 
                 // Map Arc<FieldMatcher> transitions to FrozenFieldMatcher using pointer address
-                for arc_fm in &arena_bufs.transitions {
+                for arc_fm in &bufs.arena_bufs.transitions {
                     let ptr = Arc::as_ptr(arc_fm) as usize;
                     if let Some(frozen_fm) = self.transition_map.get(&ptr) {
                         // Avoid duplicates
@@ -231,12 +225,12 @@ impl<X: Clone + Eq + Hash> FrozenValueMatcher<X> {
 
         // Traverse all arena NFAs (for regexp patterns)
         if !self.arena_nfas.is_empty() {
-            let mut arena_bufs = ArenaNfaBuffers::new();
             for (arena, start) in self.arena_nfas.iter() {
-                traverse_arena_nfa(arena, *start, value_to_match, &mut arena_bufs);
+                bufs.arena_bufs.clear();
+                traverse_arena_nfa(arena, *start, value_to_match, &mut bufs.arena_bufs);
 
                 // Map Arc<FieldMatcher> transitions to FrozenFieldMatcher using pointer address
-                for arc_fm in &arena_bufs.transitions {
+                for arc_fm in &bufs.arena_bufs.transitions {
                     let ptr = Arc::as_ptr(arc_fm) as usize;
                     if let Some(frozen_fm) = self.transition_map.get(&ptr) {
                         // Avoid duplicates
@@ -255,22 +249,21 @@ impl<X: Clone + Eq + Hash> FrozenValueMatcher<X> {
         // - NegativeLookahead("foobar"): "foobar" must NOT match full value
         // - Lookbehind conditions are pre-combined with primary during build
         if !self.multi_condition_nfas.is_empty() {
-            let mut condition_bufs = ArenaNfaBuffers::new();
-
             for mc_nfa in self.multi_condition_nfas.iter() {
                 // Verify all conditions against the full value
                 let mut all_conditions_pass = true;
 
                 for condition in &mc_nfa.conditions {
                     // Traverse the condition automaton on the full value
+                    bufs.arena_bufs.clear();
                     traverse_arena_nfa(
                         &condition.arena,
                         condition.start,
                         value_to_match,
-                        &mut condition_bufs,
+                        &mut bufs.arena_bufs,
                     );
 
-                    let condition_matched = !condition_bufs.transitions.is_empty();
+                    let condition_matched = !bufs.arena_bufs.transitions.is_empty();
 
                     // Check if condition passes:
                     // - Positive condition: must match

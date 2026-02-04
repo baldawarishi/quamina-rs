@@ -409,6 +409,8 @@ pub struct NfaBuffers {
     pub seen_transitions: Vec<usize>,
     /// HashSet for O(1) epsilon closure membership testing
     pub epsilon_seen: FxHashSet<StatePtr>,
+    /// Reusable buffers for arena-based NFA traversal (regexp, numeric patterns)
+    pub arena_bufs: super::arena::ArenaNfaBuffers,
 }
 
 impl NfaBuffers {
@@ -421,6 +423,7 @@ impl NfaBuffers {
             epsilon_stack: Vec::with_capacity(8),
             seen_transitions: Vec::with_capacity(16),
             epsilon_seen: FxHashSet::default(),
+            arena_bufs: super::arena::ArenaNfaBuffers::new(),
         }
     }
 
@@ -428,5 +431,6 @@ impl NfaBuffers {
         self.current_states.clear();
         self.next_states.clear();
         self.transitions.clear();
+        self.arena_bufs.clear();
     }
 }

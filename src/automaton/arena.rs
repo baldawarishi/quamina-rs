@@ -271,6 +271,8 @@ pub struct ArenaNfaBuffers {
     /// Closure buffer
     closure_stack: Vec<StateId>,
     closure_result: Vec<StateId>,
+    /// Seen field matcher transitions (for deduplication, stored as pointer addresses)
+    seen_transitions: rustc_hash::FxHashSet<usize>,
 }
 
 impl ArenaNfaBuffers {
@@ -286,6 +288,7 @@ impl ArenaNfaBuffers {
             seen_states: vec![false; state_capacity],
             closure_stack: Vec::with_capacity(16),
             closure_result: Vec::with_capacity(16),
+            seen_transitions: rustc_hash::FxHashSet::default(),
         }
     }
 
@@ -293,6 +296,7 @@ impl ArenaNfaBuffers {
         self.current_states.clear();
         self.next_states.clear();
         self.transitions.clear();
+        self.seen_transitions.clear();
         // Note: seen_states is reset during epsilon closure
     }
 
@@ -355,10 +359,6 @@ pub fn traverse_arena_nfa(
 
     bufs.current_states.push(start);
 
-    // Track seen field matchers by pointer
-    let mut seen_transitions: std::collections::HashSet<*const FieldMatcher> =
-        std::collections::HashSet::new();
-
     let len = val.len();
     let mut i = 0;
 
@@ -390,17 +390,20 @@ pub fn traverse_arena_nfa(
             ARENA_VALUE_TERMINATOR
         };
 
-        for &state_id in bufs.current_states.clone().iter() {
+        // Take ownership of current_states to avoid clone
+        let states_to_process = std::mem::take(&mut bufs.current_states);
+
+        for state_id in states_to_process {
             // Get epsilon closure
             let closure = get_arena_epsilon_closure(arena, state_id, bufs);
 
             for &ec_state_id in &closure {
                 let ec_state = &arena[ec_state_id];
 
-                // Collect field transitions (deduplicated)
+                // Collect field transitions (deduplicated using reusable buffer)
                 for ft in &ec_state.field_transitions {
-                    let ptr = Arc::as_ptr(ft);
-                    if seen_transitions.insert(ptr) {
+                    let ptr = Arc::as_ptr(ft) as usize;
+                    if bufs.seen_transitions.insert(ptr) {
                         bufs.transitions.push(ft.clone());
                     }
                 }
@@ -426,13 +429,14 @@ pub fn traverse_arena_nfa(
     }
 
     // Check final states for matches
-    for &state_id in bufs.current_states.clone().iter() {
+    let final_states = std::mem::take(&mut bufs.current_states);
+    for state_id in final_states {
         let closure = get_arena_epsilon_closure(arena, state_id, bufs);
         for &ec_state_id in &closure {
             let ec_state = &arena[ec_state_id];
             for ft in &ec_state.field_transitions {
-                let ptr = Arc::as_ptr(ft);
-                if seen_transitions.insert(ptr) {
+                let ptr = Arc::as_ptr(ft) as usize;
+                if bufs.seen_transitions.insert(ptr) {
                     bufs.transitions.push(ft.clone());
                 }
             }

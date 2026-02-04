@@ -12,6 +12,7 @@ parking_lot = "0.12"
 smallvec = "1.13"
 rustc-hash = "2.1"
 memchr = "2.7"
+fast-float2 = "0.2"
 
 [features]
 dhat-heap = []  # Enable heap profiling with dhat
