@@ -2409,6 +2409,267 @@ fn build_arena_fragment(val: &[u8], end_at: StateId, arena: &mut StateArena) -> 
     current
 }
 
+/// Build an arena-based FA that matches CIDR patterns (IPv4/IPv6).
+///
+/// This is the arena equivalent of `make_cidr_fa` for chain-based FAs.
+/// For IPv4, matches IP address strings within the specified CIDR range.
+/// For IPv6, matches expanded form hex addresses.
+///
+/// # Arguments
+/// * `cidr` - The CIDR pattern to match
+/// * `next_field` - The field matcher to transition to on match
+///
+/// # Returns
+/// A new arena containing the FA and its start state
+pub fn make_cidr_arena_fa(
+    cidr: &crate::json::CidrPattern,
+    next_field: Arc<FieldMatcher>,
+) -> (StateArena, StateId) {
+    use crate::json::CidrPattern;
+
+    match cidr {
+        CidrPattern::V4 {
+            network,
+            prefix_len,
+        } => make_ipv4_cidr_arena_fa(network, *prefix_len, next_field),
+        CidrPattern::V6 {
+            network,
+            prefix_len,
+        } => make_ipv6_cidr_arena_fa(network, *prefix_len, next_field),
+    }
+}
+
+/// Build arena FA for IPv4 CIDR matching.
+fn make_ipv4_cidr_arena_fa(
+    network: &[u8; 4],
+    prefix_len: u8,
+    next_field: Arc<FieldMatcher>,
+) -> (StateArena, StateId) {
+    let mut arena = StateArena::new();
+
+    // Create match state
+    let match_state = arena.alloc();
+    arena[match_state].field_transitions.push(next_field);
+
+    // Create terminator state
+    let term_state = arena.alloc_with_table(ArenaSmallTable::with_mappings(
+        StateId::NONE,
+        &[ARENA_VALUE_TERMINATOR],
+        &[match_state],
+    ));
+
+    // Build from right to left (last octet first)
+    let mut current_state = term_state;
+
+    for octet_idx in (0..4).rev() {
+        // Calculate bit constraints for this octet
+        let octet_start_bit = octet_idx * 8;
+        let octet_end_bit = octet_start_bit + 8;
+
+        let (min_val, max_val) = if prefix_len as usize >= octet_end_bit {
+            // All 8 bits constrained - exact match
+            (network[octet_idx], network[octet_idx])
+        } else if (prefix_len as usize) <= octet_start_bit {
+            // No bits constrained - any value 0-255
+            (0u8, 255u8)
+        } else {
+            // Partial constraint
+            let constrained_bits = prefix_len as usize - octet_start_bit;
+            let mask = !0u8 << (8 - constrained_bits);
+            let base = network[octet_idx] & mask;
+            let range_size = 1u16 << (8 - constrained_bits);
+            (base, (base as u16 + range_size - 1).min(255) as u8)
+        };
+
+        // Build FA for this octet range
+        let octet_start = build_octet_range_arena_fa(min_val, max_val, current_state, &mut arena);
+
+        // If not first octet, prepend dot
+        if octet_idx > 0 {
+            current_state = arena.alloc_with_table(ArenaSmallTable::with_mappings(
+                StateId::NONE,
+                b".",
+                &[octet_start],
+            ));
+        } else {
+            current_state = octet_start;
+        }
+    }
+
+    (arena, current_state)
+}
+
+/// Build arena FA for IPv6 CIDR matching.
+fn make_ipv6_cidr_arena_fa(
+    network: &[u8; 16],
+    prefix_len: u8,
+    next_field: Arc<FieldMatcher>,
+) -> (StateArena, StateId) {
+    let mut arena = StateArena::new();
+
+    // Create match state
+    let match_state = arena.alloc();
+    arena[match_state].field_transitions.push(next_field);
+
+    // Create terminator state
+    let term_state = arena.alloc_with_table(ArenaSmallTable::with_mappings(
+        StateId::NONE,
+        &[ARENA_VALUE_TERMINATOR],
+        &[match_state],
+    ));
+
+    // Build from right to left
+    let mut current_state = term_state;
+
+    for group_idx in (0..8).rev() {
+        let byte_idx = group_idx * 2;
+        let group_start_bit = group_idx * 16;
+        let group_end_bit = group_start_bit + 16;
+
+        let group_value = ((network[byte_idx] as u16) << 8) | (network[byte_idx + 1] as u16);
+
+        let (min_val, max_val) = if prefix_len as usize >= group_end_bit {
+            (group_value, group_value)
+        } else if (prefix_len as usize) <= group_start_bit {
+            (0u16, 0xffffu16)
+        } else {
+            let constrained_bits = prefix_len as usize - group_start_bit;
+            let mask = !0u16 << (16 - constrained_bits);
+            let base = group_value & mask;
+            let range_size = 1u32 << (16 - constrained_bits);
+            (base, (base as u32 + range_size - 1).min(0xffff) as u16)
+        };
+
+        // Build FA for this hex group
+        let group_start =
+            build_ipv6_group_range_arena_fa(min_val, max_val, current_state, &mut arena);
+
+        // If not first group, prepend colon
+        if group_idx > 0 {
+            current_state = arena.alloc_with_table(ArenaSmallTable::with_mappings(
+                StateId::NONE,
+                b":",
+                &[group_start],
+            ));
+        } else {
+            current_state = group_start;
+        }
+    }
+
+    (arena, current_state)
+}
+
+/// Build arena FA for matching an IPv4 octet in range [min_val, max_val].
+fn build_octet_range_arena_fa(
+    min_val: u8,
+    max_val: u8,
+    continuation: StateId,
+    arena: &mut StateArena,
+) -> StateId {
+    // For each value, build the string representation and create an NFA
+    // Then merge all NFAs together using epsilon transitions
+
+    if min_val == max_val {
+        // Single value - just build the literal chain
+        let val_str = min_val.to_string();
+        return build_literal_chain_arena(val_str.as_bytes(), continuation, arena);
+    }
+
+    // Create a start state with epsilon transitions to each value's FA
+    let start = arena.alloc();
+    let mut value_starts = Vec::new();
+
+    for val in min_val..=max_val {
+        let val_str = val.to_string();
+        let val_start = build_literal_chain_arena(val_str.as_bytes(), continuation, arena);
+        value_starts.push(val_start);
+    }
+
+    // Add epsilon transitions to all value FAs
+    arena[start].table.epsilons = value_starts;
+
+    start
+}
+
+/// Build arena FA for matching an IPv6 group in range [min_val, max_val].
+fn build_ipv6_group_range_arena_fa(
+    min_val: u16,
+    max_val: u16,
+    continuation: StateId,
+    arena: &mut StateArena,
+) -> StateId {
+    // For efficiency, special case full range (any hex value)
+    if min_val == 0 && max_val == 0xffff {
+        return build_any_hex_group_arena(continuation, arena);
+    }
+
+    if min_val == max_val {
+        // Single value
+        let val_str = format!("{:x}", min_val);
+        return build_literal_chain_arena(val_str.as_bytes(), continuation, arena);
+    }
+
+    // Create a start state with epsilon transitions to each value's FA
+    let start = arena.alloc();
+    let mut value_starts = Vec::new();
+
+    for val in min_val..=max_val {
+        let val_str = format!("{:x}", val);
+        let val_start = build_literal_chain_arena(val_str.as_bytes(), continuation, arena);
+        value_starts.push(val_start);
+    }
+
+    arena[start].table.epsilons = value_starts;
+
+    start
+}
+
+/// Build a literal chain in the arena.
+fn build_literal_chain_arena(val: &[u8], continuation: StateId, arena: &mut StateArena) -> StateId {
+    let mut current = continuation;
+    for &byte in val.iter().rev() {
+        current = arena.alloc_with_table(ArenaSmallTable::with_mappings(
+            StateId::NONE,
+            &[byte],
+            &[current],
+        ));
+    }
+    current
+}
+
+/// Build FA matching any 1-4 hex digit group.
+fn build_any_hex_group_arena(continuation: StateId, arena: &mut StateArena) -> StateId {
+    // Match 1-4 hex digits: [0-9a-fA-F]+
+    let hex_chars: Vec<u8> = (b'0'..=b'9')
+        .chain(b'a'..=b'f')
+        .chain(b'A'..=b'F')
+        .collect();
+
+    // Build states for 1, 2, 3, 4 digits
+    // State that can accept (leads to continuation) or continue with more digits
+    let mut current = continuation;
+
+    for _ in 0..4 {
+        // Create state that accepts any hex char and leads to current
+        // Also has epsilon to continuation (for shorter matches)
+        let next_state = arena.alloc();
+
+        // Build table with all hex transitions to current
+        let mut bytes = Vec::new();
+        let mut targets = Vec::new();
+        for &b in &hex_chars {
+            bytes.push(b);
+            targets.push(current);
+        }
+
+        arena[next_state].table = ArenaSmallTable::with_mappings(StateId::NONE, &bytes, &targets);
+
+        current = next_state;
+    }
+
+    current
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -4922,6 +5183,144 @@ mod monocase_arena_tests {
         assert!(
             !matches_value(&merged, merged_start, b"baz"),
             "Merged should NOT match 'baz'"
+        );
+    }
+}
+
+#[cfg(test)]
+mod cidr_arena_tests {
+    use super::*;
+    use crate::json::CidrPattern;
+
+    fn matches_value(arena: &StateArena, start: StateId, value: &[u8]) -> bool {
+        let mut bufs = ArenaNfaBuffers::with_capacity(arena.len());
+        traverse_arena_nfa(arena, start, value, &mut bufs);
+        !bufs.transitions.is_empty()
+    }
+
+    #[test]
+    fn test_cidr_arena_fa_ipv4_exact() {
+        // /32 means exact match
+        let fm = Arc::new(FieldMatcher::with_match_id(1));
+        let cidr = CidrPattern::V4 {
+            network: [192, 168, 1, 1],
+            prefix_len: 32,
+        };
+        let (arena, start) = make_cidr_arena_fa(&cidr, fm.clone());
+
+        assert!(
+            matches_value(&arena, start, b"192.168.1.1"),
+            "Should match exact IP"
+        );
+        assert!(
+            !matches_value(&arena, start, b"192.168.1.2"),
+            "Should NOT match different IP"
+        );
+    }
+
+    #[test]
+    fn test_cidr_arena_fa_ipv4_24() {
+        // /24 means first 3 octets exact, last octet 0-255
+        let fm = Arc::new(FieldMatcher::with_match_id(1));
+        let cidr = CidrPattern::V4 {
+            network: [10, 0, 0, 0],
+            prefix_len: 24,
+        };
+        let (arena, start) = make_cidr_arena_fa(&cidr, fm.clone());
+
+        // Should match any IP in 10.0.0.0/24
+        assert!(
+            matches_value(&arena, start, b"10.0.0.0"),
+            "Should match 10.0.0.0"
+        );
+        assert!(
+            matches_value(&arena, start, b"10.0.0.1"),
+            "Should match 10.0.0.1"
+        );
+        assert!(
+            matches_value(&arena, start, b"10.0.0.255"),
+            "Should match 10.0.0.255"
+        );
+
+        // Should NOT match IPs outside the range
+        assert!(
+            !matches_value(&arena, start, b"10.0.1.0"),
+            "Should NOT match 10.0.1.0"
+        );
+        assert!(
+            !matches_value(&arena, start, b"192.168.1.1"),
+            "Should NOT match 192.168.1.1"
+        );
+    }
+
+    #[test]
+    fn test_cidr_arena_fa_ipv4_range() {
+        // /30 means 4 addresses: x.x.x.0, x.x.x.1, x.x.x.2, x.x.x.3
+        let fm = Arc::new(FieldMatcher::with_match_id(1));
+        let cidr = CidrPattern::V4 {
+            network: [172, 16, 0, 0],
+            prefix_len: 30,
+        };
+        let (arena, start) = make_cidr_arena_fa(&cidr, fm.clone());
+
+        // Should match all 4 addresses
+        assert!(
+            matches_value(&arena, start, b"172.16.0.0"),
+            "Should match 172.16.0.0"
+        );
+        assert!(
+            matches_value(&arena, start, b"172.16.0.1"),
+            "Should match 172.16.0.1"
+        );
+        assert!(
+            matches_value(&arena, start, b"172.16.0.2"),
+            "Should match 172.16.0.2"
+        );
+        assert!(
+            matches_value(&arena, start, b"172.16.0.3"),
+            "Should match 172.16.0.3"
+        );
+
+        // Should NOT match outside range
+        assert!(
+            !matches_value(&arena, start, b"172.16.0.4"),
+            "Should NOT match 172.16.0.4"
+        );
+    }
+
+    #[test]
+    fn test_cidr_arena_fa_merge() {
+        let fm1 = Arc::new(FieldMatcher::with_match_id(1));
+        let fm2 = Arc::new(FieldMatcher::with_match_id(2));
+
+        let cidr1 = CidrPattern::V4 {
+            network: [10, 0, 0, 0],
+            prefix_len: 32,
+        };
+        let cidr2 = CidrPattern::V4 {
+            network: [192, 168, 0, 0],
+            prefix_len: 32,
+        };
+
+        let (arena1, start1) = make_cidr_arena_fa(&cidr1, fm1.clone());
+        let (arena2, start2) = make_cidr_arena_fa(&cidr2, fm2.clone());
+
+        let (merged, merged_start) = merge_arena_nfas(&arena1, start1, &arena2, start2);
+
+        // Should match both
+        assert!(
+            matches_value(&merged, merged_start, b"10.0.0.0"),
+            "Merged should match 10.0.0.0"
+        );
+        assert!(
+            matches_value(&merged, merged_start, b"192.168.0.0"),
+            "Merged should match 192.168.0.0"
+        );
+
+        // Should NOT match others
+        assert!(
+            !matches_value(&merged, merged_start, b"172.16.0.0"),
+            "Merged should NOT match 172.16.0.0"
         );
     }
 }
