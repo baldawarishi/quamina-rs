@@ -729,8 +729,28 @@ cargo doc --no-deps --open
 - No chain FA code used for numeric patterns ✓
 - 415 lines of dead code removed ✓
 
+### Phase 2 Progress:
+- [x] Step 2.1: Add Arena NFA Merge (with epsilon/spinout support)
+  - Implemented `merge_arena_nfas` function with full NFA support
+  - Handles epsilon transitions (for alternation patterns)
+  - Handles spinout states (for wildcard patterns like `*`)
+  - Handles cycles (for `+` quantifiers)
+  - Merge strategy follows Go quamina's approach:
+    - Both spinouts: merge recursively
+    - Either has epsilons: create splice state
+    - Neither has epsilons: byte-wise merge (DFA case)
+  - 6 comprehensive tests:
+    - `test_merge_arena_with_epsilons`
+    - `test_merge_arena_with_spinout`
+    - `test_merge_arena_shellstyle_patterns`
+    - `test_merge_arena_preserves_cycles`
+    - `test_merge_arena_both_have_spinouts`
+    - `test_merge_arena_nfas_empty_cases`
+  - Verified with Miri for memory safety
+  - Commit: (pending)
+
 ### Next Step:
-**Phase 2, Step 2.1**: Add Arena NFA Merge (with epsilon/spinout support)
+**Phase 2, Step 2.2**: Add Arena FA Builders for All Pattern Types
 
 ### Blockers:
 None
