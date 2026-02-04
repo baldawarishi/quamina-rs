@@ -747,7 +747,7 @@ cargo doc --no-deps --open
     - `test_merge_arena_both_have_spinouts`
     - `test_merge_arena_nfas_empty_cases`
   - Verified with Miri for memory safety
-  - Commit: (pending)
+  - Commit: `1a2933d`
 
 ### Next Step:
 **Phase 2, Step 2.2**: Add Arena FA Builders for All Pattern Types
