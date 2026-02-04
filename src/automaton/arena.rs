@@ -850,6 +850,317 @@ fn unpack_arena_table(table: &ArenaSmallTable, unpacked: &mut [StateId; BYTE_CEI
     }
 }
 
+// =============================================================================
+// Numeric Range Arena FA Builders
+// =============================================================================
+
+/// Build an arena-based FA that matches Q-numbers less than a bound.
+///
+/// This is the arena equivalent of `make_numeric_less_fa` for chain-based FAs.
+/// Q-numbers preserve ordering, so we can compare bytes lexicographically.
+///
+/// # Arguments
+/// * `bound` - The numeric bound as f64
+/// * `inclusive` - If true, matches <= bound; if false, matches < bound
+/// * `next_field` - The field matcher to transition to on match
+///
+/// # Returns
+/// A new arena containing the FA and its start state
+pub fn make_numeric_less_arena_fa(
+    bound: f64,
+    inclusive: bool,
+    next_field: Arc<FieldMatcher>,
+) -> (StateArena, StateId) {
+    let bound_q = crate::numbits::q_num_from_f64(bound);
+    let mut arena = StateArena::new();
+
+    // Create the "match" state - has field_transitions to mark the match
+    let match_state = arena.alloc();
+    arena[match_state].field_transitions.push(next_field);
+
+    // Build the FA recursively
+    let start = make_less_arena_fa_step(&bound_q, 0, inclusive, match_state, &mut arena);
+
+    (arena, start)
+}
+
+/// Build an arena-based FA that matches Q-numbers greater than a bound.
+///
+/// # Arguments
+/// * `bound` - The numeric bound as f64
+/// * `inclusive` - If true, matches >= bound; if false, matches > bound
+/// * `next_field` - The field matcher to transition to on match
+///
+/// # Returns
+/// A new arena containing the FA and its start state
+pub fn make_numeric_greater_arena_fa(
+    bound: f64,
+    inclusive: bool,
+    next_field: Arc<FieldMatcher>,
+) -> (StateArena, StateId) {
+    let bound_q = crate::numbits::q_num_from_f64(bound);
+    let mut arena = StateArena::new();
+
+    // Create the "match" state
+    let match_state = arena.alloc();
+    arena[match_state].field_transitions.push(next_field);
+
+    // Build the FA recursively
+    let start = make_greater_arena_fa_step(&bound_q, 0, inclusive, match_state, &mut arena);
+
+    (arena, start)
+}
+
+/// Build an arena-based FA that matches Q-numbers within a two-sided range.
+///
+/// This is used for numeric range patterns like `{"numeric": [">=", 0, "<=", 100]}`.
+///
+/// # Arguments
+/// * `lower` - Lower bound value
+/// * `lower_incl` - If true, lower bound is inclusive (>=)
+/// * `upper` - Upper bound value
+/// * `upper_incl` - If true, upper bound is inclusive (<=)
+/// * `next_field` - The field matcher to transition to on match
+///
+/// # Returns
+/// A new arena containing the FA and its start state
+pub fn make_numeric_range_arena_fa(
+    lower: f64,
+    lower_incl: bool,
+    upper: f64,
+    upper_incl: bool,
+    next_field: Arc<FieldMatcher>,
+) -> (StateArena, StateId) {
+    let lower_q = crate::numbits::q_num_from_f64(lower);
+    let upper_q = crate::numbits::q_num_from_f64(upper);
+    let mut arena = StateArena::new();
+
+    // Create the "match" state
+    let match_state = arena.alloc();
+    arena[match_state].field_transitions.push(next_field);
+
+    // Build the FA recursively
+    let start = make_range_arena_fa_step(
+        &lower_q,
+        &upper_q,
+        0,
+        lower_incl,
+        upper_incl,
+        match_state,
+        &mut arena,
+    );
+
+    (arena, start)
+}
+
+/// Recursive helper for building less-than FA.
+fn make_less_arena_fa_step(
+    bound_q: &[u8],
+    index: usize,
+    inclusive: bool,
+    match_state: StateId,
+    arena: &mut StateArena,
+) -> StateId {
+    if index >= bound_q.len() {
+        // All bound bytes consumed
+        // VALUE_TERMINATOR: input == bound (if inclusive, match; else no match)
+        // Any other byte: input > bound (no match)
+        if inclusive {
+            // On VALUE_TERMINATOR: match (equal case)
+            let start = arena.alloc_with_table(ArenaSmallTable::with_mappings(
+                StateId::NONE,
+                &[ARENA_VALUE_TERMINATOR],
+                &[match_state],
+            ));
+            return start;
+        } else {
+            // No match for equal case - return a state with no transitions
+            return arena.alloc();
+        }
+    }
+
+    let bound_byte = bound_q[index];
+
+    // Continuation for when input byte == bound_byte
+    let continuation = make_less_arena_fa_step(bound_q, index + 1, inclusive, match_state, arena);
+
+    // Build transition table
+    let mut unpacked = [StateId::NONE; BYTE_CEILING];
+
+    // VALUE_TERMINATOR: input shorter than bound = input < bound, MATCH
+    unpacked[ARENA_VALUE_TERMINATOR as usize] = match_state;
+
+    // Bytes 0..(bound_byte-1): input < bound, MATCH
+    for b in 0..bound_byte {
+        if b != ARENA_VALUE_TERMINATOR {
+            unpacked[b as usize] = match_state;
+        }
+    }
+
+    // Byte == bound_byte: check rest
+    unpacked[bound_byte as usize] = continuation;
+
+    // Bytes > bound_byte: no transition (implicit fail)
+
+    let mut table = ArenaSmallTable::new();
+    table.pack(&unpacked);
+    arena.alloc_with_table(table)
+}
+
+/// Recursive helper for building greater-than FA.
+fn make_greater_arena_fa_step(
+    bound_q: &[u8],
+    index: usize,
+    inclusive: bool,
+    match_state: StateId,
+    arena: &mut StateArena,
+) -> StateId {
+    if index >= bound_q.len() {
+        // All bound bytes consumed
+        // VALUE_TERMINATOR: input == bound
+        // Any other byte: input has more bytes, so input > bound, MATCH
+        let mut unpacked = [match_state; BYTE_CEILING];
+
+        if !inclusive {
+            // Strictly greater - VALUE_TERMINATOR = equal, don't match
+            unpacked[ARENA_VALUE_TERMINATOR as usize] = StateId::NONE;
+        }
+        // If inclusive, VALUE_TERMINATOR also matches (equal case)
+
+        let mut table = ArenaSmallTable::new();
+        table.pack(&unpacked);
+        return arena.alloc_with_table(table);
+    }
+
+    let bound_byte = bound_q[index];
+
+    // Continuation for when input byte == bound_byte
+    let continuation =
+        make_greater_arena_fa_step(bound_q, index + 1, inclusive, match_state, arena);
+
+    // Build table:
+    // - VALUE_TERMINATOR: input shorter than bound = input < bound, NO MATCH
+    // - byte < bound_byte: input < bound, NO MATCH
+    // - byte == bound_byte: check rest
+    // - byte > bound_byte (but not VALUE_TERMINATOR): input > bound, MATCH
+
+    let mut unpacked = [StateId::NONE; BYTE_CEILING];
+
+    // Byte == bound_byte: check rest
+    unpacked[bound_byte as usize] = continuation;
+
+    // Bytes > bound_byte: input > bound, MATCH
+    // But exclude VALUE_TERMINATOR - it means input is shorter, so input < bound
+    for b in (bound_byte + 1)..(BYTE_CEILING as u8) {
+        if b != ARENA_VALUE_TERMINATOR {
+            unpacked[b as usize] = match_state;
+        }
+    }
+
+    // VALUE_TERMINATOR and bytes < bound_byte: no transition (implicit fail)
+
+    let mut table = ArenaSmallTable::new();
+    table.pack(&unpacked);
+    arena.alloc_with_table(table)
+}
+
+/// Recursive helper for building two-sided range FA.
+fn make_range_arena_fa_step(
+    lower_q: &[u8],
+    upper_q: &[u8],
+    index: usize,
+    lower_incl: bool,
+    upper_incl: bool,
+    match_state: StateId,
+    arena: &mut StateArena,
+) -> StateId {
+    let lower_done = index >= lower_q.len();
+    let upper_done = index >= upper_q.len();
+
+    // Both bounds exhausted - check terminators
+    if lower_done && upper_done {
+        // Input has same length as both bounds
+        // VALUE_TERMINATOR means we've matched both bounds exactly
+        if lower_incl && upper_incl {
+            // Both inclusive - accept equal
+            return arena.alloc_with_table(ArenaSmallTable::with_mappings(
+                StateId::NONE,
+                &[ARENA_VALUE_TERMINATOR],
+                &[match_state],
+            ));
+        } else {
+            // At least one exclusive - reject equal
+            return arena.alloc();
+        }
+    }
+
+    // Only lower done - we've established input >= lower, now just check upper
+    if lower_done {
+        // Delegate to upper-only check (less-than)
+        return make_less_arena_fa_step(upper_q, index, upper_incl, match_state, arena);
+    }
+
+    // Only upper done - we've established input <= upper, now just check lower
+    if upper_done {
+        // Input has more bytes than upper bound, so input > upper
+        // This means input is out of range (> upper bound)
+        return arena.alloc();
+    }
+
+    // Both bounds have bytes at this position
+    let lower_byte = lower_q[index];
+    let upper_byte = upper_q[index];
+
+    if lower_byte == upper_byte {
+        // Same byte in both bounds - only that byte continues, others fail
+        let continuation = make_range_arena_fa_step(
+            lower_q,
+            upper_q,
+            index + 1,
+            lower_incl,
+            upper_incl,
+            match_state,
+            arena,
+        );
+
+        let mut unpacked = [StateId::NONE; BYTE_CEILING];
+        unpacked[lower_byte as usize] = continuation;
+
+        let mut table = ArenaSmallTable::new();
+        table.pack(&unpacked);
+        return arena.alloc_with_table(table);
+    }
+
+    // Different bytes in bounds - we have a range of valid first bytes
+    // lower_byte < upper_byte (since lower < upper)
+    let mut unpacked = [StateId::NONE; BYTE_CEILING];
+
+    // VALUE_TERMINATOR: input shorter than both bounds, input < lower, fail
+
+    // Bytes < lower_byte: fail (< lower)
+
+    // Byte == lower_byte: need to check rest >= lower[index+1:]
+    let lower_continuation =
+        make_greater_arena_fa_step(lower_q, index + 1, lower_incl, match_state, arena);
+    unpacked[lower_byte as usize] = lower_continuation;
+
+    // Bytes in (lower_byte, upper_byte): accept (> lower and < upper)
+    for b in (lower_byte + 1)..upper_byte {
+        unpacked[b as usize] = match_state;
+    }
+
+    // Byte == upper_byte: need to check rest <= upper[index+1:]
+    let upper_continuation =
+        make_less_arena_fa_step(upper_q, index + 1, upper_incl, match_state, arena);
+    unpacked[upper_byte as usize] = upper_continuation;
+
+    // Bytes > upper_byte: fail (> upper)
+
+    let mut table = ArenaSmallTable::new();
+    table.pack(&unpacked);
+    arena.alloc_with_table(table)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1501,6 +1812,375 @@ mod merge_tests {
                 "Should NOT match {:?}",
                 std::str::from_utf8(val)
             );
+        }
+    }
+}
+
+#[cfg(test)]
+mod numeric_arena_tests {
+    use super::*;
+    use crate::numbits::q_num_from_f64;
+
+    /// Helper to test if a Q-number matches against an arena FA
+    fn matches_arena(arena: &StateArena, start: StateId, q_num: &[u8]) -> bool {
+        let mut bufs = ArenaNfaBuffers::with_capacity(arena.len());
+        traverse_arena_nfa(arena, start, q_num, &mut bufs);
+        !bufs.transitions.is_empty()
+    }
+
+    #[test]
+    fn test_numeric_less_arena_fa_basic() {
+        let next_field = Arc::new(FieldMatcher::new());
+        let (arena, start) = make_numeric_less_arena_fa(100.0, true, next_field.clone());
+
+        // Q-numbers for testing
+        let q50 = q_num_from_f64(50.0);
+        let q100 = q_num_from_f64(100.0);
+        let q150 = q_num_from_f64(150.0);
+        let q0 = q_num_from_f64(0.0);
+        let q_neg = q_num_from_f64(-50.0);
+
+        // Should match: 50 < 100
+        assert!(matches_arena(&arena, start, &q50), "50 should match <= 100");
+
+        // Should match: 100 <= 100 (inclusive)
+        assert!(
+            matches_arena(&arena, start, &q100),
+            "100 should match <= 100 (inclusive)"
+        );
+
+        // Should NOT match: 150 > 100
+        assert!(
+            !matches_arena(&arena, start, &q150),
+            "150 should NOT match <= 100"
+        );
+
+        // Should match: 0 < 100
+        assert!(matches_arena(&arena, start, &q0), "0 should match <= 100");
+
+        // Should match: -50 < 100
+        assert!(
+            matches_arena(&arena, start, &q_neg),
+            "-50 should match <= 100"
+        );
+    }
+
+    #[test]
+    fn test_numeric_less_arena_fa_exclusive() {
+        let next_field = Arc::new(FieldMatcher::new());
+        let (arena, start) = make_numeric_less_arena_fa(100.0, false, next_field.clone());
+
+        let q99 = q_num_from_f64(99.0);
+        let q100 = q_num_from_f64(100.0);
+
+        // Should match: 99 < 100
+        assert!(matches_arena(&arena, start, &q99), "99 should match < 100");
+
+        // Should NOT match: 100 is not < 100 (exclusive)
+        assert!(
+            !matches_arena(&arena, start, &q100),
+            "100 should NOT match < 100 (exclusive)"
+        );
+    }
+
+    #[test]
+    fn test_numeric_greater_arena_fa_basic() {
+        let next_field = Arc::new(FieldMatcher::new());
+        let (arena, start) = make_numeric_greater_arena_fa(100.0, true, next_field.clone());
+
+        let q50 = q_num_from_f64(50.0);
+        let q100 = q_num_from_f64(100.0);
+        let q150 = q_num_from_f64(150.0);
+
+        // Should NOT match: 50 < 100
+        assert!(
+            !matches_arena(&arena, start, &q50),
+            "50 should NOT match >= 100"
+        );
+
+        // Should match: 100 >= 100 (inclusive)
+        assert!(
+            matches_arena(&arena, start, &q100),
+            "100 should match >= 100 (inclusive)"
+        );
+
+        // Should match: 150 > 100
+        assert!(
+            matches_arena(&arena, start, &q150),
+            "150 should match >= 100"
+        );
+    }
+
+    #[test]
+    fn test_numeric_greater_arena_fa_exclusive() {
+        let next_field = Arc::new(FieldMatcher::new());
+        let (arena, start) = make_numeric_greater_arena_fa(100.0, false, next_field.clone());
+
+        let q100 = q_num_from_f64(100.0);
+        let q101 = q_num_from_f64(101.0);
+
+        // Should NOT match: 100 is not > 100 (exclusive)
+        assert!(
+            !matches_arena(&arena, start, &q100),
+            "100 should NOT match > 100 (exclusive)"
+        );
+
+        // Should match: 101 > 100
+        assert!(
+            matches_arena(&arena, start, &q101),
+            "101 should match > 100"
+        );
+    }
+
+    #[test]
+    fn test_numeric_range_arena_fa_two_sided() {
+        let next_field = Arc::new(FieldMatcher::new());
+        // Range: 50 <= x <= 150
+        let (arena, start) =
+            make_numeric_range_arena_fa(50.0, true, 150.0, true, next_field.clone());
+
+        let q25 = q_num_from_f64(25.0);
+        let q50 = q_num_from_f64(50.0);
+        let q100 = q_num_from_f64(100.0);
+        let q150 = q_num_from_f64(150.0);
+        let q200 = q_num_from_f64(200.0);
+
+        // Should NOT match: 25 < 50
+        assert!(
+            !matches_arena(&arena, start, &q25),
+            "25 should NOT match [50, 150]"
+        );
+
+        // Should match: 50 is lower bound (inclusive)
+        assert!(
+            matches_arena(&arena, start, &q50),
+            "50 should match [50, 150]"
+        );
+
+        // Should match: 100 is in range
+        assert!(
+            matches_arena(&arena, start, &q100),
+            "100 should match [50, 150]"
+        );
+
+        // Should match: 150 is upper bound (inclusive)
+        assert!(
+            matches_arena(&arena, start, &q150),
+            "150 should match [50, 150]"
+        );
+
+        // Should NOT match: 200 > 150
+        assert!(
+            !matches_arena(&arena, start, &q200),
+            "200 should NOT match [50, 150]"
+        );
+    }
+
+    #[test]
+    fn test_numeric_range_arena_fa_exclusive_bounds() {
+        let next_field = Arc::new(FieldMatcher::new());
+        // Range: 50 < x < 150 (exclusive both sides)
+        let (arena, start) =
+            make_numeric_range_arena_fa(50.0, false, 150.0, false, next_field.clone());
+
+        let q50 = q_num_from_f64(50.0);
+        let q51 = q_num_from_f64(51.0);
+        let q149 = q_num_from_f64(149.0);
+        let q150 = q_num_from_f64(150.0);
+
+        // Should NOT match: 50 is lower bound (exclusive)
+        assert!(
+            !matches_arena(&arena, start, &q50),
+            "50 should NOT match (50, 150)"
+        );
+
+        // Should match: 51 > 50
+        assert!(
+            matches_arena(&arena, start, &q51),
+            "51 should match (50, 150)"
+        );
+
+        // Should match: 149 < 150
+        assert!(
+            matches_arena(&arena, start, &q149),
+            "149 should match (50, 150)"
+        );
+
+        // Should NOT match: 150 is upper bound (exclusive)
+        assert!(
+            !matches_arena(&arena, start, &q150),
+            "150 should NOT match (50, 150)"
+        );
+    }
+
+    #[test]
+    fn test_numeric_arena_fa_edge_cases() {
+        let next_field = Arc::new(FieldMatcher::new());
+
+        // Test with zero
+        let (arena, start) = make_numeric_less_arena_fa(0.0, true, next_field.clone());
+        let q_neg = q_num_from_f64(-1.0);
+        let q0 = q_num_from_f64(0.0);
+        let q1 = q_num_from_f64(1.0);
+
+        assert!(matches_arena(&arena, start, &q_neg), "-1 should match <= 0");
+        assert!(matches_arena(&arena, start, &q0), "0 should match <= 0");
+        assert!(
+            !matches_arena(&arena, start, &q1),
+            "1 should NOT match <= 0"
+        );
+
+        // Test with negative bound
+        let (arena2, start2) = make_numeric_greater_arena_fa(-100.0, true, next_field.clone());
+        let q_neg50 = q_num_from_f64(-50.0);
+        let q_neg100 = q_num_from_f64(-100.0);
+        let q_neg150 = q_num_from_f64(-150.0);
+
+        assert!(
+            matches_arena(&arena2, start2, &q_neg50),
+            "-50 should match >= -100"
+        );
+        assert!(
+            matches_arena(&arena2, start2, &q_neg100),
+            "-100 should match >= -100"
+        );
+        assert!(
+            !matches_arena(&arena2, start2, &q_neg150),
+            "-150 should NOT match >= -100"
+        );
+    }
+
+    #[test]
+    fn test_numeric_arena_fa_float_values() {
+        let next_field = Arc::new(FieldMatcher::new());
+
+        // Range: 1.5 <= x <= 2.5
+        let (arena, start) = make_numeric_range_arena_fa(1.5, true, 2.5, true, next_field.clone());
+
+        let q1 = q_num_from_f64(1.0);
+        let q1_5 = q_num_from_f64(1.5);
+        let q2 = q_num_from_f64(2.0);
+        let q2_5 = q_num_from_f64(2.5);
+        let q3 = q_num_from_f64(3.0);
+
+        assert!(
+            !matches_arena(&arena, start, &q1),
+            "1.0 should NOT match [1.5, 2.5]"
+        );
+        assert!(
+            matches_arena(&arena, start, &q1_5),
+            "1.5 should match [1.5, 2.5]"
+        );
+        assert!(
+            matches_arena(&arena, start, &q2),
+            "2.0 should match [1.5, 2.5]"
+        );
+        assert!(
+            matches_arena(&arena, start, &q2_5),
+            "2.5 should match [1.5, 2.5]"
+        );
+        assert!(
+            !matches_arena(&arena, start, &q3),
+            "3.0 should NOT match [1.5, 2.5]"
+        );
+    }
+
+    #[test]
+    fn test_numeric_arena_fa_merge() {
+        // Test that numeric arena FAs can be merged
+        let fm1 = Arc::new(FieldMatcher::with_match_id(1));
+        let fm2 = Arc::new(FieldMatcher::with_match_id(2));
+
+        // FA1: x < 50
+        let (arena1, start1) = make_numeric_less_arena_fa(50.0, false, fm1.clone());
+
+        // FA2: x > 100
+        let (arena2, start2) = make_numeric_greater_arena_fa(100.0, false, fm2.clone());
+
+        // Merge: should match x < 50 OR x > 100
+        let (merged, merged_start) = merge_arena_dfas(&arena1, start1, &arena2, start2);
+
+        let q25 = q_num_from_f64(25.0);
+        let q75 = q_num_from_f64(75.0);
+        let q150 = q_num_from_f64(150.0);
+
+        let mut bufs = ArenaNfaBuffers::with_capacity(merged.len());
+
+        // 25 should match (< 50)
+        traverse_arena_nfa(&merged, merged_start, &q25, &mut bufs);
+        assert_eq!(bufs.transitions.len(), 1, "25 should match merged FA");
+        assert_eq!(bufs.transitions[0].match_id, Some(1));
+
+        // 75 should NOT match (50 <= 75 <= 100)
+        bufs.clear();
+        traverse_arena_nfa(&merged, merged_start, &q75, &mut bufs);
+        assert!(bufs.transitions.is_empty(), "75 should NOT match merged FA");
+
+        // 150 should match (> 100)
+        bufs.clear();
+        traverse_arena_nfa(&merged, merged_start, &q150, &mut bufs);
+        assert_eq!(bufs.transitions.len(), 1, "150 should match merged FA");
+        assert_eq!(bufs.transitions[0].match_id, Some(2));
+    }
+
+    #[test]
+    fn test_numeric_arena_fa_ordering_preserved() {
+        // Property test: Q-number ordering should match float ordering
+        let next_field = Arc::new(FieldMatcher::new());
+
+        // Test a series of values
+        let test_values = vec![
+            -1000.0, -100.0, -10.0, -1.0, -0.5, 0.0, 0.5, 1.0, 10.0, 100.0, 1000.0,
+        ];
+
+        for &bound in &test_values {
+            let (arena_less, start_less) =
+                make_numeric_less_arena_fa(bound, false, next_field.clone());
+            let (arena_greater, start_greater) =
+                make_numeric_greater_arena_fa(bound, false, next_field.clone());
+
+            for &val in &test_values {
+                let q_val = q_num_from_f64(val);
+
+                let matches_less = matches_arena(&arena_less, start_less, &q_val);
+                let matches_greater = matches_arena(&arena_greater, start_greater, &q_val);
+
+                if val < bound {
+                    assert!(
+                        matches_less,
+                        "{} should match < {} (Q-number ordering)",
+                        val, bound
+                    );
+                    assert!(
+                        !matches_greater,
+                        "{} should NOT match > {} (Q-number ordering)",
+                        val, bound
+                    );
+                } else if val > bound {
+                    assert!(
+                        !matches_less,
+                        "{} should NOT match < {} (Q-number ordering)",
+                        val, bound
+                    );
+                    assert!(
+                        matches_greater,
+                        "{} should match > {} (Q-number ordering)",
+                        val, bound
+                    );
+                } else {
+                    // val == bound, exclusive should not match
+                    assert!(
+                        !matches_less,
+                        "{} should NOT match < {} (exclusive)",
+                        val, bound
+                    );
+                    assert!(
+                        !matches_greater,
+                        "{} should NOT match > {} (exclusive)",
+                        val, bound
+                    );
+                }
+            }
         }
     }
 }
