@@ -1605,6 +1605,61 @@ fn make_range_arena_fa_step(
     arena.alloc_with_table(table)
 }
 
+// =============================================================================
+// String Arena FA Builders
+// =============================================================================
+
+/// Build an arena-based FA that matches an exact string.
+///
+/// This is the arena equivalent of `make_string_fa` for chain-based FAs.
+/// Creates a chain of states where each byte transitions to the next,
+/// with a final transition on VALUE_TERMINATOR to a match state.
+///
+/// # Arguments
+/// * `val` - The string bytes to match
+/// * `next_field` - The field matcher to transition to on match
+///
+/// # Returns
+/// A new arena containing the FA and its start state
+pub fn make_string_arena_fa(val: &[u8], next_field: Arc<FieldMatcher>) -> (StateArena, StateId) {
+    let mut arena = StateArena::new();
+
+    // Create the "match" state - has field_transitions to mark the match
+    let match_state = arena.alloc();
+    arena[match_state].field_transitions.push(next_field);
+
+    // Build the FA chain from end to start
+    let start = make_string_arena_fa_step(val, 0, match_state, &mut arena);
+
+    (arena, start)
+}
+
+/// Recursive helper for building string-matching FA.
+fn make_string_arena_fa_step(
+    val: &[u8],
+    index: usize,
+    match_state: StateId,
+    arena: &mut StateArena,
+) -> StateId {
+    if index >= val.len() {
+        // Final step: transition on VALUE_TERMINATOR to match state
+        return arena.alloc_with_table(ArenaSmallTable::with_mappings(
+            StateId::NONE,
+            &[ARENA_VALUE_TERMINATOR],
+            &[match_state],
+        ));
+    }
+
+    // Recursive step: build rest of chain first, then prepend current byte
+    let continuation = make_string_arena_fa_step(val, index + 1, match_state, arena);
+
+    arena.alloc_with_table(ArenaSmallTable::with_mappings(
+        StateId::NONE,
+        &[val[index]],
+        &[continuation],
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3165,6 +3220,167 @@ mod nfa_merge_tests {
         assert!(
             merged_start3.is_none(),
             "Merging two empty arenas should return NONE"
+        );
+    }
+}
+
+// =============================================================================
+// String/Prefix/Shellstyle Arena FA Builder Tests
+// =============================================================================
+
+#[cfg(test)]
+mod string_arena_tests {
+    use super::*;
+
+    /// Helper to check if a value matches against an arena FA
+    fn matches_value(arena: &StateArena, start: StateId, value: &[u8]) -> bool {
+        let mut bufs = ArenaNfaBuffers::with_capacity(arena.len());
+        traverse_arena_nfa(arena, start, value, &mut bufs);
+        !bufs.transitions.is_empty()
+    }
+
+    #[test]
+    fn test_string_arena_fa_basic() {
+        let fm = Arc::new(FieldMatcher::with_match_id(1));
+        let (arena, start) = make_string_arena_fa(b"hello", fm.clone());
+
+        // Should match exact string
+        assert!(
+            matches_value(&arena, start, b"hello"),
+            "Should match 'hello'"
+        );
+
+        // Should NOT match prefix
+        assert!(
+            !matches_value(&arena, start, b"hell"),
+            "Should NOT match 'hell' (prefix)"
+        );
+
+        // Should NOT match longer string
+        assert!(
+            !matches_value(&arena, start, b"helloworld"),
+            "Should NOT match 'helloworld' (longer)"
+        );
+
+        // Should NOT match different string
+        assert!(
+            !matches_value(&arena, start, b"world"),
+            "Should NOT match 'world'"
+        );
+
+        // Should NOT match empty string
+        assert!(
+            !matches_value(&arena, start, b""),
+            "Should NOT match empty string"
+        );
+    }
+
+    #[test]
+    fn test_string_arena_fa_empty_string() {
+        let fm = Arc::new(FieldMatcher::with_match_id(1));
+        let (arena, start) = make_string_arena_fa(b"", fm.clone());
+
+        // Should match empty string
+        assert!(
+            matches_value(&arena, start, b""),
+            "Should match empty string"
+        );
+
+        // Should NOT match non-empty string
+        assert!(!matches_value(&arena, start, b"a"), "Should NOT match 'a'");
+    }
+
+    #[test]
+    fn test_string_arena_fa_single_char() {
+        let fm = Arc::new(FieldMatcher::with_match_id(1));
+        let (arena, start) = make_string_arena_fa(b"x", fm.clone());
+
+        // Should match single character
+        assert!(matches_value(&arena, start, b"x"), "Should match 'x'");
+
+        // Should NOT match different single char
+        assert!(!matches_value(&arena, start, b"y"), "Should NOT match 'y'");
+
+        // Should NOT match longer string
+        assert!(
+            !matches_value(&arena, start, b"xy"),
+            "Should NOT match 'xy'"
+        );
+    }
+
+    #[test]
+    fn test_string_arena_fa_utf8() {
+        let fm = Arc::new(FieldMatcher::with_match_id(1));
+        let (arena, start) = make_string_arena_fa("café".as_bytes(), fm.clone());
+
+        // Should match UTF-8 string
+        assert!(
+            matches_value(&arena, start, "café".as_bytes()),
+            "Should match 'café'"
+        );
+
+        // Should NOT match ASCII-only
+        assert!(
+            !matches_value(&arena, start, b"cafe"),
+            "Should NOT match 'cafe'"
+        );
+    }
+
+    #[test]
+    fn test_string_arena_fa_merge() {
+        let fm1 = Arc::new(FieldMatcher::with_match_id(1));
+        let fm2 = Arc::new(FieldMatcher::with_match_id(2));
+
+        let (arena1, start1) = make_string_arena_fa(b"foo", fm1.clone());
+        let (arena2, start2) = make_string_arena_fa(b"bar", fm2.clone());
+
+        let (merged, merged_start) = merge_arena_dfas(&arena1, start1, &arena2, start2);
+
+        // Should match both patterns
+        assert!(
+            matches_value(&merged, merged_start, b"foo"),
+            "Merged should match 'foo'"
+        );
+        assert!(
+            matches_value(&merged, merged_start, b"bar"),
+            "Merged should match 'bar'"
+        );
+
+        // Should NOT match other strings
+        assert!(
+            !matches_value(&merged, merged_start, b"baz"),
+            "Merged should NOT match 'baz'"
+        );
+    }
+
+    #[test]
+    fn test_string_arena_fa_merge_common_prefix() {
+        let fm1 = Arc::new(FieldMatcher::with_match_id(1));
+        let fm2 = Arc::new(FieldMatcher::with_match_id(2));
+
+        let (arena1, start1) = make_string_arena_fa(b"prefix_one", fm1.clone());
+        let (arena2, start2) = make_string_arena_fa(b"prefix_two", fm2.clone());
+
+        let (merged, merged_start) = merge_arena_dfas(&arena1, start1, &arena2, start2);
+
+        // Should match both patterns with common prefix
+        assert!(
+            matches_value(&merged, merged_start, b"prefix_one"),
+            "Merged should match 'prefix_one'"
+        );
+        assert!(
+            matches_value(&merged, merged_start, b"prefix_two"),
+            "Merged should match 'prefix_two'"
+        );
+
+        // Should NOT match prefix alone
+        assert!(
+            !matches_value(&merged, merged_start, b"prefix"),
+            "Merged should NOT match 'prefix'"
+        );
+        assert!(
+            !matches_value(&merged, merged_start, b"prefix_"),
+            "Merged should NOT match 'prefix_'"
         );
     }
 }
