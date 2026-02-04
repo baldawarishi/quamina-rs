@@ -679,7 +679,7 @@ cargo doc --no-deps --open
   - Updated `freeze_value_matcher` to copy numeric arena
   - Marked old chain-based numeric FA builders as deprecated (#[allow(dead_code)])
   - Commit: `f78eaa8` (combined with Step 1.3)
-- [x] Step 1.4.1: Fix Performance Regression
+- [x] Step 1.4.1: Fix Performance Regression - Part 1
   - Root cause: ArenaNfaBuffers allocation and HashSet allocation in traverse_arena_nfa
   - Fixes:
     - Added `arena_bufs: ArenaNfaBuffers` to `NfaBuffers` for reuse
@@ -689,6 +689,22 @@ cargo doc --no-deps --open
   - Performance: ~470 ns → ~337 ns (28% improvement)
   - Verified with Miri for memory safety
   - Commit: `ebca033`
+- [x] Step 1.4.2: Fix Performance Regression - Part 2
+  - Root cause: Vec clone in epsilon closure return, slow path for DFA patterns
+  - Fixes:
+    - Added fast path for DFA states (no epsilon transitions) - skips buffer operations
+    - Use SmallVec<[StateId; 4]> instead of Vec for closure results (stack-allocated)
+  - Performance: ~337 ns → ~238 ns (29% improvement)
+  - Total improvement: ~470 ns → ~238 ns (49% faster!)
+  - Verified with Miri for memory safety
+  - Commit: `e49fc8a`
+
+### Current Performance:
+| Benchmark | Before | After | Improvement |
+|-----------|--------|-------|-------------|
+| numeric_range_single | 470 ns | 238 ns | 49% |
+| numeric_range_two_sided | 436 ns | 241 ns | 45% |
+| numeric_range_10_patterns | 495 ns | 291 ns | 41% |
 
 ### Next Step:
 **Phase 1, Step 1.5**: Remove Chain-Based Numeric FA Code
