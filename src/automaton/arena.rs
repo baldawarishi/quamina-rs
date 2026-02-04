@@ -1853,6 +1853,77 @@ fn build_wildcard_arena_spinout(continuation: StateId, arena: &mut StateArena) -
     start
 }
 
+/// Build an arena-based FA that matches wildcard patterns with escape sequences.
+///
+/// This is the arena equivalent of `make_wildcard_fa` for chain-based FAs.
+/// Similar to shellstyle patterns but with escape sequence support:
+/// - `*` matches zero or more characters
+/// - `\*` matches literal asterisk
+/// - `\\` matches literal backslash
+///
+/// # Arguments
+/// * `pattern` - The pattern bytes (with `*` as wildcard, `\` for escape)
+/// * `next_field` - The field matcher to transition to on match
+///
+/// # Returns
+/// A new arena containing the FA and its start state
+pub fn make_wildcard_arena_fa(
+    pattern: &[u8],
+    next_field: Arc<FieldMatcher>,
+) -> (StateArena, StateId) {
+    let mut arena = StateArena::new();
+
+    // Create the "match" state - has field_transitions to mark the match
+    let match_state = arena.alloc();
+    arena[match_state].field_transitions.push(next_field);
+
+    // Parse the pattern into segments (handles escape sequences)
+    let segments = parse_wildcard_segments(pattern);
+
+    // Build the FA from segments (reuse shellstyle segment builder)
+    let start = build_shellstyle_arena_segments(&segments, 0, match_state, &mut arena);
+
+    (arena, start)
+}
+
+/// Parse a wildcard pattern into segments, handling escape sequences.
+///
+/// Differences from shellstyle:
+/// - `\*` becomes literal `*`
+/// - `\\` becomes literal `\`
+/// - Other `\x` sequences pass through as literal (both chars)
+fn parse_wildcard_segments(pattern: &[u8]) -> Vec<ShellstyleSegment> {
+    let mut segments = Vec::new();
+    let mut i = 0;
+
+    while i < pattern.len() {
+        if pattern[i] == b'*' {
+            segments.push(ShellstyleSegment::Wildcard);
+            i += 1;
+        } else if pattern[i] == b'\\' && i + 1 < pattern.len() {
+            // Escape sequence - consume the escaped character
+            let escaped = pattern[i + 1];
+            // Start or extend literal segment with escaped character
+            if let Some(ShellstyleSegment::Literal(ref mut bytes)) = segments.last_mut() {
+                bytes.push(escaped);
+            } else {
+                segments.push(ShellstyleSegment::Literal(vec![escaped]));
+            }
+            i += 2;
+        } else {
+            // Regular character - add to literal segment
+            if let Some(ShellstyleSegment::Literal(ref mut bytes)) = segments.last_mut() {
+                bytes.push(pattern[i]);
+            } else {
+                segments.push(ShellstyleSegment::Literal(vec![pattern[i]]));
+            }
+            i += 1;
+        }
+    }
+
+    segments
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3905,6 +3976,158 @@ mod shellstyle_arena_tests {
         assert!(
             matches_value(&merged, merged_start, b"foobar"),
             "Merged should match 'foobar'"
+        );
+        // "baz" matches neither
+        assert!(
+            !matches_value(&merged, merged_start, b"baz"),
+            "Merged should NOT match 'baz'"
+        );
+    }
+}
+
+#[cfg(test)]
+mod wildcard_arena_tests {
+    use super::*;
+
+    /// Helper to check if a value matches against an arena FA
+    fn matches_value(arena: &StateArena, start: StateId, value: &[u8]) -> bool {
+        let mut bufs = ArenaNfaBuffers::with_capacity(arena.len());
+        traverse_arena_nfa(arena, start, value, &mut bufs);
+        !bufs.transitions.is_empty()
+    }
+
+    #[test]
+    fn test_wildcard_arena_fa_basic() {
+        // Same as shellstyle for basic patterns
+        let fm = Arc::new(FieldMatcher::with_match_id(1));
+        let (arena, start) = make_wildcard_arena_fa(b"foo*bar", fm.clone());
+
+        assert!(
+            matches_value(&arena, start, b"foobar"),
+            "Should match 'foobar'"
+        );
+        assert!(
+            matches_value(&arena, start, b"foo123bar"),
+            "Should match 'foo123bar'"
+        );
+        assert!(
+            !matches_value(&arena, start, b"foo"),
+            "Should NOT match 'foo'"
+        );
+    }
+
+    #[test]
+    fn test_wildcard_arena_fa_escape_star() {
+        // Pattern: "foo\*bar" - matches literal "foo*bar"
+        let fm = Arc::new(FieldMatcher::with_match_id(1));
+        let (arena, start) = make_wildcard_arena_fa(b"foo\\*bar", fm.clone());
+
+        assert!(
+            matches_value(&arena, start, b"foo*bar"),
+            "Should match 'foo*bar'"
+        );
+        assert!(
+            !matches_value(&arena, start, b"foobar"),
+            "Should NOT match 'foobar'"
+        );
+        assert!(
+            !matches_value(&arena, start, b"foo123bar"),
+            "Should NOT match 'foo123bar'"
+        );
+    }
+
+    #[test]
+    fn test_wildcard_arena_fa_escape_backslash() {
+        // Pattern: "foo\\bar" - matches "foo\bar"
+        let fm = Arc::new(FieldMatcher::with_match_id(1));
+        let (arena, start) = make_wildcard_arena_fa(b"foo\\\\bar", fm.clone());
+
+        assert!(
+            matches_value(&arena, start, b"foo\\bar"),
+            "Should match 'foo\\bar'"
+        );
+        assert!(
+            !matches_value(&arena, start, b"foobar"),
+            "Should NOT match 'foobar'"
+        );
+    }
+
+    #[test]
+    fn test_wildcard_arena_fa_escape_with_wildcard() {
+        // Pattern: "foo\\*bar" - matches "foo\" followed by anything then "bar"
+        let fm = Arc::new(FieldMatcher::with_match_id(1));
+        let (arena, start) = make_wildcard_arena_fa(b"foo\\\\*bar", fm.clone());
+
+        assert!(
+            matches_value(&arena, start, b"foo\\bar"),
+            "Should match 'foo\\bar'"
+        );
+        assert!(
+            matches_value(&arena, start, b"foo\\123bar"),
+            "Should match 'foo\\123bar'"
+        );
+        assert!(
+            !matches_value(&arena, start, b"foobar"),
+            "Should NOT match 'foobar'"
+        );
+    }
+
+    #[test]
+    fn test_wildcard_arena_fa_star_at_end_with_escape() {
+        // Pattern: "foo\**" - matches "foo*" followed by anything
+        let fm = Arc::new(FieldMatcher::with_match_id(1));
+        let (arena, start) = make_wildcard_arena_fa(b"foo\\**", fm.clone());
+
+        assert!(matches_value(&arena, start, b"foo*"), "Should match 'foo*'");
+        assert!(
+            matches_value(&arena, start, b"foo*bar"),
+            "Should match 'foo*bar'"
+        );
+        assert!(
+            !matches_value(&arena, start, b"foo"),
+            "Should NOT match 'foo'"
+        );
+        assert!(
+            !matches_value(&arena, start, b"foobar"),
+            "Should NOT match 'foobar'"
+        );
+    }
+
+    #[test]
+    fn test_wildcard_arena_fa_no_escape() {
+        // Pattern without escape - same as shellstyle
+        let fm = Arc::new(FieldMatcher::with_match_id(1));
+        let (arena, start) = make_wildcard_arena_fa(b"hello", fm.clone());
+
+        assert!(
+            matches_value(&arena, start, b"hello"),
+            "Should match 'hello'"
+        );
+        assert!(
+            !matches_value(&arena, start, b"helloworld"),
+            "Should NOT match 'helloworld'"
+        );
+    }
+
+    #[test]
+    fn test_wildcard_arena_fa_merge() {
+        let fm1 = Arc::new(FieldMatcher::with_match_id(1));
+        let fm2 = Arc::new(FieldMatcher::with_match_id(2));
+
+        let (arena1, start1) = make_wildcard_arena_fa(b"foo\\*", fm1.clone());
+        let (arena2, start2) = make_wildcard_arena_fa(b"bar*", fm2.clone());
+
+        let (merged, merged_start) = merge_arena_nfas(&arena1, start1, &arena2, start2);
+
+        // "foo*" matches exactly
+        assert!(
+            matches_value(&merged, merged_start, b"foo*"),
+            "Merged should match 'foo*'"
+        );
+        // "bar" matches bar*
+        assert!(
+            matches_value(&merged, merged_start, b"bar"),
+            "Merged should match 'bar'"
         );
         // "baz" matches neither
         assert!(
