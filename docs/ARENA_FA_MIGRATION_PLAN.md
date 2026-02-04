@@ -749,8 +749,33 @@ cargo doc --no-deps --open
   - Verified with Miri for memory safety
   - Commit: `1a2933d`
 
+- [x] Step 2.2: Add Arena FA Builders for All Pattern Types
+  - Migrated all 7 pattern builders from chain FA to arena FA:
+    1. `make_string_arena_fa` - exact string matching with VALUE_TERMINATOR
+    2. `make_prefix_arena_fa` - prefix matching with default transitions
+    3. `make_shellstyle_arena_fa` - shell-style wildcards with spinout states
+    4. `make_wildcard_arena_fa` - wildcards with escape sequence handling (\*, \\)
+    5. `make_anything_but_arena_fa` - negative matching with trie structure
+       - Added `default` field to ArenaSmallTable for catch-all transitions
+       - Added `sparse_transitions` method for trie building
+    6. `make_monocase_arena_fa` - case-insensitive with full Unicode folding
+    7. `make_cidr_arena_fa` - IPv4/IPv6 CIDR ranges with epsilon transitions
+  - Each builder follows TDD with comprehensive tests:
+    - Basic matching, edge cases (empty, single char)
+    - UTF-8 support where applicable
+    - FA merging with `merge_arena_nfas`
+  - All verified with Miri for memory safety
+  - Commits:
+    - `8595b53` - make_string_arena_fa
+    - `8595b53` - make_prefix_arena_fa
+    - `878419c` - make_shellstyle_arena_fa
+    - `f1b28b1` - make_wildcard_arena_fa
+    - `6425952` - make_anything_but_arena_fa
+    - `fc84b44` - make_monocase_arena_fa
+    - `502176f` - make_cidr_arena_fa
+
 ### Next Step:
-**Phase 2, Step 2.2**: Add Arena FA Builders for All Pattern Types
+**Phase 2, Step 2.3**: Migrate MutableValueMatcher to Arena-Only
 
 ### Blockers:
 None
