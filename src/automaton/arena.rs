@@ -90,6 +90,8 @@ pub struct ArenaSmallTable {
     pub spinout: StateId,
     /// Acceleration info for self-loop states (exit bytes for memchr skip)
     pub accel: Option<AccelInfo>,
+    /// Default transition (computed after pack)
+    pub default: StateId,
 }
 
 impl Default for ArenaSmallTable {
@@ -107,6 +109,7 @@ impl ArenaSmallTable {
             epsilons: Vec::new(),
             spinout: StateId::NONE,
             accel: None,
+            default: StateId::NONE,
         }
     }
 
@@ -127,6 +130,7 @@ impl ArenaSmallTable {
         }
 
         let mut table = Self::new();
+        table.default = default;
         table.pack(&unpacked);
         table
     }
@@ -148,6 +152,9 @@ impl ArenaSmallTable {
         // Final entry
         self.ceilings.push(BYTE_CEILING as u8);
         self.steps.push(current);
+
+        // Compute default as the most common transition
+        // For anything-but, we explicitly set it in with_mappings
     }
 
     /// Get the state for a given byte (deterministic step).
@@ -165,6 +172,25 @@ impl ArenaSmallTable {
     #[inline]
     pub fn step(&self, byte: u8) -> (StateId, &[StateId]) {
         (self.dstep(byte), &self.epsilons)
+    }
+
+    /// Iterate over sparse transitions (byte, state) pairs that differ from the default.
+    pub fn sparse_transitions(&self) -> impl Iterator<Item = (u8, StateId)> + '_ {
+        let mut result = Vec::new();
+        let mut prev_ceiling: u8 = 0;
+
+        for (i, &ceiling) in self.ceilings.iter().enumerate() {
+            let state = self.steps[i];
+            if state != self.default {
+                // This range has a non-default transition
+                for byte in prev_ceiling..ceiling {
+                    result.push((byte, state));
+                }
+            }
+            prev_ceiling = ceiling;
+        }
+
+        result.into_iter()
     }
 }
 
@@ -607,6 +633,7 @@ fn clone_state_recursive(
         epsilons: Vec::with_capacity(old_table.epsilons.len()),
         spinout: StateId::NONE,
         accel: old_table.accel.clone(),
+        default: StateId::NONE,
     };
 
     // Remap steps
@@ -624,6 +651,11 @@ fn clone_state_recursive(
     // Remap spinout
     if !old_table.spinout.is_none() {
         new_table.spinout = clone_state_recursive(arena, old_table.spinout, new_arena, id_map);
+    }
+
+    // Remap default
+    if !old_table.default.is_none() {
+        new_table.default = clone_state_recursive(arena, old_table.default, new_arena, id_map);
     }
 
     new_arena[new_id].table = new_table;
@@ -716,6 +748,7 @@ fn remap_table_recursive(
         epsilons: Vec::with_capacity(table.epsilons.len()),
         spinout: StateId::NONE,
         accel: table.accel.clone(),
+        default: StateId::NONE,
     };
 
     for &step_id in &table.steps {
@@ -743,6 +776,30 @@ fn remap_table_recursive(
             };
             new_table.steps.push(merged);
         }
+    }
+
+    // Remap default
+    if !table.default.is_none() {
+        let merged = if is_arena1 {
+            merge_arena_states_recursive(
+                source_arena,
+                table.default,
+                _other_arena,
+                StateId::NONE,
+                new_arena,
+                memo,
+            )
+        } else {
+            merge_arena_states_recursive(
+                _other_arena,
+                StateId::NONE,
+                source_arena,
+                table.default,
+                new_arena,
+                memo,
+            )
+        };
+        new_table.default = merged;
     }
 
     for &eps_id in &table.epsilons {
@@ -1058,6 +1115,7 @@ fn merge_arena_nfa_states_recursive(
             epsilons: vec![cloned1, cloned2],
             spinout: StateId::NONE,
             accel: None,
+            default: StateId::NONE,
         };
         new_arena[new_id].field_transitions = Vec::new();
         return new_id;
@@ -1112,6 +1170,7 @@ fn clone_state_into_arena(
         epsilons: Vec::with_capacity(old_table.epsilons.len()),
         spinout: StateId::NONE,
         accel: old_table.accel.clone(),
+        default: StateId::NONE,
     };
 
     // Remap steps
@@ -1130,6 +1189,12 @@ fn clone_state_into_arena(
     if !old_table.spinout.is_none() {
         new_table.spinout =
             clone_state_into_arena(source_arena, old_table.spinout, target_arena, id_map);
+    }
+
+    // Remap default
+    if !old_table.default.is_none() {
+        new_table.default =
+            clone_state_into_arena(source_arena, old_table.default, target_arena, id_map);
     }
 
     target_arena[new_id].table = new_table;
@@ -1152,6 +1217,7 @@ fn remap_nfa_table_recursive(
         epsilons: Vec::with_capacity(table.epsilons.len()),
         spinout: StateId::NONE,
         accel: table.accel.clone(),
+        default: StateId::NONE,
     };
 
     for &step_id in &table.steps {
@@ -1179,6 +1245,30 @@ fn remap_nfa_table_recursive(
             };
             new_table.steps.push(merged);
         }
+    }
+
+    // Remap default
+    if !table.default.is_none() {
+        let merged = if is_arena1 {
+            merge_arena_nfa_states_recursive(
+                source_arena,
+                table.default,
+                _other_arena,
+                StateId::NONE,
+                new_arena,
+                memo,
+            )
+        } else {
+            merge_arena_nfa_states_recursive(
+                _other_arena,
+                StateId::NONE,
+                source_arena,
+                table.default,
+                new_arena,
+                memo,
+            )
+        };
+        new_table.default = merged;
     }
 
     for &eps_id in &table.epsilons {
@@ -1922,6 +2012,146 @@ fn parse_wildcard_segments(pattern: &[u8]) -> Vec<ShellstyleSegment> {
     }
 
     segments
+}
+
+/// Build an arena-based FA that matches anything NOT in the excluded list.
+///
+/// This is the arena equivalent of `make_anything_but_fa` for chain-based FAs.
+/// Uses a trie-like structure where:
+/// - Default transition goes to success state
+/// - Bytes that are prefixes of excluded values recurse
+/// - VALUE_TERMINATOR for excluded values goes to failure (no field transitions)
+///
+/// # Arguments
+/// * `excluded` - The list of excluded values (byte sequences)
+/// * `next_field` - The field matcher to transition to on success
+///
+/// # Returns
+/// A new arena containing the FA and its start state
+pub fn make_anything_but_arena_fa(
+    excluded: &[Vec<u8>],
+    next_field: Arc<FieldMatcher>,
+) -> (StateArena, StateId) {
+    let mut arena = StateArena::new();
+
+    // Success state - we match if we get here
+    let success = arena.alloc();
+    arena[success].field_transitions.push(next_field);
+
+    // Build the trie-like structure
+    let start = build_anything_but_step(excluded, 0, success, &mut arena);
+
+    (arena, start)
+}
+
+/// Build one step of the anything-but arena automaton.
+fn build_anything_but_step(
+    vals: &[Vec<u8>],
+    index: usize,
+    success: StateId,
+    arena: &mut StateArena,
+) -> StateId {
+    use std::collections::{HashMap, HashSet};
+
+    // Group values by the byte at current index
+    let mut vals_with_bytes_remaining: HashMap<u8, Vec<&Vec<u8>>> = HashMap::new();
+    let mut vals_ending_here: HashSet<u8> = HashSet::new();
+
+    for val in vals {
+        let last_index = val.len().saturating_sub(1);
+        if index <= last_index && !val.is_empty() {
+            let utf8_byte = val[index];
+            if index < last_index {
+                vals_with_bytes_remaining
+                    .entry(utf8_byte)
+                    .or_default()
+                    .push(val);
+            }
+            if index == last_index {
+                vals_ending_here.insert(utf8_byte);
+            }
+        }
+    }
+
+    // Collect all bytes that need special handling
+    let all_bytes: HashSet<u8> = vals_with_bytes_remaining
+        .keys()
+        .chain(vals_ending_here.iter())
+        .copied()
+        .collect();
+
+    // Build state for this step
+    let mut special_mappings: Vec<(u8, StateId)> = Vec::new();
+
+    for utf8_byte in all_bytes {
+        let has_continuation = vals_with_bytes_remaining.contains_key(&utf8_byte);
+        let ends_here = vals_ending_here.contains(&utf8_byte);
+
+        if has_continuation && ends_here {
+            // Both continues and ends - need combined state
+            let continuing_vals = vals_with_bytes_remaining.get(&utf8_byte).unwrap();
+            let owned_vals: Vec<Vec<u8>> = continuing_vals.iter().cloned().cloned().collect();
+
+            // Recurse for continuation
+            let continuation = build_anything_but_step(&owned_vals, index + 1, success, arena);
+
+            // Build combined state: fail on VALUE_TERMINATOR, inherit continuation for others
+            // We need to create a new state that merges the continuation but overrides VALUE_TERMINATOR
+            let fail_state = arena.alloc(); // Empty state = fail
+
+            // Build full unpacked table: start with success as default
+            let mut combined_unpacked: [StateId; BYTE_CEILING] = [success; BYTE_CEILING];
+
+            // Copy sparse transitions from continuation
+            for (byte, next) in arena[continuation].table.sparse_transitions() {
+                combined_unpacked[byte as usize] = next;
+            }
+
+            // Also copy default if continuation has one
+            if !arena[continuation].table.default.is_none() {
+                // Fill non-sparse positions with continuation's default
+                for slot in combined_unpacked.iter_mut() {
+                    if *slot == success {
+                        *slot = arena[continuation].table.default;
+                    }
+                }
+            }
+
+            // Override VALUE_TERMINATOR to fail
+            combined_unpacked[ARENA_VALUE_TERMINATOR as usize] = fail_state;
+
+            let combined_state = arena.alloc();
+            arena[combined_state].table.pack(&combined_unpacked);
+            special_mappings.push((utf8_byte, combined_state));
+        } else if has_continuation {
+            // Only continues
+            let continuing_vals = vals_with_bytes_remaining.get(&utf8_byte).unwrap();
+            let owned_vals: Vec<Vec<u8>> = continuing_vals.iter().cloned().cloned().collect();
+            let next_state = build_anything_but_step(&owned_vals, index + 1, success, arena);
+            special_mappings.push((utf8_byte, next_state));
+        } else if ends_here {
+            // Only ends here - fail on VALUE_TERMINATOR, success on other bytes
+            let fail_state = arena.alloc(); // Empty state = fail
+            let last_state = arena.alloc_with_table(ArenaSmallTable::with_mappings(
+                success, // Default: success on any other byte
+                &[ARENA_VALUE_TERMINATOR],
+                &[fail_state], // Fail on terminator
+            ));
+            special_mappings.push((utf8_byte, last_state));
+        }
+    }
+
+    // Build the start state with default to success
+    if special_mappings.is_empty() {
+        // No excluded values to track - just default to success
+        return arena.alloc_with_table(ArenaSmallTable::with_mappings(success, &[], &[]));
+    }
+
+    // Build state with default success and special transitions
+    let bytes: Vec<u8> = special_mappings.iter().map(|(b, _)| *b).collect();
+    let states: Vec<StateId> = special_mappings.iter().map(|(_, s)| *s).collect();
+
+    arena.alloc_with_table(ArenaSmallTable::with_mappings(success, &bytes, &states))
 }
 
 #[cfg(test)]
@@ -4133,6 +4363,132 @@ mod wildcard_arena_tests {
         assert!(
             !matches_value(&merged, merged_start, b"baz"),
             "Merged should NOT match 'baz'"
+        );
+    }
+}
+
+#[cfg(test)]
+mod anything_but_arena_tests {
+    use super::*;
+
+    /// Helper to check if a value matches against an arena FA
+    fn matches_value(arena: &StateArena, start: StateId, value: &[u8]) -> bool {
+        let mut bufs = ArenaNfaBuffers::with_capacity(arena.len());
+        traverse_arena_nfa(arena, start, value, &mut bufs);
+        !bufs.transitions.is_empty()
+    }
+
+    #[test]
+    fn test_anything_but_arena_fa_single_value() {
+        let fm = Arc::new(FieldMatcher::with_match_id(1));
+        let excluded = vec![b"foo".to_vec()];
+        let (arena, start) = make_anything_but_arena_fa(&excluded, fm.clone());
+
+        // Should NOT match excluded value
+        assert!(
+            !matches_value(&arena, start, b"foo"),
+            "Should NOT match excluded 'foo'"
+        );
+
+        // Should match other values
+        assert!(matches_value(&arena, start, b"bar"), "Should match 'bar'");
+        assert!(
+            matches_value(&arena, start, b"foobar"),
+            "Should match 'foobar' (longer than excluded)"
+        );
+        assert!(matches_value(&arena, start, b"fo"), "Should match 'fo'");
+        assert!(matches_value(&arena, start, b""), "Should match empty");
+    }
+
+    #[test]
+    fn test_anything_but_arena_fa_multiple_values() {
+        let fm = Arc::new(FieldMatcher::with_match_id(1));
+        let excluded = vec![b"foo".to_vec(), b"bar".to_vec()];
+        let (arena, start) = make_anything_but_arena_fa(&excluded, fm.clone());
+
+        // Should NOT match excluded values
+        assert!(
+            !matches_value(&arena, start, b"foo"),
+            "Should NOT match excluded 'foo'"
+        );
+        assert!(
+            !matches_value(&arena, start, b"bar"),
+            "Should NOT match excluded 'bar'"
+        );
+
+        // Should match other values
+        assert!(matches_value(&arena, start, b"baz"), "Should match 'baz'");
+        assert!(
+            matches_value(&arena, start, b"foobar"),
+            "Should match 'foobar'"
+        );
+    }
+
+    #[test]
+    fn test_anything_but_arena_fa_common_prefix() {
+        let fm = Arc::new(FieldMatcher::with_match_id(1));
+        let excluded = vec![b"foo".to_vec(), b"foobar".to_vec()];
+        let (arena, start) = make_anything_but_arena_fa(&excluded, fm.clone());
+
+        // Should NOT match excluded values
+        assert!(
+            !matches_value(&arena, start, b"foo"),
+            "Should NOT match excluded 'foo'"
+        );
+        assert!(
+            !matches_value(&arena, start, b"foobar"),
+            "Should NOT match excluded 'foobar'"
+        );
+
+        // Should match prefixes and other values
+        assert!(matches_value(&arena, start, b"fo"), "Should match 'fo'");
+        assert!(matches_value(&arena, start, b"foob"), "Should match 'foob'");
+        assert!(
+            matches_value(&arena, start, b"foobarbaz"),
+            "Should match 'foobarbaz'"
+        );
+    }
+
+    #[test]
+    fn test_anything_but_arena_fa_empty_excluded() {
+        let fm = Arc::new(FieldMatcher::with_match_id(1));
+        let excluded: Vec<Vec<u8>> = vec![];
+        let (arena, start) = make_anything_but_arena_fa(&excluded, fm.clone());
+
+        // Should match everything
+        assert!(
+            matches_value(&arena, start, b"anything"),
+            "Should match 'anything'"
+        );
+        assert!(matches_value(&arena, start, b""), "Should match empty");
+    }
+
+    #[test]
+    fn test_anything_but_arena_fa_merge() {
+        let fm1 = Arc::new(FieldMatcher::with_match_id(1));
+        let fm2 = Arc::new(FieldMatcher::with_match_id(2));
+
+        let (arena1, start1) = make_anything_but_arena_fa(&[b"foo".to_vec()], fm1.clone());
+        let (arena2, start2) = make_string_arena_fa(b"bar", fm2.clone());
+
+        let (merged, merged_start) = merge_arena_nfas(&arena1, start1, &arena2, start2);
+
+        // "foo" should NOT match anything-but (id=1) but also not string (id=2)
+        assert!(
+            !matches_value(&merged, merged_start, b"foo"),
+            "Merged should NOT match 'foo'"
+        );
+
+        // "bar" should match string (id=2)
+        assert!(
+            matches_value(&merged, merged_start, b"bar"),
+            "Merged should match 'bar'"
+        );
+
+        // "baz" should match anything-but (id=1)
+        assert!(
+            matches_value(&merged, merged_start, b"baz"),
+            "Merged should match 'baz'"
         );
     }
 }
