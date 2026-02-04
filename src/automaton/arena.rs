@@ -488,6 +488,368 @@ fn get_arena_epsilon_closure(
     bufs.closure_result.clone()
 }
 
+/// Merge two arena-based DFAs into one that matches either pattern.
+///
+/// This is the arena equivalent of `merge_fas` for chain-based FAs.
+/// For DFA-only patterns (no epsilons/spinouts), this is a simplified merge
+/// that recursively merges overlapping byte transitions.
+///
+/// # Arguments
+/// * `arena1` - First arena
+/// * `start1` - Start state in first arena (StateId::NONE if empty)
+/// * `arena2` - Second arena
+/// * `start2` - Start state in second arena (StateId::NONE if empty)
+///
+/// # Returns
+/// A new arena containing the merged DFA and its start state
+pub fn merge_arena_dfas(
+    arena1: &StateArena,
+    start1: StateId,
+    arena2: &StateArena,
+    start2: StateId,
+) -> (StateArena, StateId) {
+    use std::collections::HashMap;
+
+    // Handle empty cases
+    if start1.is_none() && start2.is_none() {
+        return (StateArena::new(), StateId::NONE);
+    }
+
+    if start1.is_none() {
+        // Clone arena2
+        return clone_arena_subset(arena2, start2);
+    }
+
+    if start2.is_none() {
+        // Clone arena1
+        return clone_arena_subset(arena1, start1);
+    }
+
+    // Memoization: (state1_id, state2_id) -> merged_state_id in new arena
+    // Use i32 to handle StateId::NONE as -1
+    type MemoKey = (i32, i32);
+    let mut memo: HashMap<MemoKey, StateId> = HashMap::new();
+    let mut new_arena = StateArena::new();
+
+    let start =
+        merge_arena_states_recursive(arena1, start1, arena2, start2, &mut new_arena, &mut memo);
+
+    (new_arena, start)
+}
+
+/// Clone a subset of an arena starting from a given state.
+fn clone_arena_subset(arena: &StateArena, start: StateId) -> (StateArena, StateId) {
+    use std::collections::HashMap;
+
+    if start.is_none() {
+        return (StateArena::new(), StateId::NONE);
+    }
+
+    let mut new_arena = StateArena::new();
+    let mut id_map: HashMap<u32, StateId> = HashMap::new();
+
+    clone_state_recursive(arena, start, &mut new_arena, &mut id_map);
+
+    let new_start = id_map.get(&start.0).copied().unwrap_or(StateId::NONE);
+    (new_arena, new_start)
+}
+
+/// Recursively clone a state and its descendants.
+fn clone_state_recursive(
+    arena: &StateArena,
+    state_id: StateId,
+    new_arena: &mut StateArena,
+    id_map: &mut std::collections::HashMap<u32, StateId>,
+) -> StateId {
+    if state_id.is_none() {
+        return StateId::NONE;
+    }
+
+    // Check if already cloned
+    if let Some(&new_id) = id_map.get(&state_id.0) {
+        return new_id;
+    }
+
+    // Allocate new state first (to handle cycles)
+    let new_id = new_arena.alloc();
+    id_map.insert(state_id.0, new_id);
+
+    let old_state = &arena[state_id];
+
+    // Clone field transitions (Arc clone is cheap)
+    new_arena[new_id].field_transitions = old_state.field_transitions.clone();
+
+    // Clone table with remapped state IDs
+    let old_table = &old_state.table;
+    let mut new_table = ArenaSmallTable {
+        ceilings: old_table.ceilings.clone(),
+        steps: Vec::with_capacity(old_table.steps.len()),
+        epsilons: Vec::with_capacity(old_table.epsilons.len()),
+        spinout: StateId::NONE,
+        accel: old_table.accel.clone(),
+    };
+
+    // Remap steps
+    for &step_id in &old_table.steps {
+        let new_step = clone_state_recursive(arena, step_id, new_arena, id_map);
+        new_table.steps.push(new_step);
+    }
+
+    // Remap epsilons
+    for &eps_id in &old_table.epsilons {
+        let new_eps = clone_state_recursive(arena, eps_id, new_arena, id_map);
+        new_table.epsilons.push(new_eps);
+    }
+
+    // Remap spinout
+    if !old_table.spinout.is_none() {
+        new_table.spinout = clone_state_recursive(arena, old_table.spinout, new_arena, id_map);
+    }
+
+    new_arena[new_id].table = new_table;
+
+    new_id
+}
+
+/// Recursively merge two states from different arenas.
+fn merge_arena_states_recursive(
+    arena1: &StateArena,
+    state1: StateId,
+    arena2: &StateArena,
+    state2: StateId,
+    new_arena: &mut StateArena,
+    memo: &mut std::collections::HashMap<(i32, i32), StateId>,
+) -> StateId {
+    // Convert to memo key (using -1 for NONE)
+    let key1 = if state1.is_none() {
+        -1
+    } else {
+        state1.0 as i32
+    };
+    let key2 = if state2.is_none() {
+        -1
+    } else {
+        state2.0 as i32
+    };
+    let key = (key1, key2);
+
+    // Check memo
+    if let Some(&cached) = memo.get(&key) {
+        return cached;
+    }
+
+    // Handle one-sided cases
+    if state1.is_none() && state2.is_none() {
+        return StateId::NONE;
+    }
+
+    // Allocate new state first (before recursion, to handle cycles)
+    let new_id = new_arena.alloc();
+    memo.insert(key, new_id);
+
+    if state1.is_none() {
+        // Copy from arena2
+        let s2 = &arena2[state2];
+        new_arena[new_id].field_transitions = s2.field_transitions.clone();
+        new_arena[new_id].table =
+            remap_table_recursive(arena2, &s2.table, arena1, new_arena, memo, false);
+        return new_id;
+    }
+
+    if state2.is_none() {
+        // Copy from arena1
+        let s1 = &arena1[state1];
+        new_arena[new_id].field_transitions = s1.field_transitions.clone();
+        new_arena[new_id].table =
+            remap_table_recursive(arena1, &s1.table, arena2, new_arena, memo, true);
+        return new_id;
+    }
+
+    // Both states exist - merge them
+    let s1 = &arena1[state1];
+    let s2 = &arena2[state2];
+
+    // Combine field transitions
+    let mut field_transitions = s1.field_transitions.clone();
+    field_transitions.extend(s2.field_transitions.iter().cloned());
+    new_arena[new_id].field_transitions = field_transitions;
+
+    // Merge tables byte-by-byte
+    new_arena[new_id].table =
+        merge_arena_tables(arena1, &s1.table, arena2, &s2.table, new_arena, memo);
+
+    new_id
+}
+
+/// Remap a table from one arena to the merged arena.
+fn remap_table_recursive(
+    source_arena: &StateArena,
+    table: &ArenaSmallTable,
+    _other_arena: &StateArena,
+    new_arena: &mut StateArena,
+    memo: &mut std::collections::HashMap<(i32, i32), StateId>,
+    is_arena1: bool,
+) -> ArenaSmallTable {
+    let mut new_table = ArenaSmallTable {
+        ceilings: table.ceilings.clone(),
+        steps: Vec::with_capacity(table.steps.len()),
+        epsilons: Vec::with_capacity(table.epsilons.len()),
+        spinout: StateId::NONE,
+        accel: table.accel.clone(),
+    };
+
+    for &step_id in &table.steps {
+        if step_id.is_none() {
+            new_table.steps.push(StateId::NONE);
+        } else {
+            let merged = if is_arena1 {
+                merge_arena_states_recursive(
+                    source_arena,
+                    step_id,
+                    _other_arena,
+                    StateId::NONE,
+                    new_arena,
+                    memo,
+                )
+            } else {
+                merge_arena_states_recursive(
+                    _other_arena,
+                    StateId::NONE,
+                    source_arena,
+                    step_id,
+                    new_arena,
+                    memo,
+                )
+            };
+            new_table.steps.push(merged);
+        }
+    }
+
+    for &eps_id in &table.epsilons {
+        if eps_id.is_none() {
+            new_table.epsilons.push(StateId::NONE);
+        } else {
+            let merged = if is_arena1 {
+                merge_arena_states_recursive(
+                    source_arena,
+                    eps_id,
+                    _other_arena,
+                    StateId::NONE,
+                    new_arena,
+                    memo,
+                )
+            } else {
+                merge_arena_states_recursive(
+                    _other_arena,
+                    StateId::NONE,
+                    source_arena,
+                    eps_id,
+                    new_arena,
+                    memo,
+                )
+            };
+            new_table.epsilons.push(merged);
+        }
+    }
+
+    if !table.spinout.is_none() {
+        let merged = if is_arena1 {
+            merge_arena_states_recursive(
+                source_arena,
+                table.spinout,
+                _other_arena,
+                StateId::NONE,
+                new_arena,
+                memo,
+            )
+        } else {
+            merge_arena_states_recursive(
+                _other_arena,
+                StateId::NONE,
+                source_arena,
+                table.spinout,
+                new_arena,
+                memo,
+            )
+        };
+        new_table.spinout = merged;
+    }
+
+    new_table
+}
+
+/// Merge two arena tables byte-by-byte.
+fn merge_arena_tables(
+    arena1: &StateArena,
+    table1: &ArenaSmallTable,
+    arena2: &StateArena,
+    table2: &ArenaSmallTable,
+    new_arena: &mut StateArena,
+    memo: &mut std::collections::HashMap<(i32, i32), StateId>,
+) -> ArenaSmallTable {
+    // Unpack both tables to 256-element arrays for simplicity
+    let mut unpacked1 = [StateId::NONE; BYTE_CEILING];
+    let mut unpacked2 = [StateId::NONE; BYTE_CEILING];
+
+    unpack_arena_table(table1, &mut unpacked1);
+    unpack_arena_table(table2, &mut unpacked2);
+
+    // Merge each byte
+    let mut merged_unpacked = [StateId::NONE; BYTE_CEILING];
+    for i in 0..BYTE_CEILING {
+        let s1 = unpacked1[i];
+        let s2 = unpacked2[i];
+
+        merged_unpacked[i] = merge_arena_states_recursive(arena1, s1, arena2, s2, new_arena, memo);
+    }
+
+    // Pack result
+    let mut result = ArenaSmallTable::new();
+    result.pack(&merged_unpacked);
+
+    // Merge epsilons (for DFA, these should be empty, but handle them anyway)
+    for &eps1 in &table1.epsilons {
+        let merged =
+            merge_arena_states_recursive(arena1, eps1, arena2, StateId::NONE, new_arena, memo);
+        if !merged.is_none() {
+            result.epsilons.push(merged);
+        }
+    }
+    for &eps2 in &table2.epsilons {
+        let merged =
+            merge_arena_states_recursive(arena1, StateId::NONE, arena2, eps2, new_arena, memo);
+        if !merged.is_none() {
+            result.epsilons.push(merged);
+        }
+    }
+
+    // Merge spinouts (for DFA, these should be NONE)
+    if !table1.spinout.is_none() || !table2.spinout.is_none() {
+        result.spinout = merge_arena_states_recursive(
+            arena1,
+            table1.spinout,
+            arena2,
+            table2.spinout,
+            new_arena,
+            memo,
+        );
+    }
+
+    result
+}
+
+/// Unpack an ArenaSmallTable into a 256-element array.
+fn unpack_arena_table(table: &ArenaSmallTable, unpacked: &mut [StateId; BYTE_CEILING]) {
+    let mut byte_idx = 0usize;
+    for (i, &ceiling) in table.ceilings.iter().enumerate() {
+        let ceiling = ceiling as usize;
+        while byte_idx < ceiling && byte_idx < BYTE_CEILING {
+            unpacked[byte_idx] = table.steps[i];
+            byte_idx += 1;
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -874,5 +1236,271 @@ mod tests {
         assert_eq!(try_accelerate_arena(&table, b"abcdefghijz"), Some(10)); // finds 'z' at position 10
         assert_eq!(try_accelerate_arena(&table, b"abcxyz"), Some(3)); // finds 'x' at position 3
         assert!(try_accelerate_arena(&table, b"abcdefghij").is_none()); // none of x, y, z
+    }
+}
+
+#[cfg(test)]
+mod merge_tests {
+    use super::*;
+
+    /// Helper to create a simple arena with a single transition: start --(byte)--> end
+    /// The end state has a field transition to the given FieldMatcher.
+    fn make_single_byte_arena(byte: u8, fm: Arc<FieldMatcher>) -> (StateArena, StateId) {
+        let mut arena = StateArena::new();
+
+        // End state with field transition
+        let end = arena.alloc();
+        arena[end].field_transitions.push(fm);
+
+        // Terminator state (required for VALUE_TERMINATOR handling)
+        let term = arena.alloc_with_table(ArenaSmallTable::with_mappings(
+            StateId::NONE,
+            &[ARENA_VALUE_TERMINATOR],
+            &[end],
+        ));
+
+        // Start state transitions on byte to terminator
+        let start = arena.alloc_with_table(ArenaSmallTable::with_mappings(
+            StateId::NONE,
+            &[byte],
+            &[term],
+        ));
+
+        (arena, start)
+    }
+
+    #[test]
+    fn test_merge_empty_arenas() {
+        let arena1 = StateArena::new();
+        let arena2 = StateArena::new();
+
+        let (merged, start) = merge_arena_dfas(&arena1, StateId::NONE, &arena2, StateId::NONE);
+
+        assert!(
+            start.is_none(),
+            "Merging empty arenas should return NONE start"
+        );
+        assert!(merged.is_empty(), "Merged arena should be empty");
+    }
+
+    #[test]
+    fn test_merge_one_empty_arena() {
+        let fm = Arc::new(FieldMatcher::new());
+        let (arena1, start1) = make_single_byte_arena(b'a', fm.clone());
+
+        // Merge with empty arena
+        let (merged, start) = merge_arena_dfas(&arena1, start1, &StateArena::new(), StateId::NONE);
+
+        // Should work like arena1
+        let mut bufs = ArenaNfaBuffers::with_capacity(merged.len());
+        traverse_arena_nfa(&merged, start, b"a", &mut bufs);
+        assert_eq!(bufs.transitions.len(), 1, "Should match 'a'");
+    }
+
+    #[test]
+    fn test_merge_single_transition() {
+        let fm1 = Arc::new(FieldMatcher::new());
+        let fm2 = Arc::new(FieldMatcher::new());
+
+        // Arena1 matches 'a', Arena2 matches 'b'
+        let (arena1, start1) = make_single_byte_arena(b'a', fm1.clone());
+        let (arena2, start2) = make_single_byte_arena(b'b', fm2.clone());
+
+        let (merged, start) = merge_arena_dfas(&arena1, start1, &arena2, start2);
+
+        let mut bufs = ArenaNfaBuffers::with_capacity(merged.len());
+
+        // Should match 'a'
+        traverse_arena_nfa(&merged, start, b"a", &mut bufs);
+        assert_eq!(bufs.transitions.len(), 1, "Merged should match 'a'");
+        assert!(Arc::ptr_eq(&bufs.transitions[0], &fm1));
+
+        // Should match 'b'
+        bufs.clear();
+        traverse_arena_nfa(&merged, start, b"b", &mut bufs);
+        assert_eq!(bufs.transitions.len(), 1, "Merged should match 'b'");
+        assert!(Arc::ptr_eq(&bufs.transitions[0], &fm2));
+
+        // Should NOT match 'c'
+        bufs.clear();
+        traverse_arena_nfa(&merged, start, b"c", &mut bufs);
+        assert!(bufs.transitions.is_empty(), "Merged should NOT match 'c'");
+    }
+
+    #[test]
+    fn test_merge_overlapping_transitions() {
+        let fm1 = Arc::new(FieldMatcher::new());
+        let fm2 = Arc::new(FieldMatcher::new());
+
+        // Both arenas match 'a' but with different field matchers
+        let (arena1, start1) = make_single_byte_arena(b'a', fm1.clone());
+        let (arena2, start2) = make_single_byte_arena(b'a', fm2.clone());
+
+        let (merged, start) = merge_arena_dfas(&arena1, start1, &arena2, start2);
+
+        let mut bufs = ArenaNfaBuffers::with_capacity(merged.len());
+        traverse_arena_nfa(&merged, start, b"a", &mut bufs);
+
+        // Should have both field matchers
+        assert_eq!(
+            bufs.transitions.len(),
+            2,
+            "Overlapping merge should have 2 transitions"
+        );
+    }
+
+    #[test]
+    fn test_merge_preserves_field_transitions() {
+        let fm1 = Arc::new(FieldMatcher::with_match_id(100));
+        let fm2 = Arc::new(FieldMatcher::with_match_id(200));
+
+        let (arena1, start1) = make_single_byte_arena(b'x', fm1.clone());
+        let (arena2, start2) = make_single_byte_arena(b'y', fm2.clone());
+
+        let (merged, start) = merge_arena_dfas(&arena1, start1, &arena2, start2);
+
+        let mut bufs = ArenaNfaBuffers::with_capacity(merged.len());
+
+        // Check 'x' has fm1
+        traverse_arena_nfa(&merged, start, b"x", &mut bufs);
+        assert_eq!(bufs.transitions.len(), 1);
+        assert_eq!(bufs.transitions[0].match_id, Some(100));
+
+        // Check 'y' has fm2
+        bufs.clear();
+        traverse_arena_nfa(&merged, start, b"y", &mut bufs);
+        assert_eq!(bufs.transitions.len(), 1);
+        assert_eq!(bufs.transitions[0].match_id, Some(200));
+    }
+
+    #[test]
+    fn test_merge_multiple_arenas_associative() {
+        // (A merge B) merge C should equal A merge (B merge C)
+        let fm_a = Arc::new(FieldMatcher::with_match_id(1));
+        let fm_b = Arc::new(FieldMatcher::with_match_id(2));
+        let fm_c = Arc::new(FieldMatcher::with_match_id(3));
+
+        let (arena_a, start_a) = make_single_byte_arena(b'a', fm_a.clone());
+        let (arena_b, start_b) = make_single_byte_arena(b'b', fm_b.clone());
+        let (arena_c, start_c) = make_single_byte_arena(b'c', fm_c.clone());
+
+        // (A merge B) merge C
+        let (ab, ab_start) = merge_arena_dfas(&arena_a, start_a, &arena_b, start_b);
+        let (abc_left, abc_left_start) = merge_arena_dfas(&ab, ab_start, &arena_c, start_c);
+
+        // A merge (B merge C)
+        let (bc, bc_start) = merge_arena_dfas(&arena_b, start_b, &arena_c, start_c);
+        let (abc_right, abc_right_start) = merge_arena_dfas(&arena_a, start_a, &bc, bc_start);
+
+        // Both should match 'a', 'b', 'c'
+        let mut bufs1 = ArenaNfaBuffers::with_capacity(abc_left.len());
+        let mut bufs2 = ArenaNfaBuffers::with_capacity(abc_right.len());
+
+        for byte in [b'a', b'b', b'c'] {
+            bufs1.clear();
+            bufs2.clear();
+            traverse_arena_nfa(&abc_left, abc_left_start, &[byte], &mut bufs1);
+            traverse_arena_nfa(&abc_right, abc_right_start, &[byte], &mut bufs2);
+
+            assert_eq!(
+                bufs1.transitions.len(),
+                bufs2.transitions.len(),
+                "Associativity: both should have same number of transitions for '{}'",
+                byte as char
+            );
+            assert_eq!(
+                bufs1.transitions.len(),
+                1,
+                "Should match '{}'",
+                byte as char
+            );
+        }
+    }
+
+    #[test]
+    fn test_merge_multi_byte_sequences() {
+        // Test merging patterns like "ab" and "ac"
+        let fm1 = Arc::new(FieldMatcher::with_match_id(1));
+        let fm2 = Arc::new(FieldMatcher::with_match_id(2));
+
+        // Build "ab" arena
+        let (arena1, start1) = {
+            let mut arena = StateArena::new();
+            let end = arena.alloc();
+            arena[end].field_transitions.push(fm1.clone());
+
+            let term = arena.alloc_with_table(ArenaSmallTable::with_mappings(
+                StateId::NONE,
+                &[ARENA_VALUE_TERMINATOR],
+                &[end],
+            ));
+
+            let state_b = arena.alloc_with_table(ArenaSmallTable::with_mappings(
+                StateId::NONE,
+                &[b'b'],
+                &[term],
+            ));
+
+            let start = arena.alloc_with_table(ArenaSmallTable::with_mappings(
+                StateId::NONE,
+                &[b'a'],
+                &[state_b],
+            ));
+
+            (arena, start)
+        };
+
+        // Build "ac" arena
+        let (arena2, start2) = {
+            let mut arena = StateArena::new();
+            let end = arena.alloc();
+            arena[end].field_transitions.push(fm2.clone());
+
+            let term = arena.alloc_with_table(ArenaSmallTable::with_mappings(
+                StateId::NONE,
+                &[ARENA_VALUE_TERMINATOR],
+                &[end],
+            ));
+
+            let state_c = arena.alloc_with_table(ArenaSmallTable::with_mappings(
+                StateId::NONE,
+                &[b'c'],
+                &[term],
+            ));
+
+            let start = arena.alloc_with_table(ArenaSmallTable::with_mappings(
+                StateId::NONE,
+                &[b'a'],
+                &[state_c],
+            ));
+
+            (arena, start)
+        };
+
+        let (merged, start) = merge_arena_dfas(&arena1, start1, &arena2, start2);
+
+        let mut bufs = ArenaNfaBuffers::with_capacity(merged.len());
+
+        // Should match "ab"
+        traverse_arena_nfa(&merged, start, b"ab", &mut bufs);
+        assert_eq!(bufs.transitions.len(), 1, "Should match 'ab'");
+        assert_eq!(bufs.transitions[0].match_id, Some(1));
+
+        // Should match "ac"
+        bufs.clear();
+        traverse_arena_nfa(&merged, start, b"ac", &mut bufs);
+        assert_eq!(bufs.transitions.len(), 1, "Should match 'ac'");
+        assert_eq!(bufs.transitions[0].match_id, Some(2));
+
+        // Should NOT match "a", "ad", "bc"
+        for val in [b"a".as_slice(), b"ad", b"bc"] {
+            bufs.clear();
+            traverse_arena_nfa(&merged, start, val, &mut bufs);
+            assert!(
+                bufs.transitions.is_empty(),
+                "Should NOT match {:?}",
+                std::str::from_utf8(val)
+            );
+        }
     }
 }
