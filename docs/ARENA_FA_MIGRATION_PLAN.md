@@ -679,6 +679,16 @@ cargo doc --no-deps --open
   - Updated `freeze_value_matcher` to copy numeric arena
   - Marked old chain-based numeric FA builders as deprecated (#[allow(dead_code)])
   - Commit: `f78eaa8` (combined with Step 1.3)
+- [x] Step 1.4.1: Fix Performance Regression
+  - Root cause: ArenaNfaBuffers allocation and HashSet allocation in traverse_arena_nfa
+  - Fixes:
+    - Added `arena_bufs: ArenaNfaBuffers` to `NfaBuffers` for reuse
+    - Added `seen_transitions: FxHashSet<usize>` to `ArenaNfaBuffers` for deduplication
+    - Used `std::mem::take` instead of `.clone()` for state iteration
+    - Added `fast-float2` dependency for faster f64 parsing
+  - Performance: ~470 ns → ~337 ns (28% improvement)
+  - Verified with Miri for memory safety
+  - Commit: `ebca033`
 
 ### Next Step:
 **Phase 1, Step 1.5**: Remove Chain-Based Numeric FA Code
