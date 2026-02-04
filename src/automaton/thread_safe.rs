@@ -123,6 +123,8 @@ pub struct FrozenValueMatcher<X: Clone + Eq + Hash> {
     transition_map: FxHashMap<usize, Arc<FrozenFieldMatcher<X>>>,
     /// Arena-based NFAs for regexp patterns (2.5x faster than chain-based)
     arena_nfas: Vec<(StateArena, StateId)>,
+    /// Arena-based FA for numeric patterns (merged from all numeric range patterns)
+    numeric_arena: Option<(StateArena, StateId)>,
     /// Multi-condition NFAs for lookaround patterns with condition verification
     multi_condition_nfas: Vec<MultiConditionNfa>,
 }
@@ -142,6 +144,7 @@ impl<X: Clone + Eq + Hash> FrozenValueMatcher<X> {
             has_numbers: false,
             transition_map: FxHashMap::default(),
             arena_nfas: Vec::new(),
+            numeric_arena: None,
             multi_condition_nfas: Vec::new(),
         }
     }
@@ -203,6 +206,25 @@ impl<X: Clone + Eq + Hash> FrozenValueMatcher<X> {
                 let ptr = Arc::as_ptr(arc_fm) as usize;
                 if let Some(frozen_fm) = self.transition_map.get(&ptr) {
                     result.push(frozen_fm.clone());
+                }
+            }
+        }
+
+        // Traverse numeric arena FA (if present and value is numeric)
+        if q_num_storage.is_some() {
+            if let Some((ref arena, start)) = self.numeric_arena {
+                let mut arena_bufs = ArenaNfaBuffers::new();
+                traverse_arena_nfa(arena, start, value_to_match, &mut arena_bufs);
+
+                // Map Arc<FieldMatcher> transitions to FrozenFieldMatcher using pointer address
+                for arc_fm in &arena_bufs.transitions {
+                    let ptr = Arc::as_ptr(arc_fm) as usize;
+                    if let Some(frozen_fm) = self.transition_map.get(&ptr) {
+                        // Avoid duplicates
+                        if !result.iter().any(|r| Arc::ptr_eq(r, frozen_fm)) {
+                            result.push(frozen_fm.clone());
+                        }
+                    }
                 }
             }
         }
@@ -461,6 +483,9 @@ impl<X: Clone + Eq + Hash + Send + Sync> ThreadSafeCoreMatcher<X> {
         // Copy the arena NFAs
         let arena_nfas = mutable.arena_nfas.borrow().clone();
 
+        // Copy the numeric arena
+        let numeric_arena = mutable.numeric_arena.borrow().clone();
+
         // Copy the multi-condition NFAs (for lookaround patterns)
         let multi_condition_nfas = mutable.multi_condition_nfas.borrow().clone();
 
@@ -472,6 +497,7 @@ impl<X: Clone + Eq + Hash + Send + Sync> ThreadSafeCoreMatcher<X> {
             has_numbers: *mutable.has_numbers.borrow(),
             transition_map,
             arena_nfas,
+            numeric_arena,
             multi_condition_nfas,
         }
     }

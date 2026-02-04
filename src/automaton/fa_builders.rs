@@ -629,6 +629,10 @@ fn make_monocase_fa_ascii(val: &[u8], next_field: Arc<FieldMatcher>) -> SmallTab
 /// * `bound` - The numeric bound
 /// * `inclusive` - If true, matches <= bound; if false, matches < bound
 /// * `next_field` - The field matcher to transition to on match
+///
+/// NOTE: This chain-based FA is deprecated and will be removed.
+/// Use arena-based `make_numeric_less_arena_fa` instead.
+#[allow(dead_code)]
 pub fn make_numeric_less_fa(
     bound: f64,
     inclusive: bool,
@@ -638,6 +642,7 @@ pub fn make_numeric_less_fa(
     make_less_fa_step(&bound_q, 0, inclusive, next_field)
 }
 
+#[allow(dead_code)]
 fn make_less_fa_step(
     bound_q: &[u8],
     index: usize,
@@ -700,6 +705,10 @@ fn make_less_fa_step(
 /// * `bound` - The numeric bound
 /// * `inclusive` - If true, matches >= bound; if false, matches > bound
 /// * `next_field` - The field matcher to transition to on match
+///
+/// NOTE: This chain-based FA is deprecated and will be removed.
+/// Use arena-based `make_numeric_greater_arena_fa` instead.
+#[allow(dead_code)]
 pub fn make_numeric_greater_fa(
     bound: f64,
     inclusive: bool,
@@ -720,6 +729,10 @@ pub fn make_numeric_greater_fa(
 /// * `upper` - Upper bound value
 /// * `upper_incl` - If true, upper bound is inclusive (<=)
 /// * `next_field` - The field matcher to transition to on match
+///
+/// NOTE: This chain-based FA is deprecated and will be removed.
+/// Use arena-based `make_numeric_range_arena_fa` instead.
+#[allow(dead_code)]
 pub fn make_numeric_range_fa(
     lower: f64,
     lower_incl: bool,
@@ -739,6 +752,7 @@ pub fn make_numeric_range_fa(
 /// - Still matching the upper bound prefix (need byte <= upper[i])
 /// - Already above lower bound (any byte >= 0 is fine for lower check)
 /// - Already below upper bound (any byte is fine for upper check)
+#[allow(dead_code)]
 fn make_range_fa_step(
     lower_q: &[u8],
     upper_q: &[u8],
@@ -843,6 +857,7 @@ fn make_range_fa_step(
     table
 }
 
+#[allow(dead_code)]
 fn make_greater_fa_step(
     bound_q: &[u8],
     index: usize,

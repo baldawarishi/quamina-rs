@@ -10,11 +10,13 @@ use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use std::sync::Arc;
 
-use super::arena::{traverse_arena_nfa, ArenaNfaBuffers, StateArena, StateId};
+use super::arena::{
+    make_numeric_greater_arena_fa, make_numeric_less_arena_fa, make_numeric_range_arena_fa,
+    merge_arena_dfas, traverse_arena_nfa, ArenaNfaBuffers, StateArena, StateId,
+};
 use super::fa_builders::{
     make_anything_but_fa, make_anything_but_numeric_fa, make_cidr_fa, make_monocase_fa,
-    make_numeric_greater_fa, make_numeric_less_fa, make_numeric_range_fa, make_prefix_fa,
-    make_shellstyle_fa, make_string_fa, make_wildcard_fa, merge_fas,
+    make_prefix_fa, make_shellstyle_fa, make_string_fa, make_wildcard_fa, merge_fas,
 };
 use super::nfa::{traverse_dfa, traverse_nfa};
 use super::small_table::{FieldMatcher, NfaBuffers, SmallTable};
@@ -205,6 +207,8 @@ pub struct MutableValueMatcher<X: Clone + Eq + std::hash::Hash> {
     pub(crate) transition_map: RefCell<HashMap<*const FieldMatcher, Rc<MutableFieldMatcher<X>>>>,
     /// Arena-based NFAs for regexp patterns (2.5x faster than chain-based)
     pub(crate) arena_nfas: RefCell<Vec<(StateArena, StateId)>>,
+    /// Arena-based FA for numeric patterns (merged from all numeric range patterns)
+    pub(crate) numeric_arena: RefCell<Option<(StateArena, StateId)>>,
     /// Multi-condition NFAs for lookaround patterns
     pub(crate) multi_condition_nfas: RefCell<Vec<MultiConditionNfa>>,
     /// Buffers for arena NFA traversal
@@ -221,6 +225,7 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
             has_numbers: RefCell::new(false),
             transition_map: RefCell::new(HashMap::new()),
             arena_nfas: RefCell::new(Vec::new()),
+            numeric_arena: RefCell::new(None),
             multi_condition_nfas: RefCell::new(Vec::new()),
             arena_bufs: RefCell::new(ArenaNfaBuffers::new()),
         }
@@ -709,10 +714,11 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
         next_fm
     }
 
-    /// Add a numeric range transition that uses Q-number ordering in the automaton.
+    /// Add a numeric range transition using arena-based FA for better performance.
     ///
-    /// For two-sided ranges (e.g., >= 5, < 100), we merge the lower and upper bound FAs.
-    /// For single-sided ranges (e.g., < 100), we only use the relevant FA.
+    /// For two-sided ranges (e.g., >= 5, < 100), we build a combined arena FA.
+    /// For single-sided ranges (e.g., < 100), we build the relevant arena FA.
+    /// Multiple numeric patterns are merged using merge_arena_dfas.
     fn add_numeric_range_transition(
         &self,
         cmp: &crate::json::NumericComparison,
@@ -723,19 +729,25 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
             .borrow_mut()
             .insert(Arc::as_ptr(&next_arc), next_fm.clone());
 
-        // Build the FA(s) based on the comparison operators
-        let new_fa = match (&cmp.lower, &cmp.upper) {
+        // Build the arena FA based on the comparison operators
+        let (new_arena, new_start) = match (&cmp.lower, &cmp.upper) {
             (Some((lower_incl, lower_val)), Some((upper_incl, upper_val))) => {
-                // Two-sided range: build a combined FA that handles both bounds
-                make_numeric_range_fa(*lower_val, *lower_incl, *upper_val, *upper_incl, next_arc)
+                // Two-sided range: build a combined arena FA
+                make_numeric_range_arena_fa(
+                    *lower_val,
+                    *lower_incl,
+                    *upper_val,
+                    *upper_incl,
+                    next_arc,
+                )
             }
             (Some((incl, val)), None) => {
                 // Lower bound only: >= or >
-                make_numeric_greater_fa(*val, *incl, next_arc)
+                make_numeric_greater_arena_fa(*val, *incl, next_arc)
             }
             (None, Some((incl, val))) => {
                 // Upper bound only: <= or <
-                make_numeric_less_fa(*val, *incl, next_arc)
+                make_numeric_less_arena_fa(*val, *incl, next_arc)
             }
             (None, None) => {
                 // No bounds specified - match any number
@@ -744,22 +756,14 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
             }
         };
 
-        let mut start_table = self.start_table.borrow_mut();
-        if let Some(ref existing) = *start_table {
-            *start_table = Some(merge_fas(existing, &new_fa));
-        } else if self.singleton_match.borrow().is_some() {
-            let singleton_val = self.singleton_match.borrow().clone().unwrap();
-            let singleton_trans = self.singleton_transition.borrow().clone().unwrap();
-            let singleton_arc = Arc::new(FieldMatcher::new());
-            self.transition_map
-                .borrow_mut()
-                .insert(Arc::as_ptr(&singleton_arc), singleton_trans);
-            let singleton_fa = make_string_fa(&singleton_val, singleton_arc);
-            *start_table = Some(merge_fas(&singleton_fa, &new_fa));
-            *self.singleton_match.borrow_mut() = None;
-            *self.singleton_transition.borrow_mut() = None;
+        // Merge with existing numeric arena
+        let mut numeric_arena = self.numeric_arena.borrow_mut();
+        if let Some((existing_arena, existing_start)) = numeric_arena.take() {
+            let (merged, merged_start) =
+                merge_arena_dfas(&existing_arena, existing_start, &new_arena, new_start);
+            *numeric_arena = Some((merged, merged_start));
         } else {
-            *start_table = Some(new_fa);
+            *numeric_arena = Some((new_arena, new_start));
         }
 
         next_fm
@@ -855,6 +859,25 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
                 let ptr = Arc::as_ptr(arc_fm);
                 if let Some(mutable_fm) = transition_map.get(&ptr) {
                     result.push(mutable_fm.clone());
+                }
+            }
+        }
+
+        // Traverse numeric arena FA (if present and value is numeric)
+        if q_num_storage.is_some() {
+            if let Some((ref arena, start)) = *self.numeric_arena.borrow() {
+                let mut arena_bufs = self.arena_bufs.borrow_mut();
+                traverse_arena_nfa(arena, start, value_to_match, &mut arena_bufs);
+
+                // Map Arc<FieldMatcher> transitions to Rc<MutableFieldMatcher<X>>
+                for arc_fm in &arena_bufs.transitions {
+                    let ptr = Arc::as_ptr(arc_fm);
+                    if let Some(mutable_fm) = transition_map.get(&ptr) {
+                        // Avoid duplicates
+                        if !result.iter().any(|r| Rc::ptr_eq(r, mutable_fm)) {
+                            result.push(mutable_fm.clone());
+                        }
+                    }
                 }
             }
         }
