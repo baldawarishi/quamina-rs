@@ -698,6 +698,16 @@ cargo doc --no-deps --open
   - Total improvement: ~470 ns → ~238 ns (49% faster!)
   - Verified with Miri for memory safety
   - Commit: `e49fc8a`
+- [x] Step 1.5: Remove Chain-Based Numeric FA Code
+  - Removed deprecated functions from `fa_builders.rs`:
+    - `make_numeric_less_fa`, `make_less_fa_step`
+    - `make_numeric_greater_fa`, `make_greater_fa_step`
+    - `make_numeric_range_fa`, `make_range_fa_step`
+  - Removed `numeric_range_tests` module (tests now in `arena.rs`)
+  - Code reduction: ~300 lines removed
+  - All 391 tests pass, 21 numeric tests verified
+  - Verified with Miri for memory safety
+  - Commit: (pending)
 
 ### Current Performance:
 | Benchmark | Before | After | Improvement |
@@ -707,7 +717,7 @@ cargo doc --no-deps --open
 | numeric_range_10_patterns | 495 ns | 291 ns | 41% |
 
 ### Next Step:
-**Phase 1, Step 1.5**: Remove Chain-Based Numeric FA Code
+**Phase 1, Step 1.6**: Final Phase 1 Verification
 
 ### Blockers:
 None
