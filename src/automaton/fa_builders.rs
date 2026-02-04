@@ -305,6 +305,7 @@ fn make_wildcard_fa_step(
 /// # Arguments
 /// * `excluded` - The list of excluded f64 values
 /// * `next_field` - The field matcher to transition to on success
+#[allow(dead_code)] // Kept for backwards compatibility; arena version preferred
 pub fn make_anything_but_numeric_fa(excluded: &[f64], next_field: Arc<FieldMatcher>) -> SmallTable {
     // Convert excluded numbers to Q-number representations
     let excluded_q_nums: Vec<Vec<u8>> = excluded

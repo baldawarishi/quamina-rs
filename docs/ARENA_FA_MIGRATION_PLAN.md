@@ -774,11 +774,34 @@ cargo doc --no-deps --open
     - `fc84b44` - make_monocase_arena_fa
     - `502176f` - make_cidr_arena_fa
 
+- [x] Step 2.3: Migrate MutableValueMatcher to Arena-Only
+  - Added `main_arena` field to `MutableValueMatcher` for unified pattern storage
+  - Added `merge_into_main_arena` helper method for efficient merging
+  - Migrated all add_*_transition methods to use arena FA builders:
+    - `add_string_transition` -> `make_string_arena_fa`
+    - `add_string_transitions_bulk` -> `make_string_arena_fa` (multiple)
+    - `add_prefix_transition` -> `make_prefix_arena_fa`
+    - `add_shellstyle_transition` -> `make_shellstyle_arena_fa`
+    - `add_wildcard_transition` -> `make_wildcard_arena_fa`
+    - `add_anything_but_transition` -> `make_anything_but_arena_fa`
+    - `add_anything_but_numeric_transition` -> `make_anything_but_arena_fa` (Q-numbers)
+    - `add_numeric_transition` -> `make_string_arena_fa` (string + Q-number)
+    - `add_numeric_range_transition` -> now merges into `main_arena`
+    - `add_regexp_transition` -> now merges into `main_arena`
+  - Updated `transition_on` to traverse `main_arena`
+  - KNOWN ISSUES (pre-existing arena FA bugs, kept chain-based for now):
+    - `add_monocase_transition` - `make_monocase_arena_fa` has Unicode bug (Greek sigma)
+    - `add_cidr_transition` - `make_cidr_arena_fa` has IPv6 bug (full-form addresses)
+  - Added `main_arena` to `FrozenValueMatcher` with traversal
+  - Updated `freeze_value_matcher` to copy `main_arena`
+  - 422 non-stress tests pass
+
 ### Next Step:
-**Phase 2, Step 2.3**: Migrate MutableValueMatcher to Arena-Only
+**Phase 2, Step 2.5**: Remove Chain FA Code (after fixing monocase/CIDR arena bugs)
 
 ### Blockers:
-None
+- `make_monocase_arena_fa` needs fix for Unicode case folding (Greek sigma)
+- `make_cidr_arena_fa` needs fix for IPv6 full-form addresses
 
 ---
 

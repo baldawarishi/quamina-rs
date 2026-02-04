@@ -108,7 +108,7 @@ impl<X: Clone + Eq + Hash> FrozenFieldMatcher<X> {
 /// This is the immutable counterpart to MutableValueMatcher.
 #[derive(Clone, Default)]
 pub struct FrozenValueMatcher<X: Clone + Eq + Hash> {
-    /// The automaton start table
+    /// The automaton start table (DEPRECATED - being migrated to main_arena)
     start_table: Option<SmallTable>,
     /// Optimization: for single exact match, store it directly
     singleton_match: Option<Vec<u8>>,
@@ -121,12 +121,14 @@ pub struct FrozenValueMatcher<X: Clone + Eq + Hash> {
     /// Mapping from FieldMatcher pointer (as usize) to FrozenFieldMatcher
     /// Uses FxHashMap for fast integer key lookup
     transition_map: FxHashMap<usize, Arc<FrozenFieldMatcher<X>>>,
-    /// Arena-based NFAs for regexp patterns (2.5x faster than chain-based)
+    /// Arena-based NFAs for regexp patterns (DEPRECATED - being migrated to main_arena)
     arena_nfas: Vec<(StateArena, StateId)>,
-    /// Arena-based FA for numeric patterns (merged from all numeric range patterns)
+    /// Arena-based FA for numeric patterns (DEPRECATED - being migrated to main_arena)
     numeric_arena: Option<(StateArena, StateId)>,
     /// Multi-condition NFAs for lookaround patterns with condition verification
     multi_condition_nfas: Vec<MultiConditionNfa>,
+    /// Unified arena-based FA for all pattern types (Step 2.3 migration target)
+    main_arena: Option<(StateArena, StateId)>,
 }
 
 // SAFETY: FrozenValueMatcher only contains Arc, FxHashMap, Option, and primitives - all Send+Sync.
@@ -146,6 +148,7 @@ impl<X: Clone + Eq + Hash> FrozenValueMatcher<X> {
             arena_nfas: Vec::new(),
             numeric_arena: None,
             multi_condition_nfas: Vec::new(),
+            main_arena: None,
         }
     }
 
@@ -184,7 +187,7 @@ impl<X: Clone + Eq + Hash> FrozenValueMatcher<X> {
             None => value,
         };
 
-        // Use chain-based automaton if present
+        // Use chain-based automaton if present (DEPRECATED - being migrated to main_arena)
         if let Some(ref table) = self.start_table {
             // Clear and reuse the transitions buffer
             bufs.transitions.clear();
@@ -200,6 +203,23 @@ impl<X: Clone + Eq + Hash> FrozenValueMatcher<X> {
                 let ptr = Arc::as_ptr(arc_fm) as usize;
                 if let Some(frozen_fm) = self.transition_map.get(&ptr) {
                     result.push(frozen_fm.clone());
+                }
+            }
+        }
+
+        // Traverse main_arena (unified arena for all pattern types - Step 2.3 migration)
+        if let Some((ref arena, start)) = self.main_arena {
+            bufs.arena_bufs.clear();
+            traverse_arena_nfa(arena, start, value_to_match, &mut bufs.arena_bufs);
+
+            // Map Arc<FieldMatcher> transitions to FrozenFieldMatcher using pointer address
+            for arc_fm in &bufs.arena_bufs.transitions {
+                let ptr = Arc::as_ptr(arc_fm) as usize;
+                if let Some(frozen_fm) = self.transition_map.get(&ptr) {
+                    // Avoid duplicates
+                    if !result.iter().any(|r| Arc::ptr_eq(r, frozen_fm)) {
+                        result.push(frozen_fm.clone());
+                    }
                 }
             }
         }
@@ -482,6 +502,9 @@ impl<X: Clone + Eq + Hash + Send + Sync> ThreadSafeCoreMatcher<X> {
         // Copy the multi-condition NFAs (for lookaround patterns)
         let multi_condition_nfas = mutable.multi_condition_nfas.borrow().clone();
 
+        // Copy the main_arena (unified arena for all pattern types)
+        let main_arena = mutable.main_arena.borrow().clone();
+
         FrozenValueMatcher {
             start_table: mutable.start_table.borrow().clone(),
             singleton_match,
@@ -492,6 +515,7 @@ impl<X: Clone + Eq + Hash + Send + Sync> ThreadSafeCoreMatcher<X> {
             arena_nfas,
             numeric_arena,
             multi_condition_nfas,
+            main_arena,
         }
     }
 
