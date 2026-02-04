@@ -13,7 +13,6 @@
 //!   go test -bench=. -benchmem ./...
 
 use flate2::read::GzDecoder;
-use quamina::numbits::{q_num_from_f64, q_num_stack};
 use quamina::Quamina;
 use rand::prelude::*;
 use std::env;
@@ -357,87 +356,6 @@ fn profile_number_matching() -> MemoryStats {
     MemoryStats::capture("number_matching_100_events")
 }
 
-/// Profile: Exact float matching at scale (10,000 events)
-/// Tests linear scaling of Q-number optimization
-fn profile_number_matching_10k() -> MemoryStats {
-    // Use fixed seed for reproducibility
-    let mut rng = rand::rngs::StdRng::seed_from_u64(2325);
-
-    // Generate 10 random float values for the pattern
-    let targets: Vec<f64> = (0..10).map(|_| rng.gen::<f64>()).collect();
-
-    // Build pattern with 10 exact float values
-    let values: String = targets
-        .iter()
-        .map(|f| format!("{:.6}", f))
-        .collect::<Vec<_>>()
-        .join(", ");
-    let pattern = format!(r#"{{"x": [{}]}}"#, values);
-
-    // Build matcher outside profiling
-    let mut q = Quamina::new();
-    q.add_pattern("P", &pattern).unwrap();
-
-    // Pre-generate 10,000 events (100x more than the 100-event benchmark)
-    let events: Vec<Vec<u8>> = (0..10_000)
-        .map(|i| {
-            if i % 2 == 0 {
-                let val = format!("{:.6}", targets[i % 10]);
-                format!(r#"{{"x": {}}}"#, val).into_bytes()
-            } else {
-                let val = format!("{:.6}", rng.gen::<f64>() + 10.0);
-                format!(r#"{{"x": {}}}"#, val).into_bytes()
-            }
-        })
-        .collect();
-
-    #[cfg(feature = "dhat-heap")]
-    let _profiler = dhat::Profiler::builder().testing().build();
-
-    for event in &events {
-        let _ = q.matches_for_event(event).unwrap();
-    }
-
-    MemoryStats::capture("number_matching_10k_events")
-}
-
-/// Profile: Exact float matching at 100k scale
-fn profile_number_matching_100k() -> MemoryStats {
-    let mut rng = rand::rngs::StdRng::seed_from_u64(2325);
-    let targets: Vec<f64> = (0..10).map(|_| rng.gen::<f64>()).collect();
-
-    let values: String = targets
-        .iter()
-        .map(|f| format!("{:.6}", f))
-        .collect::<Vec<_>>()
-        .join(", ");
-    let pattern = format!(r#"{{"x": [{}]}}"#, values);
-
-    let mut q = Quamina::new();
-    q.add_pattern("P", &pattern).unwrap();
-
-    let events: Vec<Vec<u8>> = (0..100_000)
-        .map(|i| {
-            if i % 2 == 0 {
-                let val = format!("{:.6}", targets[i % 10]);
-                format!(r#"{{"x": {}}}"#, val).into_bytes()
-            } else {
-                let val = format!("{:.6}", rng.gen::<f64>() + 10.0);
-                format!(r#"{{"x": {}}}"#, val).into_bytes()
-            }
-        })
-        .collect();
-
-    #[cfg(feature = "dhat-heap")]
-    let _profiler = dhat::Profiler::builder().testing().build();
-
-    for event in &events {
-        let _ = q.matches_for_event(event).unwrap();
-    }
-
-    MemoryStats::capture("number_matching_100k_events")
-}
-
 /// Profile: Shellstyle pattern matching (26 patterns A* through Z*)
 fn profile_shellstyle_matching() -> MemoryStats {
     // Build matcher outside profiling
@@ -476,42 +394,6 @@ fn profile_shellstyle_matching() -> MemoryStats {
     }
 
     MemoryStats::capture("shellstyle_matching_100_events")
-}
-
-/// Profile: Direct Q-number conversion comparison (100k conversions)
-/// Tests heap allocation for all 3 approaches
-fn profile_q_num_vec_100k() -> MemoryStats {
-    let mut rng = rand::rngs::StdRng::seed_from_u64(12345);
-    let values: Vec<f64> = (0..100_000).map(|_| rng.gen::<f64>() * 1000.0).collect();
-
-    #[cfg(feature = "dhat-heap")]
-    let _profiler = dhat::Profiler::builder().testing().build();
-
-    let mut total_len = 0usize;
-    for &val in &values {
-        let q = q_num_from_f64(val);
-        total_len += q.len();
-    }
-    std::hint::black_box(total_len);
-
-    MemoryStats::capture("q_num_vec_100k")
-}
-
-fn profile_q_num_stack_100k() -> MemoryStats {
-    let mut rng = rand::rngs::StdRng::seed_from_u64(12345);
-    let values: Vec<f64> = (0..100_000).map(|_| rng.gen::<f64>() * 1000.0).collect();
-
-    #[cfg(feature = "dhat-heap")]
-    let _profiler = dhat::Profiler::builder().testing().build();
-
-    let mut total_len = 0usize;
-    for &val in &values {
-        let q = q_num_stack(val);
-        total_len += q.len();
-    }
-    std::hint::black_box(total_len);
-
-    MemoryStats::capture("q_num_stack_100k")
 }
 
 fn main() {
@@ -568,22 +450,8 @@ fn main() {
             profile_number_matching(),
         ),
         (
-            "Matching: Number 10k events (scaling test)",
-            profile_number_matching_10k(),
-        ),
-        (
-            "Matching: Number 100k events (scaling test)",
-            profile_number_matching_100k(),
-        ),
-        (
             "Matching: Shellstyle 100 events",
             profile_shellstyle_matching(),
-        ),
-        // Direct Q-number comparison (heap allocation test)
-        ("Q-number: Vec 100k conversions", profile_q_num_vec_100k()),
-        (
-            "Q-number: Stack 100k conversions",
-            profile_q_num_stack_100k(),
         ),
     ];
 

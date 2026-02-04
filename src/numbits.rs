@@ -28,14 +28,14 @@
 /// Maximum bytes needed for base-128 encoding of a 64-bit value.
 const MAX_BYTES_IN_ENCODING: usize = 10;
 
-// =============================================================================
-// Approach B: Stack-allocated Q-number with length
-// =============================================================================
-
-/// Stack-allocated Q-number representation.
+/// Stack-allocated Q-number representation for zero-allocation numeric matching.
 ///
-/// Uses a fixed 10-byte buffer with a length field to avoid heap allocation
-/// while preserving minimal FA traversal (only iterates over actual bytes).
+/// This type holds a Q-number in a fixed 10-byte stack buffer (the maximum size
+/// for base-128 encoded 64-bit values), avoiding heap allocation during the
+/// matching hot path.
+///
+/// Created via [`q_num_stack`]. Use [`as_slice`](Self::as_slice) to get the
+/// actual bytes for FA traversal.
 #[derive(Clone, Copy, Debug)]
 pub struct QNumberStack {
     bytes: [u8; MAX_BYTES_IN_ENCODING],
@@ -97,7 +97,15 @@ fn to_q_number_stack(nb: u64) -> QNumberStack {
     }
 }
 
-/// Convert a float64 to a stack-allocated Q-number.
+/// Convert a float64 to a stack-allocated Q-number (zero heap allocation).
+///
+/// Use this for the **matching hot path** where the Q-number is temporary and
+/// doesn't need to be stored. The stack allocation avoids heap overhead.
+///
+/// For pattern building where you need to store the bytes, use [`q_num_from_f64`]
+/// which returns a `Vec<u8>`.
+///
+/// Both functions produce identical byte sequences.
 pub fn q_num_stack(f: f64) -> QNumberStack {
     to_q_number_stack(numbits_from_f64(f))
 }
@@ -160,7 +168,15 @@ pub(crate) fn to_q_number(nb: u64) -> Vec<u8> {
     result
 }
 
-/// Convert a float64 to its Q-number representation.
+/// Convert a float64 to its Q-number representation (heap-allocated).
+///
+/// Use this for **pattern building** where the Q-number bytes need to be stored
+/// or passed to FA construction functions.
+///
+/// For the matching hot path where the Q-number is temporary, use [`q_num_stack`]
+/// which avoids heap allocation.
+///
+/// Both functions produce identical byte sequences.
 pub fn q_num_from_f64(f: f64) -> Vec<u8> {
     to_q_number(numbits_from_f64(f))
 }
