@@ -21,8 +21,10 @@ use rustc_hash::FxHashMap;
 use arc_swap::ArcSwap;
 use parking_lot::Mutex;
 
-use super::arena::{traverse_arena_nfa, StateArena, StateId};
-use super::fa_builders::{make_prefix_fa, make_shellstyle_fa, make_string_fa, merge_fas};
+use super::arena::{
+    make_prefix_arena_fa, make_shellstyle_arena_fa, make_string_arena_fa, merge_arena_nfas,
+    traverse_arena_nfa, ArenaNfaBuffers, StateArena, StateId,
+};
 use super::mutable_matcher::{
     EventField, EventFieldRef, MultiConditionNfa, MutableFieldMatcher, MutableValueMatcher,
 };
@@ -833,10 +835,8 @@ impl<X: Clone + Eq + Hash> FrozenMatchSet<X> {
 /// Values are matched by traversing the automaton on the value bytes.
 #[derive(Clone, Default)]
 pub struct AutomatonValueMatcher<X: Clone + Eq + std::hash::Hash> {
-    /// The start table of the automaton
-    start_table: Option<SmallTable>,
-    /// Whether this matcher requires NFA traversal (has wildcards)
-    is_nondeterministic: bool,
+    /// The arena-based automaton (arena, start_state)
+    arena: Option<(StateArena, StateId)>,
     /// Map from match ID to pattern identifiers
     /// Uses match_id stored in FieldMatcher, which survives FA merging
     pattern_map: HashMap<u64, X>,
@@ -848,8 +848,7 @@ impl<X: Clone + Eq + std::hash::Hash> AutomatonValueMatcher<X> {
     /// Create a new empty value matcher
     pub fn new() -> Self {
         Self {
-            start_table: None,
-            is_nondeterministic: false,
+            arena: None,
             pattern_map: HashMap::new(),
             next_match_id: 1,
         }
@@ -862,16 +861,9 @@ impl<X: Clone + Eq + std::hash::Hash> AutomatonValueMatcher<X> {
         self.pattern_map.insert(match_id, x);
 
         let next_field = Arc::new(FieldMatcher::with_match_id(match_id));
-        let new_fa = make_string_fa(value, next_field);
+        let (new_arena, new_start) = make_string_arena_fa(value, next_field);
 
-        match &self.start_table {
-            Some(existing) => {
-                self.start_table = Some(merge_fas(existing, &new_fa));
-            }
-            None => {
-                self.start_table = Some(new_fa);
-            }
-        }
+        self.merge_arena(new_arena, new_start);
     }
 
     /// Add a prefix match pattern
@@ -881,16 +873,9 @@ impl<X: Clone + Eq + std::hash::Hash> AutomatonValueMatcher<X> {
         self.pattern_map.insert(match_id, x);
 
         let next_field = Arc::new(FieldMatcher::with_match_id(match_id));
-        let new_fa = make_prefix_fa(prefix, next_field);
+        let (new_arena, new_start) = make_prefix_arena_fa(prefix, next_field);
 
-        match &self.start_table {
-            Some(existing) => {
-                self.start_table = Some(merge_fas(existing, &new_fa));
-            }
-            None => {
-                self.start_table = Some(new_fa);
-            }
-        }
+        self.merge_arena(new_arena, new_start);
     }
 
     /// Add a shellstyle pattern
@@ -900,32 +885,34 @@ impl<X: Clone + Eq + std::hash::Hash> AutomatonValueMatcher<X> {
         self.pattern_map.insert(match_id, x);
 
         let next_field = Arc::new(FieldMatcher::with_match_id(match_id));
-        let new_fa = make_shellstyle_fa(pattern, next_field);
-        self.is_nondeterministic = true;
+        let (new_arena, new_start) = make_shellstyle_arena_fa(pattern, next_field);
 
-        match &self.start_table {
-            Some(existing) => {
-                self.start_table = Some(merge_fas(existing, &new_fa));
+        self.merge_arena(new_arena, new_start);
+    }
+
+    /// Helper to merge a new arena into the existing one
+    fn merge_arena(&mut self, new_arena: StateArena, new_start: StateId) {
+        match self.arena.take() {
+            Some((existing_arena, existing_start)) => {
+                let (merged_arena, merged_start) =
+                    merge_arena_nfas(&existing_arena, existing_start, &new_arena, new_start);
+                self.arena = Some((merged_arena, merged_start));
             }
             None => {
-                self.start_table = Some(new_fa);
+                self.arena = Some((new_arena, new_start));
             }
         }
     }
 
     /// Match a value against all patterns
     pub fn match_value(&self, value: &[u8]) -> Vec<X> {
-        let table = match &self.start_table {
-            Some(t) => t,
+        let (arena, start) = match &self.arena {
+            Some((a, s)) => (a, *s),
             None => return vec![],
         };
 
-        let mut bufs = NfaBuffers::new();
-        if self.is_nondeterministic {
-            traverse_nfa(table, value, &mut bufs);
-        } else {
-            traverse_dfa(table, value, &mut bufs.transitions);
-        }
+        let mut bufs = ArenaNfaBuffers::new();
+        traverse_arena_nfa(arena, start, value, &mut bufs);
 
         // Map transitions back to pattern identifiers using match_id
         let mut matches = Vec::new();

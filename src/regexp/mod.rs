@@ -17,7 +17,7 @@ mod nfa;
 mod parser;
 
 // Re-export public API
-pub use nfa::{make_regexp_nfa, make_regexp_nfa_arena, regexp_has_plus_star};
+pub use nfa::{make_regexp_nfa_arena, regexp_has_plus_star};
 pub use parser::{
     collect_lookarounds, has_top_level_lookaround, parse_regexp, LookaroundType, QuantifiedAtom,
     RegexpBranch, RegexpError, RegexpRoot, RunePair, RuneRange, REGEXP_QUANTIFIER_MAX, RUNE_MAX,
@@ -318,47 +318,51 @@ mod tests {
 
     #[test]
     fn test_nfa_empty_pattern() {
-        use crate::automaton::{traverse_dfa, VALUE_TERMINATOR};
+        use crate::automaton::arena::{
+            traverse_arena_nfa, ArenaNfaBuffers, ARENA_VALUE_TERMINATOR,
+        };
 
         // Test that empty regexp NFA matches ONLY empty string
         let root = parse_regexp("").unwrap();
-        let (table, field_matcher) = make_regexp_nfa(root, false);
+        let (arena, start, field_matcher) = make_regexp_nfa_arena(root, false);
 
         // Test with empty value (just VALUE_TERMINATOR)
-        let empty_value = vec![VALUE_TERMINATOR];
-        let mut matches = Vec::new();
-        traverse_dfa(&table, &empty_value, &mut matches);
+        let empty_value = vec![ARENA_VALUE_TERMINATOR];
+        let mut bufs = ArenaNfaBuffers::new();
+        traverse_arena_nfa(&arena, start, &empty_value, &mut bufs);
         assert!(
-            !matches.is_empty(),
+            !bufs.transitions.is_empty(),
             "Empty regexp should match empty string"
         );
         assert!(
-            std::sync::Arc::ptr_eq(&matches[0], &field_matcher),
+            std::sync::Arc::ptr_eq(&bufs.transitions[0], &field_matcher),
             "Should transition to field_matcher"
         );
 
         // Test with non-empty value - should NOT match
-        let non_empty_value = vec![b'h', b'i', VALUE_TERMINATOR];
-        let mut matches2 = Vec::new();
-        traverse_dfa(&table, &non_empty_value, &mut matches2);
+        let non_empty_value = vec![b'h', b'i', ARENA_VALUE_TERMINATOR];
+        bufs.clear();
+        traverse_arena_nfa(&arena, start, &non_empty_value, &mut bufs);
         assert!(
-            matches2.is_empty(),
+            bufs.transitions.is_empty(),
             "Empty regexp should NOT match non-empty string"
         );
     }
 
     #[test]
     fn test_nfa_simple_singleton() {
-        use crate::automaton::{traverse_nfa, NfaBuffers, VALUE_TERMINATOR};
+        use crate::automaton::arena::{
+            traverse_arena_nfa, ArenaNfaBuffers, ARENA_VALUE_TERMINATOR,
+        };
 
         // First verify basic non-quantified matching works
         let root = parse_regexp("[abc]").unwrap();
-        let (table, field_matcher) = make_regexp_nfa(root, false);
-        let mut bufs = NfaBuffers::new();
+        let (arena, start, field_matcher) = make_regexp_nfa_arena(root, false);
+        let mut bufs = ArenaNfaBuffers::new();
 
-        let value_a = vec![b'a', VALUE_TERMINATOR];
+        let value_a = vec![b'a', ARENA_VALUE_TERMINATOR];
         bufs.clear();
-        traverse_nfa(&table, &value_a, &mut bufs);
+        traverse_arena_nfa(&arena, start, &value_a, &mut bufs);
         assert!(
             bufs.transitions
                 .iter()
@@ -373,17 +377,19 @@ mod tests {
     #[test]
     #[cfg_attr(miri, ignore)]
     fn test_nfa_plus_quantifier() {
-        use crate::automaton::{traverse_nfa, NfaBuffers, VALUE_TERMINATOR};
+        use crate::automaton::arena::{
+            traverse_arena_nfa, ArenaNfaBuffers, ARENA_VALUE_TERMINATOR,
+        };
 
         // Test that [abc]+ matches one or more of a, b, c
         let root = parse_regexp("[abc]+").unwrap();
-        let (table, field_matcher) = make_regexp_nfa(root, false);
-        let mut bufs = NfaBuffers::new();
+        let (arena, start, field_matcher) = make_regexp_nfa_arena(root, false);
+        let mut bufs = ArenaNfaBuffers::new();
 
         // Should match "a"
-        let value_a = vec![b'a', VALUE_TERMINATOR];
+        let value_a = vec![b'a', ARENA_VALUE_TERMINATOR];
         bufs.clear();
-        traverse_nfa(&table, &value_a, &mut bufs);
+        traverse_arena_nfa(&arena, start, &value_a, &mut bufs);
         assert!(
             bufs.transitions
                 .iter()
@@ -392,9 +398,9 @@ mod tests {
         );
 
         // Should match "abc"
-        let value_abc = vec![b'a', b'b', b'c', VALUE_TERMINATOR];
+        let value_abc = vec![b'a', b'b', b'c', ARENA_VALUE_TERMINATOR];
         bufs.clear();
-        traverse_nfa(&table, &value_abc, &mut bufs);
+        traverse_arena_nfa(&arena, start, &value_abc, &mut bufs);
         assert!(
             bufs.transitions
                 .iter()
@@ -403,9 +409,9 @@ mod tests {
         );
 
         // Should NOT match empty string
-        let empty = vec![VALUE_TERMINATOR];
+        let empty = vec![ARENA_VALUE_TERMINATOR];
         bufs.clear();
-        traverse_nfa(&table, &empty, &mut bufs);
+        traverse_arena_nfa(&arena, start, &empty, &mut bufs);
         assert!(
             !bufs
                 .transitions
@@ -415,9 +421,9 @@ mod tests {
         );
 
         // Should NOT match "x"
-        let value_x = vec![b'x', VALUE_TERMINATOR];
+        let value_x = vec![b'x', ARENA_VALUE_TERMINATOR];
         bufs.clear();
-        traverse_nfa(&table, &value_x, &mut bufs);
+        traverse_arena_nfa(&arena, start, &value_x, &mut bufs);
         assert!(
             !bufs
                 .transitions
@@ -433,17 +439,19 @@ mod tests {
     #[test]
     #[cfg_attr(miri, ignore)]
     fn test_nfa_star_quantifier() {
-        use crate::automaton::{traverse_nfa, NfaBuffers, VALUE_TERMINATOR};
+        use crate::automaton::arena::{
+            traverse_arena_nfa, ArenaNfaBuffers, ARENA_VALUE_TERMINATOR,
+        };
 
         // Test that [abc]* matches zero or more of a, b, c
         let root = parse_regexp("[abc]*").unwrap();
-        let (table, field_matcher) = make_regexp_nfa(root, false);
-        let mut bufs = NfaBuffers::new();
+        let (arena, start, field_matcher) = make_regexp_nfa_arena(root, false);
+        let mut bufs = ArenaNfaBuffers::new();
 
         // Should match empty string (zero times)
-        let empty = vec![VALUE_TERMINATOR];
+        let empty = vec![ARENA_VALUE_TERMINATOR];
         bufs.clear();
-        traverse_nfa(&table, &empty, &mut bufs);
+        traverse_arena_nfa(&arena, start, &empty, &mut bufs);
         assert!(
             bufs.transitions
                 .iter()
@@ -452,9 +460,9 @@ mod tests {
         );
 
         // Should match "a"
-        let value_a = vec![b'a', VALUE_TERMINATOR];
+        let value_a = vec![b'a', ARENA_VALUE_TERMINATOR];
         bufs.clear();
-        traverse_nfa(&table, &value_a, &mut bufs);
+        traverse_arena_nfa(&arena, start, &value_a, &mut bufs);
         assert!(
             bufs.transitions
                 .iter()
@@ -463,9 +471,9 @@ mod tests {
         );
 
         // Should match "abc"
-        let value_abc = vec![b'a', b'b', b'c', VALUE_TERMINATOR];
+        let value_abc = vec![b'a', b'b', b'c', ARENA_VALUE_TERMINATOR];
         bufs.clear();
-        traverse_nfa(&table, &value_abc, &mut bufs);
+        traverse_arena_nfa(&arena, start, &value_abc, &mut bufs);
         assert!(
             bufs.transitions
                 .iter()
@@ -505,17 +513,19 @@ mod tests {
 
     #[test]
     fn test_nfa_range_exact() {
-        use crate::automaton::{traverse_nfa, NfaBuffers, VALUE_TERMINATOR};
+        use crate::automaton::arena::{
+            traverse_arena_nfa, ArenaNfaBuffers, ARENA_VALUE_TERMINATOR,
+        };
 
         // Test a{3} - exactly 3 'a's (I-Regexp semantics: {n} means exactly n)
         let root = parse_regexp("a{3}").unwrap();
-        let (table, field_matcher) = make_regexp_nfa(root, false);
-        let mut bufs = NfaBuffers::new();
+        let (arena, start, field_matcher) = make_regexp_nfa_arena(root, false);
+        let mut bufs = ArenaNfaBuffers::new();
 
         // Should NOT match "aa"
-        let value_aa = vec![b'a', b'a', VALUE_TERMINATOR];
+        let value_aa = vec![b'a', b'a', ARENA_VALUE_TERMINATOR];
         bufs.clear();
-        traverse_nfa(&table, &value_aa, &mut bufs);
+        traverse_arena_nfa(&arena, start, &value_aa, &mut bufs);
         assert!(
             !bufs
                 .transitions
@@ -525,9 +535,9 @@ mod tests {
         );
 
         // Should match "aaa"
-        let value_aaa = vec![b'a', b'a', b'a', VALUE_TERMINATOR];
+        let value_aaa = vec![b'a', b'a', b'a', ARENA_VALUE_TERMINATOR];
         bufs.clear();
-        traverse_nfa(&table, &value_aaa, &mut bufs);
+        traverse_arena_nfa(&arena, start, &value_aaa, &mut bufs);
         assert!(
             bufs.transitions
                 .iter()
@@ -536,9 +546,9 @@ mod tests {
         );
 
         // Should NOT match "aaaa" ({n} means exactly n)
-        let value_aaaa = vec![b'a', b'a', b'a', b'a', VALUE_TERMINATOR];
+        let value_aaaa = vec![b'a', b'a', b'a', b'a', ARENA_VALUE_TERMINATOR];
         bufs.clear();
-        traverse_nfa(&table, &value_aaaa, &mut bufs);
+        traverse_arena_nfa(&arena, start, &value_aaaa, &mut bufs);
         assert!(
             !bufs
                 .transitions
@@ -550,17 +560,19 @@ mod tests {
 
     #[test]
     fn test_nfa_range_bounded() {
-        use crate::automaton::{traverse_nfa, NfaBuffers, VALUE_TERMINATOR};
+        use crate::automaton::arena::{
+            traverse_arena_nfa, ArenaNfaBuffers, ARENA_VALUE_TERMINATOR,
+        };
 
         // Test a{2,4} - between 2 and 4 'a's
         let root = parse_regexp("a{2,4}").unwrap();
-        let (table, field_matcher) = make_regexp_nfa(root, false);
-        let mut bufs = NfaBuffers::new();
+        let (arena, start, field_matcher) = make_regexp_nfa_arena(root, false);
+        let mut bufs = ArenaNfaBuffers::new();
 
         // Should NOT match "a"
-        let value_a = vec![b'a', VALUE_TERMINATOR];
+        let value_a = vec![b'a', ARENA_VALUE_TERMINATOR];
         bufs.clear();
-        traverse_nfa(&table, &value_a, &mut bufs);
+        traverse_arena_nfa(&arena, start, &value_a, &mut bufs);
         assert!(
             !bufs
                 .transitions
@@ -570,9 +582,9 @@ mod tests {
         );
 
         // Should match "aa"
-        let value_aa = vec![b'a', b'a', VALUE_TERMINATOR];
+        let value_aa = vec![b'a', b'a', ARENA_VALUE_TERMINATOR];
         bufs.clear();
-        traverse_nfa(&table, &value_aa, &mut bufs);
+        traverse_arena_nfa(&arena, start, &value_aa, &mut bufs);
         assert!(
             bufs.transitions
                 .iter()
@@ -581,9 +593,9 @@ mod tests {
         );
 
         // Should match "aaa"
-        let value_aaa = vec![b'a', b'a', b'a', VALUE_TERMINATOR];
+        let value_aaa = vec![b'a', b'a', b'a', ARENA_VALUE_TERMINATOR];
         bufs.clear();
-        traverse_nfa(&table, &value_aaa, &mut bufs);
+        traverse_arena_nfa(&arena, start, &value_aaa, &mut bufs);
         assert!(
             bufs.transitions
                 .iter()
@@ -592,9 +604,9 @@ mod tests {
         );
 
         // Should match "aaaa"
-        let value_aaaa = vec![b'a', b'a', b'a', b'a', VALUE_TERMINATOR];
+        let value_aaaa = vec![b'a', b'a', b'a', b'a', ARENA_VALUE_TERMINATOR];
         bufs.clear();
-        traverse_nfa(&table, &value_aaaa, &mut bufs);
+        traverse_arena_nfa(&arena, start, &value_aaaa, &mut bufs);
         assert!(
             bufs.transitions
                 .iter()
@@ -603,9 +615,9 @@ mod tests {
         );
 
         // Should NOT match "aaaaa"
-        let value_5a = vec![b'a', b'a', b'a', b'a', b'a', VALUE_TERMINATOR];
+        let value_5a = vec![b'a', b'a', b'a', b'a', b'a', ARENA_VALUE_TERMINATOR];
         bufs.clear();
-        traverse_nfa(&table, &value_5a, &mut bufs);
+        traverse_arena_nfa(&arena, start, &value_5a, &mut bufs);
         assert!(
             !bufs
                 .transitions
@@ -617,17 +629,19 @@ mod tests {
 
     #[test]
     fn test_nfa_range_with_class() {
-        use crate::automaton::{traverse_nfa, NfaBuffers, VALUE_TERMINATOR};
+        use crate::automaton::arena::{
+            traverse_arena_nfa, ArenaNfaBuffers, ARENA_VALUE_TERMINATOR,
+        };
 
         // Test [abc]{2,3}
         let root = parse_regexp("[abc]{2,3}").unwrap();
-        let (table, field_matcher) = make_regexp_nfa(root, false);
-        let mut bufs = NfaBuffers::new();
+        let (arena, start, field_matcher) = make_regexp_nfa_arena(root, false);
+        let mut bufs = ArenaNfaBuffers::new();
 
         // Should NOT match "a"
-        let value_a = vec![b'a', VALUE_TERMINATOR];
+        let value_a = vec![b'a', ARENA_VALUE_TERMINATOR];
         bufs.clear();
-        traverse_nfa(&table, &value_a, &mut bufs);
+        traverse_arena_nfa(&arena, start, &value_a, &mut bufs);
         assert!(
             !bufs
                 .transitions
@@ -637,9 +651,9 @@ mod tests {
         );
 
         // Should match "ab"
-        let value_ab = vec![b'a', b'b', VALUE_TERMINATOR];
+        let value_ab = vec![b'a', b'b', ARENA_VALUE_TERMINATOR];
         bufs.clear();
-        traverse_nfa(&table, &value_ab, &mut bufs);
+        traverse_arena_nfa(&arena, start, &value_ab, &mut bufs);
         assert!(
             bufs.transitions
                 .iter()
@@ -648,9 +662,9 @@ mod tests {
         );
 
         // Should match "abc"
-        let value_abc = vec![b'a', b'b', b'c', VALUE_TERMINATOR];
+        let value_abc = vec![b'a', b'b', b'c', ARENA_VALUE_TERMINATOR];
         bufs.clear();
-        traverse_nfa(&table, &value_abc, &mut bufs);
+        traverse_arena_nfa(&arena, start, &value_abc, &mut bufs);
         assert!(
             bufs.transitions
                 .iter()
@@ -659,9 +673,9 @@ mod tests {
         );
 
         // Should NOT match "abcd" (4 chars)
-        let value_abcd = vec![b'a', b'b', b'c', b'd', VALUE_TERMINATOR];
+        let value_abcd = vec![b'a', b'b', b'c', b'd', ARENA_VALUE_TERMINATOR];
         bufs.clear();
-        traverse_nfa(&table, &value_abcd, &mut bufs);
+        traverse_arena_nfa(&arena, start, &value_abcd, &mut bufs);
         assert!(
             !bufs
                 .transitions
@@ -673,17 +687,19 @@ mod tests {
 
     #[test]
     fn test_nfa_range_zero_min() {
-        use crate::automaton::{traverse_nfa, NfaBuffers, VALUE_TERMINATOR};
+        use crate::automaton::arena::{
+            traverse_arena_nfa, ArenaNfaBuffers, ARENA_VALUE_TERMINATOR,
+        };
 
         // Test a{0,2} - between 0 and 2 'a's
         let root = parse_regexp("a{0,2}").unwrap();
-        let (table, field_matcher) = make_regexp_nfa(root, false);
-        let mut bufs = NfaBuffers::new();
+        let (arena, start, field_matcher) = make_regexp_nfa_arena(root, false);
+        let mut bufs = ArenaNfaBuffers::new();
 
         // Should match empty string
-        let empty = vec![VALUE_TERMINATOR];
+        let empty = vec![ARENA_VALUE_TERMINATOR];
         bufs.clear();
-        traverse_nfa(&table, &empty, &mut bufs);
+        traverse_arena_nfa(&arena, start, &empty, &mut bufs);
         assert!(
             bufs.transitions
                 .iter()
@@ -692,9 +708,9 @@ mod tests {
         );
 
         // Should match "a"
-        let value_a = vec![b'a', VALUE_TERMINATOR];
+        let value_a = vec![b'a', ARENA_VALUE_TERMINATOR];
         bufs.clear();
-        traverse_nfa(&table, &value_a, &mut bufs);
+        traverse_arena_nfa(&arena, start, &value_a, &mut bufs);
         assert!(
             bufs.transitions
                 .iter()
@@ -703,9 +719,9 @@ mod tests {
         );
 
         // Should match "aa"
-        let value_aa = vec![b'a', b'a', VALUE_TERMINATOR];
+        let value_aa = vec![b'a', b'a', ARENA_VALUE_TERMINATOR];
         bufs.clear();
-        traverse_nfa(&table, &value_aa, &mut bufs);
+        traverse_arena_nfa(&arena, start, &value_aa, &mut bufs);
         assert!(
             bufs.transitions
                 .iter()
@@ -714,9 +730,9 @@ mod tests {
         );
 
         // Should NOT match "aaa"
-        let value_aaa = vec![b'a', b'a', b'a', VALUE_TERMINATOR];
+        let value_aaa = vec![b'a', b'a', b'a', ARENA_VALUE_TERMINATOR];
         bufs.clear();
-        traverse_nfa(&table, &value_aaa, &mut bufs);
+        traverse_arena_nfa(&arena, start, &value_aaa, &mut bufs);
         assert!(
             !bufs
                 .transitions
@@ -866,23 +882,24 @@ mod tests {
         );
     }
 
-    /// Miri-friendly test for non-arena NFA paths. Uses positive character classes
-    /// which are fast, while still exercising SmallTable construction and traverse_nfa.
+    /// Miri-friendly test for arena NFA paths. Uses positive character classes
+    /// which are fast, while still exercising ArenaSmallTable construction and traverse_arena_nfa.
     #[test]
     fn test_nfa_positive_class_miri_friendly() {
-        use crate::automaton::{traverse_nfa, NfaBuffers, VALUE_TERMINATOR};
+        use crate::automaton::arena::{
+            traverse_arena_nfa, ArenaNfaBuffers, ARENA_VALUE_TERMINATOR,
+        };
 
-        // Test various positive character class patterns - these exercise the same
-        // SmallTable code paths as negated classes but without the huge Unicode ranges.
+        // Test various positive character class patterns
         let root = parse_regexp("[a-z]").unwrap();
-        let (table, field_matcher) = make_regexp_nfa(root, false);
-        let mut bufs = NfaBuffers::new();
+        let (arena, start, field_matcher) = make_regexp_nfa_arena(root, false);
+        let mut bufs = ArenaNfaBuffers::new();
 
         // Should match lowercase letters
         for ch in b"abc" {
-            let value = vec![*ch, VALUE_TERMINATOR];
+            let value = vec![*ch, ARENA_VALUE_TERMINATOR];
             bufs.clear();
-            traverse_nfa(&table, &value, &mut bufs);
+            traverse_arena_nfa(&arena, start, &value, &mut bufs);
             assert!(
                 bufs.transitions
                     .iter()
@@ -894,9 +911,9 @@ mod tests {
 
         // Should NOT match uppercase or digits
         for ch in b"ABC123" {
-            let value = vec![*ch, VALUE_TERMINATOR];
+            let value = vec![*ch, ARENA_VALUE_TERMINATOR];
             bufs.clear();
-            traverse_nfa(&table, &value, &mut bufs);
+            traverse_arena_nfa(&arena, start, &value, &mut bufs);
             assert!(
                 !bufs
                     .transitions
@@ -909,12 +926,12 @@ mod tests {
 
         // Test multiple ranges: [a-zA-Z0-9]
         let root = parse_regexp("[a-zA-Z0-9]").unwrap();
-        let (table, field_matcher) = make_regexp_nfa(root, false);
+        let (arena, start, field_matcher) = make_regexp_nfa_arena(root, false);
 
         for ch in b"aZ5" {
-            let value = vec![*ch, VALUE_TERMINATOR];
+            let value = vec![*ch, ARENA_VALUE_TERMINATOR];
             bufs.clear();
-            traverse_nfa(&table, &value, &mut bufs);
+            traverse_arena_nfa(&arena, start, &value, &mut bufs);
             assert!(
                 bufs.transitions
                     .iter()
@@ -927,25 +944,23 @@ mod tests {
 
     // MIRI SKIP RATIONALE: Pattern `[^abc]` expands to ~1.1M Unicode codepoints (all minus 3).
     // This creates a massive automaton that times out under Miri interpretation.
-    // Cannot be broken down - the pattern size IS the issue, not test complexity.
-    // Coverage: test_nfa_positive_class_miri_friendly exercises same SmallTable/NFA code paths.
     #[test]
     #[cfg_attr(miri, ignore)]
     fn test_negated_class_nfa() {
-        use crate::automaton::{traverse_nfa, NfaBuffers, VALUE_TERMINATOR};
+        use crate::automaton::arena::{
+            traverse_arena_nfa, ArenaNfaBuffers, ARENA_VALUE_TERMINATOR,
+        };
 
         // Test [^abc] - matches any character except a, b, c
-        // This test uses the optimized range-based NFA construction that builds
-        // SmallTables directly from UTF-8 byte ranges without per-character enumeration.
         let root = parse_regexp("[^abc]").unwrap();
-        let (table, field_matcher) = make_regexp_nfa(root, false);
-        let mut bufs = NfaBuffers::new();
+        let (arena, start, field_matcher) = make_regexp_nfa_arena(root, false);
+        let mut bufs = ArenaNfaBuffers::new();
 
         // Should NOT match "a", "b", "c"
         for ch in b"abc" {
-            let value = vec![*ch, VALUE_TERMINATOR];
+            let value = vec![*ch, ARENA_VALUE_TERMINATOR];
             bufs.clear();
-            traverse_nfa(&table, &value, &mut bufs);
+            traverse_arena_nfa(&arena, start, &value, &mut bufs);
             assert!(
                 !bufs
                     .transitions
@@ -958,9 +973,9 @@ mod tests {
 
         // Should match "x", "y", "z"
         for ch in b"xyz" {
-            let value = vec![*ch, VALUE_TERMINATOR];
+            let value = vec![*ch, ARENA_VALUE_TERMINATOR];
             bufs.clear();
-            traverse_nfa(&table, &value, &mut bufs);
+            traverse_arena_nfa(&arena, start, &value, &mut bufs);
             assert!(
                 bufs.transitions
                     .iter()
@@ -973,25 +988,24 @@ mod tests {
 
     // MIRI SKIP RATIONALE: 4 star patterns each building an NFA including `.*` which expands to
     // full Unicode range, slow under Miri (~87s).
-    // Coverage: test_star_matches_empty_miri_friendly exercises 1 pattern ([a-z]*).
     #[test]
     #[cfg_attr(miri, ignore)]
     fn test_star_matches_empty() {
-        use crate::automaton::{traverse_nfa, NfaBuffers, VALUE_TERMINATOR};
+        use crate::automaton::arena::{
+            traverse_arena_nfa, ArenaNfaBuffers, ARENA_VALUE_TERMINATOR,
+        };
 
         // Patterns with * should match empty string
-        // Note: Excluding patterns with negated classes (e.g., [^?]) due to slow
-        // O(unicode_range) NFA construction
         let star_patterns = vec!["[a-z]*", "[0-9]*", ".*", "([abc]*)"];
 
         for pattern in star_patterns {
             let root = parse_regexp(pattern).unwrap();
-            let (table, field_matcher) = make_regexp_nfa(root, false);
-            let mut bufs = NfaBuffers::new();
+            let (arena, start, field_matcher) = make_regexp_nfa_arena(root, false);
+            let mut bufs = ArenaNfaBuffers::new();
 
-            let empty = vec![VALUE_TERMINATOR];
+            let empty = vec![ARENA_VALUE_TERMINATOR];
             bufs.clear();
-            traverse_nfa(&table, &empty, &mut bufs);
+            traverse_arena_nfa(&arena, start, &empty, &mut bufs);
             assert!(
                 bufs.transitions
                     .iter()
@@ -1003,22 +1017,22 @@ mod tests {
     }
 
     // MIRI SKIP RATIONALE: Even with single [a-z]* pattern, NFA construction for character
-    // class with star quantifier takes ~28s under Miri. Star matching is covered by
-    // test_nfa_star_quantifier (also skipped) and parse-level tests.
+    // class with star quantifier takes ~28s under Miri.
     /// Miri-friendly version of test_star_matches_empty — 1 pattern ([a-z]*) instead of 4.
-    /// Avoids `.*` which expands to full Unicode range.
     #[test]
     #[cfg_attr(miri, ignore)]
     fn test_star_matches_empty_miri_friendly() {
-        use crate::automaton::{traverse_nfa, NfaBuffers, VALUE_TERMINATOR};
+        use crate::automaton::arena::{
+            traverse_arena_nfa, ArenaNfaBuffers, ARENA_VALUE_TERMINATOR,
+        };
 
         let root = parse_regexp("[a-z]*").unwrap();
-        let (table, field_matcher) = make_regexp_nfa(root, false);
-        let mut bufs = NfaBuffers::new();
+        let (arena, start, field_matcher) = make_regexp_nfa_arena(root, false);
+        let mut bufs = ArenaNfaBuffers::new();
 
-        let empty = vec![VALUE_TERMINATOR];
+        let empty = vec![ARENA_VALUE_TERMINATOR];
         bufs.clear();
-        traverse_nfa(&table, &empty, &mut bufs);
+        traverse_arena_nfa(&arena, start, &empty, &mut bufs);
         assert!(
             bufs.transitions
                 .iter()
@@ -1351,30 +1365,32 @@ mod tests {
 
     #[test]
     fn test_range_quantifier_equivalence_question() {
-        use crate::automaton::{traverse_nfa, NfaBuffers, VALUE_TERMINATOR};
+        use crate::automaton::arena::{
+            traverse_arena_nfa, ArenaNfaBuffers, ARENA_VALUE_TERMINATOR,
+        };
 
         // a{0,1} should be equivalent to a?
         let root_range = parse_regexp("a{0,1}").unwrap();
         let root_qm = parse_regexp("a?").unwrap();
 
-        let (table_range, fm_range) = make_regexp_nfa(root_range, false);
-        let (table_qm, fm_qm) = make_regexp_nfa(root_qm, false);
+        let (arena_range, start_range, fm_range) = make_regexp_nfa_arena(root_range, false);
+        let (arena_qm, start_qm, fm_qm) = make_regexp_nfa_arena(root_qm, false);
 
-        let mut bufs = NfaBuffers::new();
+        let mut bufs = ArenaNfaBuffers::new();
         let test_cases = vec![
-            (vec![VALUE_TERMINATOR], true, "empty"),
-            (vec![b'a', VALUE_TERMINATOR], true, "a"),
-            (vec![b'a', b'a', VALUE_TERMINATOR], false, "aa"),
-            (vec![b'b', VALUE_TERMINATOR], false, "b"),
+            (vec![ARENA_VALUE_TERMINATOR], true, "empty"),
+            (vec![b'a', ARENA_VALUE_TERMINATOR], true, "a"),
+            (vec![b'a', b'a', ARENA_VALUE_TERMINATOR], false, "aa"),
+            (vec![b'b', ARENA_VALUE_TERMINATOR], false, "b"),
         ];
 
         for (value, should_match, desc) in test_cases {
             bufs.clear();
-            traverse_nfa(&table_range, &value, &mut bufs);
+            traverse_arena_nfa(&arena_range, start_range, &value, &mut bufs);
             let range_matched = bufs.transitions.iter().any(|m| Arc::ptr_eq(m, &fm_range));
 
             bufs.clear();
-            traverse_nfa(&table_qm, &value, &mut bufs);
+            traverse_arena_nfa(&arena_qm, start_qm, &value, &mut bufs);
             let qm_matched = bufs.transitions.iter().any(|m| Arc::ptr_eq(m, &fm_qm));
 
             assert_eq!(
@@ -1394,35 +1410,36 @@ mod tests {
 
     // MIRI SKIP RATIONALE: Building two NFAs (a{1,} and a+) with REGEXP_QUANTIFIER_MAX expansion
     // is slow under Miri (~51s).
-    // Coverage: test_range_quantifier_equivalence_miri_friendly covers star+plus equivalence.
     #[test]
     #[cfg_attr(miri, ignore)]
     fn test_range_quantifier_equivalence_plus() {
-        use crate::automaton::{traverse_nfa, NfaBuffers, VALUE_TERMINATOR};
+        use crate::automaton::arena::{
+            traverse_arena_nfa, ArenaNfaBuffers, ARENA_VALUE_TERMINATOR,
+        };
 
         // a{1,} should be equivalent to a+ (but capped at REGEXP_QUANTIFIER_MAX)
         let root_range = parse_regexp("a{1,}").unwrap();
         let root_plus = parse_regexp("a+").unwrap();
 
-        let (table_range, fm_range) = make_regexp_nfa(root_range, false);
-        let (table_plus, fm_plus) = make_regexp_nfa(root_plus, false);
+        let (arena_range, start_range, fm_range) = make_regexp_nfa_arena(root_range, false);
+        let (arena_plus, start_plus, fm_plus) = make_regexp_nfa_arena(root_plus, false);
 
-        let mut bufs = NfaBuffers::new();
+        let mut bufs = ArenaNfaBuffers::new();
         let test_cases = vec![
-            (vec![VALUE_TERMINATOR], false, "empty"),
-            (vec![b'a', VALUE_TERMINATOR], true, "a"),
-            (vec![b'a', b'a', VALUE_TERMINATOR], true, "aa"),
-            (vec![b'a', b'a', b'a', VALUE_TERMINATOR], true, "aaa"),
-            (vec![b'b', VALUE_TERMINATOR], false, "b"),
+            (vec![ARENA_VALUE_TERMINATOR], false, "empty"),
+            (vec![b'a', ARENA_VALUE_TERMINATOR], true, "a"),
+            (vec![b'a', b'a', ARENA_VALUE_TERMINATOR], true, "aa"),
+            (vec![b'a', b'a', b'a', ARENA_VALUE_TERMINATOR], true, "aaa"),
+            (vec![b'b', ARENA_VALUE_TERMINATOR], false, "b"),
         ];
 
         for (value, should_match, desc) in test_cases {
             bufs.clear();
-            traverse_nfa(&table_range, &value, &mut bufs);
+            traverse_arena_nfa(&arena_range, start_range, &value, &mut bufs);
             let range_matched = bufs.transitions.iter().any(|m| Arc::ptr_eq(m, &fm_range));
 
             bufs.clear();
-            traverse_nfa(&table_plus, &value, &mut bufs);
+            traverse_arena_nfa(&arena_plus, start_plus, &value, &mut bufs);
             let plus_matched = bufs.transitions.iter().any(|m| Arc::ptr_eq(m, &fm_plus));
 
             assert_eq!(
@@ -1442,34 +1459,35 @@ mod tests {
 
     // MIRI SKIP RATIONALE: Building two NFAs (a{0,} and a*) with REGEXP_QUANTIFIER_MAX expansion
     // is slow under Miri (~51s).
-    // Coverage: test_range_quantifier_equivalence_miri_friendly covers star+plus equivalence.
     #[test]
     #[cfg_attr(miri, ignore)]
     fn test_range_quantifier_equivalence_star() {
-        use crate::automaton::{traverse_nfa, NfaBuffers, VALUE_TERMINATOR};
+        use crate::automaton::arena::{
+            traverse_arena_nfa, ArenaNfaBuffers, ARENA_VALUE_TERMINATOR,
+        };
 
         // a{0,} should be equivalent to a* (but capped at REGEXP_QUANTIFIER_MAX)
         let root_range = parse_regexp("a{0,}").unwrap();
         let root_star = parse_regexp("a*").unwrap();
 
-        let (table_range, fm_range) = make_regexp_nfa(root_range, false);
-        let (table_star, fm_star) = make_regexp_nfa(root_star, false);
+        let (arena_range, start_range, fm_range) = make_regexp_nfa_arena(root_range, false);
+        let (arena_star, start_star, fm_star) = make_regexp_nfa_arena(root_star, false);
 
-        let mut bufs = NfaBuffers::new();
+        let mut bufs = ArenaNfaBuffers::new();
         let test_cases = vec![
-            (vec![VALUE_TERMINATOR], true, "empty"),
-            (vec![b'a', VALUE_TERMINATOR], true, "a"),
-            (vec![b'a', b'a', VALUE_TERMINATOR], true, "aa"),
-            (vec![b'b', VALUE_TERMINATOR], false, "b"),
+            (vec![ARENA_VALUE_TERMINATOR], true, "empty"),
+            (vec![b'a', ARENA_VALUE_TERMINATOR], true, "a"),
+            (vec![b'a', b'a', ARENA_VALUE_TERMINATOR], true, "aa"),
+            (vec![b'b', ARENA_VALUE_TERMINATOR], false, "b"),
         ];
 
         for (value, should_match, desc) in test_cases {
             bufs.clear();
-            traverse_nfa(&table_range, &value, &mut bufs);
+            traverse_arena_nfa(&arena_range, start_range, &value, &mut bufs);
             let range_matched = bufs.transitions.iter().any(|m| Arc::ptr_eq(m, &fm_range));
 
             bufs.clear();
-            traverse_nfa(&table_star, &value, &mut bufs);
+            traverse_arena_nfa(&arena_star, start_star, &value, &mut bufs);
             let star_matched = bufs.transitions.iter().any(|m| Arc::ptr_eq(m, &fm_star));
 
             assert_eq!(
@@ -1488,33 +1506,33 @@ mod tests {
     }
 
     // MIRI SKIP RATIONALE: Building 4 NFAs with quantifiers (star/plus via range syntax)
-    // takes ~101s under Miri. Coverage: test_range_quantifier_exact_one and parse-level
-    // tests verify range quantifier semantics without NFA traversal overhead.
+    // takes ~101s under Miri.
     /// Miri-friendly combined test for star and plus range quantifier equivalence.
-    /// Tests a{0,} == a* and a{1,} == a+ with 2 inputs each instead of 4-5.
     #[test]
     #[cfg_attr(miri, ignore)]
     fn test_range_quantifier_equivalence_miri_friendly() {
-        use crate::automaton::{traverse_nfa, NfaBuffers, VALUE_TERMINATOR};
+        use crate::automaton::arena::{
+            traverse_arena_nfa, ArenaNfaBuffers, ARENA_VALUE_TERMINATOR,
+        };
 
-        let mut bufs = NfaBuffers::new();
+        let mut bufs = ArenaNfaBuffers::new();
 
         // Star equivalence: a{0,} should behave like a*
         let root_range = parse_regexp("a{0,}").unwrap();
         let root_star = parse_regexp("a*").unwrap();
-        let (table_range, fm_range) = make_regexp_nfa(root_range, false);
-        let (table_star, fm_star) = make_regexp_nfa(root_star, false);
+        let (arena_range, start_range, fm_range) = make_regexp_nfa_arena(root_range, false);
+        let (arena_star, start_star, fm_star) = make_regexp_nfa_arena(root_star, false);
 
         for (value, desc) in [
-            (vec![VALUE_TERMINATOR], "empty"),
-            (vec![b'a', VALUE_TERMINATOR], "a"),
+            (vec![ARENA_VALUE_TERMINATOR], "empty"),
+            (vec![b'a', ARENA_VALUE_TERMINATOR], "a"),
         ] {
             bufs.clear();
-            traverse_nfa(&table_range, &value, &mut bufs);
+            traverse_arena_nfa(&arena_range, start_range, &value, &mut bufs);
             let range_matched = bufs.transitions.iter().any(|m| Arc::ptr_eq(m, &fm_range));
 
             bufs.clear();
-            traverse_nfa(&table_star, &value, &mut bufs);
+            traverse_arena_nfa(&arena_star, start_star, &value, &mut bufs);
             let star_matched = bufs.transitions.iter().any(|m| Arc::ptr_eq(m, &fm_star));
 
             assert_eq!(
@@ -1527,19 +1545,19 @@ mod tests {
         // Plus equivalence: a{1,} should behave like a+
         let root_range = parse_regexp("a{1,}").unwrap();
         let root_plus = parse_regexp("a+").unwrap();
-        let (table_range, fm_range) = make_regexp_nfa(root_range, false);
-        let (table_plus, fm_plus) = make_regexp_nfa(root_plus, false);
+        let (arena_range, start_range, fm_range) = make_regexp_nfa_arena(root_range, false);
+        let (arena_plus, start_plus, fm_plus) = make_regexp_nfa_arena(root_plus, false);
 
         for (value, desc) in [
-            (vec![VALUE_TERMINATOR], "empty"),
-            (vec![b'a', VALUE_TERMINATOR], "a"),
+            (vec![ARENA_VALUE_TERMINATOR], "empty"),
+            (vec![b'a', ARENA_VALUE_TERMINATOR], "a"),
         ] {
             bufs.clear();
-            traverse_nfa(&table_range, &value, &mut bufs);
+            traverse_arena_nfa(&arena_range, start_range, &value, &mut bufs);
             let range_matched = bufs.transitions.iter().any(|m| Arc::ptr_eq(m, &fm_range));
 
             bufs.clear();
-            traverse_nfa(&table_plus, &value, &mut bufs);
+            traverse_arena_nfa(&arena_plus, start_plus, &value, &mut bufs);
             let plus_matched = bufs.transitions.iter().any(|m| Arc::ptr_eq(m, &fm_plus));
 
             assert_eq!(
@@ -1552,22 +1570,24 @@ mod tests {
 
     #[test]
     fn test_range_quantifier_exact_one() {
-        use crate::automaton::{traverse_nfa, NfaBuffers, VALUE_TERMINATOR};
+        use crate::automaton::arena::{
+            traverse_arena_nfa, ArenaNfaBuffers, ARENA_VALUE_TERMINATOR,
+        };
 
         // a{1} means exactly 1 'a' (I-Regexp semantics: {n} means exactly n)
         let root = parse_regexp("a{1}").unwrap();
-        let (table, field_matcher) = make_regexp_nfa(root, false);
-        let mut bufs = NfaBuffers::new();
+        let (arena, start, field_matcher) = make_regexp_nfa_arena(root, false);
+        let mut bufs = ArenaNfaBuffers::new();
 
         let test_cases = vec![
-            (vec![VALUE_TERMINATOR], false, "empty"),
-            (vec![b'a', VALUE_TERMINATOR], true, "a"),
-            (vec![b'a', b'a', VALUE_TERMINATOR], false, "aa"), // {1} means exactly 1
+            (vec![ARENA_VALUE_TERMINATOR], false, "empty"),
+            (vec![b'a', ARENA_VALUE_TERMINATOR], true, "a"),
+            (vec![b'a', b'a', ARENA_VALUE_TERMINATOR], false, "aa"), // {1} means exactly 1
         ];
 
         for (value, should_match, desc) in test_cases {
             bufs.clear();
-            traverse_nfa(&table, &value, &mut bufs);
+            traverse_arena_nfa(&arena, start, &value, &mut bufs);
             let matched = bufs
                 .transitions
                 .iter()
@@ -1584,22 +1604,24 @@ mod tests {
 
     #[test]
     fn test_range_quantifier_exact_zero() {
-        use crate::automaton::{traverse_nfa, NfaBuffers, VALUE_TERMINATOR};
+        use crate::automaton::arena::{
+            traverse_arena_nfa, ArenaNfaBuffers, ARENA_VALUE_TERMINATOR,
+        };
 
         // a{0,0} should only match empty string
         let root = parse_regexp("a{0,0}").unwrap();
-        let (table, field_matcher) = make_regexp_nfa(root, false);
-        let mut bufs = NfaBuffers::new();
+        let (arena, start, field_matcher) = make_regexp_nfa_arena(root, false);
+        let mut bufs = ArenaNfaBuffers::new();
 
         let test_cases = vec![
-            (vec![VALUE_TERMINATOR], true, "empty"),
-            (vec![b'a', VALUE_TERMINATOR], false, "a"),
-            (vec![b'a', b'a', VALUE_TERMINATOR], false, "aa"),
+            (vec![ARENA_VALUE_TERMINATOR], true, "empty"),
+            (vec![b'a', ARENA_VALUE_TERMINATOR], false, "a"),
+            (vec![b'a', b'a', ARENA_VALUE_TERMINATOR], false, "aa"),
         ];
 
         for (value, should_match, desc) in test_cases {
             bufs.clear();
-            traverse_nfa(&table, &value, &mut bufs);
+            traverse_arena_nfa(&arena, start, &value, &mut bufs);
             let matched = bufs
                 .transitions
                 .iter()
@@ -1616,21 +1638,27 @@ mod tests {
 
     #[test]
     fn test_range_quantifier_with_dot() {
-        use crate::automaton::{traverse_nfa, NfaBuffers, VALUE_TERMINATOR};
+        use crate::automaton::arena::{
+            traverse_arena_nfa, ArenaNfaBuffers, ARENA_VALUE_TERMINATOR,
+        };
 
         // .{2,4} - any 2-4 characters
         let root = parse_regexp(".{2,4}").unwrap();
-        let (table, field_matcher) = make_regexp_nfa(root, false);
-        let mut bufs = NfaBuffers::new();
+        let (arena, start, field_matcher) = make_regexp_nfa_arena(root, false);
+        let mut bufs = ArenaNfaBuffers::new();
 
         let test_cases = vec![
-            (vec![VALUE_TERMINATOR], false, "empty"),
-            (vec![b'x', VALUE_TERMINATOR], false, "x"),
-            (vec![b'x', b'y', VALUE_TERMINATOR], true, "xy"),
-            (vec![b'a', b'b', b'c', VALUE_TERMINATOR], true, "abc"),
-            (vec![b'a', b'b', b'c', b'd', VALUE_TERMINATOR], true, "abcd"),
+            (vec![ARENA_VALUE_TERMINATOR], false, "empty"),
+            (vec![b'x', ARENA_VALUE_TERMINATOR], false, "x"),
+            (vec![b'x', b'y', ARENA_VALUE_TERMINATOR], true, "xy"),
+            (vec![b'a', b'b', b'c', ARENA_VALUE_TERMINATOR], true, "abc"),
             (
-                vec![b'a', b'b', b'c', b'd', b'e', VALUE_TERMINATOR],
+                vec![b'a', b'b', b'c', b'd', ARENA_VALUE_TERMINATOR],
+                true,
+                "abcd",
+            ),
+            (
+                vec![b'a', b'b', b'c', b'd', b'e', ARENA_VALUE_TERMINATOR],
                 false,
                 "abcde",
             ),
@@ -1638,7 +1666,7 @@ mod tests {
 
         for (value, should_match, desc) in test_cases {
             bufs.clear();
-            traverse_nfa(&table, &value, &mut bufs);
+            traverse_arena_nfa(&arena, start, &value, &mut bufs);
             let matched = bufs
                 .transitions
                 .iter()
@@ -1655,19 +1683,25 @@ mod tests {
 
     #[test]
     fn test_range_quantifier_with_group() {
-        use crate::automaton::{traverse_nfa, NfaBuffers, VALUE_TERMINATOR};
+        use crate::automaton::arena::{
+            traverse_arena_nfa, ArenaNfaBuffers, ARENA_VALUE_TERMINATOR,
+        };
 
         // (ab){2,3} - "ab" repeated 2-3 times
         let root = parse_regexp("(ab){2,3}").unwrap();
-        let (table, field_matcher) = make_regexp_nfa(root, false);
-        let mut bufs = NfaBuffers::new();
+        let (arena, start, field_matcher) = make_regexp_nfa_arena(root, false);
+        let mut bufs = ArenaNfaBuffers::new();
 
         let test_cases = vec![
-            (vec![VALUE_TERMINATOR], false, "empty"),
-            (vec![b'a', b'b', VALUE_TERMINATOR], false, "ab"),
-            (vec![b'a', b'b', b'a', b'b', VALUE_TERMINATOR], true, "abab"),
+            (vec![ARENA_VALUE_TERMINATOR], false, "empty"),
+            (vec![b'a', b'b', ARENA_VALUE_TERMINATOR], false, "ab"),
             (
-                vec![b'a', b'b', b'a', b'b', b'a', b'b', VALUE_TERMINATOR],
+                vec![b'a', b'b', b'a', b'b', ARENA_VALUE_TERMINATOR],
+                true,
+                "abab",
+            ),
+            (
+                vec![b'a', b'b', b'a', b'b', b'a', b'b', ARENA_VALUE_TERMINATOR],
                 true,
                 "ababab",
             ),
@@ -1681,7 +1715,7 @@ mod tests {
                     b'b',
                     b'a',
                     b'b',
-                    VALUE_TERMINATOR,
+                    ARENA_VALUE_TERMINATOR,
                 ],
                 false,
                 "abababab",
@@ -1690,7 +1724,7 @@ mod tests {
 
         for (value, should_match, desc) in test_cases {
             bufs.clear();
-            traverse_nfa(&table, &value, &mut bufs);
+            traverse_arena_nfa(&arena, start, &value, &mut bufs);
             let matched = bufs
                 .transitions
                 .iter()
@@ -1707,12 +1741,14 @@ mod tests {
 
     #[test]
     fn test_range_quantifier_larger_values() {
-        use crate::automaton::{traverse_nfa, NfaBuffers, VALUE_TERMINATOR};
+        use crate::automaton::arena::{
+            traverse_arena_nfa, ArenaNfaBuffers, ARENA_VALUE_TERMINATOR,
+        };
 
         // a{5,10} - between 5 and 10 'a's
         let root = parse_regexp("a{5,10}").unwrap();
-        let (table, field_matcher) = make_regexp_nfa(root, false);
-        let mut bufs = NfaBuffers::new();
+        let (arena, start, field_matcher) = make_regexp_nfa_arena(root, false);
+        let mut bufs = ArenaNfaBuffers::new();
 
         // Test boundary cases
         let test_cases: Vec<(usize, bool)> = vec![
@@ -1725,10 +1761,10 @@ mod tests {
 
         for (count, should_match) in test_cases {
             let mut value: Vec<u8> = vec![b'a'; count];
-            value.push(VALUE_TERMINATOR);
+            value.push(ARENA_VALUE_TERMINATOR);
 
             bufs.clear();
-            traverse_nfa(&table, &value, &mut bufs);
+            traverse_arena_nfa(&arena, start, &value, &mut bufs);
             let matched = bufs
                 .transitions
                 .iter()
@@ -1804,16 +1840,18 @@ mod tests {
     #[test]
     #[cfg_attr(miri, ignore)]
     fn test_xml_escapes_nfa() {
-        use crate::automaton::{traverse_nfa, NfaBuffers, VALUE_TERMINATOR};
+        use crate::automaton::arena::{
+            traverse_arena_nfa, ArenaNfaBuffers, ARENA_VALUE_TERMINATOR,
+        };
 
         // Test ~i matches initial name chars
         let root = parse_regexp("~i").unwrap();
-        let (table, field_matcher) = make_regexp_nfa(root, false);
-        let mut bufs = NfaBuffers::new();
+        let (arena, start, field_matcher) = make_regexp_nfa_arena(root, false);
+        let mut bufs = ArenaNfaBuffers::new();
 
         // Should match 'a' (letter)
-        let value = vec![b'a', VALUE_TERMINATOR];
-        traverse_nfa(&table, &value, &mut bufs);
+        let value = vec![b'a', ARENA_VALUE_TERMINATOR];
+        traverse_arena_nfa(&arena, start, &value, &mut bufs);
         assert!(
             bufs.transitions
                 .iter()
@@ -1823,8 +1861,8 @@ mod tests {
 
         // Should match ':' (colon is valid NameStartChar)
         bufs.clear();
-        let value = vec![b':', VALUE_TERMINATOR];
-        traverse_nfa(&table, &value, &mut bufs);
+        let value = vec![b':', ARENA_VALUE_TERMINATOR];
+        traverse_arena_nfa(&arena, start, &value, &mut bufs);
         assert!(
             bufs.transitions
                 .iter()
@@ -1834,8 +1872,8 @@ mod tests {
 
         // Should match '_' (underscore is valid NameStartChar)
         bufs.clear();
-        let value = vec![b'_', VALUE_TERMINATOR];
-        traverse_nfa(&table, &value, &mut bufs);
+        let value = vec![b'_', ARENA_VALUE_TERMINATOR];
+        traverse_arena_nfa(&arena, start, &value, &mut bufs);
         assert!(
             bufs.transitions
                 .iter()
@@ -1845,8 +1883,8 @@ mod tests {
 
         // Should NOT match '1' (digits not valid for NameStartChar)
         bufs.clear();
-        let value = vec![b'1', VALUE_TERMINATOR];
-        traverse_nfa(&table, &value, &mut bufs);
+        let value = vec![b'1', ARENA_VALUE_TERMINATOR];
+        traverse_arena_nfa(&arena, start, &value, &mut bufs);
         assert!(
             !bufs
                 .transitions
@@ -1857,8 +1895,8 @@ mod tests {
 
         // Should NOT match '-' (hyphen not valid for NameStartChar)
         bufs.clear();
-        let value = vec![b'-', VALUE_TERMINATOR];
-        traverse_nfa(&table, &value, &mut bufs);
+        let value = vec![b'-', ARENA_VALUE_TERMINATOR];
+        traverse_arena_nfa(&arena, start, &value, &mut bufs);
         assert!(
             !bufs
                 .transitions
@@ -1869,12 +1907,12 @@ mod tests {
 
         // Test ~c matches name chars (including digits, hyphen, dot)
         let root = parse_regexp("~c").unwrap();
-        let (table, field_matcher) = make_regexp_nfa(root, false);
+        let (arena, start, field_matcher) = make_regexp_nfa_arena(root, false);
 
         // Should match '1' (digits valid for NameChar)
         bufs.clear();
-        let value = vec![b'1', VALUE_TERMINATOR];
-        traverse_nfa(&table, &value, &mut bufs);
+        let value = vec![b'1', ARENA_VALUE_TERMINATOR];
+        traverse_arena_nfa(&arena, start, &value, &mut bufs);
         assert!(
             bufs.transitions
                 .iter()
@@ -1884,8 +1922,8 @@ mod tests {
 
         // Should match '-' (hyphen valid for NameChar)
         bufs.clear();
-        let value = vec![b'-', VALUE_TERMINATOR];
-        traverse_nfa(&table, &value, &mut bufs);
+        let value = vec![b'-', ARENA_VALUE_TERMINATOR];
+        traverse_arena_nfa(&arena, start, &value, &mut bufs);
         assert!(
             bufs.transitions
                 .iter()
@@ -1895,8 +1933,8 @@ mod tests {
 
         // Should match '.' (period valid for NameChar)
         bufs.clear();
-        let value = vec![b'.', VALUE_TERMINATOR];
-        traverse_nfa(&table, &value, &mut bufs);
+        let value = vec![b'.', ARENA_VALUE_TERMINATOR];
+        traverse_arena_nfa(&arena, start, &value, &mut bufs);
         assert!(
             bufs.transitions
                 .iter()
@@ -1906,8 +1944,8 @@ mod tests {
 
         // Should NOT match ' ' (space not valid for NameChar)
         bufs.clear();
-        let value = vec![b' ', VALUE_TERMINATOR];
-        traverse_nfa(&table, &value, &mut bufs);
+        let value = vec![b' ', ARENA_VALUE_TERMINATOR];
+        traverse_arena_nfa(&arena, start, &value, &mut bufs);
         assert!(
             !bufs
                 .transitions
@@ -1919,16 +1957,18 @@ mod tests {
 
     #[test]
     fn test_multi_char_escapes_nfa() {
-        use crate::automaton::{traverse_nfa, NfaBuffers, VALUE_TERMINATOR};
+        use crate::automaton::arena::{
+            traverse_arena_nfa, ArenaNfaBuffers, ARENA_VALUE_TERMINATOR,
+        };
 
         // Test ~d matches digits
         let root = parse_regexp("~d").unwrap();
-        let (table, field_matcher) = make_regexp_nfa(root, false);
-        let mut bufs = NfaBuffers::new();
+        let (arena, start, field_matcher) = make_regexp_nfa_arena(root, false);
+        let mut bufs = ArenaNfaBuffers::new();
 
         // Should match "5"
-        let value = vec![b'5', VALUE_TERMINATOR];
-        traverse_nfa(&table, &value, &mut bufs);
+        let value = vec![b'5', ARENA_VALUE_TERMINATOR];
+        traverse_arena_nfa(&arena, start, &value, &mut bufs);
         assert!(
             bufs.transitions
                 .iter()
@@ -1938,8 +1978,8 @@ mod tests {
 
         // Should NOT match "a"
         bufs.clear();
-        let value = vec![b'a', VALUE_TERMINATOR];
-        traverse_nfa(&table, &value, &mut bufs);
+        let value = vec![b'a', ARENA_VALUE_TERMINATOR];
+        traverse_arena_nfa(&arena, start, &value, &mut bufs);
         assert!(
             !bufs
                 .transitions
@@ -1950,12 +1990,12 @@ mod tests {
 
         // Test ~w matches word chars
         let root = parse_regexp("~w").unwrap();
-        let (table, field_matcher) = make_regexp_nfa(root, false);
+        let (arena, start, field_matcher) = make_regexp_nfa_arena(root, false);
 
         // Should match "a"
         bufs.clear();
-        let value = vec![b'a', VALUE_TERMINATOR];
-        traverse_nfa(&table, &value, &mut bufs);
+        let value = vec![b'a', ARENA_VALUE_TERMINATOR];
+        traverse_arena_nfa(&arena, start, &value, &mut bufs);
         assert!(
             bufs.transitions
                 .iter()
@@ -1965,8 +2005,8 @@ mod tests {
 
         // Should match "_"
         bufs.clear();
-        let value = vec![b'_', VALUE_TERMINATOR];
-        traverse_nfa(&table, &value, &mut bufs);
+        let value = vec![b'_', ARENA_VALUE_TERMINATOR];
+        traverse_arena_nfa(&arena, start, &value, &mut bufs);
         assert!(
             bufs.transitions
                 .iter()
@@ -1976,8 +2016,8 @@ mod tests {
 
         // Should NOT match "-"
         bufs.clear();
-        let value = vec![b'-', VALUE_TERMINATOR];
-        traverse_nfa(&table, &value, &mut bufs);
+        let value = vec![b'-', ARENA_VALUE_TERMINATOR];
+        traverse_arena_nfa(&arena, start, &value, &mut bufs);
         assert!(
             !bufs
                 .transitions
@@ -1988,12 +2028,12 @@ mod tests {
 
         // Test ~s matches whitespace
         let root = parse_regexp("~s").unwrap();
-        let (table, field_matcher) = make_regexp_nfa(root, false);
+        let (arena, start, field_matcher) = make_regexp_nfa_arena(root, false);
 
         // Should match " "
         bufs.clear();
-        let value = vec![b' ', VALUE_TERMINATOR];
-        traverse_nfa(&table, &value, &mut bufs);
+        let value = vec![b' ', ARENA_VALUE_TERMINATOR];
+        traverse_arena_nfa(&arena, start, &value, &mut bufs);
         assert!(
             bufs.transitions
                 .iter()
@@ -2003,8 +2043,8 @@ mod tests {
 
         // Should match "\t"
         bufs.clear();
-        let value = vec![b'\t', VALUE_TERMINATOR];
-        traverse_nfa(&table, &value, &mut bufs);
+        let value = vec![b'\t', ARENA_VALUE_TERMINATOR];
+        traverse_arena_nfa(&arena, start, &value, &mut bufs);
         assert!(
             bufs.transitions
                 .iter()
@@ -2014,8 +2054,8 @@ mod tests {
 
         // Should NOT match "x"
         bufs.clear();
-        let value = vec![b'x', VALUE_TERMINATOR];
-        traverse_nfa(&table, &value, &mut bufs);
+        let value = vec![b'x', ARENA_VALUE_TERMINATOR];
+        traverse_arena_nfa(&arena, start, &value, &mut bufs);
         assert!(
             !bufs
                 .transitions
@@ -2049,16 +2089,18 @@ mod tests {
     #[test]
     #[cfg_attr(miri, ignore)]
     fn test_multi_char_escape_with_quantifier() {
-        use crate::automaton::{traverse_nfa, NfaBuffers, VALUE_TERMINATOR};
+        use crate::automaton::arena::{
+            traverse_arena_nfa, ArenaNfaBuffers, ARENA_VALUE_TERMINATOR,
+        };
 
         // Test ~d+ matches one or more digits
         let root = parse_regexp("~d+").unwrap();
-        let (table, field_matcher) = make_regexp_nfa(root, false);
-        let mut bufs = NfaBuffers::new();
+        let (arena, start, field_matcher) = make_regexp_nfa_arena(root, false);
+        let mut bufs = ArenaNfaBuffers::new();
 
         // Should match "123"
-        let value = vec![b'1', b'2', b'3', VALUE_TERMINATOR];
-        traverse_nfa(&table, &value, &mut bufs);
+        let value = vec![b'1', b'2', b'3', ARENA_VALUE_TERMINATOR];
+        traverse_arena_nfa(&arena, start, &value, &mut bufs);
         assert!(
             bufs.transitions
                 .iter()
@@ -2068,12 +2110,12 @@ mod tests {
 
         // Test ~s{0,3} matches up to 3 whitespace
         let root = parse_regexp("a~s{0,3}b").unwrap();
-        let (table, field_matcher) = make_regexp_nfa(root, false);
+        let (arena, start, field_matcher) = make_regexp_nfa_arena(root, false);
 
         // Should match "ab" (0 spaces)
         bufs.clear();
-        let value = vec![b'a', b'b', VALUE_TERMINATOR];
-        traverse_nfa(&table, &value, &mut bufs);
+        let value = vec![b'a', b'b', ARENA_VALUE_TERMINATOR];
+        traverse_arena_nfa(&arena, start, &value, &mut bufs);
         assert!(
             bufs.transitions
                 .iter()
@@ -2083,8 +2125,8 @@ mod tests {
 
         // Should match "a  b" (2 spaces)
         bufs.clear();
-        let value = vec![b'a', b' ', b' ', b'b', VALUE_TERMINATOR];
-        traverse_nfa(&table, &value, &mut bufs);
+        let value = vec![b'a', b' ', b' ', b'b', ARENA_VALUE_TERMINATOR];
+        traverse_arena_nfa(&arena, start, &value, &mut bufs);
         assert!(
             bufs.transitions
                 .iter()
@@ -2094,27 +2136,29 @@ mod tests {
     }
 
     /// Miri-only: exercises multi-char escape (~d) combined with a quantifier through
-    /// make_regexp_nfa + traverse_nfa. Uses ~d{1} (exactly-1, no star/plus expansion)
+    /// make_regexp_nfa_arena + traverse_arena_nfa. Uses ~d{1} (exactly-1, no star/plus expansion)
     /// to stay fast. Covers the gap left by skipping test_multi_char_escape_with_quantifier.
     #[test]
     #[cfg(miri)]
     fn test_multi_char_escape_quantifier_miri_minimal() {
-        use crate::automaton::{traverse_nfa, NfaBuffers, VALUE_TERMINATOR};
+        use crate::automaton::arena::{
+            traverse_arena_nfa, ArenaNfaBuffers, ARENA_VALUE_TERMINATOR,
+        };
 
         // ~d{1} = exactly one digit — exercises escape expansion + range quantifier path
         let root = parse_regexp("~d{1}").unwrap();
-        let (table, fm) = make_regexp_nfa(root, false);
-        let mut bufs = NfaBuffers::new();
+        let (arena, start, fm) = make_regexp_nfa_arena(root, false);
+        let mut bufs = ArenaNfaBuffers::new();
 
         bufs.clear();
-        traverse_nfa(&table, &[b'5', VALUE_TERMINATOR], &mut bufs);
+        traverse_arena_nfa(&arena, start, &[b'5', ARENA_VALUE_TERMINATOR], &mut bufs);
         assert!(
             bufs.transitions.iter().any(|m| Arc::ptr_eq(m, &fm)),
             "~d{{1}} should match '5'"
         );
 
         bufs.clear();
-        traverse_nfa(&table, &[b'x', VALUE_TERMINATOR], &mut bufs);
+        traverse_arena_nfa(&arena, start, &[b'x', ARENA_VALUE_TERMINATOR], &mut bufs);
         assert!(
             !bufs.transitions.iter().any(|m| Arc::ptr_eq(m, &fm)),
             "~d{{1}} should NOT match 'x'"
@@ -2177,28 +2221,30 @@ mod tests {
     #[test]
     #[cfg_attr(miri, ignore)]
     fn test_shell_caching_nfa_correctness() {
-        use crate::automaton::{traverse_nfa, NfaBuffers, VALUE_TERMINATOR};
+        use crate::automaton::arena::{
+            traverse_arena_nfa, ArenaNfaBuffers, ARENA_VALUE_TERMINATOR,
+        };
 
         // Test that cached patterns produce correct results
         // Build ~p{L} twice - second should use cache
         let root1 = parse_regexp("~p{L}").unwrap();
         let root2 = parse_regexp("~p{L}").unwrap();
 
-        let (table1, fm1) = make_regexp_nfa(root1, false);
-        let (table2, fm2) = make_regexp_nfa(root2, false);
+        let (arena1, start1, fm1) = make_regexp_nfa_arena(root1, false);
+        let (arena2, start2, fm2) = make_regexp_nfa_arena(root2, false);
 
-        let mut bufs = NfaBuffers::new();
+        let mut bufs = ArenaNfaBuffers::new();
 
         // Both should match "A"
-        let value = vec![b'A', VALUE_TERMINATOR];
-        traverse_nfa(&table1, &value, &mut bufs);
+        let value = vec![b'A', ARENA_VALUE_TERMINATOR];
+        traverse_arena_nfa(&arena1, start1, &value, &mut bufs);
         assert!(
             bufs.transitions.iter().any(|m| Arc::ptr_eq(m, &fm1)),
             "First ~p{{L}} should match 'A'"
         );
 
         bufs.clear();
-        traverse_nfa(&table2, &value, &mut bufs);
+        traverse_arena_nfa(&arena2, start2, &value, &mut bufs);
         assert!(
             bufs.transitions.iter().any(|m| Arc::ptr_eq(m, &fm2)),
             "Second ~p{{L}} should match 'A' (from cache)"
@@ -2206,15 +2252,15 @@ mod tests {
 
         // Both should NOT match "5"
         bufs.clear();
-        let value = vec![b'5', VALUE_TERMINATOR];
-        traverse_nfa(&table1, &value, &mut bufs);
+        let value = vec![b'5', ARENA_VALUE_TERMINATOR];
+        traverse_arena_nfa(&arena1, start1, &value, &mut bufs);
         assert!(
             !bufs.transitions.iter().any(|m| Arc::ptr_eq(m, &fm1)),
             "First ~p{{L}} should NOT match '5'"
         );
 
         bufs.clear();
-        traverse_nfa(&table2, &value, &mut bufs);
+        traverse_arena_nfa(&arena2, start2, &value, &mut bufs);
         assert!(
             !bufs.transitions.iter().any(|m| Arc::ptr_eq(m, &fm2)),
             "Second ~p{{L}} should NOT match '5'"
