@@ -796,12 +796,29 @@ cargo doc --no-deps --open
   - Updated `freeze_value_matcher` to copy `main_arena`
   - 422 non-stress tests pass
 
+- [x] Step 2.4: Fix Arena FA Bugs and Migrate Remaining Transitions
+  - Fixed `make_monocase_arena_fa` multi-byte UTF-8 common prefix bug
+    - Issue: `build_arena_fragment` was skipping single-byte common prefixes
+    - Fix: Build proper chain for all prefix bytes
+    - Added test for Greek sigma case folding (Σ/σ)
+  - Fixed `make_cidr_arena_fa` IPv6 group handling
+    - Issue: Required exactly 4 hex digits instead of 1-4
+    - Fix: Added epsilon transitions in `build_any_hex_group_arena` for shorter matches
+    - Added test for IPv6 CIDR patterns
+  - Updated `add_monocase_transition` to use `make_monocase_arena_fa`
+  - Updated `add_cidr_transition` to use `make_cidr_arena_fa`
+  - Marked chain-based `make_cidr_fa` as deprecated
+  - 424 tests pass, Miri verification passed
+  - Commit: `239ea32`
+
 ### Next Step:
-**Phase 2, Step 2.5**: Remove Chain FA Code (after fixing monocase/CIDR arena bugs)
+**Phase 2, Step 2.5**: Remove Chain FA Code
+- Remove unused chain-based FA builders from fa_builders.rs
+- Update thread_safe.rs to use arena-based FA
+- Remove SmallTable/FaState after all code migrated
 
 ### Blockers:
-- `make_monocase_arena_fa` needs fix for Unicode case folding (Greek sigma)
-- `make_cidr_arena_fa` needs fix for IPv6 full-form addresses
+- None (all arena FA bugs fixed)
 
 ---
 
