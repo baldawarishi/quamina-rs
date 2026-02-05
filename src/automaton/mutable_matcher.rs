@@ -11,12 +11,11 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use super::arena::{
-    make_anything_but_arena_fa, make_numeric_greater_arena_fa, make_numeric_less_arena_fa,
-    make_numeric_range_arena_fa, make_prefix_arena_fa, make_shellstyle_arena_fa,
-    make_string_arena_fa, make_wildcard_arena_fa, merge_arena_nfas, traverse_arena_nfa,
-    ArenaNfaBuffers, StateArena, StateId,
+    make_anything_but_arena_fa, make_cidr_arena_fa, make_monocase_arena_fa,
+    make_numeric_greater_arena_fa, make_numeric_less_arena_fa, make_numeric_range_arena_fa,
+    make_prefix_arena_fa, make_shellstyle_arena_fa, make_string_arena_fa, make_wildcard_arena_fa,
+    merge_arena_nfas, traverse_arena_nfa, ArenaNfaBuffers, StateArena, StateId,
 };
-use super::fa_builders::{make_cidr_fa, make_monocase_fa, make_string_fa, merge_fas};
 use super::nfa::{traverse_dfa, traverse_nfa};
 use super::small_table::{FieldMatcher, NfaBuffers, SmallTable};
 use crate::regexp::make_regexp_nfa_arena;
@@ -683,30 +682,34 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
     }
 
     fn add_monocase_transition(&self, val: &[u8]) -> Rc<MutableFieldMatcher<X>> {
-        // TEMP: Use chain-based FA for monocase while debugging arena implementation
         let next_fm = Rc::new(MutableFieldMatcher::new());
         let next_arc = Arc::new(FieldMatcher::new());
         self.transition_map
             .borrow_mut()
             .insert(Arc::as_ptr(&next_arc), next_fm.clone());
-        let new_fa = make_monocase_fa(val, next_arc);
 
-        let mut start_table = self.start_table.borrow_mut();
-        if let Some(ref existing) = *start_table {
-            *start_table = Some(merge_fas(existing, &new_fa));
-        } else if self.singleton_match.borrow().is_some() {
+        // Use arena-based FA for monocase patterns
+        let (new_arena, new_start) = make_monocase_arena_fa(val, next_arc);
+
+        // Handle singleton optimization
+        if self.singleton_match.borrow().is_some() {
             let singleton_val = self.singleton_match.borrow().clone().unwrap();
             let singleton_trans = self.singleton_transition.borrow().clone().unwrap();
             let singleton_arc = Arc::new(FieldMatcher::new());
             self.transition_map
                 .borrow_mut()
                 .insert(Arc::as_ptr(&singleton_arc), singleton_trans);
-            let singleton_fa = make_string_fa(&singleton_val, singleton_arc);
-            *start_table = Some(merge_fas(&singleton_fa, &new_fa));
+
+            let (singleton_arena, singleton_start) =
+                make_string_arena_fa(&singleton_val, singleton_arc);
+            let (merged, merged_start) =
+                merge_arena_nfas(&singleton_arena, singleton_start, &new_arena, new_start);
+            self.merge_into_main_arena(merged, merged_start);
+
             *self.singleton_match.borrow_mut() = None;
             *self.singleton_transition.borrow_mut() = None;
         } else {
-            *start_table = Some(new_fa);
+            self.merge_into_main_arena(new_arena, new_start);
         }
 
         next_fm
@@ -893,32 +896,36 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
 
     /// Add a CIDR pattern transition using automaton-based IP matching.
     ///
-    /// Builds an FA that matches IP addresses in the specified CIDR range.
+    /// Builds an arena-based FA that matches IP addresses in the specified CIDR range.
     fn add_cidr_transition(&self, cidr: &crate::json::CidrPattern) -> Rc<MutableFieldMatcher<X>> {
-        // TEMP: Use chain-based FA for CIDR while debugging arena implementation for IPv6
         let next_fm = Rc::new(MutableFieldMatcher::new());
         let next_arc = Arc::new(FieldMatcher::new());
         self.transition_map
             .borrow_mut()
             .insert(Arc::as_ptr(&next_arc), next_fm.clone());
-        let new_fa = make_cidr_fa(cidr, next_arc);
 
-        let mut start_table = self.start_table.borrow_mut();
-        if let Some(ref existing) = *start_table {
-            *start_table = Some(merge_fas(existing, &new_fa));
-        } else if self.singleton_match.borrow().is_some() {
+        // Use arena-based FA for CIDR patterns
+        let (new_arena, new_start) = make_cidr_arena_fa(cidr, next_arc);
+
+        // Handle singleton optimization
+        if self.singleton_match.borrow().is_some() {
             let singleton_val = self.singleton_match.borrow().clone().unwrap();
             let singleton_trans = self.singleton_transition.borrow().clone().unwrap();
             let singleton_arc = Arc::new(FieldMatcher::new());
             self.transition_map
                 .borrow_mut()
                 .insert(Arc::as_ptr(&singleton_arc), singleton_trans);
-            let singleton_fa = make_string_fa(&singleton_val, singleton_arc);
-            *start_table = Some(merge_fas(&singleton_fa, &new_fa));
+
+            let (singleton_arena, singleton_start) =
+                make_string_arena_fa(&singleton_val, singleton_arc);
+            let (merged, merged_start) =
+                merge_arena_nfas(&singleton_arena, singleton_start, &new_arena, new_start);
+            self.merge_into_main_arena(merged, merged_start);
+
             *self.singleton_match.borrow_mut() = None;
             *self.singleton_transition.borrow_mut() = None;
         } else {
-            *start_table = Some(new_fa);
+            self.merge_into_main_arena(new_arena, new_start);
         }
 
         next_fm

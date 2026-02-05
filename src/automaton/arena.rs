@@ -2368,7 +2368,21 @@ fn build_monocase_arena_recursive(
             };
 
             // Now build the common prefix chain leading to diverge_state
-            build_arena_fragment(&orig[..common_prefix], diverge_state, arena)
+            // Must build a proper chain for all prefix bytes, including single-byte prefixes
+            let prefix = &orig[..common_prefix];
+            if prefix.is_empty() {
+                diverge_state
+            } else {
+                let mut current = diverge_state;
+                for &byte in prefix.iter().rev() {
+                    current = arena.alloc_with_table(ArenaSmallTable::with_mappings(
+                        StateId::NONE,
+                        &[byte],
+                        &[current],
+                    ));
+                }
+                current
+            }
         }
     } else {
         // No case alternate - single path
@@ -2639,19 +2653,26 @@ fn build_literal_chain_arena(val: &[u8], continuation: StateId, arena: &mut Stat
 
 /// Build FA matching any 1-4 hex digit group.
 fn build_any_hex_group_arena(continuation: StateId, arena: &mut StateArena) -> StateId {
-    // Match 1-4 hex digits: [0-9a-fA-F]+
+    // Match 1-4 hex digits: [0-9a-fA-F]{1,4}
     let hex_chars: Vec<u8> = (b'0'..=b'9')
         .chain(b'a'..=b'f')
         .chain(b'A'..=b'F')
         .collect();
 
     // Build states for 1, 2, 3, 4 digits
-    // State that can accept (leads to continuation) or continue with more digits
+    // Each state should:
+    // 1. Accept hex chars to continue matching more digits
+    // 2. Have epsilon transition to continuation (allowing match to end here)
+
+    // Start with continuation (state after 4th digit)
     let mut current = continuation;
 
-    for _ in 0..4 {
-        // Create state that accepts any hex char and leads to current
-        // Also has epsilon to continuation (for shorter matches)
+    // Build from digit 4 back to digit 1
+    // After digit 4: must transition to continuation (no more digits allowed)
+    // After digit 3, 2, 1: can either continue or epsilon to continuation
+
+    for digit_pos in (0..4).rev() {
+        // Create state that accepts any hex char
         let next_state = arena.alloc();
 
         // Build table with all hex transitions to current
@@ -2663,6 +2684,12 @@ fn build_any_hex_group_arena(continuation: StateId, arena: &mut StateArena) -> S
         }
 
         arena[next_state].table = ArenaSmallTable::with_mappings(StateId::NONE, &bytes, &targets);
+
+        // For positions 1, 2, 3 (not 0), add epsilon transition to allow match to end
+        // After matching 1-3 digits, we can optionally match more or transition out
+        if digit_pos > 0 {
+            arena[next_state].table.epsilons.push(continuation);
+        }
 
         current = next_state;
     }
@@ -5185,6 +5212,39 @@ mod monocase_arena_tests {
             "Merged should NOT match 'baz'"
         );
     }
+
+    #[test]
+    fn test_monocase_arena_fa_greek_sigma() {
+        // Test with simple Greek word without accents to test sigma case folding
+        let fm = Arc::new(FieldMatcher::with_match_id(1));
+        // Pattern: "Σοφα" (Sopha in Greek - without accent, for simpler testing)
+        let pattern = "Σοφα".as_bytes();
+        let (arena, start) = make_monocase_arena_fa(pattern, fm.clone());
+
+        // Original pattern should match
+        assert!(
+            matches_value(&arena, start, "Σοφα".as_bytes()),
+            "Original Greek should match"
+        );
+
+        // Lowercase sigma should match
+        assert!(
+            matches_value(&arena, start, "σοφα".as_bytes()),
+            "Lowercase sigma at start should match"
+        );
+
+        // All uppercase should match
+        assert!(
+            matches_value(&arena, start, "ΣΟΦΑ".as_bytes()),
+            "All uppercase should match"
+        );
+
+        // Mixed case should match
+        assert!(
+            matches_value(&arena, start, "σΟΦΑ".as_bytes()),
+            "Mixed case should match"
+        );
+    }
 }
 
 #[cfg(test)]
@@ -5321,6 +5381,33 @@ mod cidr_arena_tests {
         assert!(
             !matches_value(&merged, merged_start, b"172.16.0.0"),
             "Merged should NOT match 172.16.0.0"
+        );
+    }
+
+    #[test]
+    fn test_cidr_arena_fa_ipv6_basic() {
+        // IPv6 CIDR pattern 2001:db8::/32
+        let fm = Arc::new(FieldMatcher::with_match_id(1));
+        let cidr = CidrPattern::V6 {
+            network: [0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            prefix_len: 32,
+        };
+        let (arena, start) = make_cidr_arena_fa(&cidr, fm.clone());
+
+        // Should match IPs in range (full form)
+        assert!(
+            matches_value(&arena, start, b"2001:db8:0:0:0:0:0:1"),
+            "Should match 2001:db8:0:0:0:0:0:1"
+        );
+        assert!(
+            matches_value(&arena, start, b"2001:db8:ffff:ffff:ffff:ffff:ffff:ffff"),
+            "Should match end of range"
+        );
+
+        // Should NOT match IPs outside range
+        assert!(
+            !matches_value(&arena, start, b"2001:db9:0:0:0:0:0:1"),
+            "Should NOT match 2001:db9:..."
         );
     }
 }

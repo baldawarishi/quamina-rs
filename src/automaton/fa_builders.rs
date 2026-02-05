@@ -629,6 +629,10 @@ fn make_monocase_fa_ascii(val: &[u8], next_field: Arc<FieldMatcher>) -> SmallTab
 /// # Arguments
 /// * `cidr` - The CIDR pattern to match
 /// * `next_field` - The field matcher to transition to on match
+///
+/// NOTE: This function is deprecated in favor of `make_cidr_arena_fa` which uses
+/// arena-based allocation for better performance. Kept for reference and tests.
+#[allow(dead_code)]
 pub fn make_cidr_fa(cidr: &crate::json::CidrPattern, next_field: Arc<FieldMatcher>) -> SmallTable {
     use crate::json::CidrPattern;
 
