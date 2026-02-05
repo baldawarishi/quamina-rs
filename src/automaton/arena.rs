@@ -314,7 +314,10 @@ impl ArenaNfaBuffers {
             seen_states: vec![false; state_capacity],
             closure_stack: Vec::with_capacity(16),
             closure_result: Vec::with_capacity(16),
-            seen_transitions: rustc_hash::FxHashSet::default(),
+            seen_transitions: rustc_hash::FxHashSet::with_capacity_and_hasher(
+                16,
+                Default::default(),
+            ),
         }
     }
 
@@ -420,10 +423,12 @@ pub fn traverse_arena_nfa(
         let states_to_process = std::mem::take(&mut bufs.current_states);
 
         for state_id in states_to_process {
-            // Get epsilon closure
-            let closure = get_arena_epsilon_closure(arena, state_id, bufs);
+            // Get epsilon closure into bufs.closure_result
+            fill_epsilon_closure(arena, state_id, bufs);
 
-            for &ec_state_id in &closure {
+            // Iterate by index to avoid borrow conflicts
+            for ec_idx in 0..bufs.closure_result.len() {
+                let ec_state_id = bufs.closure_result[ec_idx];
                 let ec_state = &arena[ec_state_id];
 
                 // Collect field transitions (deduplicated using reusable buffer)
@@ -457,8 +462,12 @@ pub fn traverse_arena_nfa(
     // Check final states for matches
     let final_states = std::mem::take(&mut bufs.current_states);
     for state_id in final_states {
-        let closure = get_arena_epsilon_closure(arena, state_id, bufs);
-        for &ec_state_id in &closure {
+        // Get epsilon closure into bufs.closure_result
+        fill_epsilon_closure(arena, state_id, bufs);
+
+        // Iterate by index to avoid borrow conflicts
+        for ec_idx in 0..bufs.closure_result.len() {
+            let ec_state_id = bufs.closure_result[ec_idx];
             let ec_state = &arena[ec_state_id];
             for ft in &ec_state.field_transitions {
                 let ptr = Arc::as_ptr(ft) as usize;
@@ -474,25 +483,24 @@ pub fn traverse_arena_nfa(
 ///
 /// For DFA-only patterns (no epsilon transitions), this is a fast O(1) operation.
 /// For NFA patterns, this computes the full epsilon closure.
-fn get_arena_epsilon_closure(
-    arena: &StateArena,
-    start: StateId,
-    bufs: &mut ArenaNfaBuffers,
-) -> smallvec::SmallVec<[StateId; 4]> {
+///
+/// Results are written to `bufs.closure_result`. Callers should iterate
+/// `bufs.closure_result` directly after calling this function.
+fn fill_epsilon_closure(arena: &StateArena, start: StateId, bufs: &mut ArenaNfaBuffers) {
+    bufs.closure_result.clear();
+
     if start.is_none() {
-        return smallvec::SmallVec::new();
+        return;
     }
 
     // Fast path: DFA state with no epsilon transitions (common case for numeric patterns)
     let start_state = &arena[start];
     if start_state.table.epsilons.is_empty() {
-        let mut result = smallvec::SmallVec::new();
-        result.push(start);
-        return result;
+        bufs.closure_result.push(start);
+        return;
     }
 
     // Slow path: compute full epsilon closure
-    bufs.closure_result.clear();
     bufs.closure_stack.clear();
 
     bufs.closure_result.push(start);
@@ -529,9 +537,6 @@ fn get_arena_epsilon_closure(
             bufs.seen_states[id.index()] = false;
         }
     }
-
-    // Copy to SmallVec (stack-allocated for small closures)
-    bufs.closure_result.iter().copied().collect()
 }
 
 /// Merge two arena-based DFAs into one that matches either pattern.
