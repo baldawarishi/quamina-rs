@@ -1178,3 +1178,49 @@ fn test_arc_field_matcher_sharing() {
     matches3.sort();
     assert_eq!(matches3, vec!["id1", "id3"]);
 }
+
+// ============================================================================
+// Pattern Insertion Scaling Guard
+// ============================================================================
+
+/// Regression guard: pattern insertion must scale linearly, not quadratically.
+///
+/// Adds N patterns in two equal batches. If the second batch takes more than 3x
+/// the first, insertion has regressed to O(n²) and the test fails immediately.
+/// This catches the merge_arena_nfas deep-copy regression that caused CI to hang.
+#[test]
+#[cfg_attr(miri, ignore)]
+fn test_pattern_insertion_scales_linearly() {
+    use std::time::Instant;
+
+    let n = 2000; // enough to detect quadratic scaling, fast enough for CI
+    let mut q = Quamina::new();
+
+    // First batch: patterns 0..n
+    let start1 = Instant::now();
+    for i in 0..n {
+        let pattern = format!(r#"{{"key": ["value_{}"]}}"#, i);
+        q.add_pattern(format!("p{}", i), &pattern).unwrap();
+    }
+    let batch1 = start1.elapsed();
+
+    // Second batch: patterns n..2n (arena is now larger, so O(n²) would be much slower)
+    let start2 = Instant::now();
+    for i in n..2 * n {
+        let pattern = format!(r#"{{"key": ["value_{}"]}}"#, i);
+        q.add_pattern(format!("p{}", i), &pattern).unwrap();
+    }
+    let batch2 = start2.elapsed();
+
+    // With O(n) insertion: batch2 ≈ batch1
+    // With O(n²) insertion: batch2 ≈ 3-4x batch1 (since total work ~ (2n)² - n² = 3n²)
+    let ratio = batch2.as_secs_f64() / batch1.as_secs_f64().max(0.001);
+    assert!(
+        ratio < 3.0,
+        "Pattern insertion is scaling poorly: batch2 took {:.1}x batch1 \
+         (batch1={:.2}s, batch2={:.2}s). This suggests O(n²) insertion regression.",
+        ratio,
+        batch1.as_secs_f64(),
+        batch2.as_secs_f64(),
+    );
+}

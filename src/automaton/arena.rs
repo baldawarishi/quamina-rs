@@ -157,6 +157,14 @@ impl ArenaSmallTable {
         // For anything-but, we explicitly set it in with_mappings
     }
 
+    /// Set a single byte transition, unpacking and repacking the table.
+    pub fn set_transition(&mut self, byte: u8, target: StateId) {
+        let mut unpacked = [StateId::NONE; BYTE_CEILING];
+        unpack_arena_table(self, &mut unpacked);
+        unpacked[byte as usize] = target;
+        self.pack(&unpacked);
+    }
+
     /// Get the state for a given byte (deterministic step).
     #[inline]
     pub fn dstep(&self, byte: u8) -> StateId {
@@ -1799,6 +1807,60 @@ fn make_string_arena_fa_step(
         &[val[index]],
         &[continuation],
     ))
+}
+
+/// Insert a string into an existing arena in-place, sharing prefix structure.
+///
+/// This is O(L) per string where L is the string length, avoiding the O(n²) cost
+/// of repeated `merge_arena_nfas` calls. It walks the existing trie, following
+/// existing transitions where they match and creating new states where they diverge.
+pub fn insert_string_into_arena(
+    arena: &mut StateArena,
+    start: StateId,
+    val: &[u8],
+    field_matcher: Arc<FieldMatcher>,
+) {
+    let mut current = start;
+
+    for i in 0..=val.len() {
+        let byte = if i < val.len() {
+            val[i]
+        } else {
+            ARENA_VALUE_TERMINATOR
+        };
+
+        let next = arena[current].table.dstep(byte);
+        if !next.is_none() {
+            // Transition exists, follow it
+            current = next;
+        } else {
+            // No transition for this byte — create the remaining chain
+            let match_state = arena.alloc();
+            arena[match_state].field_transitions.push(field_matcher);
+
+            // Build chain backwards for any remaining bytes after this one
+            let mut target = match_state;
+            for j in (i + 1..=val.len()).rev() {
+                let b = if j < val.len() {
+                    val[j]
+                } else {
+                    ARENA_VALUE_TERMINATOR
+                };
+                target = arena.alloc_with_table(ArenaSmallTable::with_mappings(
+                    StateId::NONE,
+                    &[b],
+                    &[target],
+                ));
+            }
+
+            // Add transition from current state to the new chain
+            arena[current].table.set_transition(byte, target);
+            return;
+        }
+    }
+
+    // Full path already exists — add field transition to the terminal state
+    arena[current].field_transitions.push(field_matcher);
 }
 
 /// Build an arena-based FA that matches strings with a given prefix.

@@ -9,6 +9,7 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
@@ -36,7 +37,7 @@ jobs:
 
   fuzz:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@nightly
@@ -59,13 +60,24 @@ jobs:
 
   kani:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v6
       - name: Run Kani proofs
         uses: model-checking/kani-github-action@v1
         with:
           args: --output-format terse
+
+  bench:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Run matching benchmarks
+        run: cargo bench --bench matching
+      - name: Run memory benchmarks
+        run: cargo bench --bench memory --features dhat-heap
 
   security:
     runs-on: ubuntu-latest
