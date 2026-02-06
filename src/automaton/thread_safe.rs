@@ -14,6 +14,7 @@
 use std::collections::{HashMap, HashSet};
 use std::hash::Hash;
 use std::rc::Rc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use rustc_hash::FxHashMap;
@@ -364,7 +365,9 @@ impl<X: Clone + Eq + Hash> BuildState<X> {
 /// Thread-safe core matcher using automaton-based matching.
 ///
 /// This matcher is `Send + Sync`, allowing concurrent access from multiple threads.
-/// Pattern addition is serialized via a mutex, while matching is lock-free.
+/// Pattern addition is serialized via a mutex. Matching is lock-free in steady state
+/// but lazily freezes the mutable structures on the first match after pattern additions,
+/// amortizing the freeze cost to avoid O(n²) overhead from per-add freezing.
 ///
 /// See `tests::test_thread_safe_core_matcher_basic` for usage example.
 pub struct ThreadSafeCoreMatcher<X: Clone + Eq + Hash + Send + Sync> {
@@ -372,6 +375,10 @@ pub struct ThreadSafeCoreMatcher<X: Clone + Eq + Hash + Send + Sync> {
     root: ArcSwap<FrozenFieldMatcher<X>>,
     /// Mutex protecting pattern building
     build_lock: Mutex<BuildState<X>>,
+    /// Flag indicating that patterns were added since the last freeze.
+    /// When true, the next match operation will freeze before reading.
+    /// This avoids O(n²) cost from freezing after every add_pattern.
+    needs_freeze: AtomicBool,
 }
 
 // ThreadSafeCoreMatcher is Send + Sync because:
@@ -387,12 +394,33 @@ impl<X: Clone + Eq + Hash + Send + Sync> ThreadSafeCoreMatcher<X> {
         Self {
             root: ArcSwap::from_pointee(FrozenFieldMatcher::new()),
             build_lock: Mutex::new(BuildState::new()),
+            needs_freeze: AtomicBool::new(false),
+        }
+    }
+
+    /// Ensure the frozen snapshot is up-to-date.
+    ///
+    /// If patterns have been added since the last freeze, acquires the build lock
+    /// and freezes the mutable structures into a new frozen snapshot. This defers
+    /// the O(n*L) freeze cost to the first match after a batch of adds, avoiding
+    /// O(n²*L) total cost from freezing after every individual add_pattern.
+    fn ensure_frozen(&self) {
+        if self.needs_freeze.load(Ordering::Acquire) {
+            let build_state = self.build_lock.lock();
+            // Double-check under lock: another thread may have frozen already
+            if self.needs_freeze.load(Ordering::Relaxed) {
+                let frozen = self.freeze_field_matcher(&build_state.root);
+                self.root.store(Arc::new(frozen));
+                self.needs_freeze.store(false, Ordering::Release);
+            }
         }
     }
 
     /// Add a pattern with the given identifier.
     ///
     /// This method is thread-safe but serialized - only one pattern can be added at a time.
+    /// The pattern is not frozen immediately; the frozen snapshot is updated lazily on
+    /// the next match operation, amortizing the freeze cost across batches of adds.
     /// The pattern_fields should be a list of (path, matchers) tuples.
     pub fn add_pattern(&self, x: X, pattern_fields: &[(String, Vec<crate::json::Matcher>)]) {
         // Acquire build lock
@@ -438,9 +466,10 @@ impl<X: Clone + Eq + Hash + Send + Sync> ThreadSafeCoreMatcher<X> {
             state.add_match(x.clone());
         }
 
-        // Freeze the mutable structures and store atomically
-        let frozen = self.freeze_field_matcher(&build_state.root);
-        self.root.store(Arc::new(frozen));
+        // Mark that frozen snapshot needs updating.
+        // Freeze is deferred to the next match operation (ensure_frozen),
+        // avoiding O(n²) cost from cloning the growing arena after every add.
+        self.needs_freeze.store(true, Ordering::Release);
     }
 
     /// Freeze a MutableFieldMatcher into a FrozenFieldMatcher
@@ -547,8 +576,11 @@ impl<X: Clone + Eq + Hash + Send + Sync> ThreadSafeCoreMatcher<X> {
 
     /// Match fields against patterns and return matching pattern identifiers.
     ///
-    /// This method is lock-free and can be called concurrently from multiple threads.
+    /// Can be called concurrently from multiple threads. Lock-free in steady state;
+    /// briefly acquires the build lock on the first call after pattern additions
+    /// to freeze the mutable structures into an immutable snapshot.
     pub fn matches_for_fields(&self, fields: &[EventField]) -> Vec<X> {
+        self.ensure_frozen();
         let root = self.root.load();
 
         if fields.is_empty() {
@@ -641,13 +673,15 @@ impl<X: Clone + Eq + Hash + Send + Sync> ThreadSafeCoreMatcher<X> {
 
     /// Match fields using zero-copy field references.
     ///
-    /// This method is lock-free and can be called concurrently from multiple threads.
+    /// Can be called concurrently from multiple threads. Lock-free in steady state;
+    /// briefly acquires the build lock on the first call after pattern additions.
     /// The `bufs` parameter should be a reusable NfaBuffers instance for reduced allocations.
     pub fn matches_for_fields_ref(
         &self,
         fields: &[EventFieldRef<'_>],
         bufs: &mut NfaBuffers,
     ) -> Vec<X> {
+        self.ensure_frozen();
         let root = self.root.load();
 
         if fields.is_empty() {
@@ -732,12 +766,14 @@ impl<X: Clone + Eq + Hash + Send + Sync> ThreadSafeCoreMatcher<X> {
     ///
     /// This avoids the intermediate EventFieldRef allocation by working
     /// directly with flatten_json::Field. Fields should already be sorted by path.
-    /// This method is lock-free and can be called concurrently from multiple threads.
+    /// Can be called concurrently from multiple threads. Lock-free in steady state;
+    /// briefly acquires the build lock on the first call after pattern additions.
     pub fn matches_for_fields_direct(
         &self,
         fields: &[crate::flatten_json::Field<'_>],
         bufs: &mut NfaBuffers,
     ) -> Vec<X> {
+        self.ensure_frozen();
         let root = self.root.load();
 
         if fields.is_empty() {

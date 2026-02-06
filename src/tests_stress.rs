@@ -1185,18 +1185,21 @@ fn test_arc_field_matcher_sharing() {
 
 /// Regression guard: pattern insertion must scale linearly, not quadratically.
 ///
-/// Measures per-pattern cost at two scales (500 and 2000 patterns). With O(n*L)
-/// insertion the per-pattern cost is constant, so the ratio ≈ 1. With O(n²)
-/// insertion (the merge_arena_nfas regression), the per-pattern cost at 2000
-/// would be ~4x the cost at 500, giving ratio ≈ 4+. We use a generous threshold
-/// of 6x to tolerate CI noise while still catching quadratic blowup.
+/// Measures per-pattern cost at four layers (50, 500, 5000, 20000 patterns).
+/// With O(n*L) insertion the per-pattern cost is roughly constant, so the
+/// ratio between consecutive layers ≈ 1. With O(n²) regression, the
+/// per-pattern cost grows linearly with n (e.g., 500/50 ≈ 10x).
+/// We use a generous 6x threshold to tolerate CI noise while catching
+/// quadratic blowup.
+///
+/// Includes a match after all adds to trigger any deferred work (e.g., lazy
+/// freeze), ensuring total user-visible cost is measured.
 #[test]
 #[cfg_attr(miri, ignore)]
 fn test_pattern_insertion_scales_linearly() {
     use std::time::Instant;
 
-    let small_n = 500;
-    let large_n = 2000;
+    let layers: &[usize] = &[50, 500, 5000, 20_000];
 
     // Warmup: add patterns to a throwaway instance to warm caches/allocator
     {
@@ -1205,38 +1208,51 @@ fn test_pattern_insertion_scales_linearly() {
             let pattern = format!(r#"{{"key": ["warmup_{}"]}}"#, i);
             warmup.add_pattern(format!("w{}", i), &pattern).unwrap();
         }
+        let _ = warmup.matches_for_event(r#"{"key": "warmup_0"}"#.as_bytes());
     }
 
-    // Measure small batch: per-pattern cost at small_n
-    let mut q_small = Quamina::new();
-    let start_small = Instant::now();
-    for i in 0..small_n {
-        let pattern = format!(r#"{{"key": ["value_{}"]}}"#, i);
-        q_small.add_pattern(format!("p{}", i), &pattern).unwrap();
-    }
-    let cost_small = start_small.elapsed().as_secs_f64() / small_n as f64;
+    let mut costs: Vec<(usize, f64)> = Vec::new();
 
-    // Measure large batch: per-pattern cost at large_n
-    let mut q_large = Quamina::new();
-    let start_large = Instant::now();
-    for i in 0..large_n {
-        let pattern = format!(r#"{{"key": ["value_{}"]}}"#, i);
-        q_large.add_pattern(format!("p{}", i), &pattern).unwrap();
+    for &n in layers {
+        let mut q = Quamina::new();
+        let start = Instant::now();
+        for i in 0..n {
+            let pattern = format!(r#"{{"key": ["value_{}"]}}"#, i);
+            q.add_pattern(format!("p{}", i), &pattern).unwrap();
+        }
+        // Trigger any deferred work (lazy freeze) so total cost is captured
+        let matches = q
+            .matches_for_event(r#"{"key": "value_0"}"#.as_bytes())
+            .unwrap();
+        let elapsed = start.elapsed();
+        assert!(
+            matches.contains(&"p0".to_string()),
+            "Pattern p0 should match after adding {} patterns",
+            n,
+        );
+        let cost_per_pattern = elapsed.as_secs_f64() / n as f64;
+        costs.push((n, cost_per_pattern));
     }
-    let cost_large = start_large.elapsed().as_secs_f64() / large_n as f64;
 
-    // With O(n*L): cost_large/cost_small ≈ 1 (constant per-pattern cost)
-    // With O(n²): cost_large/cost_small ≈ large_n/small_n = 4 (linear per-pattern cost)
-    let ratio = cost_large / cost_small.max(1e-9);
-    assert!(
-        ratio < 6.0,
-        "Pattern insertion is scaling poorly: per-pattern cost at n={} is {:.1}x \
-         the cost at n={} (small={:.4}ms, large={:.4}ms). \
-         This suggests O(n²) insertion regression.",
-        large_n,
-        ratio,
-        small_n,
-        cost_small * 1000.0,
-        cost_large * 1000.0,
-    );
+    // Compare per-pattern cost between consecutive layers.
+    // With O(n*L): ratio ≈ 1 (constant per-pattern cost)
+    // With O(n²): ratio ≈ layer_large/layer_small (linear per-pattern cost)
+    for i in 1..costs.len() {
+        let (small_n, small_cost) = costs[i - 1];
+        let (large_n, large_cost) = costs[i];
+        let ratio = large_cost / small_cost.max(1e-9);
+        assert!(
+            ratio < 6.0,
+            "Pattern insertion scales poorly between n={} and n={}: {:.1}x \
+             (n={}={:.4}ms/pattern, n={}={:.4}ms/pattern). \
+             This suggests O(n²) regression.",
+            small_n,
+            large_n,
+            ratio,
+            small_n,
+            small_cost * 1000.0,
+            large_n,
+            large_cost * 1000.0,
+        );
+    }
 }
