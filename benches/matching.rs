@@ -857,16 +857,20 @@ fn bench_arena_nfa_short(c: &mut Criterion) {
 /// Benchmark for bulk pattern adding (100 patterns × 10 values each)
 /// This measures the O(n²) problem from repeated merge_fas calls
 fn bench_bulk_100x10(c: &mut Criterion) {
+    let patterns: Vec<String> = (0..100)
+        .map(|i| {
+            let values: String = (0..10)
+                .map(|j| format!("\"value_{}_{}\"", i, j))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!(r#"{{"field": [{}]}}"#, values)
+        })
+        .collect();
     c.bench_function("bulk_100x10", |b| {
         b.iter(|| {
             let mut q = Quamina::<usize>::new();
-            for i in 0..100 {
-                let values: String = (0..10)
-                    .map(|j| format!("\"value_{}_{}\"", i, j))
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                let pattern = format!(r#"{{"field": [{}]}}"#, values);
-                q.add_pattern(i, &pattern).unwrap();
+            for (i, pattern) in patterns.iter().enumerate() {
+                q.add_pattern(i, pattern).unwrap();
             }
         })
     });
@@ -874,16 +878,20 @@ fn bench_bulk_100x10(c: &mut Criterion) {
 
 /// Larger bulk benchmark (1000 patterns × 10 values)
 fn bench_bulk_1000x10(c: &mut Criterion) {
+    let patterns: Vec<String> = (0..1000)
+        .map(|i| {
+            let values: String = (0..10)
+                .map(|j| format!("\"value_{}_{}\"", i, j))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!(r#"{{"field": [{}]}}"#, values)
+        })
+        .collect();
     c.bench_function("bulk_1000x10", |b| {
         b.iter(|| {
             let mut q = Quamina::<usize>::new();
-            for i in 0..1000 {
-                let values: String = (0..10)
-                    .map(|j| format!("\"value_{}_{}\"", i, j))
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                let pattern = format!(r#"{{"field": [{}]}}"#, values);
-                q.add_pattern(i, &pattern).unwrap();
+            for (i, pattern) in patterns.iter().enumerate() {
+                q.add_pattern(i, pattern).unwrap();
             }
         })
     });
@@ -891,16 +899,20 @@ fn bench_bulk_1000x10(c: &mut Criterion) {
 
 /// Smaller bulk benchmark (100 patterns × 100 values) for faster iteration
 fn bench_bulk_100x100(c: &mut Criterion) {
+    let patterns: Vec<String> = (0..100)
+        .map(|i| {
+            let values: String = (0..100)
+                .map(|j| format!("\"value_{}_{}\"", i, j))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!(r#"{{"field": [{}]}}"#, values)
+        })
+        .collect();
     c.bench_function("bulk_100x100", |b| {
         b.iter(|| {
             let mut q = Quamina::<usize>::new();
-            for i in 0..100 {
-                let values: String = (0..100)
-                    .map(|j| format!("\"value_{}_{}\"", i, j))
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                let pattern = format!(r#"{{"field": [{}]}}"#, values);
-                q.add_pattern(i, &pattern).unwrap();
+            for (i, pattern) in patterns.iter().enumerate() {
+                q.add_pattern(i, pattern).unwrap();
             }
         })
     });
@@ -908,19 +920,23 @@ fn bench_bulk_100x100(c: &mut Criterion) {
 
 /// Bulk benchmark with multiple fields per pattern
 fn bench_bulk_100x10_multifield(c: &mut Criterion) {
+    let patterns: Vec<String> = (0..100)
+        .map(|i| {
+            let values: String = (0..10)
+                .map(|j| format!("\"value_{}_{}\"", i, j))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!(
+                r#"{{"field1": [{}], "field2": [{}], "field3": [{}]}}"#,
+                values, values, values
+            )
+        })
+        .collect();
     c.bench_function("bulk_100x10_multifield", |b| {
         b.iter(|| {
             let mut q = Quamina::<usize>::new();
-            for i in 0..100 {
-                let values: String = (0..10)
-                    .map(|j| format!("\"value_{}_{}\"", i, j))
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                let pattern = format!(
-                    r#"{{"field1": [{}], "field2": [{}], "field3": [{}]}}"#,
-                    values, values, values
-                );
-                q.add_pattern(i, &pattern).unwrap();
+            for (i, pattern) in patterns.iter().enumerate() {
+                q.add_pattern(i, pattern).unwrap();
             }
         })
     });
@@ -931,12 +947,14 @@ fn bench_bulk_100x10_multifield(c: &mut Criterion) {
 /// Benchmark for adding 10,000 patterns (single value each)
 /// Tests scaling behavior beyond typical workloads
 fn bench_bulk_10000x1(c: &mut Criterion) {
+    let patterns: Vec<String> = (0..10_000)
+        .map(|i| format!(r#"{{"field": ["value_{}"]}}"#, i))
+        .collect();
     c.bench_function("bulk_10000x1", |b| {
         b.iter(|| {
             let mut q = Quamina::<usize>::new();
-            for i in 0..10_000 {
-                let pattern = format!(r#"{{"field": ["value_{}"]}}"#, i);
-                q.add_pattern(i, &pattern).unwrap();
+            for (i, pattern) in patterns.iter().enumerate() {
+                q.add_pattern(i, pattern).unwrap();
             }
         })
     });
