@@ -1235,3 +1235,81 @@ fn test_arc_field_matcher_sharing() {
     matches3.sort();
     assert_eq!(matches3, vec!["id1", "id3"]);
 }
+
+// ============================================================================
+// Pattern Insertion Scaling Guard
+// ============================================================================
+
+/// Regression guard: pattern insertion must scale linearly, not quadratically.
+///
+/// Measures per-pattern cost at four layers (50, 500, 5000, 20000 patterns).
+/// With O(n*L) insertion the per-pattern cost is roughly constant, so the
+/// ratio between consecutive layers ≈ 1. With O(n²) regression, the
+/// per-pattern cost grows linearly with n (e.g., 500/50 ≈ 10x).
+/// We use a generous 6x threshold to tolerate CI noise while catching
+/// quadratic blowup.
+///
+/// Includes a match after all adds to trigger any deferred work (e.g., lazy
+/// freeze), ensuring total user-visible cost is measured.
+#[test]
+#[cfg_attr(miri, ignore)]
+fn test_pattern_insertion_scales_linearly() {
+    use std::time::Instant;
+
+    let layers: &[usize] = &[50, 500, 5000, 20_000];
+
+    // Warmup: add patterns to a throwaway instance to warm caches/allocator
+    {
+        let mut warmup = Quamina::new();
+        for i in 0..100 {
+            let pattern = format!(r#"{{"key": ["warmup_{}"]}}"#, i);
+            warmup.add_pattern(format!("w{}", i), &pattern).unwrap();
+        }
+        let _ = warmup.matches_for_event(r#"{"key": "warmup_0"}"#.as_bytes());
+    }
+
+    let mut costs: Vec<(usize, f64)> = Vec::new();
+
+    for &n in layers {
+        let mut q = Quamina::new();
+        let start = Instant::now();
+        for i in 0..n {
+            let pattern = format!(r#"{{"key": ["value_{}"]}}"#, i);
+            q.add_pattern(format!("p{}", i), &pattern).unwrap();
+        }
+        // Trigger any deferred work (lazy freeze) so total cost is captured
+        let matches = q
+            .matches_for_event(r#"{"key": "value_0"}"#.as_bytes())
+            .unwrap();
+        let elapsed = start.elapsed();
+        assert!(
+            matches.contains(&"p0".to_string()),
+            "Pattern p0 should match after adding {} patterns",
+            n,
+        );
+        let cost_per_pattern = elapsed.as_secs_f64() / n as f64;
+        costs.push((n, cost_per_pattern));
+    }
+
+    // Compare per-pattern cost between consecutive layers.
+    // With O(n*L): ratio ≈ 1 (constant per-pattern cost)
+    // With O(n²): ratio ≈ layer_large/layer_small (linear per-pattern cost)
+    for i in 1..costs.len() {
+        let (small_n, small_cost) = costs[i - 1];
+        let (large_n, large_cost) = costs[i];
+        let ratio = large_cost / small_cost.max(1e-9);
+        assert!(
+            ratio < 6.0,
+            "Pattern insertion scales poorly between n={} and n={}: {:.1}x \
+             (n={}={:.4}ms/pattern, n={}={:.4}ms/pattern). \
+             This suggests O(n²) regression.",
+            small_n,
+            large_n,
+            ratio,
+            small_n,
+            small_cost * 1000.0,
+            large_n,
+            large_cost * 1000.0,
+        );
+    }
+}

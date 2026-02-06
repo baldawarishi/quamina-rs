@@ -315,7 +315,7 @@ fn profile_number_matching() -> MemoryStats {
     let mut rng = rand::rngs::StdRng::seed_from_u64(2325);
 
     // Generate 10 random float values for the pattern
-    let targets: Vec<f64> = (0..10).map(|_| rng.gen::<f64>()).collect();
+    let targets: Vec<f64> = (0..10).map(|_| rng.random::<f64>()).collect();
 
     // Build pattern with 10 exact float values
     let values: String = targets
@@ -339,7 +339,7 @@ fn profile_number_matching() -> MemoryStats {
                 format!(r#"{{"x": {}}}"#, val).into_bytes()
             } else {
                 // Non-matching event - use a different random value
-                let val = format!("{:.6}", rng.gen::<f64>() + 10.0); // +10 ensures no collision
+                let val = format!("{:.6}", rng.random::<f64>() + 10.0); // +10 ensures no collision
                 format!(r#"{{"x": {}}}"#, val).into_bytes()
             }
         })

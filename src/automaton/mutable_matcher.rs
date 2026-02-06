@@ -11,10 +11,11 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use super::arena::{
-    make_anything_but_arena_fa, make_cidr_arena_fa, make_monocase_arena_fa,
-    make_numeric_greater_arena_fa, make_numeric_less_arena_fa, make_numeric_range_arena_fa,
-    make_prefix_arena_fa, make_shellstyle_arena_fa, make_string_arena_fa, make_wildcard_arena_fa,
-    merge_arena_nfas, traverse_arena_nfa, ArenaNfaBuffers, StateArena, StateId,
+    insert_string_into_arena, make_anything_but_arena_fa, make_cidr_arena_fa,
+    make_monocase_arena_fa, make_numeric_greater_arena_fa, make_numeric_less_arena_fa,
+    make_numeric_range_arena_fa, make_prefix_arena_fa, make_shellstyle_arena_fa,
+    make_string_arena_fa, make_wildcard_arena_fa, merge_arena_nfas, traverse_arena_dfa,
+    traverse_arena_nfa, ArenaNfaBuffers, StateArena, StateId,
 };
 use super::nfa::{traverse_dfa, traverse_nfa};
 use super::small_table::{FieldMatcher, NfaBuffers, SmallTable};
@@ -217,6 +218,9 @@ pub struct MutableValueMatcher<X: Clone + Eq + std::hash::Hash> {
     /// Unified arena-based FA for all pattern types (Step 2.3 migration target)
     /// This will replace start_table, arena_nfas, and numeric_arena
     pub(crate) main_arena: RefCell<Option<(StateArena, StateId)>>,
+    /// Whether main_arena contains NFA states (epsilon transitions or spinout).
+    /// When false, the fast traverse_arena_dfa path can be used instead of traverse_arena_nfa.
+    pub(crate) main_arena_is_nfa: RefCell<bool>,
 }
 
 impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
@@ -233,6 +237,7 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
             multi_condition_nfas: RefCell::new(Vec::new()),
             arena_bufs: RefCell::new(ArenaNfaBuffers::new()),
             main_arena: RefCell::new(None),
+            main_arena_is_nfa: RefCell::new(false),
         }
     }
 
@@ -246,6 +251,51 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
             *main = Some((merged, merged_start));
         } else {
             *main = Some((new_arena, new_start));
+        }
+    }
+
+    /// Ensure main_arena exists, bootstrapping it from the singleton if needed.
+    /// After this call, main_arena is guaranteed to be Some and singleton is cleared.
+    fn ensure_main_arena_with_singleton(&self) {
+        if self.main_arena.borrow().is_some() {
+            // Already exists — but if there's a pending singleton, insert it
+            if self.singleton_match.borrow().is_some() {
+                let singleton_val = self.singleton_match.borrow().clone().unwrap();
+                let singleton_trans = self.singleton_transition.borrow().clone().unwrap();
+                let singleton_arc = Arc::new(FieldMatcher::new());
+                self.transition_map
+                    .borrow_mut()
+                    .insert(Arc::as_ptr(&singleton_arc), singleton_trans);
+
+                let mut main = self.main_arena.borrow_mut();
+                let (arena, start) = main.as_mut().unwrap();
+                insert_string_into_arena(arena, *start, &singleton_val, singleton_arc);
+
+                *self.singleton_match.borrow_mut() = None;
+                *self.singleton_transition.borrow_mut() = None;
+            }
+            return;
+        }
+
+        // No main_arena yet — create one
+        if self.singleton_match.borrow().is_some() {
+            // Bootstrap from singleton
+            let singleton_val = self.singleton_match.borrow().clone().unwrap();
+            let singleton_trans = self.singleton_transition.borrow().clone().unwrap();
+            let singleton_arc = Arc::new(FieldMatcher::new());
+            self.transition_map
+                .borrow_mut()
+                .insert(Arc::as_ptr(&singleton_arc), singleton_trans);
+
+            let (arena, start) = make_string_arena_fa(&singleton_val, singleton_arc);
+            *self.main_arena.borrow_mut() = Some((arena, start));
+            *self.singleton_match.borrow_mut() = None;
+            *self.singleton_transition.borrow_mut() = None;
+        } else {
+            // Create empty arena with a start state
+            let mut arena = StateArena::new();
+            let start = arena.alloc();
+            *self.main_arena.borrow_mut() = Some((arena, start));
         }
     }
 
@@ -312,7 +362,7 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
     /// Add multiple string transitions.
     ///
     /// All values share the same next field matcher.
-    /// Uses arena-based FA with merge_arena_nfas for prefix sharing.
+    /// Uses in-place arena insertion for O(n*L) total cost instead of O(n²).
     fn add_string_transitions_bulk(&self, values: &[&[u8]]) -> Rc<MutableFieldMatcher<X>> {
         if values.is_empty() {
             return Rc::new(MutableFieldMatcher::new());
@@ -330,46 +380,16 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
             .borrow_mut()
             .insert(Arc::as_ptr(&next_arc), next_fm.clone());
 
-        // Build merged arena FA for all values
-        // Start with the first value
-        let (mut merged_arena, mut merged_start) =
-            make_string_arena_fa(values[0], next_arc.clone());
+        // Ensure main_arena exists (bootstrap with first value if needed)
+        self.ensure_main_arena_with_singleton();
 
-        // Merge in remaining values
-        for val in &values[1..] {
-            let (new_arena, new_start) = make_string_arena_fa(val, next_arc.clone());
-            let (result_arena, result_start) =
-                merge_arena_nfas(&merged_arena, merged_start, &new_arena, new_start);
-            merged_arena = result_arena;
-            merged_start = result_start;
+        let mut main = self.main_arena.borrow_mut();
+        let (arena, start) = main.as_mut().unwrap();
+
+        // Insert all values directly into the arena trie
+        for val in values {
+            insert_string_into_arena(arena, *start, val, next_arc.clone());
         }
-
-        // Convert singleton to arena and merge if present
-        if self.singleton_match.borrow().is_some() {
-            let singleton_val = self.singleton_match.borrow().clone().unwrap();
-            let singleton_trans = self.singleton_transition.borrow().clone().unwrap();
-            let singleton_arc = Arc::new(FieldMatcher::new());
-            self.transition_map
-                .borrow_mut()
-                .insert(Arc::as_ptr(&singleton_arc), singleton_trans);
-            let (singleton_arena, singleton_start) =
-                make_string_arena_fa(&singleton_val, singleton_arc);
-
-            let (result_arena, result_start) = merge_arena_nfas(
-                &merged_arena,
-                merged_start,
-                &singleton_arena,
-                singleton_start,
-            );
-            merged_arena = result_arena;
-            merged_start = result_start;
-
-            *self.singleton_match.borrow_mut() = None;
-            *self.singleton_transition.borrow_mut() = None;
-        }
-
-        // Merge into main_arena
-        self.merge_into_main_arena(merged_arena, merged_start);
 
         next_fm
     }
@@ -412,31 +432,13 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
             .borrow_mut()
             .insert(Arc::as_ptr(&next_arc), next_fm.clone());
 
-        // Build arena FA for the new string
-        let (new_arena, new_start) = make_string_arena_fa(val, next_arc);
+        // Ensure main_arena exists (bootstrap with singleton if needed)
+        self.ensure_main_arena_with_singleton();
 
-        // If singleton exists, convert it to arena and merge
-        if self.singleton_match.borrow().is_some() {
-            let singleton_val = self.singleton_match.borrow().clone().unwrap();
-            let singleton_trans = self.singleton_transition.borrow().clone().unwrap();
-            let singleton_arc = Arc::new(FieldMatcher::new());
-            self.transition_map
-                .borrow_mut()
-                .insert(Arc::as_ptr(&singleton_arc), singleton_trans);
-            let (singleton_arena, singleton_start) =
-                make_string_arena_fa(&singleton_val, singleton_arc);
-
-            // Merge singleton with new pattern, then merge into main_arena
-            let (merged, merged_start) =
-                merge_arena_nfas(&singleton_arena, singleton_start, &new_arena, new_start);
-            self.merge_into_main_arena(merged, merged_start);
-
-            *self.singleton_match.borrow_mut() = None;
-            *self.singleton_transition.borrow_mut() = None;
-        } else {
-            // Just merge new pattern into main_arena
-            self.merge_into_main_arena(new_arena, new_start);
-        }
+        // Insert directly into the arena trie — O(L) instead of O(arena_size)
+        let mut main = self.main_arena.borrow_mut();
+        let (arena, start) = main.as_mut().unwrap();
+        insert_string_into_arena(arena, *start, val, next_arc);
 
         next_fm
     }
@@ -459,39 +461,14 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
             .borrow_mut()
             .insert(Arc::as_ptr(&next_arc), next_fm.clone());
 
-        // Build arena FAs for string and Q-number representations
-        let (string_arena, string_start) = make_string_arena_fa(val, next_arc.clone());
-        let (q_num_arena, q_num_start) = make_string_arena_fa(&q_num, next_arc);
+        // Ensure main_arena exists (bootstrap with singleton if needed)
+        self.ensure_main_arena_with_singleton();
 
-        // Merge string and Q-number arenas
-        let (merged_arena, merged_start) =
-            merge_arena_nfas(&string_arena, string_start, &q_num_arena, q_num_start);
-
-        // Convert singleton to arena and merge if present
-        if self.singleton_match.borrow().is_some() {
-            let singleton_val = self.singleton_match.borrow().clone().unwrap();
-            let singleton_trans = self.singleton_transition.borrow().clone().unwrap();
-            let singleton_arc = Arc::new(FieldMatcher::new());
-            self.transition_map
-                .borrow_mut()
-                .insert(Arc::as_ptr(&singleton_arc), singleton_trans);
-            let (singleton_arena, singleton_start) =
-                make_string_arena_fa(&singleton_val, singleton_arc);
-
-            // Merge singleton with merged pattern, then merge into main_arena
-            let (final_arena, final_start) = merge_arena_nfas(
-                &singleton_arena,
-                singleton_start,
-                &merged_arena,
-                merged_start,
-            );
-            self.merge_into_main_arena(final_arena, final_start);
-
-            *self.singleton_match.borrow_mut() = None;
-            *self.singleton_transition.borrow_mut() = None;
-        } else {
-            self.merge_into_main_arena(merged_arena, merged_start);
-        }
+        // Insert both representations directly into the arena trie — O(L) each
+        let mut main = self.main_arena.borrow_mut();
+        let (arena, start) = main.as_mut().unwrap();
+        insert_string_into_arena(arena, *start, val, next_arc.clone());
+        insert_string_into_arena(arena, *start, &q_num, next_arc);
 
         next_fm
     }
@@ -538,7 +515,8 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
             .borrow_mut()
             .insert(Arc::as_ptr(&next_arc), next_fm.clone());
 
-        // Build arena FA for shellstyle pattern
+        // Build arena FA for shellstyle pattern (NFA: uses spinout + epsilon)
+        *self.main_arena_is_nfa.borrow_mut() = true;
         let (new_arena, new_start) = make_shellstyle_arena_fa(pattern, next_arc);
 
         // Convert singleton to arena and merge if present
@@ -573,7 +551,8 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
             .borrow_mut()
             .insert(Arc::as_ptr(&next_arc), next_fm.clone());
 
-        // Build arena FA for wildcard pattern
+        // Build arena FA for wildcard pattern (NFA: uses spinout + epsilon)
+        *self.main_arena_is_nfa.borrow_mut() = true;
         let (new_arena, new_start) = make_wildcard_arena_fa(pattern, next_arc);
 
         // Convert singleton to arena and merge if present
@@ -721,7 +700,8 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
     ) -> Rc<MutableFieldMatcher<X>> {
         let next_fm = Rc::new(MutableFieldMatcher::new());
 
-        // Always use arena-based NFA for regexp patterns (2.5x faster)
+        // Always use arena-based NFA for regexp patterns (NFA: uses epsilon transitions)
+        *self.main_arena_is_nfa.borrow_mut() = true;
         let (arena, start, field_matcher_arc) = make_regexp_nfa_arena(tree.clone(), false);
 
         self.transition_map
@@ -904,7 +884,8 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
             .borrow_mut()
             .insert(Arc::as_ptr(&next_arc), next_fm.clone());
 
-        // Use arena-based FA for CIDR patterns
+        // Use arena-based FA for CIDR patterns (NFA: uses epsilon transitions for octet ranges)
+        *self.main_arena_is_nfa.borrow_mut() = true;
         let (new_arena, new_start) = make_cidr_arena_fa(cidr, next_arc);
 
         // Handle singleton optimization
@@ -993,10 +974,15 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
             }
         }
 
-        // Traverse main_arena (unified arena for all pattern types - Step 2.3 migration)
+        // Traverse main_arena (unified arena for all pattern types)
         if let Some((ref arena, start)) = *self.main_arena.borrow() {
             let mut arena_bufs = self.arena_bufs.borrow_mut();
-            traverse_arena_nfa(arena, start, value_to_match, &mut arena_bufs);
+            if *self.main_arena_is_nfa.borrow() {
+                traverse_arena_nfa(arena, start, value_to_match, &mut arena_bufs);
+            } else {
+                arena_bufs.transitions.clear();
+                traverse_arena_dfa(arena, start, value_to_match, &mut arena_bufs.transitions);
+            }
 
             // Map Arc<FieldMatcher> transitions to Rc<MutableFieldMatcher<X>>
             for arc_fm in &arena_bufs.transitions {

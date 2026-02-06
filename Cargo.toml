@@ -34,6 +34,10 @@ name = "matching"
 harness = false
 
 [[bench]]
+name = "bulk_10k"
+harness = false
+
+[[bench]]
 name = "memory"
 harness = false
 
