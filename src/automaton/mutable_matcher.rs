@@ -1978,7 +1978,11 @@ mod tests {
         assert!(results.len() >= 1);
     }
 
+    // MIRI SKIP RATIONALE: CIDR /24 pattern construction + 4 IP traversals takes ~46s under
+    // Miri. Coverage: test_cidr_arena_fa_ipv4_exact and test_cidr_arena_fa_ipv4_range
+    // exercise the same arena CIDR construction/matching at the arena level.
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_arena_migration_cidr_v4() {
         use crate::json::CidrPattern;
 
