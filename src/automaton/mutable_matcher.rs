@@ -14,7 +14,7 @@ use super::arena::{
     make_anything_but_arena_fa, make_cidr_arena_fa, make_monocase_arena_fa,
     make_numeric_greater_arena_fa, make_numeric_less_arena_fa, make_numeric_range_arena_fa,
     make_prefix_arena_fa, make_shellstyle_arena_fa, make_string_arena_fa, make_wildcard_arena_fa,
-    merge_arena_nfas, traverse_arena_nfa, ArenaNfaBuffers, StateArena, StateId,
+    merge_arena_nfas, traverse_arena_dfa, traverse_arena_nfa, ArenaNfaBuffers, StateArena, StateId,
 };
 use super::nfa::{traverse_dfa, traverse_nfa};
 use super::small_table::{FieldMatcher, NfaBuffers, SmallTable};
@@ -217,6 +217,9 @@ pub struct MutableValueMatcher<X: Clone + Eq + std::hash::Hash> {
     /// Unified arena-based FA for all pattern types (Step 2.3 migration target)
     /// This will replace start_table, arena_nfas, and numeric_arena
     pub(crate) main_arena: RefCell<Option<(StateArena, StateId)>>,
+    /// Whether main_arena contains NFA states (epsilon transitions or spinout).
+    /// When false, the fast traverse_arena_dfa path can be used instead of traverse_arena_nfa.
+    pub(crate) main_arena_is_nfa: RefCell<bool>,
 }
 
 impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
@@ -233,6 +236,7 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
             multi_condition_nfas: RefCell::new(Vec::new()),
             arena_bufs: RefCell::new(ArenaNfaBuffers::new()),
             main_arena: RefCell::new(None),
+            main_arena_is_nfa: RefCell::new(false),
         }
     }
 
@@ -538,7 +542,8 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
             .borrow_mut()
             .insert(Arc::as_ptr(&next_arc), next_fm.clone());
 
-        // Build arena FA for shellstyle pattern
+        // Build arena FA for shellstyle pattern (NFA: uses spinout + epsilon)
+        *self.main_arena_is_nfa.borrow_mut() = true;
         let (new_arena, new_start) = make_shellstyle_arena_fa(pattern, next_arc);
 
         // Convert singleton to arena and merge if present
@@ -573,7 +578,8 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
             .borrow_mut()
             .insert(Arc::as_ptr(&next_arc), next_fm.clone());
 
-        // Build arena FA for wildcard pattern
+        // Build arena FA for wildcard pattern (NFA: uses spinout + epsilon)
+        *self.main_arena_is_nfa.borrow_mut() = true;
         let (new_arena, new_start) = make_wildcard_arena_fa(pattern, next_arc);
 
         // Convert singleton to arena and merge if present
@@ -721,7 +727,8 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
     ) -> Rc<MutableFieldMatcher<X>> {
         let next_fm = Rc::new(MutableFieldMatcher::new());
 
-        // Always use arena-based NFA for regexp patterns (2.5x faster)
+        // Always use arena-based NFA for regexp patterns (NFA: uses epsilon transitions)
+        *self.main_arena_is_nfa.borrow_mut() = true;
         let (arena, start, field_matcher_arc) = make_regexp_nfa_arena(tree.clone(), false);
 
         self.transition_map
@@ -904,7 +911,8 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
             .borrow_mut()
             .insert(Arc::as_ptr(&next_arc), next_fm.clone());
 
-        // Use arena-based FA for CIDR patterns
+        // Use arena-based FA for CIDR patterns (NFA: uses epsilon transitions for octet ranges)
+        *self.main_arena_is_nfa.borrow_mut() = true;
         let (new_arena, new_start) = make_cidr_arena_fa(cidr, next_arc);
 
         // Handle singleton optimization
@@ -993,10 +1001,15 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
             }
         }
 
-        // Traverse main_arena (unified arena for all pattern types - Step 2.3 migration)
+        // Traverse main_arena (unified arena for all pattern types)
         if let Some((ref arena, start)) = *self.main_arena.borrow() {
             let mut arena_bufs = self.arena_bufs.borrow_mut();
-            traverse_arena_nfa(arena, start, value_to_match, &mut arena_bufs);
+            if *self.main_arena_is_nfa.borrow() {
+                traverse_arena_nfa(arena, start, value_to_match, &mut arena_bufs);
+            } else {
+                arena_bufs.transitions.clear();
+                traverse_arena_dfa(arena, start, value_to_match, &mut arena_bufs.transitions);
+            }
 
             // Map Arc<FieldMatcher> transitions to Rc<MutableFieldMatcher<X>>
             for arc_fm in &arena_bufs.transitions {

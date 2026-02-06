@@ -479,6 +479,52 @@ pub fn traverse_arena_nfa(
     }
 }
 
+/// Fast DFA traversal for arena-based automata.
+///
+/// This is the arena equivalent of the old chain-based `traverse_dfa`.
+/// For pure DFA patterns (no epsilon transitions, no spinout states), this is
+/// significantly faster than `traverse_arena_nfa` because it follows a single
+/// state pointer per byte with no buffer management overhead.
+///
+/// The caller must ensure the arena is a pure DFA (no epsilon transitions or
+/// spinout states). For NFA patterns, use `traverse_arena_nfa`.
+#[inline]
+pub fn traverse_arena_dfa(
+    arena: &StateArena,
+    start: StateId,
+    val: &[u8],
+    transitions: &mut Vec<Arc<FieldMatcher>>,
+) {
+    if start.is_none() {
+        return;
+    }
+
+    let mut current = start;
+
+    for i in 0..=val.len() {
+        let state = &arena[current];
+
+        // Collect any field transitions at this state
+        transitions.extend(state.field_transitions.iter().cloned());
+
+        let byte = if i < val.len() {
+            val[i]
+        } else {
+            ARENA_VALUE_TERMINATOR
+        };
+
+        let next = state.table.dstep(byte);
+        if next.is_none() {
+            return;
+        }
+        current = next;
+    }
+
+    // Check final state
+    let state = &arena[current];
+    transitions.extend(state.field_transitions.iter().cloned());
+}
+
 /// Compute the epsilon closure of a state in the arena.
 ///
 /// For DFA-only patterns (no epsilon transitions), this is a fast O(1) operation.
