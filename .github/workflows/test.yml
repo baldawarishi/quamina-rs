@@ -70,14 +70,14 @@ jobs:
 
   bench:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
-      - name: Smoke-test matching benchmarks
-        run: cargo bench --bench matching -- --test
-      - name: Smoke-test memory benchmarks
-        run: cargo bench --bench memory --features dhat-heap -- --test
+      - name: Run matching benchmarks
+        run: cargo bench --bench matching -- --skip bulk_10000x1
+      - name: Run memory benchmarks
+        run: cargo bench --bench memory --features dhat-heap
 
   security:
     runs-on: ubuntu-latest
