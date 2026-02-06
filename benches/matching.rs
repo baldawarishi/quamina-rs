@@ -943,22 +943,7 @@ fn bench_bulk_100x10_multifield(c: &mut Criterion) {
 }
 
 // === 10K+ Pattern Stress Benchmarks ===
-
-/// Benchmark for adding 10,000 patterns (single value each)
-/// Tests scaling behavior beyond typical workloads
-fn bench_bulk_10000x1(c: &mut Criterion) {
-    let patterns: Vec<String> = (0..10_000)
-        .map(|i| format!(r#"{{"field": ["value_{}"]}}"#, i))
-        .collect();
-    c.bench_function("bulk_10000x1", |b| {
-        b.iter(|| {
-            let mut q = Quamina::<usize>::new();
-            for (i, pattern) in patterns.iter().enumerate() {
-                q.add_pattern(i, pattern).unwrap();
-            }
-        })
-    });
-}
+// Note: bench_bulk_10000x1 is in benches/bulk_10k.rs (too slow for CI).
 
 /// Benchmark for matching against 10,000 patterns on same field
 /// Tests automaton traversal at scale
@@ -1357,7 +1342,7 @@ fn configure_bulk_benchmarks() -> Criterion {
 criterion_group! {
     name = bulk_benches;
     config = configure_bulk_benchmarks();
-    targets = bench_bulk_100x10, bench_bulk_1000x10, bench_bulk_100x100, bench_bulk_100x10_multifield, bench_bulk_10000x1
+    targets = bench_bulk_100x10, bench_bulk_1000x10, bench_bulk_100x100, bench_bulk_100x10_multifield
 }
 
 // Configure 10k pattern benchmarks with minimum sample count.

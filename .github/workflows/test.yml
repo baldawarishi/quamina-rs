@@ -75,7 +75,7 @@ jobs:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
       - name: Run matching benchmarks
-        run: cargo bench --bench matching -- --skip bulk_10000x1
+        run: cargo bench --bench matching
       - name: Run memory benchmarks
         run: cargo bench --bench memory --features dhat-heap
 
