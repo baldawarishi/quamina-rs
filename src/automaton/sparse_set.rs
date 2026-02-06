@@ -26,6 +26,12 @@ pub struct SparseSet {
     sparse: Vec<usize>,
 }
 
+impl Default for SparseSet {
+    fn default() -> Self {
+        Self::new(0)
+    }
+}
+
 impl SparseSet {
     /// Create a new sparse set with the given capacity.
     ///

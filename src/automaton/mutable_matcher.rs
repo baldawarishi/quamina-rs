@@ -5,7 +5,7 @@
 //! - `MutableValueMatcher`: Mutable value matcher with singleton optimization
 //! - `CoreMatcher`: Single-threaded core matcher that builds and matches patterns
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use std::sync::Arc;
@@ -198,9 +198,9 @@ pub struct MutableValueMatcher<X: Clone + Eq + std::hash::Hash> {
     /// Transition for singleton match
     pub(crate) singleton_transition: RefCell<Option<Rc<MutableFieldMatcher<X>>>>,
     /// Whether this matcher requires NFA traversal
-    pub(crate) is_nondeterministic: RefCell<bool>,
+    pub(crate) is_nondeterministic: Cell<bool>,
     /// Whether this matcher has numeric patterns (for Q-number conversion)
-    pub(crate) has_numbers: RefCell<bool>,
+    pub(crate) has_numbers: Cell<bool>,
     /// Mapping from Arc<FieldMatcher> to Rc<MutableFieldMatcher<X>>
     /// This bridges the automaton's field transitions to our mutable field matchers
     pub(crate) transition_map: RefCell<HashMap<*const FieldMatcher, Rc<MutableFieldMatcher<X>>>>,
@@ -229,8 +229,8 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
             start_table: RefCell::new(None),
             singleton_match: RefCell::new(None),
             singleton_transition: RefCell::new(None),
-            is_nondeterministic: RefCell::new(false),
-            has_numbers: RefCell::new(false),
+            is_nondeterministic: Cell::new(false),
+            has_numbers: Cell::new(false),
             transition_map: RefCell::new(HashMap::new()),
             arena_nfas: RefCell::new(Vec::new()),
             numeric_arena: RefCell::new(None),
@@ -308,11 +308,11 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
             Matcher::NumericExact(n) => self.add_numeric_transition(*n),
             Matcher::Prefix(s) => self.add_prefix_transition(s.as_bytes()),
             Matcher::Shellstyle(s) => {
-                *self.is_nondeterministic.borrow_mut() = true;
+                self.is_nondeterministic.set(true);
                 self.add_shellstyle_transition(s.as_bytes())
             }
             Matcher::Wildcard(s) => {
-                *self.is_nondeterministic.borrow_mut() = true;
+                self.is_nondeterministic.set(true);
                 self.add_wildcard_transition(s.as_bytes())
             }
             Matcher::AnythingBut(excluded) => {
@@ -322,35 +322,35 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
             }
             Matcher::AnythingButNumeric(excluded) => {
                 // Mark as having numbers so values get Q-number conversion
-                *self.has_numbers.borrow_mut() = true;
+                self.has_numbers.set(true);
                 self.add_anything_but_numeric_transition(excluded)
             }
             Matcher::EqualsIgnoreCase(s) => self.add_monocase_transition(s.as_bytes()),
             Matcher::ParsedRegexp(ref tree) => {
-                *self.is_nondeterministic.borrow_mut() = true;
+                self.is_nondeterministic.set(true);
                 self.add_regexp_transition(tree)
             }
             Matcher::MultiCondition(ref mc) => {
                 // Multi-condition patterns use arena-based NFA for primary pattern
                 // Conditions are verified during matching
-                *self.is_nondeterministic.borrow_mut() = true;
+                self.is_nondeterministic.set(true);
                 self.add_multi_condition_transition(mc)
             }
             Matcher::Suffix(s) => {
                 // Suffix "abc" is equivalent to shellstyle "*abc"
-                *self.is_nondeterministic.borrow_mut() = true;
+                self.is_nondeterministic.set(true);
                 let pattern = format!("*{}", s);
                 self.add_shellstyle_transition(pattern.as_bytes())
             }
             Matcher::Numeric(cmp) => {
                 // Numeric ranges use Q-number ordering in the automaton
-                *self.has_numbers.borrow_mut() = true;
+                self.has_numbers.set(true);
                 self.add_numeric_range_transition(cmp)
             }
             Matcher::Cidr(ref cidr) => {
                 // IPv6 CIDR patterns use epsilon transitions, so mark as nondeterministic
                 if matches!(cidr, crate::json::CidrPattern::V6 { .. }) {
-                    *self.is_nondeterministic.borrow_mut() = true;
+                    self.is_nondeterministic.set(true);
                 }
                 self.add_cidr_transition(cidr)
             }
@@ -447,7 +447,7 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
     /// Builds both a string FA for the text representation and a Q-number FA.
     fn add_numeric_transition(&self, num: f64) -> Rc<MutableFieldMatcher<X>> {
         // Mark that this matcher has numeric patterns
-        *self.has_numbers.borrow_mut() = true;
+        self.has_numbers.set(true);
 
         let val_str = num.to_string();
         let val = val_str.as_bytes();
@@ -935,7 +935,7 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
         // Try with Q-number conversion if this matcher has numbers and value is numeric
         // Use stack-allocated QNumberStack to avoid heap allocation
         let q_num_storage: Option<crate::numbits::QNumberStack> =
-            if *self.has_numbers.borrow() && is_number {
+            if self.has_numbers.get() && is_number {
                 // Try to parse as f64 and convert to Q-number
                 if let Ok(s) = std::str::from_utf8(value) {
                     if let Ok(n) = s.parse::<f64>() {
@@ -959,7 +959,7 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
             // Clear and reuse the transitions buffer
             bufs.transitions.clear();
 
-            if *self.is_nondeterministic.borrow() {
+            if self.is_nondeterministic.get() {
                 traverse_nfa(table, value_to_match, bufs);
             } else {
                 traverse_dfa(table, value_to_match, &mut bufs.transitions);
