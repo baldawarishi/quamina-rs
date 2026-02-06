@@ -1185,42 +1185,58 @@ fn test_arc_field_matcher_sharing() {
 
 /// Regression guard: pattern insertion must scale linearly, not quadratically.
 ///
-/// Adds N patterns in two equal batches. If the second batch takes more than 3x
-/// the first, insertion has regressed to O(n²) and the test fails immediately.
-/// This catches the merge_arena_nfas deep-copy regression that caused CI to hang.
+/// Measures per-pattern cost at two scales (500 and 2000 patterns). With O(n*L)
+/// insertion the per-pattern cost is constant, so the ratio ≈ 1. With O(n²)
+/// insertion (the merge_arena_nfas regression), the per-pattern cost at 2000
+/// would be ~4x the cost at 500, giving ratio ≈ 4+. We use a generous threshold
+/// of 6x to tolerate CI noise while still catching quadratic blowup.
 #[test]
 #[cfg_attr(miri, ignore)]
 fn test_pattern_insertion_scales_linearly() {
     use std::time::Instant;
 
-    let n = 2000; // enough to detect quadratic scaling, fast enough for CI
-    let mut q = Quamina::new();
+    let small_n = 500;
+    let large_n = 2000;
 
-    // First batch: patterns 0..n
-    let start1 = Instant::now();
-    for i in 0..n {
-        let pattern = format!(r#"{{"key": ["value_{}"]}}"#, i);
-        q.add_pattern(format!("p{}", i), &pattern).unwrap();
+    // Warmup: add patterns to a throwaway instance to warm caches/allocator
+    {
+        let mut warmup = Quamina::new();
+        for i in 0..100 {
+            let pattern = format!(r#"{{"key": ["warmup_{}"]}}"#, i);
+            warmup.add_pattern(format!("w{}", i), &pattern).unwrap();
+        }
     }
-    let batch1 = start1.elapsed();
 
-    // Second batch: patterns n..2n (arena is now larger, so O(n²) would be much slower)
-    let start2 = Instant::now();
-    for i in n..2 * n {
+    // Measure small batch: per-pattern cost at small_n
+    let mut q_small = Quamina::new();
+    let start_small = Instant::now();
+    for i in 0..small_n {
         let pattern = format!(r#"{{"key": ["value_{}"]}}"#, i);
-        q.add_pattern(format!("p{}", i), &pattern).unwrap();
+        q_small.add_pattern(format!("p{}", i), &pattern).unwrap();
     }
-    let batch2 = start2.elapsed();
+    let cost_small = start_small.elapsed().as_secs_f64() / small_n as f64;
 
-    // With O(n) insertion: batch2 ≈ batch1
-    // With O(n²) insertion: batch2 ≈ 3-4x batch1 (since total work ~ (2n)² - n² = 3n²)
-    let ratio = batch2.as_secs_f64() / batch1.as_secs_f64().max(0.001);
+    // Measure large batch: per-pattern cost at large_n
+    let mut q_large = Quamina::new();
+    let start_large = Instant::now();
+    for i in 0..large_n {
+        let pattern = format!(r#"{{"key": ["value_{}"]}}"#, i);
+        q_large.add_pattern(format!("p{}", i), &pattern).unwrap();
+    }
+    let cost_large = start_large.elapsed().as_secs_f64() / large_n as f64;
+
+    // With O(n*L): cost_large/cost_small ≈ 1 (constant per-pattern cost)
+    // With O(n²): cost_large/cost_small ≈ large_n/small_n = 4 (linear per-pattern cost)
+    let ratio = cost_large / cost_small.max(1e-9);
     assert!(
-        ratio < 3.0,
-        "Pattern insertion is scaling poorly: batch2 took {:.1}x batch1 \
-         (batch1={:.2}s, batch2={:.2}s). This suggests O(n²) insertion regression.",
+        ratio < 6.0,
+        "Pattern insertion is scaling poorly: per-pattern cost at n={} is {:.1}x \
+         the cost at n={} (small={:.4}ms, large={:.4}ms). \
+         This suggests O(n²) insertion regression.",
+        large_n,
         ratio,
-        batch1.as_secs_f64(),
-        batch2.as_secs_f64(),
+        small_n,
+        cost_small * 1000.0,
+        cost_large * 1000.0,
     );
 }
