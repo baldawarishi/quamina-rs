@@ -5283,7 +5283,11 @@ mod cidr_arena_tests {
         );
     }
 
+    // MIRI SKIP RATIONALE: /24 CIDR creates an automaton matching 256 IPs; traversal with
+    // 5 test IPs takes ~44s under Miri. Coverage: test_cidr_arena_fa_ipv4_exact (/32, single
+    // IP) and test_cidr_arena_fa_ipv4_range (/30, 4 IPs) exercise the same CIDR arena logic.
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_cidr_arena_fa_ipv4_24() {
         // /24 means first 3 octets exact, last octet 0-255
         let fm = Arc::new(FieldMatcher::with_match_id(1));

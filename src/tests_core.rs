@@ -498,7 +498,11 @@ fn test_pruner_stats() {
     assert_eq!(q.pruner_stats().filtered(), 0);
 }
 
+// MIRI SKIP RATIONALE: 500 iterations of matches_for_event with 5 patterns takes ~48s under
+// Miri. Coverage: test_should_rebuild_threshold_miri_friendly exercises the same rebuild
+// threshold logic with fewer iterations.
 #[test]
+#[cfg_attr(miri, ignore)]
 fn test_should_rebuild_threshold() {
     let mut q = Quamina::new();
 
@@ -534,6 +538,40 @@ fn test_should_rebuild_threshold() {
     assert_eq!(purged, 2);
 
     // After rebuild, no longer needs rebuild
+    assert!(!q.should_rebuild());
+}
+
+/// Miri-only: exercises the same rebuild threshold logic with 100 iterations instead of 500.
+/// With 3 patterns (2 deleted, 1 remaining), 100 matches yields:
+///   filtered = 100 * 2 = 200, emitted = 100 * 1 = 100, total = 300.
+/// We use 3 patterns total so threshold math still triggers (needs total > 1000 with
+/// ratio > 0.2). We run 400 iterations: filtered=800, emitted=400, total=1200 > 1000,
+/// ratio=800/400=2.0 > 0.2.
+#[test]
+#[cfg(miri)]
+fn test_should_rebuild_threshold_miri_friendly() {
+    let mut q = Quamina::new();
+
+    q.add_pattern("p1", r#"{"x": ["a"]}"#).unwrap();
+    q.add_pattern("p2", r#"{"x": ["a"]}"#).unwrap();
+    q.add_pattern("p3", r#"{"x": ["a"]}"#).unwrap();
+
+    q.delete_patterns(&"p1").unwrap();
+    q.delete_patterns(&"p2").unwrap();
+
+    assert!(!q.should_rebuild());
+
+    let event = br#"{"x": "a"}"#;
+    // 400 iterations: filtered=800, emitted=400, total=1200 > 1000
+    for _ in 0..400 {
+        let _ = q.matches_for_event(event).unwrap();
+    }
+
+    assert!(q.should_rebuild());
+
+    let purged = q.maybe_rebuild();
+    assert_eq!(purged, 2);
+
     assert!(!q.should_rebuild());
 }
 

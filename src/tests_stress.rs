@@ -474,7 +474,11 @@ fn test_numbits_ordering_through_range() {
 // Memory Cleanup Tests
 // ============================================================================
 
+// MIRI SKIP RATIONALE: Even with 5 numeric patterns, delete + rebuild + match takes ~36s
+// under Miri due to numeric automaton overhead. Coverage: test_memory_cleanup_miri_minimal
+// exercises the same delete/rebuild/verify path with 2 string patterns (~3s under Miri).
 #[test]
+#[cfg_attr(miri, ignore)]
 fn test_memory_cleanup_miri_friendly() {
     // Lightweight memory test for Miri
     let mut q = Quamina::<String>::new();
@@ -497,6 +501,29 @@ fn test_memory_cleanup_miri_friendly() {
     // Verify remaining patterns still work
     let matches = q.matches_for_event(r#"{"x": 3}"#.as_bytes()).unwrap();
     assert_eq!(matches, vec!["p3".to_string()]);
+}
+
+/// Miri-only: exercises delete + rebuild + verify with 2 string patterns (avoids numeric
+/// automaton overhead that made test_memory_cleanup_miri_friendly too slow).
+#[test]
+#[cfg(miri)]
+fn test_memory_cleanup_miri_minimal() {
+    let mut q = Quamina::<String>::new();
+
+    q.add_pattern("keep".to_string(), r#"{"x": ["a"]}"#)
+        .unwrap();
+    q.add_pattern("del".to_string(), r#"{"x": ["b"]}"#).unwrap();
+
+    q.delete_patterns(&"del".to_string()).unwrap();
+
+    let purged = q.rebuild();
+    assert_eq!(purged, 1, "Should have purged 1 pattern");
+
+    let matches = q.matches_for_event(r#"{"x": "a"}"#.as_bytes()).unwrap();
+    assert_eq!(matches, vec!["keep".to_string()]);
+
+    let no_match = q.matches_for_event(r#"{"x": "b"}"#.as_bytes()).unwrap();
+    assert!(no_match.is_empty(), "Deleted pattern should not match");
 }
 
 // MIRI SKIP RATIONALE: Large allocations and cleanup operations are slow under Miri.
@@ -578,7 +605,11 @@ fn test_concurrent_citylots_stress() {
 // Bulk Add Correctness Test
 // ============================================================================
 
+// MIRI SKIP RATIONALE: Adding 50 patterns across 50 distinct fields takes ~83s under Miri
+// due to cumulative automaton construction overhead. Coverage: test_bulk_add_correctness_miri_friendly
+// exercises the same add + match path with 5 patterns.
 #[test]
+#[cfg_attr(miri, ignore)]
 fn test_bulk_add_correctness() {
     // Test adding many patterns and verifying all work
     let mut q = Quamina::new();
@@ -593,6 +624,32 @@ fn test_bulk_add_correctness() {
 
     // Test a few patterns
     for i in [0, 10, 25, 49].iter() {
+        let event = format!(r#"{{"field{}": "value{}"}}"#, i, i);
+        let matches = q.matches_for_event(event.as_bytes()).unwrap();
+        assert_eq!(
+            matches,
+            vec![format!("p{}", i)],
+            "Pattern {} should match",
+            i
+        );
+    }
+}
+
+/// Miri-only: exercises the same bulk-add + match logic with 5 patterns instead of 50.
+#[test]
+#[cfg(miri)]
+fn test_bulk_add_correctness_miri_friendly() {
+    let mut q = Quamina::new();
+
+    let count = 5;
+    for i in 0..count {
+        let pattern = format!(r#"{{"field{}": ["value{}"]}}"#, i, i);
+        q.add_pattern(format!("p{}", i), &pattern).unwrap();
+    }
+
+    assert_eq!(q.pattern_count(), count);
+
+    for i in 0..count {
         let event = format!(r#"{{"field{}": "value{}"}}"#, i, i);
         let matches = q.matches_for_event(event.as_bytes()).unwrap();
         assert_eq!(
