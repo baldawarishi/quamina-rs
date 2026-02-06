@@ -1325,11 +1325,13 @@ fn bench_number_matching_10k(c: &mut Criterion) {
     });
 }
 
-// Configure longer benchmarks with reduced sample count
+// Configure longer benchmarks with minimum sample count and short warm-up.
+// bulk_10000x1 takes ~28s per iteration, so 10 samples ≈ 280s total.
 fn configure_bulk_benchmarks() -> Criterion {
     Criterion::default()
-        .sample_size(20)
+        .sample_size(10)
         .measurement_time(std::time::Duration::from_secs(10))
+        .warm_up_time(std::time::Duration::from_secs(3))
 }
 
 criterion_group! {
@@ -1338,11 +1340,12 @@ criterion_group! {
     targets = bench_bulk_100x10, bench_bulk_1000x10, bench_bulk_100x100, bench_bulk_100x10_multifield, bench_bulk_10000x1
 }
 
-// Configure 10k pattern benchmarks with even longer measurement
+// Configure 10k pattern benchmarks with minimum sample count.
 fn configure_10k_benchmarks() -> Criterion {
     Criterion::default()
         .sample_size(10)
-        .measurement_time(std::time::Duration::from_secs(15))
+        .measurement_time(std::time::Duration::from_secs(10))
+        .warm_up_time(std::time::Duration::from_secs(3))
 }
 
 criterion_group! {
