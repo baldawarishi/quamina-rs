@@ -2870,9 +2870,7 @@ fn test_cidr_non_ip_values_miri_friendly() {
     assert!(m1.is_empty(), "Non-IP string should not match CIDR");
 
     // Number should not match
-    let m2 = q
-        .matches_for_event(r#"{"ip": 12345}"#.as_bytes())
-        .unwrap();
+    let m2 = q.matches_for_event(r#"{"ip": 12345}"#.as_bytes()).unwrap();
     assert!(m2.is_empty(), "Number should not match CIDR");
 }
 

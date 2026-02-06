@@ -510,7 +510,8 @@ fn test_memory_cleanup_miri_friendly() {
 fn test_memory_cleanup_miri_minimal() {
     let mut q = Quamina::<String>::new();
 
-    q.add_pattern("keep".to_string(), r#"{"x": ["a"]}"#).unwrap();
+    q.add_pattern("keep".to_string(), r#"{"x": ["a"]}"#)
+        .unwrap();
     q.add_pattern("del".to_string(), r#"{"x": ["b"]}"#).unwrap();
 
     q.delete_patterns(&"del".to_string()).unwrap();
