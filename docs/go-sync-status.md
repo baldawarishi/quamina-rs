@@ -61,6 +61,20 @@ Checked: Feb 2026. ~20 non-merge commits since `e3d13cd`, all optimizations (no 
 
 **Rust status:** N/A. Rust's regexp implementation doesn't have this parameter. Design lesson: don't expose parameters that are always the same value.
 
+## Porting Tracker
+
+Investigate each Go optimization empirically - one per session. Measure before/after.
+
+| # | Optimization | Initial Assessment | Empirical Result | Session |
+|---|---|---|---|---|
+| 1 | Flatten Epsilon Targets (#486) | PORT CANDIDATE | PORTED (one-level), -3% to -7% | Feb 2026 |
+| 2 | Epsilon Closure Refactoring (#482) | SKIP (arena already has SparseSet) | | |
+| 3 | Cache startState (#490) | SKIP (marginal in Rust) | | |
+| 4 | SkinnyRuneTree (#483) | DEFER (no Unicode prop automata) | | |
+| 5 | forField Removal | N/A (different design) | | |
+
+---
+
 ## Behavioral Differences from Go
 
 1. `{"anything-but": "foo"}` - Rust accepts single string, Go requires array
