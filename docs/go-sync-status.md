@@ -55,11 +55,11 @@ Checked: Feb 2026. ~20 non-merge commits since `e3d13cd`, all optimizations (no 
 
 **Rust status:** DEFER. Not applicable - Rust doesn't build Unicode property automata. Revisit if Unicode properties are added.
 
-### 5. forField Removal
+### 5. forField Removal + String/Number Type Distinction Fix
 
-**Go change:** Removed always-true `forField` boolean parameter from `makeRegexpNFA` and related functions.
+**Go change:** Removed always-true `forField` boolean parameter from `makeRegexpNFA` and related functions. Go keeps JSON quotes on string values so the automaton naturally distinguishes strings from numbers.
 
-**Rust status:** N/A. Rust's regexp implementation doesn't have this parameter. Design lesson: don't expose parameters that are always the same value.
+**Rust status:** PORTED. Rust had `for_field` parameter (always `false`) because `value_bytes()` stripped quotes. This caused a correctness bug: string `"123"` matched number `123` since their bytes were identical after stripping. Fix: stopped stripping quotes in `value_bytes()`, wrapped string pattern values in quotes in `value_to_string()`, updated all matchers (prefix/shellstyle/wildcard/etc.) and CIDR builders to handle quotes, then removed `for_field` parameter (hardcoded `true`).
 
 ## Porting Tracker
 
@@ -68,10 +68,10 @@ Investigate each Go optimization empirically - one per session. Measure before/a
 | # | Optimization | Initial Assessment | Empirical Result | Session |
 |---|---|---|---|---|
 | 1 | Flatten Epsilon Targets (#486) | PORT CANDIDATE | PORTED (one-level), -3% to -7% | Feb 2026 |
-| 2 | Epsilon Closure Refactoring (#482) | SKIP (arena already has SparseSet) | | |
-| 3 | Cache startState (#490) | SKIP (marginal in Rust) | | |
-| 4 | SkinnyRuneTree (#483) | DEFER (no Unicode prop automata) | | |
-| 5 | forField Removal | N/A (different design) | | |
+| 2 | Epsilon Closure Refactoring (#482) | SKIP (arena already has SparseSet) | SKIP confirmed: SparseSet > generation counter, ArenaNfaBuffers already reused, StateId=u32 (no alloc) | Feb 2026 |
+| 3 | Cache startState (#490) | SKIP (marginal in Rust) | SKIP confirmed: StateId=u32 (no alloc), closure computed in-place in reusable Vec | Feb 2026 |
+| 4 | SkinnyRuneTree (#483) | DEFER (no Unicode prop automata) | DEFER confirmed: no \\p{} support in Rust | Feb 2026 |
+| 5 | forField Removal | N/A (different design) | PORTED: removed `for_field` param, fixed string/number type distinction bug | Feb 2026 |
 
 ---
 

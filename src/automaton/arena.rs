@@ -2615,15 +2615,21 @@ fn make_ipv4_cidr_arena_fa(
     let match_state = arena.alloc();
     arena[match_state].field_transitions.push(next_field);
 
-    // Create terminator state
+    // Create terminator state: " → VT → match
+    // (closing quote before value terminator, since string values retain quotes)
     let term_state = arena.alloc_with_table(ArenaSmallTable::with_mappings(
         StateId::NONE,
         &[ARENA_VALUE_TERMINATOR],
         &[match_state],
     ));
+    let close_quote_state = arena.alloc_with_table(ArenaSmallTable::with_mappings(
+        StateId::NONE,
+        b"\"",
+        &[term_state],
+    ));
 
     // Build from right to left (last octet first)
-    let mut current_state = term_state;
+    let mut current_state = close_quote_state;
 
     for octet_idx in (0..4).rev() {
         // Calculate bit constraints for this octet
@@ -2660,7 +2666,14 @@ fn make_ipv4_cidr_arena_fa(
         }
     }
 
-    (arena, current_state)
+    // Prepend opening quote: " → first_octet
+    let open_quote_start = arena.alloc_with_table(ArenaSmallTable::with_mappings(
+        StateId::NONE,
+        b"\"",
+        &[current_state],
+    ));
+
+    (arena, open_quote_start)
 }
 
 /// Build arena FA for IPv6 CIDR matching.
@@ -2675,15 +2688,20 @@ fn make_ipv6_cidr_arena_fa(
     let match_state = arena.alloc();
     arena[match_state].field_transitions.push(next_field);
 
-    // Create terminator state
+    // Create terminator state: " → VT → match
     let term_state = arena.alloc_with_table(ArenaSmallTable::with_mappings(
         StateId::NONE,
         &[ARENA_VALUE_TERMINATOR],
         &[match_state],
     ));
+    let close_quote_state = arena.alloc_with_table(ArenaSmallTable::with_mappings(
+        StateId::NONE,
+        b"\"",
+        &[term_state],
+    ));
 
     // Build from right to left
-    let mut current_state = term_state;
+    let mut current_state = close_quote_state;
 
     for group_idx in (0..8).rev() {
         let byte_idx = group_idx * 2;
@@ -2720,7 +2738,14 @@ fn make_ipv6_cidr_arena_fa(
         }
     }
 
-    (arena, current_state)
+    // Prepend opening quote: " → first_group
+    let open_quote_start = arena.alloc_with_table(ArenaSmallTable::with_mappings(
+        StateId::NONE,
+        b"\"",
+        &[current_state],
+    ));
+
+    (arena, open_quote_start)
 }
 
 /// Build arena FA for matching an IPv4 octet in range [min_val, max_val].
@@ -5459,12 +5484,13 @@ mod cidr_arena_tests {
         };
         let (arena, start) = make_cidr_arena_fa(&cidr, fm.clone());
 
+        // IP addresses are JSON strings, so they include surrounding quotes
         assert!(
-            matches_value(&arena, start, b"192.168.1.1"),
+            matches_value(&arena, start, b"\"192.168.1.1\""),
             "Should match exact IP"
         );
         assert!(
-            !matches_value(&arena, start, b"192.168.1.2"),
+            !matches_value(&arena, start, b"\"192.168.1.2\""),
             "Should NOT match different IP"
         );
     }
@@ -5483,27 +5509,27 @@ mod cidr_arena_tests {
         };
         let (arena, start) = make_cidr_arena_fa(&cidr, fm.clone());
 
-        // Should match any IP in 10.0.0.0/24
+        // Should match any IP in 10.0.0.0/24 (quoted, as JSON strings)
         assert!(
-            matches_value(&arena, start, b"10.0.0.0"),
+            matches_value(&arena, start, b"\"10.0.0.0\""),
             "Should match 10.0.0.0"
         );
         assert!(
-            matches_value(&arena, start, b"10.0.0.1"),
+            matches_value(&arena, start, b"\"10.0.0.1\""),
             "Should match 10.0.0.1"
         );
         assert!(
-            matches_value(&arena, start, b"10.0.0.255"),
+            matches_value(&arena, start, b"\"10.0.0.255\""),
             "Should match 10.0.0.255"
         );
 
         // Should NOT match IPs outside the range
         assert!(
-            !matches_value(&arena, start, b"10.0.1.0"),
+            !matches_value(&arena, start, b"\"10.0.1.0\""),
             "Should NOT match 10.0.1.0"
         );
         assert!(
-            !matches_value(&arena, start, b"192.168.1.1"),
+            !matches_value(&arena, start, b"\"192.168.1.1\""),
             "Should NOT match 192.168.1.1"
         );
     }
@@ -5518,27 +5544,27 @@ mod cidr_arena_tests {
         };
         let (arena, start) = make_cidr_arena_fa(&cidr, fm.clone());
 
-        // Should match all 4 addresses
+        // Should match all 4 addresses (quoted, as JSON strings)
         assert!(
-            matches_value(&arena, start, b"172.16.0.0"),
+            matches_value(&arena, start, b"\"172.16.0.0\""),
             "Should match 172.16.0.0"
         );
         assert!(
-            matches_value(&arena, start, b"172.16.0.1"),
+            matches_value(&arena, start, b"\"172.16.0.1\""),
             "Should match 172.16.0.1"
         );
         assert!(
-            matches_value(&arena, start, b"172.16.0.2"),
+            matches_value(&arena, start, b"\"172.16.0.2\""),
             "Should match 172.16.0.2"
         );
         assert!(
-            matches_value(&arena, start, b"172.16.0.3"),
+            matches_value(&arena, start, b"\"172.16.0.3\""),
             "Should match 172.16.0.3"
         );
 
         // Should NOT match outside range
         assert!(
-            !matches_value(&arena, start, b"172.16.0.4"),
+            !matches_value(&arena, start, b"\"172.16.0.4\""),
             "Should NOT match 172.16.0.4"
         );
     }
@@ -5562,19 +5588,19 @@ mod cidr_arena_tests {
 
         let (merged, merged_start) = merge_arena_nfas(&arena1, start1, &arena2, start2);
 
-        // Should match both
+        // Should match both (quoted, as JSON strings)
         assert!(
-            matches_value(&merged, merged_start, b"10.0.0.0"),
+            matches_value(&merged, merged_start, b"\"10.0.0.0\""),
             "Merged should match 10.0.0.0"
         );
         assert!(
-            matches_value(&merged, merged_start, b"192.168.0.0"),
+            matches_value(&merged, merged_start, b"\"192.168.0.0\""),
             "Merged should match 192.168.0.0"
         );
 
         // Should NOT match others
         assert!(
-            !matches_value(&merged, merged_start, b"172.16.0.0"),
+            !matches_value(&merged, merged_start, b"\"172.16.0.0\""),
             "Merged should NOT match 172.16.0.0"
         );
     }
@@ -5589,19 +5615,19 @@ mod cidr_arena_tests {
         };
         let (arena, start) = make_cidr_arena_fa(&cidr, fm.clone());
 
-        // Should match IPs in range (full form)
+        // Should match IPs in range (full form, quoted as JSON strings)
         assert!(
-            matches_value(&arena, start, b"2001:db8:0:0:0:0:0:1"),
+            matches_value(&arena, start, b"\"2001:db8:0:0:0:0:0:1\""),
             "Should match 2001:db8:0:0:0:0:0:1"
         );
         assert!(
-            matches_value(&arena, start, b"2001:db8:ffff:ffff:ffff:ffff:ffff:ffff"),
+            matches_value(&arena, start, b"\"2001:db8:ffff:ffff:ffff:ffff:ffff:ffff\""),
             "Should match end of range"
         );
 
         // Should NOT match IPs outside range
         assert!(
-            !matches_value(&arena, start, b"2001:db9:0:0:0:0:0:1"),
+            !matches_value(&arena, start, b"\"2001:db9:0:0:0:0:0:1\""),
             "Should NOT match 2001:db9:..."
         );
     }

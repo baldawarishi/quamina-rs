@@ -57,15 +57,14 @@ impl Field<'_> {
         unsafe { std::str::from_utf8_unchecked(&self.path) }
     }
 
-    /// Returns the value as raw bytes, stripping surrounding quotes from strings.
+    /// Returns the value as raw bytes, preserving surrounding quotes for strings.
+    ///
+    /// String values retain their quotes (e.g., `"hello"`) so that the automaton
+    /// can distinguish strings from numbers with identical digit content.
+    /// This mirrors Go's design where quotes act as an implicit type tag.
     #[inline]
     pub fn value_bytes(&self) -> &[u8] {
-        let raw = self.val.as_bytes();
-        if raw.len() >= 2 && raw[0] == b'"' && raw[raw.len() - 1] == b'"' {
-            &raw[1..raw.len() - 1]
-        } else {
-            raw
-        }
+        self.val.as_bytes()
     }
 
     /// Returns the array trail as a slice.

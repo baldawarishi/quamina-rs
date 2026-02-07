@@ -2477,14 +2477,8 @@ fn test_regexp_validity() {
     }
 
     let mut problems = 0;
-    let mut tests = 0;
-    let mut implemented = 0;
-    let mut correctly_matched = 0;
-    let mut correctly_not_matched = 0;
 
     for sample in REGEXP_SAMPLES.iter() {
-        tests += 1;
-
         fn should_skip(re: &str) -> bool {
             if re.contains("-[") {
                 return true;
@@ -2545,13 +2539,14 @@ fn test_regexp_validity() {
         if sample.valid {
             match parse_result {
                 Ok(tree) => {
-                    implemented += 1;
-
-                    let (arena, start, field_matcher) = make_regexp_nfa_arena(tree, false);
+                    let (arena, start, field_matcher) = make_regexp_nfa_arena(tree);
                     let mut bufs = ArenaNfaBuffers::new();
 
                     for should_match in sample.matches {
-                        let mut value: Vec<u8> = should_match.as_bytes().to_vec();
+                        let mut value: Vec<u8> = Vec::new();
+                        value.push(b'"');
+                        value.extend_from_slice(should_match.as_bytes());
+                        value.push(b'"');
                         value.push(ARENA_VALUE_TERMINATOR);
                         bufs.clear();
                         traverse_arena_nfa(&arena, start, &value, &mut bufs);
@@ -2561,13 +2556,14 @@ fn test_regexp_validity() {
                             .any(|m| Arc::ptr_eq(m, &field_matcher));
                         if !matched && !should_match.is_empty() {
                             problems += 1;
-                        } else if matched {
-                            correctly_matched += 1;
                         }
                     }
 
                     for should_not_match in sample.nomatches {
-                        let mut value: Vec<u8> = should_not_match.as_bytes().to_vec();
+                        let mut value: Vec<u8> = Vec::new();
+                        value.push(b'"');
+                        value.extend_from_slice(should_not_match.as_bytes());
+                        value.push(b'"');
                         value.push(ARENA_VALUE_TERMINATOR);
                         bufs.clear();
                         traverse_arena_nfa(&arena, start, &value, &mut bufs);
@@ -2575,16 +2571,12 @@ fn test_regexp_validity() {
                             .transitions
                             .iter()
                             .any(|m| Arc::ptr_eq(m, &field_matcher));
-                        if matched {
-                            if should_not_match.is_empty()
-                                && star_samples_matching_empty(sample.regex)
-                            {
-                                // Expected
-                            } else if !should_not_match.is_empty() {
-                                problems += 1;
-                            }
-                        } else {
-                            correctly_not_matched += 1;
+                        if matched
+                            && !(should_not_match.is_empty()
+                                && star_samples_matching_empty(sample.regex))
+                            && !should_not_match.is_empty()
+                        {
+                            problems += 1;
                         }
                     }
                 }
@@ -2593,9 +2585,7 @@ fn test_regexp_validity() {
         } else {
             if parse_result.is_ok() {
                 let is_extension = is_known_extension(sample.regex);
-                if is_extension {
-                    implemented += 1;
-                } else {
+                if !is_extension {
                     problems += 1;
                 }
             }
@@ -2624,41 +2614,61 @@ fn test_regexp_validity_miri_minimal() {
     let mut bufs = ArenaNfaBuffers::new();
 
     let root = parse_regexp("a|b").unwrap();
-    let (arena, start, fm) = make_regexp_nfa_arena(root, false);
-    bufs.clear();
-    traverse_arena_nfa(&arena, start, &[b'a', ARENA_VALUE_TERMINATOR], &mut bufs);
-    assert!(bufs.transitions.iter().any(|m| Arc::ptr_eq(m, &fm)));
-    bufs.clear();
-    traverse_arena_nfa(&arena, start, &[b'x', ARENA_VALUE_TERMINATOR], &mut bufs);
-    assert!(!bufs.transitions.iter().any(|m| Arc::ptr_eq(m, &fm)));
-
-    let root = parse_regexp("a(h|i)z").unwrap();
-    let (arena, start, fm) = make_regexp_nfa_arena(root, false);
+    let (arena, start, fm) = make_regexp_nfa_arena(root);
     bufs.clear();
     traverse_arena_nfa(
         &arena,
         start,
-        &[b'a', b'h', b'z', ARENA_VALUE_TERMINATOR],
+        &[b'"', b'a', b'"', ARENA_VALUE_TERMINATOR],
+        &mut bufs,
+    );
+    assert!(bufs.transitions.iter().any(|m| Arc::ptr_eq(m, &fm)));
+    bufs.clear();
+    traverse_arena_nfa(
+        &arena,
+        start,
+        &[b'"', b'x', b'"', ARENA_VALUE_TERMINATOR],
+        &mut bufs,
+    );
+    assert!(!bufs.transitions.iter().any(|m| Arc::ptr_eq(m, &fm)));
+
+    let root = parse_regexp("a(h|i)z").unwrap();
+    let (arena, start, fm) = make_regexp_nfa_arena(root);
+    bufs.clear();
+    traverse_arena_nfa(
+        &arena,
+        start,
+        &[b'"', b'a', b'h', b'z', b'"', ARENA_VALUE_TERMINATOR],
         &mut bufs,
     );
     assert!(bufs.transitions.iter().any(|m| Arc::ptr_eq(m, &fm)));
 
     let root = parse_regexp("[a-c]").unwrap();
-    let (arena, start, fm) = make_regexp_nfa_arena(root, false);
-    bufs.clear();
-    traverse_arena_nfa(&arena, start, &[b'b', ARENA_VALUE_TERMINATOR], &mut bufs);
-    assert!(bufs.transitions.iter().any(|m| Arc::ptr_eq(m, &fm)));
-    bufs.clear();
-    traverse_arena_nfa(&arena, start, &[b'z', ARENA_VALUE_TERMINATOR], &mut bufs);
-    assert!(!bufs.transitions.iter().any(|m| Arc::ptr_eq(m, &fm)));
-
-    let root = parse_regexp("a.b").unwrap();
-    let (arena, start, fm) = make_regexp_nfa_arena(root, false);
+    let (arena, start, fm) = make_regexp_nfa_arena(root);
     bufs.clear();
     traverse_arena_nfa(
         &arena,
         start,
-        &[b'a', b'x', b'b', ARENA_VALUE_TERMINATOR],
+        &[b'"', b'b', b'"', ARENA_VALUE_TERMINATOR],
+        &mut bufs,
+    );
+    assert!(bufs.transitions.iter().any(|m| Arc::ptr_eq(m, &fm)));
+    bufs.clear();
+    traverse_arena_nfa(
+        &arena,
+        start,
+        &[b'"', b'z', b'"', ARENA_VALUE_TERMINATOR],
+        &mut bufs,
+    );
+    assert!(!bufs.transitions.iter().any(|m| Arc::ptr_eq(m, &fm)));
+
+    let root = parse_regexp("a.b").unwrap();
+    let (arena, start, fm) = make_regexp_nfa_arena(root);
+    bufs.clear();
+    traverse_arena_nfa(
+        &arena,
+        start,
+        &[b'"', b'a', b'x', b'b', b'"', ARENA_VALUE_TERMINATOR],
         &mut bufs,
     );
     assert!(bufs.transitions.iter().any(|m| Arc::ptr_eq(m, &fm)));

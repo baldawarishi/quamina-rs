@@ -1496,3 +1496,76 @@ fn test_condition_cost_ordering() {
         "Third should be cost 40"
     );
 }
+
+#[test]
+fn test_string_number_type_distinction() {
+    // Verify that string patterns don't match number events and vice versa.
+    // In Go, the outer quotes on string values act as an implicit type tag
+    // (NFA expects `"123"` for strings vs `123` for numbers).
+    // In Rust, quotes are stripped by value_bytes(), so we need to verify
+    // the type distinction is maintained by other means.
+
+    let mut q = Quamina::new();
+    q.add_pattern("string_pat", r#"{"key": ["123"]}"#).unwrap();
+
+    // String "123" SHOULD match
+    let m1 = q.matches_for_event(r#"{"key": "123"}"#.as_bytes()).unwrap();
+    assert_eq!(
+        m1,
+        vec!["string_pat"],
+        "String '123' should match string pattern '123'"
+    );
+
+    // Number 123 should NOT match string pattern "123"
+    let m2 = q.matches_for_event(r#"{"key": 123}"#.as_bytes()).unwrap();
+    assert!(
+        m2.is_empty(),
+        "Number 123 should NOT match string pattern '123' - type distinction must be preserved"
+    );
+}
+
+#[test]
+fn test_numeric_pattern_should_not_match_string_event() {
+    // The reverse: numeric pattern should not match a string with the same digits
+    let mut q = Quamina::new();
+    q.add_pattern("num_pat", r#"{"key": [42]}"#).unwrap();
+
+    // Number 42 SHOULD match
+    let m1 = q.matches_for_event(r#"{"key": 42}"#.as_bytes()).unwrap();
+    assert_eq!(
+        m1,
+        vec!["num_pat"],
+        "Number 42 should match numeric pattern"
+    );
+
+    // String "42" should NOT match numeric pattern
+    let m2 = q.matches_for_event(r#"{"key": "42"}"#.as_bytes()).unwrap();
+    assert!(
+        m2.is_empty(),
+        "String '42' should NOT match numeric pattern 42"
+    );
+}
+
+#[test]
+fn test_mixed_string_and_number_patterns_same_digits() {
+    // Both a string pattern and a numeric pattern for "123"/123
+    let mut q = Quamina::new();
+    q.add_pattern("str", r#"{"key": ["123"]}"#).unwrap();
+    q.add_pattern("num", r#"{"key": [123]}"#).unwrap();
+
+    // String event should only match string pattern
+    let m1 = q.matches_for_event(r#"{"key": "123"}"#.as_bytes()).unwrap();
+    assert_eq!(
+        m1,
+        vec!["str"],
+        "String '123' should match only string pattern"
+    );
+
+    // Number event should only match numeric pattern
+    let m2 = q.matches_for_event(r#"{"key": 123}"#.as_bytes()).unwrap();
+    assert_eq!(
+        m2,
+        vec!["num"],
+        "Number 123 should match only numeric pattern"
+    );
+}

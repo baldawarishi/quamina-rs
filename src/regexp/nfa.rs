@@ -65,21 +65,17 @@ pub fn regexp_has_plus_star(root: &RegexpRoot) -> bool {
 
 /// Build an arena-based regexp NFA from a parsed tree.
 ///
-/// # Arguments
-/// * `root` - The parsed regexp tree
-/// * `for_field` - If true, add " matching at start/end for field values
+/// The NFA always includes leading and trailing `"` transitions to match
+/// JSON string values as they appear from the flattener (with surrounding quotes).
 ///
 /// # Returns
 /// A tuple of (arena, start_state_id, field_matcher)
-pub fn make_regexp_nfa_arena(
-    root: RegexpRoot,
-    for_field: bool,
-) -> (StateArena, StateId, Arc<FieldMatcher>) {
+pub fn make_regexp_nfa_arena(root: RegexpRoot) -> (StateArena, StateId, Arc<FieldMatcher>) {
     let next_field = Arc::new(FieldMatcher::new());
 
-    // Handle empty regexp specially - it matches any string
+    // Handle empty regexp specially - it matches only the empty string
     if root.is_empty() {
-        let mut arena = StateArena::with_capacity(2);
+        let mut arena = StateArena::with_capacity(4);
 
         // Create match state
         let match_state = arena.alloc();
@@ -87,13 +83,25 @@ pub fn make_regexp_nfa_arena(
             .field_transitions
             .push(next_field.clone());
 
-        // Create start state that transitions to match on VALUE_TERMINATOR
-        let start = arena.alloc_with_table(ArenaSmallTable::with_mappings(
+        // Create VALUE_TERMINATOR transition state
+        let vt_state = arena.alloc_with_table(ArenaSmallTable::with_mappings(
             StateId::NONE,
             &[ARENA_VALUE_TERMINATOR],
             &[match_state],
         ));
 
+        // With quotes: start → " → closing_quote → " → vt_state
+        // Matches the empty string value "" (two quote bytes)
+        let closing_quote = arena.alloc_with_table(ArenaSmallTable::with_mappings(
+            StateId::NONE,
+            b"\"",
+            &[vt_state],
+        ));
+        let start = arena.alloc_with_table(ArenaSmallTable::with_mappings(
+            StateId::NONE,
+            b"\"",
+            &[closing_quote],
+        ));
         return (arena, start, next_field);
     }
 
@@ -113,29 +121,35 @@ pub fn make_regexp_nfa_arena(
         &[match_state],
     ));
 
-    // If for_field, add trailing quote handling
-    let next_step = if for_field {
-        arena.alloc_with_table(ArenaSmallTable::with_mappings(
-            StateId::NONE,
-            b"\"",
-            &[vt_state],
-        ))
-    } else {
-        vt_state
-    };
+    // Add trailing quote: regexp content → " → VALUE_TERMINATOR → match
+    let next_step = arena.alloc_with_table(ArenaSmallTable::with_mappings(
+        StateId::NONE,
+        b"\"",
+        &[vt_state],
+    ));
 
     // Build the NFA from branches
-    let start = make_arena_nfa_from_branches(&root, &mut arena, next_step, for_field);
+    let branch_start = make_arena_nfa_from_branches(&root, &mut arena, next_step);
+
+    // Wrap with leading quote at the top level only
+    let start = arena.alloc_with_table(ArenaSmallTable::with_mappings(
+        StateId::NONE,
+        b"\"",
+        &[branch_start],
+    ));
 
     (arena, start, next_field)
 }
 
 /// Build arena NFA from branches (alternatives).
+///
+/// This function does NOT add quote wrapping — that is handled by the
+/// top-level `make_regexp_nfa_arena` caller. Subtrees (groups) also call
+/// this function and must not add quotes.
 fn make_arena_nfa_from_branches(
     root: &RegexpRoot,
     arena: &mut StateArena,
     next_step: StateId,
-    for_field: bool,
 ) -> StateId {
     if root.is_empty() {
         return next_step;
@@ -143,7 +157,7 @@ fn make_arena_nfa_from_branches(
 
     if root.len() == 1 {
         // Single branch - no alternation needed
-        return make_one_arena_branch_fa(&root[0], arena, next_step, for_field);
+        return make_one_arena_branch_fa(&root[0], arena, next_step);
     }
 
     // Multiple branches - create a start state with epsilons to each branch
@@ -153,7 +167,7 @@ fn make_arena_nfa_from_branches(
             // Empty branch means we can skip directly to next_step
             branch_starts.push(next_step);
         } else {
-            let branch_start = make_one_arena_branch_fa(branch, arena, next_step, false);
+            let branch_start = make_one_arena_branch_fa(branch, arena, next_step);
             branch_starts.push(branch_start);
         }
     }
@@ -162,16 +176,7 @@ fn make_arena_nfa_from_branches(
     let start = arena.alloc();
     arena[start].table.epsilons = SmallVec::from_vec(branch_starts);
 
-    if for_field {
-        // Wrap with leading quote
-        arena.alloc_with_table(ArenaSmallTable::with_mappings(
-            StateId::NONE,
-            b"\"",
-            &[start],
-        ))
-    } else {
-        start
-    }
+    start
 }
 
 /// Build arena NFA for one branch (sequence of atoms).
@@ -179,7 +184,6 @@ fn make_one_arena_branch_fa(
     branch: &RegexpBranch,
     arena: &mut StateArena,
     next_step: StateId,
-    for_field: bool,
 ) -> StateId {
     let mut current_next = next_step;
 
@@ -225,16 +229,7 @@ fn make_one_arena_branch_fa(
         }
     }
 
-    if for_field {
-        // Wrap with leading quote
-        arena.alloc_with_table(ArenaSmallTable::with_mappings(
-            StateId::NONE,
-            b"\"",
-            &[current_next],
-        ))
-    } else {
-        current_next
-    }
+    current_next
 }
 
 /// Create a cyclic arena NFA structure for + and * quantifiers.
@@ -295,7 +290,7 @@ fn make_arena_atom_fa(qa: &QuantifiedAtom, arena: &mut StateArena, next: StateId
     if qa.is_dot {
         make_arena_dot_fa(arena, next)
     } else if let Some(ref subtree) = qa.subtree {
-        make_arena_nfa_from_branches(subtree, arena, next, false)
+        make_arena_nfa_from_branches(subtree, arena, next)
     } else {
         make_arena_rune_range_fa(&qa.runes, arena, next)
     }

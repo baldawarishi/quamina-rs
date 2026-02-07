@@ -20,6 +20,21 @@ use super::arena::{
 use super::small_table::{FieldMatcher, NfaBuffers};
 use crate::regexp::make_regexp_nfa_arena;
 
+/// Wrap a byte slice in quotes: `val` → `"val"`.
+///
+/// Used by `add_transition()` to wrap string pattern values so that
+/// the automaton can distinguish strings from numbers. Event values
+/// from the flattener retain their JSON quotes, so pattern FAs must
+/// also include quotes to match correctly.
+#[inline]
+fn quote_wrap(val: &[u8]) -> Vec<u8> {
+    let mut result = Vec::with_capacity(val.len() + 2);
+    result.push(b'"');
+    result.extend_from_slice(val);
+    result.push(b'"');
+    result
+}
+
 /// A condition NFA for lookaround verification.
 ///
 /// Each condition is an automaton that must match (or not match, if negative)
@@ -145,6 +160,7 @@ impl<X: Clone + Eq + std::hash::Hash> MutableFieldMatcher<X> {
             .or_insert_with(|| Rc::new(MutableValueMatcher::new()));
 
         // Check if all matchers are Exact strings - use bulk optimization
+        // Note: Exact values are pre-quoted for strings in json.rs value_to_string()
         let all_exact: Vec<&[u8]> = matchers
             .iter()
             .filter_map(|m| match m {
@@ -282,19 +298,32 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
         }
     }
 
-    /// Add a transition for a matcher, returns the next field matcher
+    /// Add a transition for a matcher, returns the next field matcher.
+    ///
+    /// String-based pattern values are wrapped in quotes before building FAs.
+    /// This ensures string values (which retain quotes from the flattener) only
+    /// match string patterns, not number events with identical digit content.
     pub fn add_transition(&self, matcher: &crate::json::Matcher) -> Rc<MutableFieldMatcher<X>> {
         use crate::json::Matcher;
 
         match matcher {
+            // Exact values are pre-quoted for strings in json.rs value_to_string().
+            // Boolean/null values remain unquoted, matching flattener output.
             Matcher::Exact(s) => self.add_string_transition(s.as_bytes()),
             Matcher::NumericExact(n) => self.add_numeric_transition(*n),
-            Matcher::Prefix(s) => self.add_prefix_transition(s.as_bytes()),
-            Matcher::Shellstyle(s) => self.add_shellstyle_transition(s.as_bytes()),
-            Matcher::Wildcard(s) => self.add_wildcard_transition(s.as_bytes()),
+            Matcher::Prefix(s) => {
+                // Prefix only needs opening quote — the FA matches prefix then
+                // accepts anything after (including closing quote and VT)
+                let mut quoted = Vec::with_capacity(s.len() + 1);
+                quoted.push(b'"');
+                quoted.extend_from_slice(s.as_bytes());
+                self.add_prefix_transition(&quoted)
+            }
+            Matcher::Shellstyle(s) => self.add_shellstyle_transition(&quote_wrap(s.as_bytes())),
+            Matcher::Wildcard(s) => self.add_wildcard_transition(&quote_wrap(s.as_bytes())),
             Matcher::AnythingBut(excluded) => {
                 let excluded_bytes: Vec<Vec<u8>> =
-                    excluded.iter().map(|s| s.as_bytes().to_vec()).collect();
+                    excluded.iter().map(|s| quote_wrap(s.as_bytes())).collect();
                 self.add_anything_but_transition(&excluded_bytes)
             }
             Matcher::AnythingButNumeric(excluded) => {
@@ -302,12 +331,14 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
                 self.has_numbers.set(true);
                 self.add_anything_but_numeric_transition(excluded)
             }
-            Matcher::EqualsIgnoreCase(s) => self.add_monocase_transition(s.as_bytes()),
+            Matcher::EqualsIgnoreCase(s) => self.add_monocase_transition(&quote_wrap(s.as_bytes())),
             Matcher::ParsedRegexp(ref tree) => self.add_regexp_transition(tree),
             Matcher::MultiCondition(ref mc) => self.add_multi_condition_transition(mc),
             Matcher::Suffix(s) => {
-                // Suffix "abc" is equivalent to shellstyle "*abc"
-                let pattern = format!("*{}", s);
+                // Suffix "abc" is equivalent to shellstyle "*abc" with closing quote
+                // The * matches the opening quote + any content, then "abc" matches
+                // the suffix, then the closing quote must follow.
+                let pattern = format!("*{}\"", s);
                 self.add_shellstyle_transition(pattern.as_bytes())
             }
             Matcher::Numeric(cmp) => {
@@ -662,7 +693,7 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
 
         // Always use arena-based NFA for regexp patterns (NFA: uses epsilon transitions)
         *self.main_arena_is_nfa.borrow_mut() = true;
-        let (arena, start, field_matcher_arc) = make_regexp_nfa_arena(tree.clone(), false);
+        let (arena, start, field_matcher_arc) = make_regexp_nfa_arena(tree.clone());
 
         self.transition_map
             .borrow_mut()
@@ -710,9 +741,9 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
 
         let next_fm = Rc::new(MutableFieldMatcher::new());
 
-        // Build primary pattern automaton
+        // Build primary pattern automaton (with quote transitions for field values)
         let (primary_arena, primary_start, field_matcher_arc) =
-            make_regexp_nfa_arena(mc.primary.clone(), false);
+            make_regexp_nfa_arena(mc.primary.clone());
 
         self.transition_map
             .borrow_mut()
@@ -744,8 +775,8 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
                 }
             };
 
-            // Build automaton for the combined pattern
-            let (arena, start, _) = make_regexp_nfa_arena(combined_pattern, false);
+            // Build automaton for the combined pattern (with quote transitions)
+            let (arena, start, _) = make_regexp_nfa_arena(combined_pattern);
             condition_nfas.push(ConditionNfa {
                 arena,
                 start,
@@ -1456,8 +1487,8 @@ mod tests {
         );
         // Test matching
         let mut bufs = NfaBuffers::new();
-        let value = b"alice@example.com";
-        let results = vm.transition_on(value, false, &mut bufs);
+        let value = qv(b"alice@example.com");
+        let results = vm.transition_on(&value, false, &mut bufs);
 
         assert_eq!(
             results.len(),
@@ -1472,8 +1503,8 @@ mod tests {
 
         // Test non-matching
         bufs.clear();
-        let no_match_value = b"alice@exampleXcom";
-        let no_results = vm.transition_on(no_match_value, false, &mut bufs);
+        let no_match_value = qv(b"alice@exampleXcom");
+        let no_results = vm.transition_on(&no_match_value, false, &mut bufs);
         assert!(
             no_results.is_empty(),
             "Should not match 'alice@exampleXcom'"
@@ -1498,8 +1529,8 @@ mod tests {
         );
         // Test matching
         let mut bufs = NfaBuffers::new();
-        let value = b"a";
-        let results = vm.transition_on(value, false, &mut bufs);
+        let value = qv(b"a");
+        let results = vm.transition_on(&value, false, &mut bufs);
 
         assert_eq!(results.len(), 1, "Should match 'a'");
         assert!(
@@ -1520,10 +1551,10 @@ mod tests {
 
         cm.add_pattern("p1".to_string(), &pattern_vec);
 
-        // Create a field like the flattener would
+        // Create a field like the flattener would (strings retain JSON quotes)
         let fields = vec![EventField {
             path: "email".to_string(),
-            value: "alice@example.com".to_string(),
+            value: "\"alice@example.com\"".to_string(),
             array_trail: vec![],
             is_number: false,
         }];
@@ -1534,7 +1565,7 @@ mod tests {
         // Test non-match
         let fields_no_match = vec![EventField {
             path: "email".to_string(),
-            value: "alice@exampleXcom".to_string(),
+            value: "\"alice@exampleXcom\"".to_string(),
             array_trail: vec![],
             is_number: false,
         }];
@@ -1557,10 +1588,10 @@ mod tests {
 
         cm.add_pattern("p1".to_string(), &pattern_vec);
 
-        // Create fields like matches_for_fields_direct expects
+        // Create fields like matches_for_fields_direct expects (strings retain JSON quotes)
         let fields = vec![crate::flatten_json::Field {
             path: Arc::from(b"email".as_slice()),
-            val: crate::flatten_json::FieldValue::Borrowed(b"alice@example.com"),
+            val: crate::flatten_json::FieldValue::Borrowed(b"\"alice@example.com\""),
             array_trail: [].as_slice().into(),
             is_number: false,
         }];
@@ -1574,6 +1605,17 @@ mod tests {
         );
     }
 
+    /// Helper: wrap a byte slice in quotes to simulate flattener output for strings.
+    /// The flattener preserves JSON quotes on string values, so test values
+    /// passed to `transition_on` must include them.
+    fn qv(s: &[u8]) -> Vec<u8> {
+        let mut v = Vec::with_capacity(s.len() + 2);
+        v.push(b'"');
+        v.extend_from_slice(s);
+        v.push(b'"');
+        v
+    }
+
     // =========================================================================
     // Integration tests for Arena-Only Migration (Step 2.3)
     // These tests verify behavior that must remain unchanged after migration
@@ -1583,19 +1625,20 @@ mod tests {
     fn test_arena_migration_string_single() {
         // Test single exact string match
         let vm: MutableValueMatcher<String> = MutableValueMatcher::new();
-        let matcher = Matcher::Exact("hello".to_string());
+        // Matcher::Exact for strings contains quoted value (like json.rs value_to_string produces)
+        let matcher = Matcher::Exact("\"hello\"".to_string());
         let next_fm = vm.add_transition(&matcher);
 
         let mut bufs = NfaBuffers::new();
 
-        // Should match
-        let results = vm.transition_on(b"hello", false, &mut bufs);
+        // Should match (quoted, like flattener output for strings)
+        let results = vm.transition_on(&qv(b"hello"), false, &mut bufs);
         assert_eq!(results.len(), 1);
         assert!(Rc::ptr_eq(&results[0], &next_fm));
 
         // Should not match
         bufs.clear();
-        let results = vm.transition_on(b"world", false, &mut bufs);
+        let results = vm.transition_on(&qv(b"world"), false, &mut bufs);
         assert!(results.is_empty());
     }
 
@@ -1604,30 +1647,31 @@ mod tests {
         // Test multiple exact string matches
         let vm: MutableValueMatcher<String> = MutableValueMatcher::new();
 
-        let fm1 = vm.add_transition(&Matcher::Exact("foo".to_string()));
-        let fm2 = vm.add_transition(&Matcher::Exact("bar".to_string()));
-        let fm3 = vm.add_transition(&Matcher::Exact("baz".to_string()));
+        // Matcher::Exact for strings contains quoted values (like json.rs value_to_string produces)
+        let fm1 = vm.add_transition(&Matcher::Exact("\"foo\"".to_string()));
+        let fm2 = vm.add_transition(&Matcher::Exact("\"bar\"".to_string()));
+        let fm3 = vm.add_transition(&Matcher::Exact("\"baz\"".to_string()));
 
         let mut bufs = NfaBuffers::new();
 
-        // Each should match
-        let results = vm.transition_on(b"foo", false, &mut bufs);
+        // Each should match (quoted)
+        let results = vm.transition_on(&qv(b"foo"), false, &mut bufs);
         assert_eq!(results.len(), 1);
         assert!(Rc::ptr_eq(&results[0], &fm1));
 
         bufs.clear();
-        let results = vm.transition_on(b"bar", false, &mut bufs);
+        let results = vm.transition_on(&qv(b"bar"), false, &mut bufs);
         assert_eq!(results.len(), 1);
         assert!(Rc::ptr_eq(&results[0], &fm2));
 
         bufs.clear();
-        let results = vm.transition_on(b"baz", false, &mut bufs);
+        let results = vm.transition_on(&qv(b"baz"), false, &mut bufs);
         assert_eq!(results.len(), 1);
         assert!(Rc::ptr_eq(&results[0], &fm3));
 
         // None should match
         bufs.clear();
-        let results = vm.transition_on(b"qux", false, &mut bufs);
+        let results = vm.transition_on(&qv(b"qux"), false, &mut bufs);
         assert!(results.is_empty());
     }
 
@@ -1640,26 +1684,26 @@ mod tests {
 
         let mut bufs = NfaBuffers::new();
 
-        // Should match any string starting with "hello"
-        let results = vm.transition_on(b"hello", false, &mut bufs);
+        // Should match any string starting with "hello" (quoted)
+        let results = vm.transition_on(&qv(b"hello"), false, &mut bufs);
         assert_eq!(results.len(), 1);
         assert!(Rc::ptr_eq(&results[0], &next_fm));
 
         bufs.clear();
-        let results = vm.transition_on(b"helloworld", false, &mut bufs);
+        let results = vm.transition_on(&qv(b"helloworld"), false, &mut bufs);
         assert_eq!(results.len(), 1);
 
         bufs.clear();
-        let results = vm.transition_on(b"hello123", false, &mut bufs);
+        let results = vm.transition_on(&qv(b"hello123"), false, &mut bufs);
         assert_eq!(results.len(), 1);
 
         // Should not match
         bufs.clear();
-        let results = vm.transition_on(b"hell", false, &mut bufs);
+        let results = vm.transition_on(&qv(b"hell"), false, &mut bufs);
         assert!(results.is_empty());
 
         bufs.clear();
-        let results = vm.transition_on(b"world", false, &mut bufs);
+        let results = vm.transition_on(&qv(b"world"), false, &mut bufs);
         assert!(results.is_empty());
     }
 
@@ -1672,26 +1716,26 @@ mod tests {
 
         let mut bufs = NfaBuffers::new();
 
-        // Should match
-        let results = vm.transition_on(b"helloworld", false, &mut bufs);
+        // Should match (quoted)
+        let results = vm.transition_on(&qv(b"helloworld"), false, &mut bufs);
         assert_eq!(results.len(), 1);
         assert!(Rc::ptr_eq(&results[0], &next_fm));
 
         bufs.clear();
-        let results = vm.transition_on(b"hello_world", false, &mut bufs);
+        let results = vm.transition_on(&qv(b"hello_world"), false, &mut bufs);
         assert_eq!(results.len(), 1);
 
         bufs.clear();
-        let results = vm.transition_on(b"hello123world", false, &mut bufs);
+        let results = vm.transition_on(&qv(b"hello123world"), false, &mut bufs);
         assert_eq!(results.len(), 1);
 
         // Should not match
         bufs.clear();
-        let results = vm.transition_on(b"helloworl", false, &mut bufs);
+        let results = vm.transition_on(&qv(b"helloworl"), false, &mut bufs);
         assert!(results.is_empty());
 
         bufs.clear();
-        let results = vm.transition_on(b"worldhello", false, &mut bufs);
+        let results = vm.transition_on(&qv(b"worldhello"), false, &mut bufs);
         assert!(results.is_empty());
     }
 
@@ -1705,14 +1749,14 @@ mod tests {
 
         let mut bufs = NfaBuffers::new();
 
-        // Should match literal *
-        let results = vm.transition_on(b"foo*bar", false, &mut bufs);
+        // Should match literal * (quoted)
+        let results = vm.transition_on(&qv(b"foo*bar"), false, &mut bufs);
         assert_eq!(results.len(), 1);
         assert!(Rc::ptr_eq(&results[0], &next_fm));
 
         // Should not match without *
         bufs.clear();
-        let results = vm.transition_on(b"foobar", false, &mut bufs);
+        let results = vm.transition_on(&qv(b"foobar"), false, &mut bufs);
         assert!(results.is_empty());
     }
 
@@ -1725,22 +1769,22 @@ mod tests {
 
         let mut bufs = NfaBuffers::new();
 
-        // Should match anything except foo and bar
-        let results = vm.transition_on(b"baz", false, &mut bufs);
+        // Should match anything except foo and bar (quoted)
+        let results = vm.transition_on(&qv(b"baz"), false, &mut bufs);
         assert_eq!(results.len(), 1);
         assert!(Rc::ptr_eq(&results[0], &next_fm));
 
         bufs.clear();
-        let results = vm.transition_on(b"qux", false, &mut bufs);
+        let results = vm.transition_on(&qv(b"qux"), false, &mut bufs);
         assert_eq!(results.len(), 1);
 
         // Should not match excluded values
         bufs.clear();
-        let results = vm.transition_on(b"foo", false, &mut bufs);
+        let results = vm.transition_on(&qv(b"foo"), false, &mut bufs);
         assert!(results.is_empty());
 
         bufs.clear();
-        let results = vm.transition_on(b"bar", false, &mut bufs);
+        let results = vm.transition_on(&qv(b"bar"), false, &mut bufs);
         assert!(results.is_empty());
     }
 
@@ -1753,26 +1797,26 @@ mod tests {
 
         let mut bufs = NfaBuffers::new();
 
-        // Should match any case combination
-        let results = vm.transition_on(b"Hello", false, &mut bufs);
+        // Should match any case combination (quoted)
+        let results = vm.transition_on(&qv(b"Hello"), false, &mut bufs);
         assert_eq!(results.len(), 1);
         assert!(Rc::ptr_eq(&results[0], &next_fm));
 
         bufs.clear();
-        let results = vm.transition_on(b"hello", false, &mut bufs);
+        let results = vm.transition_on(&qv(b"hello"), false, &mut bufs);
         assert_eq!(results.len(), 1);
 
         bufs.clear();
-        let results = vm.transition_on(b"HELLO", false, &mut bufs);
+        let results = vm.transition_on(&qv(b"HELLO"), false, &mut bufs);
         assert_eq!(results.len(), 1);
 
         bufs.clear();
-        let results = vm.transition_on(b"hElLo", false, &mut bufs);
+        let results = vm.transition_on(&qv(b"hElLo"), false, &mut bufs);
         assert_eq!(results.len(), 1);
 
         // Should not match different strings
         bufs.clear();
-        let results = vm.transition_on(b"world", false, &mut bufs);
+        let results = vm.transition_on(&qv(b"world"), false, &mut bufs);
         assert!(results.is_empty());
     }
 
@@ -1822,32 +1866,33 @@ mod tests {
         let vm: MutableValueMatcher<String> = MutableValueMatcher::new();
 
         // Add various pattern types
-        let fm_exact = vm.add_transition(&Matcher::Exact("exact".to_string()));
+        // Exact values contain quotes (like json.rs value_to_string produces for strings)
+        let fm_exact = vm.add_transition(&Matcher::Exact("\"exact\"".to_string()));
         let fm_prefix = vm.add_transition(&Matcher::Prefix("pre".to_string()));
         let fm_shell = vm.add_transition(&Matcher::Shellstyle("*wild*".to_string()));
 
         let mut bufs = NfaBuffers::new();
 
-        // Test exact match
-        let results = vm.transition_on(b"exact", false, &mut bufs);
+        // Test exact match (quoted like flattener output)
+        let results = vm.transition_on(&qv(b"exact"), false, &mut bufs);
         assert_eq!(results.len(), 1);
         assert!(Rc::ptr_eq(&results[0], &fm_exact));
 
-        // Test prefix match
+        // Test prefix match (quoted)
         bufs.clear();
-        let results = vm.transition_on(b"prefix_value", false, &mut bufs);
+        let results = vm.transition_on(&qv(b"prefix_value"), false, &mut bufs);
         assert_eq!(results.len(), 1);
         assert!(Rc::ptr_eq(&results[0], &fm_prefix));
 
-        // Test shellstyle match
+        // Test shellstyle match (quoted)
         bufs.clear();
-        let results = vm.transition_on(b"something_wild_here", false, &mut bufs);
+        let results = vm.transition_on(&qv(b"something_wild_here"), false, &mut bufs);
         assert_eq!(results.len(), 1);
         assert!(Rc::ptr_eq(&results[0], &fm_shell));
 
-        // Test value matching multiple patterns
+        // Test value matching multiple patterns (quoted)
         bufs.clear();
-        let results = vm.transition_on(b"prewild", false, &mut bufs);
+        let results = vm.transition_on(&qv(b"prewild"), false, &mut bufs);
         // Should match both prefix and shellstyle
         assert!(results.len() >= 1);
     }
@@ -1871,22 +1916,22 @@ mod tests {
 
         let mut bufs = NfaBuffers::new();
 
-        // Should match IPs in the /24 range
-        let results = vm.transition_on(b"192.168.1.1", false, &mut bufs);
+        // Should match IPs in the /24 range (quoted, like flattener output for strings)
+        let results = vm.transition_on(&qv(b"192.168.1.1"), false, &mut bufs);
         assert_eq!(results.len(), 1);
         assert!(Rc::ptr_eq(&results[0], &next_fm));
 
         bufs.clear();
-        let results = vm.transition_on(b"192.168.1.255", false, &mut bufs);
+        let results = vm.transition_on(&qv(b"192.168.1.255"), false, &mut bufs);
         assert_eq!(results.len(), 1);
 
         // Should not match IPs outside the range
         bufs.clear();
-        let results = vm.transition_on(b"192.168.2.1", false, &mut bufs);
+        let results = vm.transition_on(&qv(b"192.168.2.1"), false, &mut bufs);
         assert!(results.is_empty());
 
         bufs.clear();
-        let results = vm.transition_on(b"10.0.0.1", false, &mut bufs);
+        let results = vm.transition_on(&qv(b"10.0.0.1"), false, &mut bufs);
         assert!(results.is_empty());
     }
 
@@ -1896,11 +1941,12 @@ mod tests {
         let cm: CoreMatcher<String> = CoreMatcher::new();
 
         // Add patterns of different types
+        // Matcher::Exact for strings contains quoted values (like json.rs value_to_string produces)
         cm.add_pattern(
             "exact".to_string(),
             &[(
                 "field".to_string(),
-                vec![Matcher::Exact("hello".to_string())],
+                vec![Matcher::Exact("\"hello\"".to_string())],
             )],
         );
         cm.add_pattern(
@@ -1918,10 +1964,10 @@ mod tests {
             )],
         );
 
-        // Test exact match
+        // Test exact match (string values include quotes like flattener output)
         let fields = vec![EventField {
             path: "field".to_string(),
-            value: "hello".to_string(),
+            value: "\"hello\"".to_string(),
             array_trail: vec![],
             is_number: false,
         }];
@@ -1931,7 +1977,7 @@ mod tests {
         // Test prefix match
         let fields = vec![EventField {
             path: "field".to_string(),
-            value: "prefix_value".to_string(),
+            value: "\"prefix_value\"".to_string(),
             array_trail: vec![],
             is_number: false,
         }];
@@ -1941,7 +1987,7 @@ mod tests {
         // Test shellstyle match
         let fields = vec![EventField {
             path: "field".to_string(),
-            value: "something_wild_here".to_string(),
+            value: "\"something_wild_here\"".to_string(),
             array_trail: vec![],
             is_number: false,
         }];

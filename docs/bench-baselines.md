@@ -48,3 +48,30 @@ splice states one level deep, reducing nesting from repeated merges.
 | 10k_exact | 172 ns | 163 ns | **-5.3%** |
 | 10k_prefix | 171 ns | 161 ns | **-4.9%** |
 | 10k_numeric | 179 ns | 175 ns | **-3.5%** |
+
+### String/Number Type Distinction Fix (forField removal)
+
+**Change:** Keep JSON quotes on string values as implicit type tags. Automaton
+now processes 2 extra bytes (surrounding quotes) per string value. Regexp NFAs
+gain 2 states (leading/trailing quote transitions). CIDR builders gain 2 states.
+
+**Expected cost:** +2 bytes per value comparison. This is the unavoidable cost
+of fixing the correctness bug where string `"123"` matched number `123`.
+
+**Results (same machine, single-run spot check):**
+
+| Benchmark | Before | After | Change |
+|-----------|--------|-------|--------|
+| exact_match | 121 ns | 126 ns | +4.1% |
+| nested_match | 171 ns | 172 ns | +0.6% |
+| regex_match | 100 ns | 119 ns | +19% |
+| shellstyle_26 | 489 ns | 537 ns | +9.8% |
+| 10k_1_match | 167 ns | 177 ns | +6.0% |
+| 10k_no_match | 71 ns | 77 ns | +8.5% |
+| 10k_exact | 163 ns | 167 ns | +2.5% |
+| 10k_prefix | 161 ns | 172 ns | +6.8% |
+| 10k_numeric | 175 ns | 180 ns | +2.9% |
+
+Note: These are single-run numbers, not A/B criterion comparisons. The regex
+and shellstyle regressions reflect 2 extra NFA state transitions per match.
+Numbers and booleans are unaffected (no quotes added).
