@@ -4,7 +4,7 @@ Rust port of [quamina](https://github.com/timbray/quamina) - fast pattern-matchi
 
 ## Status
 
-**369 tests passing.** Rust 1.5-2x faster than Go. Synced with Go commit e3d13cd (Jan 2026).
+**434 tests passing.** Rust 1.5-2x faster than Go. Synced with Go commit e3d13cd (Jan 2026).
 
 | Benchmark | Go (ns) | Rust (ns) | Speedup |
 |-----------|---------|-----------|---------|
@@ -48,16 +48,18 @@ src/
 │   ├── parser.rs       # I-Regexp parser + lookaround
 │   └── nfa.rs          # NFA building
 └── automaton/
-    ├── small_table.rs  # SmallTable (byte transitions)
-    ├── fa_builders.rs  # FA construction
+    ├── arena.rs        # Arena-based FA (all pattern types)
+    ├── trie.rs         # In-place trie insertion for pattern building
+    ├── sparse_set.rs   # O(1) sparse set for traversal dedup
+    ├── small_table.rs  # SmallTable (byte transitions, legacy)
     ├── nfa.rs          # traverse_dfa, traverse_nfa
-    ├── arena.rs        # StateArena for cyclic NFA
-    └── mutable_matcher.rs # Pattern building
+    ├── mutable_matcher.rs  # Pattern building
+    └── thread_safe.rs  # FrozenValueMatcher (thread-safe matching)
 ```
 
 **Key files for optimization:**
+- `src/automaton/arena.rs` - arena FA construction, merging, traversal
 - `src/automaton/nfa.rs` - traversal, acceleration
-- `src/automaton/arena.rs` - cyclic NFA
 - `src/regexp/nfa.rs` - regexp NFA building
 
 ---
@@ -86,6 +88,19 @@ memchr acceleration for `[^x]+`, `[^/]+`, `[^"]+`. Detects at parse time.
 | 1000 chars | 34.4 µs | 801 ns | **43x** |
 | 100 chars | 4.06 µs | 444 ns | **9x** |
 
+### Arena FA Migration
+
+Migrated all pattern types from chain-based `Arc<FaState>` to arena-based `StateArena` with contiguous memory layout. Includes DFA fast path, in-place trie insertion, and deferred freeze.
+
+| Benchmark | Before (Chain) | After (Arena) | Improvement |
+|-----------|---------------|---------------|-------------|
+| numeric_range_single | 470 ns | 237 ns | **50%** |
+| numeric_range_10_patterns | 495 ns | 285 ns | **42%** |
+
+### Deferred Freeze
+
+Defer `FrozenValueMatcher` construction to first match, eliminating O(n^2) clone cost during pattern building.
+
 ---
 
 ## Rejected Optimizations
@@ -111,7 +126,7 @@ memchr acceleration for `[^x]+`, `[^/]+`, `[^"]+`. Detects at parse time.
 ## Commands
 
 ```bash
-cargo test                    # 362 tests
+cargo test                    # 434 tests
 cargo bench                   # benchmarks
 cargo clippy -- -D warnings   # lint
 cargo +nightly miri test      # memory safety
