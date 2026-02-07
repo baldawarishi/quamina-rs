@@ -23,6 +23,7 @@
 
 use std::sync::Arc;
 
+use rustc_hash::FxHashSet;
 use smallvec::{smallvec, SmallVec};
 
 use super::small_table::{AccelInfo, FieldMatcher, BYTE_CEILING};
@@ -315,8 +316,7 @@ pub struct ArenaNfaBuffers {
     closure_stack: Vec<StateId>,
     closure_result: Vec<StateId>,
     /// Seen field matcher transitions (for deduplication, stored as pointer addresses).
-    /// Uses Vec for linear dedup - faster than FxHashSet for the typical 1-3 transitions.
-    seen_transitions: Vec<usize>,
+    seen_transitions: FxHashSet<usize>,
 }
 
 impl ArenaNfaBuffers {
@@ -332,7 +332,7 @@ impl ArenaNfaBuffers {
             seen_states: SparseSet::new(state_capacity),
             closure_stack: Vec::with_capacity(16),
             closure_result: Vec::with_capacity(16),
-            seen_transitions: Vec::with_capacity(8),
+            seen_transitions: FxHashSet::default(),
         }
     }
 
@@ -449,8 +449,7 @@ pub fn traverse_arena_nfa(
                 // Collect field transitions from cold storage (deduplicated)
                 for ft in &arena[ec_state_id].field_transitions {
                     let ptr = Arc::as_ptr(ft) as usize;
-                    if !bufs.seen_transitions.contains(&ptr) {
-                        bufs.seen_transitions.push(ptr);
+                    if bufs.seen_transitions.insert(ptr) {
                         bufs.transitions.push(ft.clone());
                     }
                 }
@@ -487,8 +486,7 @@ pub fn traverse_arena_nfa(
             // Collect field transitions from cold storage (deduplicated)
             for ft in &arena[ec_state_id].field_transitions {
                 let ptr = Arc::as_ptr(ft) as usize;
-                if !bufs.seen_transitions.contains(&ptr) {
-                    bufs.seen_transitions.push(ptr);
+                if bufs.seen_transitions.insert(ptr) {
                     bufs.transitions.push(ft.clone());
                 }
             }
