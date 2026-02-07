@@ -6,6 +6,8 @@
 
 use std::sync::Arc;
 
+use smallvec::{smallvec, SmallVec};
+
 use crate::automaton::{
     arena::{ArenaSmallTable, StateArena, StateId, ARENA_VALUE_TERMINATOR},
     FieldMatcher, BYTE_CEILING,
@@ -158,7 +160,7 @@ fn make_arena_nfa_from_branches(
 
     // Create a start state that has epsilons to all branch starts
     let start = arena.alloc();
-    arena[start].table.epsilons = branch_starts;
+    arena[start].table.epsilons = SmallVec::from_vec(branch_starts);
 
     if for_field {
         // Wrap with leading quote
@@ -256,7 +258,7 @@ fn create_arena_plus_star_loop(
     let start = make_arena_atom_fa(qa, arena, loopback);
 
     // Set up loopback's epsilons: to exit AND back to start (CYCLE!)
-    arena[loopback].table.epsilons = vec![exit_state, start];
+    arena[loopback].table.epsilons = smallvec![exit_state, start];
 
     // For *, add epsilon from start to exit (can skip entirely)
     if is_star {

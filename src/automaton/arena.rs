@@ -23,7 +23,11 @@
 
 use std::sync::Arc;
 
+use rustc_hash::FxHashSet;
+use smallvec::{smallvec, SmallVec};
+
 use super::small_table::{AccelInfo, FieldMatcher, BYTE_CEILING};
+use super::sparse_set::SparseSet;
 
 /// A state identifier - just an index into the arena.
 ///
@@ -51,8 +55,9 @@ impl StateId {
 pub struct ArenaFaState {
     /// The transition table for this state
     pub table: ArenaSmallTable,
-    /// Field matchers to transition to when this state is reached at end of value
-    pub field_transitions: Vec<Arc<FieldMatcher>>,
+    /// Field matchers to transition to when this state is reached at end of value.
+    /// SmallVec<[_; 1]> avoids heap allocation for the common case (0 or 1 transitions).
+    pub field_transitions: SmallVec<[Arc<FieldMatcher>; 1]>,
 }
 
 impl std::fmt::Debug for ArenaFaState {
@@ -72,20 +77,25 @@ impl ArenaFaState {
     pub fn with_table(table: ArenaSmallTable) -> Self {
         Self {
             table,
-            field_transitions: Vec::new(),
+            field_transitions: SmallVec::new(),
         }
     }
 }
 
 /// A compact lookup table using arena-based state references.
+///
+/// Uses SmallVec to keep small tables (the common case) inline on the stack,
+/// avoiding heap allocation for most states.
 #[derive(Clone, Debug)]
 pub struct ArenaSmallTable {
-    /// Upper bounds (exclusive) for each byte range
-    pub ceilings: Vec<u8>,
+    /// Upper bounds (exclusive) for each byte range.
+    /// SmallVec<[_; 8]> covers most tables inline (typically 1-8 ranges).
+    pub ceilings: SmallVec<[u8; 8]>,
     /// State IDs to transition to for each range (StateId::NONE = no transition)
-    pub steps: Vec<StateId>,
-    /// Epsilon transitions (taken regardless of input byte)
-    pub epsilons: Vec<StateId>,
+    pub steps: SmallVec<[StateId; 8]>,
+    /// Epsilon transitions (taken regardless of input byte).
+    /// SmallVec<[_; 2]> covers the common case of 0-2 epsilon transitions.
+    pub epsilons: SmallVec<[StateId; 2]>,
     /// Special state for handling wildcard patterns
     pub spinout: StateId,
     /// Acceleration info for self-loop states (exit bytes for memchr skip)
@@ -104,9 +114,9 @@ impl ArenaSmallTable {
     /// Create a new empty table.
     pub fn new() -> Self {
         Self {
-            ceilings: vec![BYTE_CEILING as u8],
-            steps: vec![StateId::NONE],
-            epsilons: Vec::new(),
+            ceilings: smallvec![BYTE_CEILING as u8],
+            steps: smallvec![StateId::NONE],
+            epsilons: SmallVec::new(),
             spinout: StateId::NONE,
             accel: None,
             default: StateId::NONE,
@@ -300,13 +310,13 @@ pub struct ArenaNfaBuffers {
     pub next_states: Vec<StateId>,
     /// Accumulated field matcher transitions
     pub transitions: Vec<Arc<FieldMatcher>>,
-    /// Seen state IDs (for epsilon closure deduplication)
-    seen_states: Vec<bool>,
+    /// Seen state IDs (for epsilon closure deduplication) - O(1) clear
+    seen_states: SparseSet,
     /// Closure buffer
     closure_stack: Vec<StateId>,
     closure_result: Vec<StateId>,
-    /// Seen field matcher transitions (for deduplication, stored as pointer addresses)
-    seen_transitions: rustc_hash::FxHashSet<usize>,
+    /// Seen field matcher transitions (for deduplication, stored as pointer addresses).
+    seen_transitions: FxHashSet<usize>,
 }
 
 impl ArenaNfaBuffers {
@@ -319,13 +329,10 @@ impl ArenaNfaBuffers {
             current_states: Vec::with_capacity(16),
             next_states: Vec::with_capacity(16),
             transitions: Vec::new(),
-            seen_states: vec![false; state_capacity],
+            seen_states: SparseSet::new(state_capacity),
             closure_stack: Vec::with_capacity(16),
             closure_result: Vec::with_capacity(16),
-            seen_transitions: rustc_hash::FxHashSet::with_capacity_and_hasher(
-                16,
-                Default::default(),
-            ),
+            seen_transitions: FxHashSet::default(),
         }
     }
 
@@ -339,8 +346,8 @@ impl ArenaNfaBuffers {
 
     /// Ensure seen_states buffer is large enough for the arena.
     fn ensure_seen_capacity(&mut self, arena_size: usize) {
-        if self.seen_states.len() < arena_size {
-            self.seen_states.resize(arena_size, false);
+        if self.seen_states.capacity() < arena_size {
+            self.seen_states.resize(arena_size);
         }
     }
 }
@@ -439,8 +446,8 @@ pub fn traverse_arena_nfa(
                 let ec_state_id = bufs.closure_result[ec_idx];
                 let ec_state = &arena[ec_state_id];
 
-                // Collect field transitions (deduplicated using reusable buffer)
-                for ft in &ec_state.field_transitions {
+                // Collect field transitions from cold storage (deduplicated)
+                for ft in &arena[ec_state_id].field_transitions {
                     let ptr = Arc::as_ptr(ft) as usize;
                     if bufs.seen_transitions.insert(ptr) {
                         bufs.transitions.push(ft.clone());
@@ -476,8 +483,8 @@ pub fn traverse_arena_nfa(
         // Iterate by index to avoid borrow conflicts
         for ec_idx in 0..bufs.closure_result.len() {
             let ec_state_id = bufs.closure_result[ec_idx];
-            let ec_state = &arena[ec_state_id];
-            for ft in &ec_state.field_transitions {
+            // Collect field transitions from cold storage (deduplicated)
+            for ft in &arena[ec_state_id].field_transitions {
                 let ptr = Arc::as_ptr(ft) as usize;
                 if bufs.seen_transitions.insert(ptr) {
                     bufs.transitions.push(ft.clone());
@@ -512,8 +519,8 @@ pub fn traverse_arena_dfa(
     for i in 0..=val.len() {
         let state = &arena[current];
 
-        // Collect any field transitions at this state
-        transitions.extend(state.field_transitions.iter().cloned());
+        // Collect any field transitions at this state (cold data)
+        transitions.extend(arena[current].field_transitions.iter().cloned());
 
         let byte = if i < val.len() {
             val[i]
@@ -528,9 +535,8 @@ pub fn traverse_arena_dfa(
         current = next;
     }
 
-    // Check final state
-    let state = &arena[current];
-    transitions.extend(state.field_transitions.iter().cloned());
+    // Check final state (cold data)
+    transitions.extend(arena[current].field_transitions.iter().cloned());
 }
 
 /// Compute the epsilon closure of a state in the arena.
@@ -556,13 +562,14 @@ fn fill_epsilon_closure(arena: &StateArena, start: StateId, bufs: &mut ArenaNfaB
 
     // Slow path: compute full epsilon closure
     bufs.closure_stack.clear();
+    bufs.seen_states.clear();
 
     bufs.closure_result.push(start);
     bufs.closure_stack.push(start);
 
     // Mark start as seen
-    if start.index() < bufs.seen_states.len() {
-        bufs.seen_states[start.index()] = true;
+    if start.index() < bufs.seen_states.capacity() {
+        bufs.seen_states.insert(start.index());
     }
 
     while let Some(current_id) = bufs.closure_stack.pop() {
@@ -577,20 +584,13 @@ fn fill_epsilon_closure(arena: &StateArena, start: StateId, bufs: &mut ArenaNfaB
             }
 
             let idx = eps_id.index();
-            if idx < bufs.seen_states.len() && !bufs.seen_states[idx] {
-                bufs.seen_states[idx] = true;
+            if idx < bufs.seen_states.capacity() && bufs.seen_states.insert(idx) {
                 bufs.closure_result.push(eps_id);
                 bufs.closure_stack.push(eps_id);
             }
         }
     }
-
-    // Clear seen markers for next use
-    for &id in &bufs.closure_result {
-        if !id.is_none() && id.index() < bufs.seen_states.len() {
-            bufs.seen_states[id.index()] = false;
-        }
-    }
+    // SparseSet: no manual cleanup needed - O(1) clear on next call
 }
 
 /// Merge two arena-based DFAs into one that matches either pattern.
@@ -679,17 +679,17 @@ fn clone_state_recursive(
     let new_id = new_arena.alloc();
     id_map.insert(state_id.0, new_id);
 
-    let old_state = &arena[state_id];
+    // Clone field transitions (Arc clone is cheap) - cold data
+    new_arena[new_id].field_transitions = arena[state_id].field_transitions.clone();
 
-    // Clone field transitions (Arc clone is cheap)
-    new_arena[new_id].field_transitions = old_state.field_transitions.clone();
+    let old_state = &arena[state_id];
 
     // Clone table with remapped state IDs
     let old_table = &old_state.table;
     let mut new_table = ArenaSmallTable {
         ceilings: old_table.ceilings.clone(),
-        steps: Vec::with_capacity(old_table.steps.len()),
-        epsilons: Vec::with_capacity(old_table.epsilons.len()),
+        steps: SmallVec::with_capacity(old_table.steps.len()),
+        epsilons: SmallVec::with_capacity(old_table.epsilons.len()),
         spinout: StateId::NONE,
         accel: old_table.accel.clone(),
         default: StateId::NONE,
@@ -784,8 +784,6 @@ fn merge_arena_states_recursive(
     let mut field_transitions = s1.field_transitions.clone();
     field_transitions.extend(s2.field_transitions.iter().cloned());
     new_arena[new_id].field_transitions = field_transitions;
-
-    // Merge tables byte-by-byte
     new_arena[new_id].table =
         merge_arena_tables(arena1, &s1.table, arena2, &s2.table, new_arena, memo);
 
@@ -803,8 +801,8 @@ fn remap_table_recursive(
 ) -> ArenaSmallTable {
     let mut new_table = ArenaSmallTable {
         ceilings: table.ceilings.clone(),
-        steps: Vec::with_capacity(table.steps.len()),
-        epsilons: Vec::with_capacity(table.epsilons.len()),
+        steps: SmallVec::with_capacity(table.steps.len()),
+        epsilons: SmallVec::with_capacity(table.epsilons.len()),
         spinout: StateId::NONE,
         accel: table.accel.clone(),
         default: StateId::NONE,
@@ -1124,7 +1122,6 @@ fn merge_arena_nfa_states_recursive(
 
     // Case 1: Both have spinouts - merge them recursively
     if s1_has_spinout && s2_has_spinout {
-        // Merge the spinout continuations (the epsilon targets)
         let spinout1_eps = s1.table.epsilons[0];
         let spinout2_eps = s2.table.epsilons[0];
         let merged_eps = merge_arena_nfa_states_recursive(
@@ -1136,15 +1133,12 @@ fn merge_arena_nfa_states_recursive(
             memo,
         );
 
-        // Merge byte transitions
         let mut combined_table =
             merge_nfa_tables_bytewise(arena1, &s1.table, arena2, &s2.table, new_arena, memo);
 
-        // Set up spinout with merged epsilon
-        combined_table.spinout = new_id; // Self-reference for spinout looping
-        combined_table.epsilons = vec![merged_eps];
+        combined_table.spinout = new_id;
+        combined_table.epsilons = smallvec![merged_eps];
 
-        // Combine field transitions
         let mut field_transitions = s1.field_transitions.clone();
         field_transitions.extend(s2.field_transitions.iter().cloned());
 
@@ -1155,11 +1149,6 @@ fn merge_arena_nfa_states_recursive(
 
     // Case 2: Either has epsilons (but not both spinouts) - create splice
     if s1_has_epsilons || s2_has_epsilons {
-        // Create a splice state that branches to try both patterns independently
-        // This keeps patterns from interfering with each other
-
-        // Clone both original states into the new arena using separate clone maps
-        // We can't reuse the merge memo because the keys would conflict
         let mut clone_map1: std::collections::HashMap<u32, StateId> =
             std::collections::HashMap::new();
         let mut clone_map2: std::collections::HashMap<u32, StateId> =
@@ -1167,16 +1156,14 @@ fn merge_arena_nfa_states_recursive(
         let cloned1 = clone_state_into_arena(arena1, state1, new_arena, &mut clone_map1);
         let cloned2 = clone_state_into_arena(arena2, state2, new_arena, &mut clone_map2);
 
-        // Set up splice: empty state with epsilons to both original states
         new_arena[new_id].table = ArenaSmallTable {
-            ceilings: vec![BYTE_CEILING as u8],
-            steps: vec![StateId::NONE],
-            epsilons: vec![cloned1, cloned2],
+            ceilings: smallvec![BYTE_CEILING as u8],
+            steps: smallvec![StateId::NONE],
+            epsilons: smallvec![cloned1, cloned2],
             spinout: StateId::NONE,
             accel: None,
             default: StateId::NONE,
         };
-        new_arena[new_id].field_transitions = Vec::new();
         return new_id;
     }
 
@@ -1216,17 +1203,17 @@ fn clone_state_into_arena(
     let new_id = target_arena.alloc();
     id_map.insert(state_id.0, new_id);
 
-    let old_state = &source_arena[state_id];
+    // Clone field transitions (Arc clone is cheap) - cold data
+    target_arena[new_id].field_transitions = source_arena[state_id].field_transitions.clone();
 
-    // Clone field transitions (Arc clone is cheap)
-    target_arena[new_id].field_transitions = old_state.field_transitions.clone();
+    let old_state = &source_arena[state_id];
 
     // Clone table with remapped state IDs
     let old_table = &old_state.table;
     let mut new_table = ArenaSmallTable {
         ceilings: old_table.ceilings.clone(),
-        steps: Vec::with_capacity(old_table.steps.len()),
-        epsilons: Vec::with_capacity(old_table.epsilons.len()),
+        steps: SmallVec::with_capacity(old_table.steps.len()),
+        epsilons: SmallVec::with_capacity(old_table.epsilons.len()),
         spinout: StateId::NONE,
         accel: old_table.accel.clone(),
         default: StateId::NONE,
@@ -1272,8 +1259,8 @@ fn remap_nfa_table_recursive(
 ) -> ArenaSmallTable {
     let mut new_table = ArenaSmallTable {
         ceilings: table.ceilings.clone(),
-        steps: Vec::with_capacity(table.steps.len()),
-        epsilons: Vec::with_capacity(table.epsilons.len()),
+        steps: SmallVec::with_capacity(table.steps.len()),
+        epsilons: SmallVec::with_capacity(table.epsilons.len()),
         spinout: StateId::NONE,
         accel: table.accel.clone(),
         default: StateId::NONE,
@@ -2713,7 +2700,7 @@ fn build_octet_range_arena_fa(
     }
 
     // Add epsilon transitions to all value FAs
-    arena[start].table.epsilons = value_starts;
+    arena[start].table.epsilons = SmallVec::from_vec(value_starts);
 
     start
 }
@@ -2746,7 +2733,7 @@ fn build_ipv6_group_range_arena_fa(
         value_starts.push(val_start);
     }
 
-    arena[start].table.epsilons = value_starts;
+    arena[start].table.epsilons = SmallVec::from_vec(value_starts);
 
     start
 }
@@ -2943,7 +2930,7 @@ mod tests {
         });
 
         // Now set up loopback's epsilons: to exit AND back to start (CYCLE!)
-        arena[loopback].table.epsilons = vec![exit_state, start];
+        arena[loopback].table.epsilons = smallvec![exit_state, start];
 
         let mut bufs = ArenaNfaBuffers::with_capacity(arena.len());
 
@@ -3018,7 +3005,7 @@ mod tests {
         ));
 
         // Set up loopback's epsilons: to exit AND back to start (CYCLE!)
-        arena[loopback].table.epsilons = vec![exit_state, start];
+        arena[loopback].table.epsilons = smallvec![exit_state, start];
 
         let mut bufs = ArenaNfaBuffers::with_capacity(arena.len());
 
@@ -3070,7 +3057,7 @@ mod tests {
             table
         });
 
-        arena[loopback].table.epsilons = vec![exit_state, start];
+        arena[loopback].table.epsilons = smallvec![exit_state, start];
 
         // Only 4 states needed for [a]* with arena!
         // The chain-based approach needs 100+ states for the same pattern.
@@ -3124,7 +3111,7 @@ mod tests {
         let start = arena.alloc_with_table(start_table);
 
         // Set up loopback
-        arena[loopback].table.epsilons = vec![exit_state, start];
+        arena[loopback].table.epsilons = smallvec![exit_state, start];
         arena[loopback].table.accel = Some(super::super::AccelInfo {
             exit_bytes: [b'x', 0, 0],
             len: 1,
@@ -3900,7 +3887,7 @@ mod nfa_merge_tests {
 
         // Create start state with epsilon transitions to all branches
         let start = arena.alloc();
-        arena[start].table.epsilons = branches;
+        arena[start].table.epsilons = SmallVec::from_vec(branches);
 
         (arena, start)
     }
@@ -4131,7 +4118,7 @@ mod nfa_merge_tests {
             ));
 
             // Set up cycle: loopback -> term_state (for exit) and -> start (for loop)
-            arena[loopback].table.epsilons = vec![term_state, start];
+            arena[loopback].table.epsilons = smallvec![term_state, start];
 
             (arena, start)
         };
