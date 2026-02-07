@@ -17,8 +17,7 @@ use super::arena::{
     make_string_arena_fa, make_wildcard_arena_fa, merge_arena_nfas, traverse_arena_dfa,
     traverse_arena_nfa, ArenaNfaBuffers, StateArena, StateId,
 };
-use super::nfa::{traverse_dfa, traverse_nfa};
-use super::small_table::{FieldMatcher, NfaBuffers, SmallTable};
+use super::small_table::{FieldMatcher, NfaBuffers};
 use crate::regexp::make_regexp_nfa_arena;
 
 /// A condition NFA for lookaround verification.
@@ -190,33 +189,21 @@ impl<X: Clone + Eq + std::hash::Hash> MutableFieldMatcher<X> {
 /// Similar to Go's valueMatcher with singleton optimization and automaton.
 #[derive(Default)]
 pub struct MutableValueMatcher<X: Clone + Eq + std::hash::Hash> {
-    /// The automaton start table (once we have multiple values or complex patterns)
-    /// DEPRECATED: Being migrated to main_arena in Step 2.3
-    pub(crate) start_table: RefCell<Option<SmallTable>>,
     /// Optimization: for single exact match, store it directly
     pub(crate) singleton_match: RefCell<Option<Vec<u8>>>,
     /// Transition for singleton match
     pub(crate) singleton_transition: RefCell<Option<Rc<MutableFieldMatcher<X>>>>,
-    /// Whether this matcher requires NFA traversal
-    pub(crate) is_nondeterministic: Cell<bool>,
     /// Whether this matcher has numeric patterns (for Q-number conversion)
     pub(crate) has_numbers: Cell<bool>,
     /// Mapping from Arc<FieldMatcher> to Rc<MutableFieldMatcher<X>>
     /// This bridges the automaton's field transitions to our mutable field matchers
     pub(crate) transition_map: RefCell<HashMap<*const FieldMatcher, Rc<MutableFieldMatcher<X>>>>,
-    /// Arena-based NFAs for regexp patterns (2.5x faster than chain-based)
-    /// DEPRECATED: Being migrated to main_arena in Step 2.3
-    pub(crate) arena_nfas: RefCell<Vec<(StateArena, StateId)>>,
-    /// Arena-based FA for numeric patterns (merged from all numeric range patterns)
-    /// DEPRECATED: Being migrated to main_arena in Step 2.3
-    pub(crate) numeric_arena: RefCell<Option<(StateArena, StateId)>>,
     /// Multi-condition NFAs for lookaround patterns
     /// NOTE: Kept separate from main_arena for lookaround verification
     pub(crate) multi_condition_nfas: RefCell<Vec<MultiConditionNfa>>,
     /// Buffers for arena NFA traversal
     pub(crate) arena_bufs: RefCell<ArenaNfaBuffers>,
-    /// Unified arena-based FA for all pattern types (Step 2.3 migration target)
-    /// This will replace start_table, arena_nfas, and numeric_arena
+    /// Unified arena-based FA for all pattern types
     pub(crate) main_arena: RefCell<Option<(StateArena, StateId)>>,
     /// Whether main_arena contains NFA states (epsilon transitions or spinout).
     /// When false, the fast traverse_arena_dfa path can be used instead of traverse_arena_nfa.
@@ -226,14 +213,10 @@ pub struct MutableValueMatcher<X: Clone + Eq + std::hash::Hash> {
 impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
     pub fn new() -> Self {
         Self {
-            start_table: RefCell::new(None),
             singleton_match: RefCell::new(None),
             singleton_transition: RefCell::new(None),
-            is_nondeterministic: Cell::new(false),
             has_numbers: Cell::new(false),
             transition_map: RefCell::new(HashMap::new()),
-            arena_nfas: RefCell::new(Vec::new()),
-            numeric_arena: RefCell::new(None),
             multi_condition_nfas: RefCell::new(Vec::new()),
             arena_bufs: RefCell::new(ArenaNfaBuffers::new()),
             main_arena: RefCell::new(None),
@@ -307,14 +290,8 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
             Matcher::Exact(s) => self.add_string_transition(s.as_bytes()),
             Matcher::NumericExact(n) => self.add_numeric_transition(*n),
             Matcher::Prefix(s) => self.add_prefix_transition(s.as_bytes()),
-            Matcher::Shellstyle(s) => {
-                self.is_nondeterministic.set(true);
-                self.add_shellstyle_transition(s.as_bytes())
-            }
-            Matcher::Wildcard(s) => {
-                self.is_nondeterministic.set(true);
-                self.add_wildcard_transition(s.as_bytes())
-            }
+            Matcher::Shellstyle(s) => self.add_shellstyle_transition(s.as_bytes()),
+            Matcher::Wildcard(s) => self.add_wildcard_transition(s.as_bytes()),
             Matcher::AnythingBut(excluded) => {
                 let excluded_bytes: Vec<Vec<u8>> =
                     excluded.iter().map(|s| s.as_bytes().to_vec()).collect();
@@ -326,19 +303,10 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
                 self.add_anything_but_numeric_transition(excluded)
             }
             Matcher::EqualsIgnoreCase(s) => self.add_monocase_transition(s.as_bytes()),
-            Matcher::ParsedRegexp(ref tree) => {
-                self.is_nondeterministic.set(true);
-                self.add_regexp_transition(tree)
-            }
-            Matcher::MultiCondition(ref mc) => {
-                // Multi-condition patterns use arena-based NFA for primary pattern
-                // Conditions are verified during matching
-                self.is_nondeterministic.set(true);
-                self.add_multi_condition_transition(mc)
-            }
+            Matcher::ParsedRegexp(ref tree) => self.add_regexp_transition(tree),
+            Matcher::MultiCondition(ref mc) => self.add_multi_condition_transition(mc),
             Matcher::Suffix(s) => {
                 // Suffix "abc" is equivalent to shellstyle "*abc"
-                self.is_nondeterministic.set(true);
                 let pattern = format!("*{}", s);
                 self.add_shellstyle_transition(pattern.as_bytes())
             }
@@ -347,13 +315,7 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
                 self.has_numbers.set(true);
                 self.add_numeric_range_transition(cmp)
             }
-            Matcher::Cidr(ref cidr) => {
-                // IPv6 CIDR patterns use epsilon transitions, so mark as nondeterministic
-                if matches!(cidr, crate::json::CidrPattern::V6 { .. }) {
-                    self.is_nondeterministic.set(true);
-                }
-                self.add_cidr_transition(cidr)
-            }
+            Matcher::Cidr(ref cidr) => self.add_cidr_transition(cidr),
             // Catch-all for any future matcher types
             _ => Rc::new(MutableFieldMatcher::new()),
         }
@@ -399,10 +361,8 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
         let singleton = self.singleton_match.borrow();
         let singleton_trans = self.singleton_transition.borrow();
 
-        // Check if virgin state (no singleton, no start_table, no main_arena)
-        let is_virgin = singleton.is_none()
-            && self.start_table.borrow().is_none()
-            && self.main_arena.borrow().is_none();
+        // Check if virgin state (no singleton, no main_arena)
+        let is_virgin = singleton.is_none() && self.main_arena.borrow().is_none();
 
         if is_virgin {
             // Virgin state - use singleton optimization
@@ -917,7 +877,7 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
         &self,
         value: &[u8],
         is_number: bool,
-        bufs: &mut NfaBuffers,
+        _bufs: &mut NfaBuffers,
     ) -> Vec<Rc<MutableFieldMatcher<X>>> {
         // Check singleton first
         if let Some(ref singleton_val) = *self.singleton_match.borrow() {
@@ -954,26 +914,6 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
             None => value,
         };
 
-        // Use chain-based automaton if present (DEPRECATED - being migrated to main_arena)
-        if let Some(ref table) = *self.start_table.borrow() {
-            // Clear and reuse the transitions buffer
-            bufs.transitions.clear();
-
-            if self.is_nondeterministic.get() {
-                traverse_nfa(table, value_to_match, bufs);
-            } else {
-                traverse_dfa(table, value_to_match, &mut bufs.transitions);
-            }
-
-            // Map Arc<FieldMatcher> transitions to Rc<MutableFieldMatcher<X>>
-            for arc_fm in &bufs.transitions {
-                let ptr = Arc::as_ptr(arc_fm);
-                if let Some(mutable_fm) = transition_map.get(&ptr) {
-                    result.push(mutable_fm.clone());
-                }
-            }
-        }
-
         // Traverse main_arena (unified arena for all pattern types)
         if let Some((ref arena, start)) = *self.main_arena.borrow() {
             let mut arena_bufs = self.arena_bufs.borrow_mut();
@@ -988,49 +928,7 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
             for arc_fm in &arena_bufs.transitions {
                 let ptr = Arc::as_ptr(arc_fm);
                 if let Some(mutable_fm) = transition_map.get(&ptr) {
-                    // Avoid duplicates
-                    if !result.iter().any(|r| Rc::ptr_eq(r, mutable_fm)) {
-                        result.push(mutable_fm.clone());
-                    }
-                }
-            }
-        }
-
-        // Traverse numeric arena FA (if present and value is numeric)
-        if q_num_storage.is_some() {
-            if let Some((ref arena, start)) = *self.numeric_arena.borrow() {
-                let mut arena_bufs = self.arena_bufs.borrow_mut();
-                traverse_arena_nfa(arena, start, value_to_match, &mut arena_bufs);
-
-                // Map Arc<FieldMatcher> transitions to Rc<MutableFieldMatcher<X>>
-                for arc_fm in &arena_bufs.transitions {
-                    let ptr = Arc::as_ptr(arc_fm);
-                    if let Some(mutable_fm) = transition_map.get(&ptr) {
-                        // Avoid duplicates
-                        if !result.iter().any(|r| Rc::ptr_eq(r, mutable_fm)) {
-                            result.push(mutable_fm.clone());
-                        }
-                    }
-                }
-            }
-        }
-
-        // Traverse all arena NFAs (for regexp patterns)
-        let arena_nfas = self.arena_nfas.borrow();
-        if !arena_nfas.is_empty() {
-            let mut arena_bufs = self.arena_bufs.borrow_mut();
-            for (arena, start) in arena_nfas.iter() {
-                traverse_arena_nfa(arena, *start, value_to_match, &mut arena_bufs);
-
-                // Map Arc<FieldMatcher> transitions to Rc<MutableFieldMatcher<X>>
-                for arc_fm in &arena_bufs.transitions {
-                    let ptr = Arc::as_ptr(arc_fm);
-                    if let Some(mutable_fm) = transition_map.get(&ptr) {
-                        // Avoid duplicates
-                        if !result.iter().any(|r| Rc::ptr_eq(r, mutable_fm)) {
-                            result.push(mutable_fm.clone());
-                        }
-                    }
+                    result.push(mutable_fm.clone());
                 }
             }
         }
@@ -1556,11 +1454,6 @@ mod tests {
             vm.main_arena.borrow().is_some(),
             "main_arena should be set for regexp"
         );
-        assert!(
-            vm.start_table.borrow().is_none(),
-            "Start table should be None when using arena"
-        );
-
         // Test matching
         let mut bufs = NfaBuffers::new();
         let value = b"alice@example.com";
@@ -1603,11 +1496,6 @@ mod tests {
             vm.main_arena.borrow().is_some(),
             "main_arena should be set for regexp"
         );
-        assert!(
-            vm.start_table.borrow().is_none(),
-            "Start table should be None when using arena for regexp"
-        );
-
         // Test matching
         let mut bufs = NfaBuffers::new();
         let value = b"a";
