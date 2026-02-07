@@ -785,7 +785,9 @@ fn build_arena_nfa_plus() -> (StateArena, StateId, Arc<FieldMatcher>) {
 
     // final state with field_transitions
     let final_state = arena.alloc();
-    arena[final_state].field_transitions.push(field_matcher.clone());
+    arena[final_state]
+        .field_transitions
+        .push(field_matcher.clone());
 
     // exit state: VALUE_TERMINATOR -> final_state
     let exit_state = arena.alloc_with_table(ArenaSmallTable::with_mappings(

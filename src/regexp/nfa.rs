@@ -83,7 +83,9 @@ pub fn make_regexp_nfa_arena(
 
         // Create match state
         let match_state = arena.alloc();
-        arena[match_state].field_transitions.push(next_field.clone());
+        arena[match_state]
+            .field_transitions
+            .push(next_field.clone());
 
         // Create start state that transitions to match on VALUE_TERMINATOR
         let start = arena.alloc_with_table(ArenaSmallTable::with_mappings(
@@ -100,7 +102,9 @@ pub fn make_regexp_nfa_arena(
 
     // Create match state (reached at end of value)
     let match_state = arena.alloc();
-    arena[match_state].field_transitions.push(next_field.clone());
+    arena[match_state]
+        .field_transitions
+        .push(next_field.clone());
 
     // Create VALUE_TERMINATOR transition state
     let vt_state = arena.alloc_with_table(ArenaSmallTable::with_mappings(
