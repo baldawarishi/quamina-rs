@@ -1080,7 +1080,7 @@ impl<X: Clone + Eq + std::hash::Hash> MatchSet<X> {
 /// Core matcher that uses automaton-based matching for multiple fields.
 ///
 /// This implements the Go quamina matching algorithm:
-/// 1. Patterns are added by building a graph of FieldMatcher -> ValueMatcher -> FieldMatcher
+/// 1. Patterns are added by building a graph of FieldMatcher -> MutableValueMatcher -> FieldMatcher
 /// 2. Event fields are sorted and matched against the automaton
 /// 3. Matching recursively tries subsequent fields to find complete pattern matches
 #[derive(Default)]
