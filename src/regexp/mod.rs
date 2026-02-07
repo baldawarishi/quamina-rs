@@ -324,10 +324,10 @@ mod tests {
 
         // Test that empty regexp NFA matches ONLY empty string
         let root = parse_regexp("").unwrap();
-        let (arena, start, field_matcher) = make_regexp_nfa_arena(root, false);
+        let (arena, start, field_matcher) = make_regexp_nfa_arena(root);
 
-        // Test with empty value (just VALUE_TERMINATOR)
-        let empty_value = vec![ARENA_VALUE_TERMINATOR];
+        // Test with empty value (just quotes + VALUE_TERMINATOR)
+        let empty_value = vec![b'"', b'"', ARENA_VALUE_TERMINATOR];
         let mut bufs = ArenaNfaBuffers::new();
         traverse_arena_nfa(&arena, start, &empty_value, &mut bufs);
         assert!(
@@ -340,7 +340,7 @@ mod tests {
         );
 
         // Test with non-empty value - should NOT match
-        let non_empty_value = vec![b'h', b'i', ARENA_VALUE_TERMINATOR];
+        let non_empty_value = vec![b'"', b'h', b'i', b'"', ARENA_VALUE_TERMINATOR];
         bufs.clear();
         traverse_arena_nfa(&arena, start, &non_empty_value, &mut bufs);
         assert!(
@@ -357,10 +357,10 @@ mod tests {
 
         // First verify basic non-quantified matching works
         let root = parse_regexp("[abc]").unwrap();
-        let (arena, start, field_matcher) = make_regexp_nfa_arena(root, false);
+        let (arena, start, field_matcher) = make_regexp_nfa_arena(root);
         let mut bufs = ArenaNfaBuffers::new();
 
-        let value_a = vec![b'a', ARENA_VALUE_TERMINATOR];
+        let value_a = vec![b'"', b'a', b'"', ARENA_VALUE_TERMINATOR];
         bufs.clear();
         traverse_arena_nfa(&arena, start, &value_a, &mut bufs);
         assert!(
@@ -383,11 +383,11 @@ mod tests {
 
         // Test that [abc]+ matches one or more of a, b, c
         let root = parse_regexp("[abc]+").unwrap();
-        let (arena, start, field_matcher) = make_regexp_nfa_arena(root, false);
+        let (arena, start, field_matcher) = make_regexp_nfa_arena(root);
         let mut bufs = ArenaNfaBuffers::new();
 
         // Should match "a"
-        let value_a = vec![b'a', ARENA_VALUE_TERMINATOR];
+        let value_a = vec![b'"', b'a', b'"', ARENA_VALUE_TERMINATOR];
         bufs.clear();
         traverse_arena_nfa(&arena, start, &value_a, &mut bufs);
         assert!(
@@ -398,7 +398,7 @@ mod tests {
         );
 
         // Should match "abc"
-        let value_abc = vec![b'a', b'b', b'c', ARENA_VALUE_TERMINATOR];
+        let value_abc = vec![b'"', b'a', b'b', b'c', b'"', ARENA_VALUE_TERMINATOR];
         bufs.clear();
         traverse_arena_nfa(&arena, start, &value_abc, &mut bufs);
         assert!(
@@ -409,7 +409,7 @@ mod tests {
         );
 
         // Should NOT match empty string
-        let empty = vec![ARENA_VALUE_TERMINATOR];
+        let empty = vec![b'"', b'"', ARENA_VALUE_TERMINATOR];
         bufs.clear();
         traverse_arena_nfa(&arena, start, &empty, &mut bufs);
         assert!(
@@ -421,7 +421,7 @@ mod tests {
         );
 
         // Should NOT match "x"
-        let value_x = vec![b'x', ARENA_VALUE_TERMINATOR];
+        let value_x = vec![b'"', b'x', b'"', ARENA_VALUE_TERMINATOR];
         bufs.clear();
         traverse_arena_nfa(&arena, start, &value_x, &mut bufs);
         assert!(
@@ -445,11 +445,11 @@ mod tests {
 
         // Test that [abc]* matches zero or more of a, b, c
         let root = parse_regexp("[abc]*").unwrap();
-        let (arena, start, field_matcher) = make_regexp_nfa_arena(root, false);
+        let (arena, start, field_matcher) = make_regexp_nfa_arena(root);
         let mut bufs = ArenaNfaBuffers::new();
 
         // Should match empty string (zero times)
-        let empty = vec![ARENA_VALUE_TERMINATOR];
+        let empty = vec![b'"', b'"', ARENA_VALUE_TERMINATOR];
         bufs.clear();
         traverse_arena_nfa(&arena, start, &empty, &mut bufs);
         assert!(
@@ -460,7 +460,7 @@ mod tests {
         );
 
         // Should match "a"
-        let value_a = vec![b'a', ARENA_VALUE_TERMINATOR];
+        let value_a = vec![b'"', b'a', b'"', ARENA_VALUE_TERMINATOR];
         bufs.clear();
         traverse_arena_nfa(&arena, start, &value_a, &mut bufs);
         assert!(
@@ -471,7 +471,7 @@ mod tests {
         );
 
         // Should match "abc"
-        let value_abc = vec![b'a', b'b', b'c', ARENA_VALUE_TERMINATOR];
+        let value_abc = vec![b'"', b'a', b'b', b'c', b'"', ARENA_VALUE_TERMINATOR];
         bufs.clear();
         traverse_arena_nfa(&arena, start, &value_abc, &mut bufs);
         assert!(
@@ -519,11 +519,11 @@ mod tests {
 
         // Test a{3} - exactly 3 'a's (I-Regexp semantics: {n} means exactly n)
         let root = parse_regexp("a{3}").unwrap();
-        let (arena, start, field_matcher) = make_regexp_nfa_arena(root, false);
+        let (arena, start, field_matcher) = make_regexp_nfa_arena(root);
         let mut bufs = ArenaNfaBuffers::new();
 
         // Should NOT match "aa"
-        let value_aa = vec![b'a', b'a', ARENA_VALUE_TERMINATOR];
+        let value_aa = vec![b'"', b'a', b'a', b'"', ARENA_VALUE_TERMINATOR];
         bufs.clear();
         traverse_arena_nfa(&arena, start, &value_aa, &mut bufs);
         assert!(
@@ -535,7 +535,7 @@ mod tests {
         );
 
         // Should match "aaa"
-        let value_aaa = vec![b'a', b'a', b'a', ARENA_VALUE_TERMINATOR];
+        let value_aaa = vec![b'"', b'a', b'a', b'a', b'"', ARENA_VALUE_TERMINATOR];
         bufs.clear();
         traverse_arena_nfa(&arena, start, &value_aaa, &mut bufs);
         assert!(
@@ -546,7 +546,7 @@ mod tests {
         );
 
         // Should NOT match "aaaa" ({n} means exactly n)
-        let value_aaaa = vec![b'a', b'a', b'a', b'a', ARENA_VALUE_TERMINATOR];
+        let value_aaaa = vec![b'"', b'a', b'a', b'a', b'a', b'"', ARENA_VALUE_TERMINATOR];
         bufs.clear();
         traverse_arena_nfa(&arena, start, &value_aaaa, &mut bufs);
         assert!(
@@ -566,11 +566,11 @@ mod tests {
 
         // Test a{2,4} - between 2 and 4 'a's
         let root = parse_regexp("a{2,4}").unwrap();
-        let (arena, start, field_matcher) = make_regexp_nfa_arena(root, false);
+        let (arena, start, field_matcher) = make_regexp_nfa_arena(root);
         let mut bufs = ArenaNfaBuffers::new();
 
         // Should NOT match "a"
-        let value_a = vec![b'a', ARENA_VALUE_TERMINATOR];
+        let value_a = vec![b'"', b'a', b'"', ARENA_VALUE_TERMINATOR];
         bufs.clear();
         traverse_arena_nfa(&arena, start, &value_a, &mut bufs);
         assert!(
@@ -582,7 +582,7 @@ mod tests {
         );
 
         // Should match "aa"
-        let value_aa = vec![b'a', b'a', ARENA_VALUE_TERMINATOR];
+        let value_aa = vec![b'"', b'a', b'a', b'"', ARENA_VALUE_TERMINATOR];
         bufs.clear();
         traverse_arena_nfa(&arena, start, &value_aa, &mut bufs);
         assert!(
@@ -593,7 +593,7 @@ mod tests {
         );
 
         // Should match "aaa"
-        let value_aaa = vec![b'a', b'a', b'a', ARENA_VALUE_TERMINATOR];
+        let value_aaa = vec![b'"', b'a', b'a', b'a', b'"', ARENA_VALUE_TERMINATOR];
         bufs.clear();
         traverse_arena_nfa(&arena, start, &value_aaa, &mut bufs);
         assert!(
@@ -604,7 +604,7 @@ mod tests {
         );
 
         // Should match "aaaa"
-        let value_aaaa = vec![b'a', b'a', b'a', b'a', ARENA_VALUE_TERMINATOR];
+        let value_aaaa = vec![b'"', b'a', b'a', b'a', b'a', b'"', ARENA_VALUE_TERMINATOR];
         bufs.clear();
         traverse_arena_nfa(&arena, start, &value_aaaa, &mut bufs);
         assert!(
@@ -615,7 +615,16 @@ mod tests {
         );
 
         // Should NOT match "aaaaa"
-        let value_5a = vec![b'a', b'a', b'a', b'a', b'a', ARENA_VALUE_TERMINATOR];
+        let value_5a = vec![
+            b'"',
+            b'a',
+            b'a',
+            b'a',
+            b'a',
+            b'a',
+            b'"',
+            ARENA_VALUE_TERMINATOR,
+        ];
         bufs.clear();
         traverse_arena_nfa(&arena, start, &value_5a, &mut bufs);
         assert!(
@@ -635,11 +644,11 @@ mod tests {
 
         // Test [abc]{2,3}
         let root = parse_regexp("[abc]{2,3}").unwrap();
-        let (arena, start, field_matcher) = make_regexp_nfa_arena(root, false);
+        let (arena, start, field_matcher) = make_regexp_nfa_arena(root);
         let mut bufs = ArenaNfaBuffers::new();
 
         // Should NOT match "a"
-        let value_a = vec![b'a', ARENA_VALUE_TERMINATOR];
+        let value_a = vec![b'"', b'a', b'"', ARENA_VALUE_TERMINATOR];
         bufs.clear();
         traverse_arena_nfa(&arena, start, &value_a, &mut bufs);
         assert!(
@@ -651,7 +660,7 @@ mod tests {
         );
 
         // Should match "ab"
-        let value_ab = vec![b'a', b'b', ARENA_VALUE_TERMINATOR];
+        let value_ab = vec![b'"', b'a', b'b', b'"', ARENA_VALUE_TERMINATOR];
         bufs.clear();
         traverse_arena_nfa(&arena, start, &value_ab, &mut bufs);
         assert!(
@@ -662,7 +671,7 @@ mod tests {
         );
 
         // Should match "abc"
-        let value_abc = vec![b'a', b'b', b'c', ARENA_VALUE_TERMINATOR];
+        let value_abc = vec![b'"', b'a', b'b', b'c', b'"', ARENA_VALUE_TERMINATOR];
         bufs.clear();
         traverse_arena_nfa(&arena, start, &value_abc, &mut bufs);
         assert!(
@@ -673,7 +682,7 @@ mod tests {
         );
 
         // Should NOT match "abcd" (4 chars)
-        let value_abcd = vec![b'a', b'b', b'c', b'd', ARENA_VALUE_TERMINATOR];
+        let value_abcd = vec![b'"', b'a', b'b', b'c', b'd', b'"', ARENA_VALUE_TERMINATOR];
         bufs.clear();
         traverse_arena_nfa(&arena, start, &value_abcd, &mut bufs);
         assert!(
@@ -693,11 +702,11 @@ mod tests {
 
         // Test a{0,2} - between 0 and 2 'a's
         let root = parse_regexp("a{0,2}").unwrap();
-        let (arena, start, field_matcher) = make_regexp_nfa_arena(root, false);
+        let (arena, start, field_matcher) = make_regexp_nfa_arena(root);
         let mut bufs = ArenaNfaBuffers::new();
 
         // Should match empty string
-        let empty = vec![ARENA_VALUE_TERMINATOR];
+        let empty = vec![b'"', b'"', ARENA_VALUE_TERMINATOR];
         bufs.clear();
         traverse_arena_nfa(&arena, start, &empty, &mut bufs);
         assert!(
@@ -708,7 +717,7 @@ mod tests {
         );
 
         // Should match "a"
-        let value_a = vec![b'a', ARENA_VALUE_TERMINATOR];
+        let value_a = vec![b'"', b'a', b'"', ARENA_VALUE_TERMINATOR];
         bufs.clear();
         traverse_arena_nfa(&arena, start, &value_a, &mut bufs);
         assert!(
@@ -719,7 +728,7 @@ mod tests {
         );
 
         // Should match "aa"
-        let value_aa = vec![b'a', b'a', ARENA_VALUE_TERMINATOR];
+        let value_aa = vec![b'"', b'a', b'a', b'"', ARENA_VALUE_TERMINATOR];
         bufs.clear();
         traverse_arena_nfa(&arena, start, &value_aa, &mut bufs);
         assert!(
@@ -730,7 +739,7 @@ mod tests {
         );
 
         // Should NOT match "aaa"
-        let value_aaa = vec![b'a', b'a', b'a', ARENA_VALUE_TERMINATOR];
+        let value_aaa = vec![b'"', b'a', b'a', b'a', b'"', ARENA_VALUE_TERMINATOR];
         bufs.clear();
         traverse_arena_nfa(&arena, start, &value_aaa, &mut bufs);
         assert!(
@@ -862,7 +871,7 @@ mod tests {
         // Verify pattern has + or * (should use arena)
         assert!(regexp_has_plus_star(&root), "Toxic pattern should have +/*");
 
-        let (arena, start, field_matcher) = make_regexp_nfa_arena(root, true);
+        let (arena, start, field_matcher) = make_regexp_nfa_arena(root);
 
         // Test string: ".~?*+{}[]()|.~?*+{}[]()|.~?*+{}[]()|"
         let test_str = ".~?*+{}[]()|.~?*+{}[]()|.~?*+{}[]()|";
@@ -892,12 +901,12 @@ mod tests {
 
         // Test various positive character class patterns
         let root = parse_regexp("[a-z]").unwrap();
-        let (arena, start, field_matcher) = make_regexp_nfa_arena(root, false);
+        let (arena, start, field_matcher) = make_regexp_nfa_arena(root);
         let mut bufs = ArenaNfaBuffers::new();
 
         // Should match lowercase letters
         for ch in b"abc" {
-            let value = vec![*ch, ARENA_VALUE_TERMINATOR];
+            let value = vec![b'"', *ch, b'"', ARENA_VALUE_TERMINATOR];
             bufs.clear();
             traverse_arena_nfa(&arena, start, &value, &mut bufs);
             assert!(
@@ -911,7 +920,7 @@ mod tests {
 
         // Should NOT match uppercase or digits
         for ch in b"ABC123" {
-            let value = vec![*ch, ARENA_VALUE_TERMINATOR];
+            let value = vec![b'"', *ch, b'"', ARENA_VALUE_TERMINATOR];
             bufs.clear();
             traverse_arena_nfa(&arena, start, &value, &mut bufs);
             assert!(
@@ -926,10 +935,10 @@ mod tests {
 
         // Test multiple ranges: [a-zA-Z0-9]
         let root = parse_regexp("[a-zA-Z0-9]").unwrap();
-        let (arena, start, field_matcher) = make_regexp_nfa_arena(root, false);
+        let (arena, start, field_matcher) = make_regexp_nfa_arena(root);
 
         for ch in b"aZ5" {
-            let value = vec![*ch, ARENA_VALUE_TERMINATOR];
+            let value = vec![b'"', *ch, b'"', ARENA_VALUE_TERMINATOR];
             bufs.clear();
             traverse_arena_nfa(&arena, start, &value, &mut bufs);
             assert!(
@@ -953,12 +962,12 @@ mod tests {
 
         // Test [^abc] - matches any character except a, b, c
         let root = parse_regexp("[^abc]").unwrap();
-        let (arena, start, field_matcher) = make_regexp_nfa_arena(root, false);
+        let (arena, start, field_matcher) = make_regexp_nfa_arena(root);
         let mut bufs = ArenaNfaBuffers::new();
 
         // Should NOT match "a", "b", "c"
         for ch in b"abc" {
-            let value = vec![*ch, ARENA_VALUE_TERMINATOR];
+            let value = vec![b'"', *ch, b'"', ARENA_VALUE_TERMINATOR];
             bufs.clear();
             traverse_arena_nfa(&arena, start, &value, &mut bufs);
             assert!(
@@ -973,7 +982,7 @@ mod tests {
 
         // Should match "x", "y", "z"
         for ch in b"xyz" {
-            let value = vec![*ch, ARENA_VALUE_TERMINATOR];
+            let value = vec![b'"', *ch, b'"', ARENA_VALUE_TERMINATOR];
             bufs.clear();
             traverse_arena_nfa(&arena, start, &value, &mut bufs);
             assert!(
@@ -1000,10 +1009,10 @@ mod tests {
 
         for pattern in star_patterns {
             let root = parse_regexp(pattern).unwrap();
-            let (arena, start, field_matcher) = make_regexp_nfa_arena(root, false);
+            let (arena, start, field_matcher) = make_regexp_nfa_arena(root);
             let mut bufs = ArenaNfaBuffers::new();
 
-            let empty = vec![ARENA_VALUE_TERMINATOR];
+            let empty = vec![b'"', b'"', ARENA_VALUE_TERMINATOR];
             bufs.clear();
             traverse_arena_nfa(&arena, start, &empty, &mut bufs);
             assert!(
@@ -1027,10 +1036,10 @@ mod tests {
         };
 
         let root = parse_regexp("[a-z]*").unwrap();
-        let (arena, start, field_matcher) = make_regexp_nfa_arena(root, false);
+        let (arena, start, field_matcher) = make_regexp_nfa_arena(root);
         let mut bufs = ArenaNfaBuffers::new();
 
-        let empty = vec![ARENA_VALUE_TERMINATOR];
+        let empty = vec![b'"', b'"', ARENA_VALUE_TERMINATOR];
         bufs.clear();
         traverse_arena_nfa(&arena, start, &empty, &mut bufs);
         assert!(
@@ -1058,12 +1067,15 @@ mod tests {
         );
 
         // Build arena NFA
-        let (arena, start, field_matcher) = make_regexp_nfa_arena(root, false);
+        let (arena, start, field_matcher) = make_regexp_nfa_arena(root);
 
         let mut bufs = ArenaNfaBuffers::with_capacity(arena.len());
 
         // Test: "alice@example.com" should match
-        let mut value = b"alice@example.com".to_vec();
+        let mut value = Vec::new();
+        value.push(b'"');
+        value.extend_from_slice(b"alice@example.com");
+        value.push(b'"');
         value.push(ARENA_VALUE_TERMINATOR);
         traverse_arena_nfa(&arena, start, &value, &mut bufs);
 
@@ -1085,12 +1097,15 @@ mod tests {
         // Test simple [a-z]+ pattern with arena
         let pattern = "[a-z]+";
         let root = parse_regexp(pattern).unwrap();
-        let (arena, start, field_matcher) = make_regexp_nfa_arena(root, false);
+        let (arena, start, field_matcher) = make_regexp_nfa_arena(root);
 
         let mut bufs = ArenaNfaBuffers::with_capacity(arena.len());
 
         // Test: "abc" should match
-        let mut value = b"abc".to_vec();
+        let mut value = Vec::new();
+        value.push(b'"');
+        value.extend_from_slice(b"abc");
+        value.push(b'"');
         value.push(ARENA_VALUE_TERMINATOR);
         traverse_arena_nfa(&arena, start, &value, &mut bufs);
 
@@ -1114,10 +1129,13 @@ mod tests {
         // Helper to test if a pattern matches a string
         fn matches(pattern: &str, input: &str) -> bool {
             let root = parse_regexp(pattern).expect(&format!("Failed to parse: {}", pattern));
-            let (arena, start, field_matcher) = make_regexp_nfa_arena(root, false);
+            let (arena, start, field_matcher) = make_regexp_nfa_arena(root);
             let mut bufs = ArenaNfaBuffers::with_capacity(arena.len());
 
-            let mut value: Vec<u8> = input.as_bytes().to_vec();
+            let mut value: Vec<u8> = Vec::new();
+            value.push(b'"');
+            value.extend_from_slice(input.as_bytes());
+            value.push(b'"');
             value.push(ARENA_VALUE_TERMINATOR);
             traverse_arena_nfa(&arena, start, &value, &mut bufs);
 
@@ -1176,11 +1194,15 @@ mod tests {
         // Helper to test if a pattern matches a string
         fn matches(pattern: &str, input: &str) -> bool {
             let root = parse_regexp(pattern).expect(&format!("Failed to parse: {}", pattern));
-            let (arena, start, field_matcher) = make_regexp_nfa_arena(root, false);
+            let (arena, start, field_matcher) = make_regexp_nfa_arena(root);
             let mut bufs = ArenaNfaBuffers::with_capacity(arena.len());
 
-            // Note: traverse_arena_nfa auto-appends VALUE_TERMINATOR, so don't add it to input
-            traverse_arena_nfa(&arena, start, input.as_bytes(), &mut bufs);
+            // Wrap input in quotes (NFA now always expects leading/trailing ")
+            let mut value: Vec<u8> = Vec::new();
+            value.push(b'"');
+            value.extend_from_slice(input.as_bytes());
+            value.push(b'"');
+            traverse_arena_nfa(&arena, start, &value, &mut bufs);
 
             bufs.transitions
                 .iter()
@@ -1233,11 +1255,14 @@ mod tests {
         use crate::automaton::arena::ARENA_VALUE_TERMINATOR;
         fn matches_with_vt(pattern: &str, input: &str) -> bool {
             let root = parse_regexp(pattern).expect(&format!("Failed to parse: {}", pattern));
-            let (arena, start, field_matcher) = make_regexp_nfa_arena(root, false);
+            let (arena, start, field_matcher) = make_regexp_nfa_arena(root);
             let mut bufs = ArenaNfaBuffers::with_capacity(arena.len());
 
-            // Add VALUE_TERMINATOR to input (like test_regexp_validity does)
-            let mut value: Vec<u8> = input.as_bytes().to_vec();
+            // Add quotes and VALUE_TERMINATOR to input (like test_regexp_validity does)
+            let mut value: Vec<u8> = Vec::new();
+            value.push(b'"');
+            value.extend_from_slice(input.as_bytes());
+            value.push(b'"');
             value.push(ARENA_VALUE_TERMINATOR);
             traverse_arena_nfa(&arena, start, &value, &mut bufs);
 
@@ -1271,21 +1296,23 @@ mod tests {
         // Pattern [^x]+ - ASCII-only negated, so WILL have acceleration
         let pattern = "[^x]+";
         let root = parse_regexp(pattern).expect(&format!("Failed to parse: {}", pattern));
-        let (arena, start, field_matcher) = make_regexp_nfa_arena(root, false);
+        let (arena, start, field_matcher) = make_regexp_nfa_arena(root);
 
-        // Check that accel IS set with just 'x' as the exit byte
-        let start_state = &arena[start];
+        // The start state is the leading-quote transition; follow it to the inner regex state
+        let inner_start = arena[start].table.dstep(b'"');
+        assert!(!inner_start.is_none(), "start should transition on '\"'");
+        let inner_state = &arena[inner_start];
         assert!(
-            start_state.table.accel.is_some(),
+            inner_state.table.accel.is_some(),
             "[^x]+ should have acceleration with ASCII fast path"
         );
-        let accel = start_state.table.accel.as_ref().unwrap();
+        let accel = inner_state.table.accel.as_ref().unwrap();
         assert_eq!(accel.len, 1, "Should have 1 exit byte");
         assert_eq!(accel.exit_bytes[0], b'x', "Exit byte should be 'x'");
 
         // Verify the pattern still works correctly
         let mut bufs = ArenaNfaBuffers::with_capacity(arena.len());
-        traverse_arena_nfa(&arena, start, b"abc", &mut bufs);
+        traverse_arena_nfa(&arena, start, b"\"abc\"", &mut bufs);
         assert!(
             bufs.transitions
                 .iter()
@@ -1295,12 +1322,12 @@ mod tests {
 
         // Should not match string starting with 'x'
         bufs.clear();
-        traverse_arena_nfa(&arena, start, b"xabc", &mut bufs);
+        traverse_arena_nfa(&arena, start, b"\"xabc\"", &mut bufs);
         assert!(bufs.transitions.is_empty(), "[^x]+ should not match 'xabc'");
 
         // Should not match empty string (+ requires at least one)
         bufs.clear();
-        traverse_arena_nfa(&arena, start, b"", &mut bufs);
+        traverse_arena_nfa(&arena, start, b"\"\"", &mut bufs);
         assert!(
             bufs.transitions.is_empty(),
             "[^x]+ should not match empty string"
@@ -1308,7 +1335,13 @@ mod tests {
 
         // Test with Unicode characters - should still work
         bufs.clear();
-        traverse_arena_nfa(&arena, start, "αβγ".as_bytes(), &mut bufs);
+        {
+            let mut value = Vec::new();
+            value.push(b'"');
+            value.extend_from_slice("αβγ".as_bytes());
+            value.push(b'"');
+            traverse_arena_nfa(&arena, start, &value, &mut bufs);
+        }
         assert!(
             bufs.transitions
                 .iter()
@@ -1325,7 +1358,7 @@ mod tests {
         // Pattern [^ü]+ - non-ASCII negated char, so NO acceleration
         let pattern = "[^ü]+";
         let root = parse_regexp(pattern).expect(&format!("Failed to parse: {}", pattern));
-        let (arena, start, _field_matcher) = make_regexp_nfa_arena(root, false);
+        let (arena, start, _field_matcher) = make_regexp_nfa_arena(root);
 
         // Check that accel is NOT set (non-ASCII negated char)
         let start_state = &arena[start];
@@ -1373,15 +1406,19 @@ mod tests {
         let root_range = parse_regexp("a{0,1}").unwrap();
         let root_qm = parse_regexp("a?").unwrap();
 
-        let (arena_range, start_range, fm_range) = make_regexp_nfa_arena(root_range, false);
-        let (arena_qm, start_qm, fm_qm) = make_regexp_nfa_arena(root_qm, false);
+        let (arena_range, start_range, fm_range) = make_regexp_nfa_arena(root_range);
+        let (arena_qm, start_qm, fm_qm) = make_regexp_nfa_arena(root_qm);
 
         let mut bufs = ArenaNfaBuffers::new();
         let test_cases = vec![
-            (vec![ARENA_VALUE_TERMINATOR], true, "empty"),
-            (vec![b'a', ARENA_VALUE_TERMINATOR], true, "a"),
-            (vec![b'a', b'a', ARENA_VALUE_TERMINATOR], false, "aa"),
-            (vec![b'b', ARENA_VALUE_TERMINATOR], false, "b"),
+            (vec![b'"', b'"', ARENA_VALUE_TERMINATOR], true, "empty"),
+            (vec![b'"', b'a', b'"', ARENA_VALUE_TERMINATOR], true, "a"),
+            (
+                vec![b'"', b'a', b'a', b'"', ARENA_VALUE_TERMINATOR],
+                false,
+                "aa",
+            ),
+            (vec![b'"', b'b', b'"', ARENA_VALUE_TERMINATOR], false, "b"),
         ];
 
         for (value, should_match, desc) in test_cases {
@@ -1421,16 +1458,24 @@ mod tests {
         let root_range = parse_regexp("a{1,}").unwrap();
         let root_plus = parse_regexp("a+").unwrap();
 
-        let (arena_range, start_range, fm_range) = make_regexp_nfa_arena(root_range, false);
-        let (arena_plus, start_plus, fm_plus) = make_regexp_nfa_arena(root_plus, false);
+        let (arena_range, start_range, fm_range) = make_regexp_nfa_arena(root_range);
+        let (arena_plus, start_plus, fm_plus) = make_regexp_nfa_arena(root_plus);
 
         let mut bufs = ArenaNfaBuffers::new();
         let test_cases = vec![
-            (vec![ARENA_VALUE_TERMINATOR], false, "empty"),
-            (vec![b'a', ARENA_VALUE_TERMINATOR], true, "a"),
-            (vec![b'a', b'a', ARENA_VALUE_TERMINATOR], true, "aa"),
-            (vec![b'a', b'a', b'a', ARENA_VALUE_TERMINATOR], true, "aaa"),
-            (vec![b'b', ARENA_VALUE_TERMINATOR], false, "b"),
+            (vec![b'"', b'"', ARENA_VALUE_TERMINATOR], false, "empty"),
+            (vec![b'"', b'a', b'"', ARENA_VALUE_TERMINATOR], true, "a"),
+            (
+                vec![b'"', b'a', b'a', b'"', ARENA_VALUE_TERMINATOR],
+                true,
+                "aa",
+            ),
+            (
+                vec![b'"', b'a', b'a', b'a', b'"', ARENA_VALUE_TERMINATOR],
+                true,
+                "aaa",
+            ),
+            (vec![b'"', b'b', b'"', ARENA_VALUE_TERMINATOR], false, "b"),
         ];
 
         for (value, should_match, desc) in test_cases {
@@ -1470,15 +1515,19 @@ mod tests {
         let root_range = parse_regexp("a{0,}").unwrap();
         let root_star = parse_regexp("a*").unwrap();
 
-        let (arena_range, start_range, fm_range) = make_regexp_nfa_arena(root_range, false);
-        let (arena_star, start_star, fm_star) = make_regexp_nfa_arena(root_star, false);
+        let (arena_range, start_range, fm_range) = make_regexp_nfa_arena(root_range);
+        let (arena_star, start_star, fm_star) = make_regexp_nfa_arena(root_star);
 
         let mut bufs = ArenaNfaBuffers::new();
         let test_cases = vec![
-            (vec![ARENA_VALUE_TERMINATOR], true, "empty"),
-            (vec![b'a', ARENA_VALUE_TERMINATOR], true, "a"),
-            (vec![b'a', b'a', ARENA_VALUE_TERMINATOR], true, "aa"),
-            (vec![b'b', ARENA_VALUE_TERMINATOR], false, "b"),
+            (vec![b'"', b'"', ARENA_VALUE_TERMINATOR], true, "empty"),
+            (vec![b'"', b'a', b'"', ARENA_VALUE_TERMINATOR], true, "a"),
+            (
+                vec![b'"', b'a', b'a', b'"', ARENA_VALUE_TERMINATOR],
+                true,
+                "aa",
+            ),
+            (vec![b'"', b'b', b'"', ARENA_VALUE_TERMINATOR], false, "b"),
         ];
 
         for (value, should_match, desc) in test_cases {
@@ -1520,12 +1569,12 @@ mod tests {
         // Star equivalence: a{0,} should behave like a*
         let root_range = parse_regexp("a{0,}").unwrap();
         let root_star = parse_regexp("a*").unwrap();
-        let (arena_range, start_range, fm_range) = make_regexp_nfa_arena(root_range, false);
-        let (arena_star, start_star, fm_star) = make_regexp_nfa_arena(root_star, false);
+        let (arena_range, start_range, fm_range) = make_regexp_nfa_arena(root_range);
+        let (arena_star, start_star, fm_star) = make_regexp_nfa_arena(root_star);
 
         for (value, desc) in [
-            (vec![ARENA_VALUE_TERMINATOR], "empty"),
-            (vec![b'a', ARENA_VALUE_TERMINATOR], "a"),
+            (vec![b'"', b'"', ARENA_VALUE_TERMINATOR], "empty"),
+            (vec![b'"', b'a', b'"', ARENA_VALUE_TERMINATOR], "a"),
         ] {
             bufs.clear();
             traverse_arena_nfa(&arena_range, start_range, &value, &mut bufs);
@@ -1545,12 +1594,12 @@ mod tests {
         // Plus equivalence: a{1,} should behave like a+
         let root_range = parse_regexp("a{1,}").unwrap();
         let root_plus = parse_regexp("a+").unwrap();
-        let (arena_range, start_range, fm_range) = make_regexp_nfa_arena(root_range, false);
-        let (arena_plus, start_plus, fm_plus) = make_regexp_nfa_arena(root_plus, false);
+        let (arena_range, start_range, fm_range) = make_regexp_nfa_arena(root_range);
+        let (arena_plus, start_plus, fm_plus) = make_regexp_nfa_arena(root_plus);
 
         for (value, desc) in [
-            (vec![ARENA_VALUE_TERMINATOR], "empty"),
-            (vec![b'a', ARENA_VALUE_TERMINATOR], "a"),
+            (vec![b'"', b'"', ARENA_VALUE_TERMINATOR], "empty"),
+            (vec![b'"', b'a', b'"', ARENA_VALUE_TERMINATOR], "a"),
         ] {
             bufs.clear();
             traverse_arena_nfa(&arena_range, start_range, &value, &mut bufs);
@@ -1576,13 +1625,17 @@ mod tests {
 
         // a{1} means exactly 1 'a' (I-Regexp semantics: {n} means exactly n)
         let root = parse_regexp("a{1}").unwrap();
-        let (arena, start, field_matcher) = make_regexp_nfa_arena(root, false);
+        let (arena, start, field_matcher) = make_regexp_nfa_arena(root);
         let mut bufs = ArenaNfaBuffers::new();
 
         let test_cases = vec![
-            (vec![ARENA_VALUE_TERMINATOR], false, "empty"),
-            (vec![b'a', ARENA_VALUE_TERMINATOR], true, "a"),
-            (vec![b'a', b'a', ARENA_VALUE_TERMINATOR], false, "aa"), // {1} means exactly 1
+            (vec![b'"', b'"', ARENA_VALUE_TERMINATOR], false, "empty"),
+            (vec![b'"', b'a', b'"', ARENA_VALUE_TERMINATOR], true, "a"),
+            (
+                vec![b'"', b'a', b'a', b'"', ARENA_VALUE_TERMINATOR],
+                false,
+                "aa",
+            ), // {1} means exactly 1
         ];
 
         for (value, should_match, desc) in test_cases {
@@ -1610,13 +1663,17 @@ mod tests {
 
         // a{0,0} should only match empty string
         let root = parse_regexp("a{0,0}").unwrap();
-        let (arena, start, field_matcher) = make_regexp_nfa_arena(root, false);
+        let (arena, start, field_matcher) = make_regexp_nfa_arena(root);
         let mut bufs = ArenaNfaBuffers::new();
 
         let test_cases = vec![
-            (vec![ARENA_VALUE_TERMINATOR], true, "empty"),
-            (vec![b'a', ARENA_VALUE_TERMINATOR], false, "a"),
-            (vec![b'a', b'a', ARENA_VALUE_TERMINATOR], false, "aa"),
+            (vec![b'"', b'"', ARENA_VALUE_TERMINATOR], true, "empty"),
+            (vec![b'"', b'a', b'"', ARENA_VALUE_TERMINATOR], false, "a"),
+            (
+                vec![b'"', b'a', b'a', b'"', ARENA_VALUE_TERMINATOR],
+                false,
+                "aa",
+            ),
         ];
 
         for (value, should_match, desc) in test_cases {
@@ -1644,21 +1701,38 @@ mod tests {
 
         // .{2,4} - any 2-4 characters
         let root = parse_regexp(".{2,4}").unwrap();
-        let (arena, start, field_matcher) = make_regexp_nfa_arena(root, false);
+        let (arena, start, field_matcher) = make_regexp_nfa_arena(root);
         let mut bufs = ArenaNfaBuffers::new();
 
         let test_cases = vec![
-            (vec![ARENA_VALUE_TERMINATOR], false, "empty"),
-            (vec![b'x', ARENA_VALUE_TERMINATOR], false, "x"),
-            (vec![b'x', b'y', ARENA_VALUE_TERMINATOR], true, "xy"),
-            (vec![b'a', b'b', b'c', ARENA_VALUE_TERMINATOR], true, "abc"),
+            (vec![b'"', b'"', ARENA_VALUE_TERMINATOR], false, "empty"),
+            (vec![b'"', b'x', b'"', ARENA_VALUE_TERMINATOR], false, "x"),
             (
-                vec![b'a', b'b', b'c', b'd', ARENA_VALUE_TERMINATOR],
+                vec![b'"', b'x', b'y', b'"', ARENA_VALUE_TERMINATOR],
+                true,
+                "xy",
+            ),
+            (
+                vec![b'"', b'a', b'b', b'c', b'"', ARENA_VALUE_TERMINATOR],
+                true,
+                "abc",
+            ),
+            (
+                vec![b'"', b'a', b'b', b'c', b'd', b'"', ARENA_VALUE_TERMINATOR],
                 true,
                 "abcd",
             ),
             (
-                vec![b'a', b'b', b'c', b'd', b'e', ARENA_VALUE_TERMINATOR],
+                vec![
+                    b'"',
+                    b'a',
+                    b'b',
+                    b'c',
+                    b'd',
+                    b'e',
+                    b'"',
+                    ARENA_VALUE_TERMINATOR,
+                ],
                 false,
                 "abcde",
             ),
@@ -1689,24 +1763,39 @@ mod tests {
 
         // (ab){2,3} - "ab" repeated 2-3 times
         let root = parse_regexp("(ab){2,3}").unwrap();
-        let (arena, start, field_matcher) = make_regexp_nfa_arena(root, false);
+        let (arena, start, field_matcher) = make_regexp_nfa_arena(root);
         let mut bufs = ArenaNfaBuffers::new();
 
         let test_cases = vec![
-            (vec![ARENA_VALUE_TERMINATOR], false, "empty"),
-            (vec![b'a', b'b', ARENA_VALUE_TERMINATOR], false, "ab"),
+            (vec![b'"', b'"', ARENA_VALUE_TERMINATOR], false, "empty"),
             (
-                vec![b'a', b'b', b'a', b'b', ARENA_VALUE_TERMINATOR],
+                vec![b'"', b'a', b'b', b'"', ARENA_VALUE_TERMINATOR],
+                false,
+                "ab",
+            ),
+            (
+                vec![b'"', b'a', b'b', b'a', b'b', b'"', ARENA_VALUE_TERMINATOR],
                 true,
                 "abab",
             ),
             (
-                vec![b'a', b'b', b'a', b'b', b'a', b'b', ARENA_VALUE_TERMINATOR],
+                vec![
+                    b'"',
+                    b'a',
+                    b'b',
+                    b'a',
+                    b'b',
+                    b'a',
+                    b'b',
+                    b'"',
+                    ARENA_VALUE_TERMINATOR,
+                ],
                 true,
                 "ababab",
             ),
             (
                 vec![
+                    b'"',
                     b'a',
                     b'b',
                     b'a',
@@ -1715,6 +1804,7 @@ mod tests {
                     b'b',
                     b'a',
                     b'b',
+                    b'"',
                     ARENA_VALUE_TERMINATOR,
                 ],
                 false,
@@ -1747,7 +1837,7 @@ mod tests {
 
         // a{5,10} - between 5 and 10 'a's
         let root = parse_regexp("a{5,10}").unwrap();
-        let (arena, start, field_matcher) = make_regexp_nfa_arena(root, false);
+        let (arena, start, field_matcher) = make_regexp_nfa_arena(root);
         let mut bufs = ArenaNfaBuffers::new();
 
         // Test boundary cases
@@ -1760,7 +1850,10 @@ mod tests {
         ];
 
         for (count, should_match) in test_cases {
-            let mut value: Vec<u8> = vec![b'a'; count];
+            let mut value: Vec<u8> = Vec::with_capacity(count + 3);
+            value.push(b'"');
+            value.extend(std::iter::repeat(b'a').take(count));
+            value.push(b'"');
             value.push(ARENA_VALUE_TERMINATOR);
 
             bufs.clear();
@@ -1846,11 +1939,11 @@ mod tests {
 
         // Test ~i matches initial name chars
         let root = parse_regexp("~i").unwrap();
-        let (arena, start, field_matcher) = make_regexp_nfa_arena(root, false);
+        let (arena, start, field_matcher) = make_regexp_nfa_arena(root);
         let mut bufs = ArenaNfaBuffers::new();
 
         // Should match 'a' (letter)
-        let value = vec![b'a', ARENA_VALUE_TERMINATOR];
+        let value = vec![b'"', b'a', b'"', ARENA_VALUE_TERMINATOR];
         traverse_arena_nfa(&arena, start, &value, &mut bufs);
         assert!(
             bufs.transitions
@@ -1861,7 +1954,7 @@ mod tests {
 
         // Should match ':' (colon is valid NameStartChar)
         bufs.clear();
-        let value = vec![b':', ARENA_VALUE_TERMINATOR];
+        let value = vec![b'"', b':', b'"', ARENA_VALUE_TERMINATOR];
         traverse_arena_nfa(&arena, start, &value, &mut bufs);
         assert!(
             bufs.transitions
@@ -1872,7 +1965,7 @@ mod tests {
 
         // Should match '_' (underscore is valid NameStartChar)
         bufs.clear();
-        let value = vec![b'_', ARENA_VALUE_TERMINATOR];
+        let value = vec![b'"', b'_', b'"', ARENA_VALUE_TERMINATOR];
         traverse_arena_nfa(&arena, start, &value, &mut bufs);
         assert!(
             bufs.transitions
@@ -1883,7 +1976,7 @@ mod tests {
 
         // Should NOT match '1' (digits not valid for NameStartChar)
         bufs.clear();
-        let value = vec![b'1', ARENA_VALUE_TERMINATOR];
+        let value = vec![b'"', b'1', b'"', ARENA_VALUE_TERMINATOR];
         traverse_arena_nfa(&arena, start, &value, &mut bufs);
         assert!(
             !bufs
@@ -1895,7 +1988,7 @@ mod tests {
 
         // Should NOT match '-' (hyphen not valid for NameStartChar)
         bufs.clear();
-        let value = vec![b'-', ARENA_VALUE_TERMINATOR];
+        let value = vec![b'"', b'-', b'"', ARENA_VALUE_TERMINATOR];
         traverse_arena_nfa(&arena, start, &value, &mut bufs);
         assert!(
             !bufs
@@ -1907,11 +2000,11 @@ mod tests {
 
         // Test ~c matches name chars (including digits, hyphen, dot)
         let root = parse_regexp("~c").unwrap();
-        let (arena, start, field_matcher) = make_regexp_nfa_arena(root, false);
+        let (arena, start, field_matcher) = make_regexp_nfa_arena(root);
 
         // Should match '1' (digits valid for NameChar)
         bufs.clear();
-        let value = vec![b'1', ARENA_VALUE_TERMINATOR];
+        let value = vec![b'"', b'1', b'"', ARENA_VALUE_TERMINATOR];
         traverse_arena_nfa(&arena, start, &value, &mut bufs);
         assert!(
             bufs.transitions
@@ -1922,7 +2015,7 @@ mod tests {
 
         // Should match '-' (hyphen valid for NameChar)
         bufs.clear();
-        let value = vec![b'-', ARENA_VALUE_TERMINATOR];
+        let value = vec![b'"', b'-', b'"', ARENA_VALUE_TERMINATOR];
         traverse_arena_nfa(&arena, start, &value, &mut bufs);
         assert!(
             bufs.transitions
@@ -1933,7 +2026,7 @@ mod tests {
 
         // Should match '.' (period valid for NameChar)
         bufs.clear();
-        let value = vec![b'.', ARENA_VALUE_TERMINATOR];
+        let value = vec![b'"', b'.', b'"', ARENA_VALUE_TERMINATOR];
         traverse_arena_nfa(&arena, start, &value, &mut bufs);
         assert!(
             bufs.transitions
@@ -1944,7 +2037,7 @@ mod tests {
 
         // Should NOT match ' ' (space not valid for NameChar)
         bufs.clear();
-        let value = vec![b' ', ARENA_VALUE_TERMINATOR];
+        let value = vec![b'"', b' ', b'"', ARENA_VALUE_TERMINATOR];
         traverse_arena_nfa(&arena, start, &value, &mut bufs);
         assert!(
             !bufs
@@ -1963,11 +2056,11 @@ mod tests {
 
         // Test ~d matches digits
         let root = parse_regexp("~d").unwrap();
-        let (arena, start, field_matcher) = make_regexp_nfa_arena(root, false);
+        let (arena, start, field_matcher) = make_regexp_nfa_arena(root);
         let mut bufs = ArenaNfaBuffers::new();
 
         // Should match "5"
-        let value = vec![b'5', ARENA_VALUE_TERMINATOR];
+        let value = vec![b'"', b'5', b'"', ARENA_VALUE_TERMINATOR];
         traverse_arena_nfa(&arena, start, &value, &mut bufs);
         assert!(
             bufs.transitions
@@ -1978,7 +2071,7 @@ mod tests {
 
         // Should NOT match "a"
         bufs.clear();
-        let value = vec![b'a', ARENA_VALUE_TERMINATOR];
+        let value = vec![b'"', b'a', b'"', ARENA_VALUE_TERMINATOR];
         traverse_arena_nfa(&arena, start, &value, &mut bufs);
         assert!(
             !bufs
@@ -1990,11 +2083,11 @@ mod tests {
 
         // Test ~w matches word chars
         let root = parse_regexp("~w").unwrap();
-        let (arena, start, field_matcher) = make_regexp_nfa_arena(root, false);
+        let (arena, start, field_matcher) = make_regexp_nfa_arena(root);
 
         // Should match "a"
         bufs.clear();
-        let value = vec![b'a', ARENA_VALUE_TERMINATOR];
+        let value = vec![b'"', b'a', b'"', ARENA_VALUE_TERMINATOR];
         traverse_arena_nfa(&arena, start, &value, &mut bufs);
         assert!(
             bufs.transitions
@@ -2005,7 +2098,7 @@ mod tests {
 
         // Should match "_"
         bufs.clear();
-        let value = vec![b'_', ARENA_VALUE_TERMINATOR];
+        let value = vec![b'"', b'_', b'"', ARENA_VALUE_TERMINATOR];
         traverse_arena_nfa(&arena, start, &value, &mut bufs);
         assert!(
             bufs.transitions
@@ -2016,7 +2109,7 @@ mod tests {
 
         // Should NOT match "-"
         bufs.clear();
-        let value = vec![b'-', ARENA_VALUE_TERMINATOR];
+        let value = vec![b'"', b'-', b'"', ARENA_VALUE_TERMINATOR];
         traverse_arena_nfa(&arena, start, &value, &mut bufs);
         assert!(
             !bufs
@@ -2028,11 +2121,11 @@ mod tests {
 
         // Test ~s matches whitespace
         let root = parse_regexp("~s").unwrap();
-        let (arena, start, field_matcher) = make_regexp_nfa_arena(root, false);
+        let (arena, start, field_matcher) = make_regexp_nfa_arena(root);
 
         // Should match " "
         bufs.clear();
-        let value = vec![b' ', ARENA_VALUE_TERMINATOR];
+        let value = vec![b'"', b' ', b'"', ARENA_VALUE_TERMINATOR];
         traverse_arena_nfa(&arena, start, &value, &mut bufs);
         assert!(
             bufs.transitions
@@ -2043,7 +2136,7 @@ mod tests {
 
         // Should match "\t"
         bufs.clear();
-        let value = vec![b'\t', ARENA_VALUE_TERMINATOR];
+        let value = vec![b'"', b'\t', b'"', ARENA_VALUE_TERMINATOR];
         traverse_arena_nfa(&arena, start, &value, &mut bufs);
         assert!(
             bufs.transitions
@@ -2054,7 +2147,7 @@ mod tests {
 
         // Should NOT match "x"
         bufs.clear();
-        let value = vec![b'x', ARENA_VALUE_TERMINATOR];
+        let value = vec![b'"', b'x', b'"', ARENA_VALUE_TERMINATOR];
         traverse_arena_nfa(&arena, start, &value, &mut bufs);
         assert!(
             !bufs
@@ -2095,11 +2188,11 @@ mod tests {
 
         // Test ~d+ matches one or more digits
         let root = parse_regexp("~d+").unwrap();
-        let (arena, start, field_matcher) = make_regexp_nfa_arena(root, false);
+        let (arena, start, field_matcher) = make_regexp_nfa_arena(root);
         let mut bufs = ArenaNfaBuffers::new();
 
         // Should match "123"
-        let value = vec![b'1', b'2', b'3', ARENA_VALUE_TERMINATOR];
+        let value = vec![b'"', b'1', b'2', b'3', b'"', ARENA_VALUE_TERMINATOR];
         traverse_arena_nfa(&arena, start, &value, &mut bufs);
         assert!(
             bufs.transitions
@@ -2110,11 +2203,11 @@ mod tests {
 
         // Test ~s{0,3} matches up to 3 whitespace
         let root = parse_regexp("a~s{0,3}b").unwrap();
-        let (arena, start, field_matcher) = make_regexp_nfa_arena(root, false);
+        let (arena, start, field_matcher) = make_regexp_nfa_arena(root);
 
         // Should match "ab" (0 spaces)
         bufs.clear();
-        let value = vec![b'a', b'b', ARENA_VALUE_TERMINATOR];
+        let value = vec![b'"', b'a', b'b', b'"', ARENA_VALUE_TERMINATOR];
         traverse_arena_nfa(&arena, start, &value, &mut bufs);
         assert!(
             bufs.transitions
@@ -2125,7 +2218,7 @@ mod tests {
 
         // Should match "a  b" (2 spaces)
         bufs.clear();
-        let value = vec![b'a', b' ', b' ', b'b', ARENA_VALUE_TERMINATOR];
+        let value = vec![b'"', b'a', b' ', b' ', b'b', b'"', ARENA_VALUE_TERMINATOR];
         traverse_arena_nfa(&arena, start, &value, &mut bufs);
         assert!(
             bufs.transitions
@@ -2147,18 +2240,28 @@ mod tests {
 
         // ~d{1} = exactly one digit — exercises escape expansion + range quantifier path
         let root = parse_regexp("~d{1}").unwrap();
-        let (arena, start, fm) = make_regexp_nfa_arena(root, false);
+        let (arena, start, fm) = make_regexp_nfa_arena(root);
         let mut bufs = ArenaNfaBuffers::new();
 
         bufs.clear();
-        traverse_arena_nfa(&arena, start, &[b'5', ARENA_VALUE_TERMINATOR], &mut bufs);
+        traverse_arena_nfa(
+            &arena,
+            start,
+            &[b'"', b'5', b'"', ARENA_VALUE_TERMINATOR],
+            &mut bufs,
+        );
         assert!(
             bufs.transitions.iter().any(|m| Arc::ptr_eq(m, &fm)),
             "~d{{1}} should match '5'"
         );
 
         bufs.clear();
-        traverse_arena_nfa(&arena, start, &[b'x', ARENA_VALUE_TERMINATOR], &mut bufs);
+        traverse_arena_nfa(
+            &arena,
+            start,
+            &[b'"', b'x', b'"', ARENA_VALUE_TERMINATOR],
+            &mut bufs,
+        );
         assert!(
             !bufs.transitions.iter().any(|m| Arc::ptr_eq(m, &fm)),
             "~d{{1}} should NOT match 'x'"
@@ -2230,13 +2333,13 @@ mod tests {
         let root1 = parse_regexp("~p{L}").unwrap();
         let root2 = parse_regexp("~p{L}").unwrap();
 
-        let (arena1, start1, fm1) = make_regexp_nfa_arena(root1, false);
-        let (arena2, start2, fm2) = make_regexp_nfa_arena(root2, false);
+        let (arena1, start1, fm1) = make_regexp_nfa_arena(root1);
+        let (arena2, start2, fm2) = make_regexp_nfa_arena(root2);
 
         let mut bufs = ArenaNfaBuffers::new();
 
         // Both should match "A"
-        let value = vec![b'A', ARENA_VALUE_TERMINATOR];
+        let value = vec![b'"', b'A', b'"', ARENA_VALUE_TERMINATOR];
         traverse_arena_nfa(&arena1, start1, &value, &mut bufs);
         assert!(
             bufs.transitions.iter().any(|m| Arc::ptr_eq(m, &fm1)),
@@ -2252,7 +2355,7 @@ mod tests {
 
         // Both should NOT match "5"
         bufs.clear();
-        let value = vec![b'5', ARENA_VALUE_TERMINATOR];
+        let value = vec![b'"', b'5', b'"', ARENA_VALUE_TERMINATOR];
         traverse_arena_nfa(&arena1, start1, &value, &mut bufs);
         assert!(
             !bufs.transitions.iter().any(|m| Arc::ptr_eq(m, &fm1)),

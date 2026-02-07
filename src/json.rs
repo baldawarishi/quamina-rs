@@ -775,7 +775,10 @@ fn parse_numeric_comparison(arr: &[Value]) -> Option<NumericComparison> {
 
 fn value_to_string(value: &Value) -> String {
     match value {
-        Value::String(s) => s.clone(),
+        // String values are wrapped in quotes so the automaton can distinguish
+        // them from boolean/null literals and numbers with identical bytes.
+        // Event values from the flattener retain JSON quotes for strings.
+        Value::String(s) => format!("\"{}\"", s),
         Value::Number(n) => n.clone(),
         Value::Bool(b) => b.to_string(),
         Value::Null => "null".to_string(),
