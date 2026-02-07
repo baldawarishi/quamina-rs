@@ -17,20 +17,15 @@
 
 pub mod arena;
 mod mutable_matcher;
-mod nfa;
 mod small_table;
 pub mod sparse_set;
 mod thread_safe;
-pub mod trie;
 
 // Re-export from small_table
 pub use small_table::{
-    AccelInfo, FaState, FieldMatcher, NfaBuffers, SmallTable, StatePtr, ValueMatcher, BYTE_CEILING,
+    AccelInfo, FaState, FieldMatcher, NfaBuffers, SmallTable, ValueMatcher, BYTE_CEILING,
     VALUE_TERMINATOR,
 };
-
-// Re-export from nfa
-pub use nfa::{traverse_dfa, traverse_nfa};
 
 // Re-export from mutable_matcher
 pub use mutable_matcher::{

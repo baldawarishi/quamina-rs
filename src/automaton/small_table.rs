@@ -10,30 +10,8 @@
 //! # Safety
 //! This module contains unsafe Send/Sync implementations for StatePtr.
 //! These are verified by Miri tests in CI.
-#![allow(unsafe_code)]
-
 use std::collections::HashMap;
 use std::sync::Arc;
-
-use rustc_hash::FxHashSet;
-
-/// Wrapper for raw pointers that implements Send+Sync.
-/// Safe because these pointers are only used within NfaBuffers which is mutex-protected.
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
-pub struct StatePtr(*const FaState);
-
-// SAFETY: StatePtr is only used within NfaBuffers for epsilon closure deduplication.
-// The NfaBuffers are protected by a Mutex in Quamina, so concurrent access is prevented.
-// The pointers point to Arc<FaState> data which has its own thread-safety guarantees.
-unsafe impl Send for StatePtr {}
-// SAFETY: Same as Send - protected by Mutex, pointers to Arc data.
-unsafe impl Sync for StatePtr {}
-
-impl StatePtr {
-    pub fn new(ptr: *const FaState) -> Self {
-        StatePtr(ptr)
-    }
-}
 
 /// Maximum byte value we handle. UTF-8 bytes 0xF5-0xFF can't appear in valid strings.
 /// We use 0xF5 as a value terminator.
@@ -394,43 +372,21 @@ impl ValueMatcher {
     }
 }
 
-/// Buffers reused during NFA traversal to minimize allocations.
+/// Buffers reused during NFA/DFA traversal to minimize allocations.
 #[derive(Default)]
 pub struct NfaBuffers {
-    pub current_states: Vec<Arc<FaState>>,
-    pub next_states: Vec<Arc<FaState>>,
-    /// Reusable buffer for collecting field transitions
-    pub transitions: Vec<Arc<FieldMatcher>>,
-    /// Reusable buffer for epsilon closure computation
-    pub epsilon_closure: Vec<Arc<FaState>>,
-    /// Reusable stack for epsilon closure DFS
-    pub epsilon_stack: Vec<Arc<FaState>>,
-    /// Sorted vec of seen transition pointers (as usize) for deduplication
-    pub seen_transitions: Vec<usize>,
-    /// HashSet for O(1) epsilon closure membership testing
-    pub epsilon_seen: FxHashSet<StatePtr>,
-    /// Reusable buffers for arena-based NFA traversal (regexp, numeric patterns)
+    /// Reusable buffers for arena-based NFA traversal
     pub arena_bufs: super::arena::ArenaNfaBuffers,
 }
 
 impl NfaBuffers {
     pub fn new() -> Self {
         Self {
-            current_states: Vec::with_capacity(16),
-            next_states: Vec::with_capacity(16),
-            transitions: Vec::with_capacity(8),
-            epsilon_closure: Vec::with_capacity(8),
-            epsilon_stack: Vec::with_capacity(8),
-            seen_transitions: Vec::with_capacity(16),
-            epsilon_seen: FxHashSet::default(),
             arena_bufs: super::arena::ArenaNfaBuffers::new(),
         }
     }
 
     pub fn clear(&mut self) {
-        self.current_states.clear();
-        self.next_states.clear();
-        self.transitions.clear();
         self.arena_bufs.clear();
     }
 }
