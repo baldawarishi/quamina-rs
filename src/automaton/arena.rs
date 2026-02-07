@@ -1041,6 +1041,50 @@ pub fn merge_arena_nfas(
     (new_arena, start)
 }
 
+/// Check if a state is an "epsilon-only" splice state created during merges.
+///
+/// These synthetic states only serve to branch into multiple epsilon targets,
+/// with no byte transitions, spinout behavior, or field transitions.
+/// Mirrors Go's `smallTable.isEpsilonOnly()`, with additional guards for
+/// Rust's spinout and field_transition fields.
+fn is_epsilon_only_state(arena: &StateArena, state_id: StateId) -> bool {
+    if state_id.is_none() {
+        return false;
+    }
+    let state = &arena[state_id];
+    !state.table.epsilons.is_empty()
+        && state.table.ceilings.len() == 1
+        && state.table.spinout.is_none()
+        && state.field_transitions.is_empty()
+}
+
+/// Flatten immediate epsilon-only splice states one level deep.
+///
+/// When merging creates splice states, repeated merges can nest them:
+///   splice2 -> [splice1 -> [A, B], C]  (depth 2)
+/// This function inlines one level of splice targets:
+///   splice2 -> [A, B, C]  (depth reduced by 1)
+///
+/// Only flattens one level to avoid creating huge epsilon lists for
+/// high-pattern-count scenarios (10k+ patterns). Mirrors the intent of
+/// Go's `flattenEpsilonTargets()` from PR #486, adapted for Rust's
+/// arena architecture where large inline lists hurt cache performance.
+fn flatten_epsilon_targets(arena: &StateArena, states: &[StateId]) -> SmallVec<[StateId; 2]> {
+    let mut targets = SmallVec::new();
+
+    for &state_id in states {
+        if !state_id.is_none() && is_epsilon_only_state(arena, state_id) {
+            // Splice state - inline its direct epsilon targets (one level)
+            for &eps_id in &arena[state_id].table.epsilons {
+                targets.push(eps_id);
+            }
+        } else {
+            targets.push(state_id);
+        }
+    }
+    targets
+}
+
 /// Check if a state is a "spinout state" (has spinout marker and exactly 1 epsilon).
 ///
 /// Spinout states are used for wildcard patterns. The convention is:
@@ -1148,6 +1192,8 @@ fn merge_arena_nfa_states_recursive(
     }
 
     // Case 2: Either has epsilons (but not both spinouts) - create splice
+    // Flatten epsilon targets to prevent deep nesting from repeated merges.
+    // (Mirrors Go PR #486: flattenEpsilonTargets)
     if s1_has_epsilons || s2_has_epsilons {
         let mut clone_map1: std::collections::HashMap<u32, StateId> =
             std::collections::HashMap::new();
@@ -1156,10 +1202,14 @@ fn merge_arena_nfa_states_recursive(
         let cloned1 = clone_state_into_arena(arena1, state1, new_arena, &mut clone_map1);
         let cloned2 = clone_state_into_arena(arena2, state2, new_arena, &mut clone_map2);
 
+        // Flatten: if cloned states are themselves epsilon-only splices,
+        // collect their real targets directly instead of nesting splices.
+        let epsilons = flatten_epsilon_targets(new_arena, &[cloned1, cloned2]);
+
         new_arena[new_id].table = ArenaSmallTable {
             ceilings: smallvec![BYTE_CEILING as u8],
             steps: smallvec![StateId::NONE],
-            epsilons: smallvec![cloned1, cloned2],
+            epsilons,
             spinout: StateId::NONE,
             accel: None,
             default: StateId::NONE,
@@ -4357,6 +4407,47 @@ mod nfa_merge_tests {
         assert!(
             merged_start3.is_none(),
             "Merging two empty arenas should return NONE"
+        );
+    }
+
+    /// Verify that repeated merges flatten splice states instead of nesting them.
+    ///
+    /// Without flattening, merging A+B+C+D creates:
+    ///   splice3 -> [splice2 -> [splice1 -> [A, B], C], D]  (depth 3)
+    /// With flattening:
+    ///   splice3 -> [A, B, C, D]  (depth 1)
+    #[test]
+    fn test_flatten_epsilon_targets_on_repeated_merge() {
+        let fm = Arc::new(FieldMatcher::new());
+
+        // Build 4 separate single-value arenas
+        let (a1, s1) = make_epsilon_alternation_arena(&[b"a"], fm.clone());
+        let (a2, s2) = make_epsilon_alternation_arena(&[b"b"], fm.clone());
+        let (a3, s3) = make_epsilon_alternation_arena(&[b"c"], fm.clone());
+        let (a4, s4) = make_epsilon_alternation_arena(&[b"d"], fm.clone());
+
+        // Merge them one by one (simulates adding patterns sequentially)
+        let (m12, s12) = merge_arena_nfas(&a1, s1, &a2, s2);
+        let (m123, s123) = merge_arena_nfas(&m12, s12, &a3, s3);
+        let (m1234, s1234) = merge_arena_nfas(&m123, s123, &a4, s4);
+
+        // All 4 values should still match
+        assert!(matches_value(&m1234, s1234, b"a"), "should match 'a'");
+        assert!(matches_value(&m1234, s1234, b"b"), "should match 'b'");
+        assert!(matches_value(&m1234, s1234, b"c"), "should match 'c'");
+        assert!(matches_value(&m1234, s1234, b"d"), "should match 'd'");
+        assert!(!matches_value(&m1234, s1234, b"e"), "should not match 'e'");
+
+        // Verify flattening: the start state's epsilons should point to
+        // real states (not nested splice states). With flattening, the
+        // start state should have more direct epsilon targets than 2.
+        let start_state = &m1234[s1234];
+        let eps_count = start_state.table.epsilons.len();
+        // Without flattening: always 2 epsilons (splice -> [prev_merge, new])
+        // With flattening: should be > 2 (all real states flattened)
+        assert!(
+            eps_count > 2,
+            "Flattening should produce > 2 direct epsilon targets, got {eps_count}"
         );
     }
 }
