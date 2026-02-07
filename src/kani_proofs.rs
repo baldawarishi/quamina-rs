@@ -10,7 +10,7 @@
 //! Kani works best with simple, bounded code paths. Complex data structures
 //! like Vec cause exponential state explosion. We focus on:
 //! - Constant validation (BYTE_CEILING)
-//! - Simple table lookups (SmallTable::step/dstep)
+//! - Simple table lookups (ArenaSmallTable::step_byte)
 //! - JSON parsing invariants (UTF-8 validity)
 //!
 //! Arena allocations and complex automaton traversals are better tested by
@@ -18,20 +18,20 @@
 //!
 //! ## Performance Notes
 //!
-//! Fast proofs (< 1s): byte_ceiling_utf8_valid, stateid_none_*, stateptr_equality_*
-//! Medium proofs (1-30s): smalltable_step_*, json_string_byte_validity
+//! Fast proofs (< 1s): byte_ceiling_utf8_valid, stateid_none_*
+//! Medium proofs (1-30s): arena_smalltable_step_*, json_string_byte_validity
 //! Slow proofs (> 1min): smalltable_unpack_* (246-element arrays) - skipped in CI
 
 #[cfg(kani)]
 mod proofs {
-    use crate::automaton::{SmallTable, StatePtr, BYTE_CEILING};
+    use crate::automaton::{arena::ArenaSmallTable, BYTE_CEILING};
 
-    /// Proof: SmallTable::step never panics for any valid UTF-8 byte.
+    /// Proof: ArenaSmallTable::step_byte never panics for any valid UTF-8 byte.
     ///
-    /// The SmallTable uses a ceiling-based lookup that must handle all bytes 0-245.
+    /// The ArenaSmallTable uses a ceiling-based lookup that must handle all bytes 0-245.
     #[kani::proof]
-    fn smalltable_step_no_panic() {
-        let table = SmallTable::new();
+    fn arena_smalltable_step_no_panic() {
+        let table = ArenaSmallTable::new();
         let byte: u8 = kani::any();
 
         // UTF-8 bytes are 0x00-0xF4 (valid) or could be 0xF5 (VALUE_TERMINATOR)
@@ -39,17 +39,6 @@ mod proofs {
 
         // This should never panic
         let (_step, _epsilons) = table.step(byte);
-    }
-
-    /// Proof: SmallTable::dstep never panics for any valid byte.
-    #[kani::proof]
-    fn smalltable_dstep_no_panic() {
-        let table = SmallTable::new();
-        let byte: u8 = kani::any();
-        kani::assume(byte < BYTE_CEILING as u8);
-
-        // This should never panic
-        let _step = table.dstep(byte);
     }
 
     /// Proof: BYTE_CEILING constant is correct for UTF-8.
@@ -62,23 +51,6 @@ mod proofs {
         // 0xF5 is our terminator
         // 0xF6 is BYTE_CEILING
         kani::assert(BYTE_CEILING == 0xF6, "BYTE_CEILING must be 0xF6");
-    }
-
-    /// Proof: StatePtr equality is reflexive.
-    ///
-    /// StatePtr wraps raw pointers for hash set deduplication.
-    #[kani::proof]
-    fn stateptr_equality_reflexive() {
-        use std::ptr;
-
-        // Create a StatePtr from null (simplest case)
-        let state_ptr = StatePtr::new(ptr::null());
-
-        // Reflexive equality
-        kani::assert(
-            state_ptr == state_ptr,
-            "StatePtr equality must be reflexive",
-        );
     }
 }
 

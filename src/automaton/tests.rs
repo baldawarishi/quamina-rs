@@ -1,35 +1,8 @@
 use super::*;
-use std::sync::Arc;
 
-#[test]
-fn test_small_table_step() {
-    let table = SmallTable::new();
-    let (step, epsilons) = table.step(b'a');
-    assert!(step.is_none());
-    assert!(epsilons.is_empty());
-}
-
-#[test]
-fn test_small_table_with_mappings() {
-    let next_field = Arc::new(FieldMatcher::new());
-    let next_state = Arc::new(FaState {
-        table: SmallTable::new(),
-        field_transitions: vec![next_field],
-    });
-
-    let table = SmallTable::with_mappings(None, b"ab", &[next_state.clone(), next_state.clone()]);
-
-    let (step_a, _) = table.step(b'a');
-    assert!(step_a.is_some());
-
-    let (step_b, _) = table.step(b'b');
-    assert!(step_b.is_some());
-
-    let (step_c, _) = table.step(b'c');
-    assert!(step_c.is_none());
-}
-
-// Chain-based FA builder tests removed - migrated to arena FA
+// ========================================================================
+// AutomatonValueMatcher Tests (arena-based)
+// ========================================================================
 
 #[test]
 fn test_automaton_value_matcher_string() {
@@ -96,8 +69,6 @@ fn test_automaton_value_matcher_shellstyle_multiple() {
     matcher.add_shellstyle_match(b"*.txt", "p1".to_string());
     matcher.add_shellstyle_match(b"test*", "p2".to_string());
 
-    // This test may fail due to merge_fas not handling shellstyle properly
-    // For now, just test that we can add patterns
     let matches = matcher.match_value(b"random");
     assert!(matches.is_empty(), "random should not match any pattern");
 }
@@ -118,7 +89,52 @@ fn test_automaton_value_matcher_mixed() {
     assert!(matches.contains(&"prefix_match".to_string()));
 }
 
-// merge_fas tests removed - migrated to arena FA
+// ========================================================================
+// ArenaSmallTable Tests (ported from chain SmallTable tests)
+// ========================================================================
+
+#[test]
+fn test_arena_small_table_step() {
+    use arena::ArenaSmallTable;
+
+    let table = ArenaSmallTable::new();
+
+    // Test that all valid bytes return NONE for empty table
+    for b in 0..BYTE_CEILING as u8 {
+        let (s, eps) = table.step(b);
+        assert!(
+            s.is_none(),
+            "byte {b} should have no transition in empty table"
+        );
+        assert!(
+            eps.is_empty(),
+            "byte {b} should have no epsilons in empty table"
+        );
+    }
+}
+
+#[test]
+fn test_arena_small_table_with_mappings() {
+    use arena::{ArenaSmallTable, StateArena, StateId};
+    use std::sync::Arc;
+
+    let mut arena = StateArena::new();
+    let next_field = Arc::new(FieldMatcher::new());
+    let next_state = arena.alloc_with_table(ArenaSmallTable::new());
+    arena[next_state].field_transitions.push(next_field);
+
+    let table =
+        ArenaSmallTable::with_mappings(StateId::NONE, &[b'a', b'b'], &[next_state, next_state]);
+
+    let (step_a, _) = table.step(b'a');
+    assert!(!step_a.is_none(), "byte 'a' should have a transition");
+
+    let (step_b, _) = table.step(b'b');
+    assert!(!step_b.is_none(), "byte 'b' should have a transition");
+
+    let (step_c, _) = table.step(b'c');
+    assert!(step_c.is_none(), "byte 'c' should have no transition");
+}
 
 // ========================================================================
 // CoreMatcher Tests
@@ -405,10 +421,6 @@ fn test_core_matcher_multiple_patterns() {
     assert_eq!(matches.len(), 1);
     assert!(matches.contains(&"p1".to_string()));
 }
-
-// AnythingBut FA Tests removed - migrated to arena FA
-
-// Monocase FA Tests removed - migrated to arena FA
 
 // ========================================================================
 // ThreadSafeCoreMatcher Tests

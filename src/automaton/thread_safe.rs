@@ -29,8 +29,7 @@ use super::arena::{
 use super::mutable_matcher::{
     EventField, EventFieldRef, MultiConditionNfa, MutableFieldMatcher, MutableValueMatcher,
 };
-use super::nfa::{traverse_dfa, traverse_nfa};
-use super::small_table::{FieldMatcher, NfaBuffers, SmallTable};
+use super::small_table::{FieldMatcher, NfaBuffers};
 
 /// Check if two array trails have no conflicts (using flatten_json::ArrayPos)
 fn no_array_trail_conflict_ref(
@@ -111,26 +110,18 @@ impl<X: Clone + Eq + Hash> FrozenFieldMatcher<X> {
 /// This is the immutable counterpart to MutableValueMatcher.
 #[derive(Clone, Default)]
 pub struct FrozenValueMatcher<X: Clone + Eq + Hash> {
-    /// The automaton start table (DEPRECATED - being migrated to main_arena)
-    start_table: Option<SmallTable>,
     /// Optimization: for single exact match, store it directly
     singleton_match: Option<Vec<u8>>,
     /// Transition for singleton match
     singleton_transition: Option<Arc<FrozenFieldMatcher<X>>>,
-    /// Whether this matcher requires NFA traversal
-    is_nondeterministic: bool,
     /// Whether this matcher has numeric patterns (for Q-number conversion)
     has_numbers: bool,
     /// Mapping from FieldMatcher pointer (as usize) to FrozenFieldMatcher
     /// Uses FxHashMap for fast integer key lookup
     transition_map: FxHashMap<usize, Arc<FrozenFieldMatcher<X>>>,
-    /// Arena-based NFAs for regexp patterns (DEPRECATED - being migrated to main_arena)
-    arena_nfas: Vec<(StateArena, StateId)>,
-    /// Arena-based FA for numeric patterns (DEPRECATED - being migrated to main_arena)
-    numeric_arena: Option<(StateArena, StateId)>,
     /// Multi-condition NFAs for lookaround patterns with condition verification
     multi_condition_nfas: Vec<MultiConditionNfa>,
-    /// Unified arena-based FA for all pattern types (Step 2.3 migration target)
+    /// Unified arena-based FA for all pattern types
     main_arena: Option<(StateArena, StateId)>,
     /// Whether main_arena contains NFA states (epsilon transitions or spinout).
     /// When false, the fast traverse_arena_dfa path is used.
@@ -145,14 +136,10 @@ unsafe impl<X: Clone + Eq + Hash + Send + Sync> Sync for FrozenValueMatcher<X> {
 impl<X: Clone + Eq + Hash> FrozenValueMatcher<X> {
     pub fn new() -> Self {
         Self {
-            start_table: None,
             singleton_match: None,
             singleton_transition: None,
-            is_nondeterministic: false,
             has_numbers: false,
             transition_map: FxHashMap::default(),
-            arena_nfas: Vec::new(),
-            numeric_arena: None,
             multi_condition_nfas: Vec::new(),
             main_arena: None,
             main_arena_is_nfa: false,
@@ -194,26 +181,6 @@ impl<X: Clone + Eq + Hash> FrozenValueMatcher<X> {
             None => value,
         };
 
-        // Use chain-based automaton if present (DEPRECATED - being migrated to main_arena)
-        if let Some(ref table) = self.start_table {
-            // Clear and reuse the transitions buffer
-            bufs.transitions.clear();
-
-            if self.is_nondeterministic {
-                traverse_nfa(table, value_to_match, bufs);
-            } else {
-                traverse_dfa(table, value_to_match, &mut bufs.transitions);
-            }
-
-            // Map FieldMatcher transitions to FrozenFieldMatcher using pointer address
-            for arc_fm in &bufs.transitions {
-                let ptr = Arc::as_ptr(arc_fm) as usize;
-                if let Some(frozen_fm) = self.transition_map.get(&ptr) {
-                    result.push(frozen_fm.clone());
-                }
-            }
-        }
-
         // Traverse main_arena (unified arena for all pattern types)
         if let Some((ref arena, start)) = self.main_arena {
             if self.main_arena_is_nfa {
@@ -224,9 +191,7 @@ impl<X: Clone + Eq + Hash> FrozenValueMatcher<X> {
                 for arc_fm in &bufs.arena_bufs.transitions {
                     let ptr = Arc::as_ptr(arc_fm) as usize;
                     if let Some(frozen_fm) = self.transition_map.get(&ptr) {
-                        if !result.iter().any(|r| Arc::ptr_eq(r, frozen_fm)) {
-                            result.push(frozen_fm.clone());
-                        }
+                        result.push(frozen_fm.clone());
                     }
                 }
             } else {
@@ -242,47 +207,7 @@ impl<X: Clone + Eq + Hash> FrozenValueMatcher<X> {
                 for arc_fm in &bufs.arena_bufs.transitions {
                     let ptr = Arc::as_ptr(arc_fm) as usize;
                     if let Some(frozen_fm) = self.transition_map.get(&ptr) {
-                        if !result.iter().any(|r| Arc::ptr_eq(r, frozen_fm)) {
-                            result.push(frozen_fm.clone());
-                        }
-                    }
-                }
-            }
-        }
-
-        // Traverse numeric arena FA (if present and value is numeric)
-        if q_num_storage.is_some() {
-            if let Some((ref arena, start)) = self.numeric_arena {
-                bufs.arena_bufs.clear();
-                traverse_arena_nfa(arena, start, value_to_match, &mut bufs.arena_bufs);
-
-                // Map Arc<FieldMatcher> transitions to FrozenFieldMatcher using pointer address
-                for arc_fm in &bufs.arena_bufs.transitions {
-                    let ptr = Arc::as_ptr(arc_fm) as usize;
-                    if let Some(frozen_fm) = self.transition_map.get(&ptr) {
-                        // Avoid duplicates
-                        if !result.iter().any(|r| Arc::ptr_eq(r, frozen_fm)) {
-                            result.push(frozen_fm.clone());
-                        }
-                    }
-                }
-            }
-        }
-
-        // Traverse all arena NFAs (for regexp patterns)
-        if !self.arena_nfas.is_empty() {
-            for (arena, start) in self.arena_nfas.iter() {
-                bufs.arena_bufs.clear();
-                traverse_arena_nfa(arena, *start, value_to_match, &mut bufs.arena_bufs);
-
-                // Map Arc<FieldMatcher> transitions to FrozenFieldMatcher using pointer address
-                for arc_fm in &bufs.arena_bufs.transitions {
-                    let ptr = Arc::as_ptr(arc_fm) as usize;
-                    if let Some(frozen_fm) = self.transition_map.get(&ptr) {
-                        // Avoid duplicates
-                        if !result.iter().any(|r| Arc::ptr_eq(r, frozen_fm)) {
-                            result.push(frozen_fm.clone());
-                        }
+                        result.push(frozen_fm.clone());
                     }
                 }
             }
@@ -539,19 +464,13 @@ impl<X: Clone + Eq + Hash + Send + Sync> ThreadSafeCoreMatcher<X> {
         });
 
         // Build transition map for automaton-based matching
-        // Use the pointer address as the key - this matches what traverse_dfa/nfa returns
+        // Use the pointer address as the key - matches what arena traversal returns
         let mut transition_map = FxHashMap::default();
         for (ptr, mutable_fm) in mutable.transition_map.borrow().iter() {
             let frozen_fm = self.freeze_field_matcher_impl(mutable_fm, cache);
             // Use the raw pointer value as the key (cast to usize for hash stability)
             transition_map.insert(*ptr as usize, Arc::new(frozen_fm));
         }
-
-        // Copy the arena NFAs
-        let arena_nfas = mutable.arena_nfas.borrow().clone();
-
-        // Copy the numeric arena
-        let numeric_arena = mutable.numeric_arena.borrow().clone();
 
         // Copy the multi-condition NFAs (for lookaround patterns)
         let multi_condition_nfas = mutable.multi_condition_nfas.borrow().clone();
@@ -560,14 +479,10 @@ impl<X: Clone + Eq + Hash + Send + Sync> ThreadSafeCoreMatcher<X> {
         let main_arena = mutable.main_arena.borrow().clone();
 
         FrozenValueMatcher {
-            start_table: mutable.start_table.borrow().clone(),
             singleton_match,
             singleton_transition,
-            is_nondeterministic: mutable.is_nondeterministic.get(),
             has_numbers: mutable.has_numbers.get(),
             transition_map,
-            arena_nfas,
-            numeric_arena,
             multi_condition_nfas,
             main_arena,
             main_arena_is_nfa: *mutable.main_arena_is_nfa.borrow(),

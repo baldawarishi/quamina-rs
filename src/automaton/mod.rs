@@ -3,34 +3,24 @@
 //! This module implements an NFA/DFA-based pattern matching engine similar to
 //! the Go quamina implementation. The key components are:
 //!
-//! - `arena`: Arena-based state allocation for all pattern types
+//! - `arena`: Arena-based state allocation and traversal for all pattern types
 //! - `FieldMatcher`: Matches field names and dispatches to value matchers
-//! - `ValueMatcher`: Matches field values using the automaton
 //!
 //! # Module Organization
 //!
-//! - `arena`: Arena-based FA construction and traversal (primary)
-//! - `small_table`: Core data structures (FieldMatcher, etc.)
-//! - `nfa`: Chain-based NFA/DFA traversal (legacy, being phased out)
+//! - `arena`: Arena-based FA construction and traversal
+//! - `small_table`: Core data structures (FieldMatcher, AccelInfo, NfaBuffers)
 //! - `mutable_matcher`: Single-threaded mutable matchers (CoreMatcher)
 //! - `thread_safe`: Thread-safe matchers (ThreadSafeCoreMatcher)
 
 pub mod arena;
 mod mutable_matcher;
-mod nfa;
 mod small_table;
 pub mod sparse_set;
 mod thread_safe;
-pub mod trie;
 
 // Re-export from small_table
-pub use small_table::{
-    AccelInfo, FaState, FieldMatcher, NfaBuffers, SmallTable, StatePtr, ValueMatcher, BYTE_CEILING,
-    VALUE_TERMINATOR,
-};
-
-// Re-export from nfa
-pub use nfa::{traverse_dfa, traverse_nfa};
+pub use small_table::{AccelInfo, FieldMatcher, NfaBuffers, BYTE_CEILING, VALUE_TERMINATOR};
 
 // Re-export from mutable_matcher
 pub use mutable_matcher::{
