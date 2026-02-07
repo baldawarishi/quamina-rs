@@ -143,8 +143,7 @@ open flamegraph.svg           # view in browser
 ## References
 
 - `../quamina` - Go implementation (read source directly)
+- [Go sync status](go-sync-status.md) - Feature parity, Go commit delta analysis, porting decisions
 - [Hyperscan paper](https://www.usenix.org/system/files/nsdi19-wang-xiang.pdf)
 - [regex-automata](https://docs.rs/regex-automata/latest/regex_automata/)
 - [ripgrep internals](https://blog.burntsushi.net/ripgrep/)
-
-append more as you find them here. 
