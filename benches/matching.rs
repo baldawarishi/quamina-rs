@@ -785,8 +785,8 @@ fn build_arena_nfa_plus() -> (StateArena, StateId, Arc<FieldMatcher>) {
 
     // final state with field_transitions
     let final_state = arena.alloc();
-    arena[final_state]
-        .field_transitions
+    arena
+        .get_field_transitions_mut(final_state)
         .push(field_matcher.clone());
 
     // exit state: VALUE_TERMINATOR -> final_state
@@ -813,7 +813,7 @@ fn build_arena_nfa_plus() -> (StateArena, StateId, Arc<FieldMatcher>) {
     ));
 
     // Set up loopback: epsilon to exit AND back to start (CYCLE!)
-    arena[loopback].table.epsilons = vec![exit_state, start];
+    arena[loopback].table.epsilons = smallvec::smallvec![exit_state, start];
 
     (arena, start, field_matcher)
 }
