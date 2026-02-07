@@ -50,20 +50,20 @@ impl StateId {
 }
 
 /// A state in the arena-based finite automaton.
-///
-/// Hot/cold split: Only the transition table (hot data) is stored here.
-/// Field transitions (cold data) are stored separately in `StateArena::field_transitions`
-/// to improve cache density during byte-by-byte traversal.
 #[derive(Clone, Default)]
 pub struct ArenaFaState {
-    /// The transition table for this state (hot path - accessed every byte)
+    /// The transition table for this state
     pub table: ArenaSmallTable,
+    /// Field matchers to transition to when this state is reached at end of value.
+    /// SmallVec<[_; 1]> avoids heap allocation for the common case (0 or 1 transitions).
+    pub field_transitions: SmallVec<[Arc<FieldMatcher>; 1]>,
 }
 
 impl std::fmt::Debug for ArenaFaState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ArenaFaState")
             .field("table", &self.table)
+            .field("field_transitions_count", &self.field_transitions.len())
             .finish()
     }
 }
@@ -74,7 +74,10 @@ impl ArenaFaState {
     }
 
     pub fn with_table(table: ArenaSmallTable) -> Self {
-        Self { table }
+        Self {
+            table,
+            field_transitions: SmallVec::new(),
+        }
     }
 }
 
@@ -212,18 +215,9 @@ impl ArenaSmallTable {
 ///
 /// States are allocated contiguously and referenced by `StateId`.
 /// The arena owns all state memory and frees it when dropped.
-///
-/// Hot/cold split: The `states` array contains only transition tables (hot data,
-/// accessed every byte during traversal). The `field_transitions` array stores
-/// field matcher transitions (cold data, accessed only at value boundaries).
-/// Both arrays are indexed by `StateId` and always have the same length.
 #[derive(Clone, Default)]
 pub struct StateArena {
-    /// Hot data: transition tables (accessed every byte during traversal)
     states: Vec<ArenaFaState>,
-    /// Cold data: field matcher transitions (accessed only at value boundaries).
-    /// Parallel to `states` - indexed by StateId.
-    field_transitions: Vec<SmallVec<[Arc<FieldMatcher>; 1]>>,
 }
 
 impl std::fmt::Debug for StateArena {
@@ -236,16 +230,12 @@ impl std::fmt::Debug for StateArena {
 
 impl StateArena {
     pub fn new() -> Self {
-        Self {
-            states: Vec::new(),
-            field_transitions: Vec::new(),
-        }
+        Self { states: Vec::new() }
     }
 
     pub fn with_capacity(capacity: usize) -> Self {
         Self {
             states: Vec::with_capacity(capacity),
-            field_transitions: Vec::with_capacity(capacity),
         }
     }
 
@@ -253,7 +243,6 @@ impl StateArena {
     pub fn alloc(&mut self) -> StateId {
         let id = StateId(self.states.len() as u32);
         self.states.push(ArenaFaState::default());
-        self.field_transitions.push(SmallVec::new());
         id
     }
 
@@ -261,7 +250,6 @@ impl StateArena {
     pub fn alloc_with_table(&mut self, table: ArenaSmallTable) -> StateId {
         let id = StateId(self.states.len() as u32);
         self.states.push(ArenaFaState::with_table(table));
-        self.field_transitions.push(SmallVec::new());
         id
     }
 
@@ -283,21 +271,6 @@ impl StateArena {
         } else {
             self.states.get_mut(id.index())
         }
-    }
-
-    /// Get the field transitions for a state by ID.
-    #[inline]
-    pub fn get_field_transitions(&self, id: StateId) -> &SmallVec<[Arc<FieldMatcher>; 1]> {
-        &self.field_transitions[id.index()]
-    }
-
-    /// Get mutable field transitions for a state by ID.
-    #[inline]
-    pub fn get_field_transitions_mut(
-        &mut self,
-        id: StateId,
-    ) -> &mut SmallVec<[Arc<FieldMatcher>; 1]> {
-        &mut self.field_transitions[id.index()]
     }
 
     /// Number of states in the arena.
@@ -474,7 +447,7 @@ pub fn traverse_arena_nfa(
                 let ec_state = &arena[ec_state_id];
 
                 // Collect field transitions from cold storage (deduplicated)
-                for ft in arena.get_field_transitions(ec_state_id) {
+                for ft in &arena[ec_state_id].field_transitions {
                     let ptr = Arc::as_ptr(ft) as usize;
                     if !bufs.seen_transitions.contains(&ptr) {
                         bufs.seen_transitions.push(ptr);
@@ -512,7 +485,7 @@ pub fn traverse_arena_nfa(
         for ec_idx in 0..bufs.closure_result.len() {
             let ec_state_id = bufs.closure_result[ec_idx];
             // Collect field transitions from cold storage (deduplicated)
-            for ft in arena.get_field_transitions(ec_state_id) {
+            for ft in &arena[ec_state_id].field_transitions {
                 let ptr = Arc::as_ptr(ft) as usize;
                 if !bufs.seen_transitions.contains(&ptr) {
                     bufs.seen_transitions.push(ptr);
@@ -549,7 +522,7 @@ pub fn traverse_arena_dfa(
         let state = &arena[current];
 
         // Collect any field transitions at this state (cold data)
-        transitions.extend(arena.get_field_transitions(current).iter().cloned());
+        transitions.extend(arena[current].field_transitions.iter().cloned());
 
         let byte = if i < val.len() {
             val[i]
@@ -565,7 +538,7 @@ pub fn traverse_arena_dfa(
     }
 
     // Check final state (cold data)
-    transitions.extend(arena.get_field_transitions(current).iter().cloned());
+    transitions.extend(arena[current].field_transitions.iter().cloned());
 }
 
 /// Compute the epsilon closure of a state in the arena.
@@ -709,7 +682,7 @@ fn clone_state_recursive(
     id_map.insert(state_id.0, new_id);
 
     // Clone field transitions (Arc clone is cheap) - cold data
-    *new_arena.get_field_transitions_mut(new_id) = arena.get_field_transitions(state_id).clone();
+    new_arena[new_id].field_transitions = arena[state_id].field_transitions.clone();
 
     let old_state = &arena[state_id];
 
@@ -789,9 +762,8 @@ fn merge_arena_states_recursive(
 
     if state1.is_none() {
         // Copy from arena2
-        *new_arena.get_field_transitions_mut(new_id) =
-            arena2.get_field_transitions(state2).clone();
         let s2 = &arena2[state2];
+        new_arena[new_id].field_transitions = s2.field_transitions.clone();
         new_arena[new_id].table =
             remap_table_recursive(arena2, &s2.table, arena1, new_arena, memo, false);
         return new_id;
@@ -799,23 +771,21 @@ fn merge_arena_states_recursive(
 
     if state2.is_none() {
         // Copy from arena1
-        *new_arena.get_field_transitions_mut(new_id) =
-            arena1.get_field_transitions(state1).clone();
         let s1 = &arena1[state1];
+        new_arena[new_id].field_transitions = s1.field_transitions.clone();
         new_arena[new_id].table =
             remap_table_recursive(arena1, &s1.table, arena2, new_arena, memo, true);
         return new_id;
     }
 
     // Both states exist - merge them
-    // Combine field transitions (cold data)
-    let mut field_transitions = arena1.get_field_transitions(state1).clone();
-    field_transitions.extend(arena2.get_field_transitions(state2).iter().cloned());
-    *new_arena.get_field_transitions_mut(new_id) = field_transitions;
-
-    // Merge tables byte-by-byte
     let s1 = &arena1[state1];
     let s2 = &arena2[state2];
+
+    // Combine field transitions
+    let mut field_transitions = s1.field_transitions.clone();
+    field_transitions.extend(s2.field_transitions.iter().cloned());
+    new_arena[new_id].field_transitions = field_transitions;
     new_arena[new_id].table =
         merge_arena_tables(arena1, &s1.table, arena2, &s2.table, new_arena, memo);
 
@@ -1127,9 +1097,8 @@ fn merge_arena_nfa_states_recursive(
     // Handle case where one state is NONE
     if state1.is_none() {
         // Copy from arena2
-        *new_arena.get_field_transitions_mut(new_id) =
-            arena2.get_field_transitions(state2).clone();
         let s2 = &arena2[state2];
+        new_arena[new_id].field_transitions = s2.field_transitions.clone();
         new_arena[new_id].table =
             remap_nfa_table_recursive(arena2, &s2.table, arena1, new_arena, memo, false);
         return new_id;
@@ -1137,9 +1106,8 @@ fn merge_arena_nfa_states_recursive(
 
     if state2.is_none() {
         // Copy from arena1
-        *new_arena.get_field_transitions_mut(new_id) =
-            arena1.get_field_transitions(state1).clone();
         let s1 = &arena1[state1];
+        new_arena[new_id].field_transitions = s1.field_transitions.clone();
         new_arena[new_id].table =
             remap_nfa_table_recursive(arena1, &s1.table, arena2, new_arena, memo, true);
         return new_id;
@@ -1156,7 +1124,6 @@ fn merge_arena_nfa_states_recursive(
 
     // Case 1: Both have spinouts - merge them recursively
     if s1_has_spinout && s2_has_spinout {
-        // Merge the spinout continuations (the epsilon targets)
         let spinout1_eps = s1.table.epsilons[0];
         let spinout2_eps = s2.table.epsilons[0];
         let merged_eps = merge_arena_nfa_states_recursive(
@@ -1168,30 +1135,22 @@ fn merge_arena_nfa_states_recursive(
             memo,
         );
 
-        // Merge byte transitions
         let mut combined_table =
             merge_nfa_tables_bytewise(arena1, &s1.table, arena2, &s2.table, new_arena, memo);
 
-        // Set up spinout with merged epsilon
-        combined_table.spinout = new_id; // Self-reference for spinout looping
+        combined_table.spinout = new_id;
         combined_table.epsilons = smallvec![merged_eps];
 
-        // Combine field transitions (cold data)
-        let mut field_transitions = arena1.get_field_transitions(state1).clone();
-        field_transitions.extend(arena2.get_field_transitions(state2).iter().cloned());
+        let mut field_transitions = s1.field_transitions.clone();
+        field_transitions.extend(s2.field_transitions.iter().cloned());
 
         new_arena[new_id].table = combined_table;
-        *new_arena.get_field_transitions_mut(new_id) = field_transitions;
+        new_arena[new_id].field_transitions = field_transitions;
         return new_id;
     }
 
     // Case 2: Either has epsilons (but not both spinouts) - create splice
     if s1_has_epsilons || s2_has_epsilons {
-        // Create a splice state that branches to try both patterns independently
-        // This keeps patterns from interfering with each other
-
-        // Clone both original states into the new arena using separate clone maps
-        // We can't reuse the merge memo because the keys would conflict
         let mut clone_map1: std::collections::HashMap<u32, StateId> =
             std::collections::HashMap::new();
         let mut clone_map2: std::collections::HashMap<u32, StateId> =
@@ -1199,7 +1158,6 @@ fn merge_arena_nfa_states_recursive(
         let cloned1 = clone_state_into_arena(arena1, state1, new_arena, &mut clone_map1);
         let cloned2 = clone_state_into_arena(arena2, state2, new_arena, &mut clone_map2);
 
-        // Set up splice: empty state with epsilons to both original states
         new_arena[new_id].table = ArenaSmallTable {
             ceilings: smallvec![BYTE_CEILING as u8],
             steps: smallvec![StateId::NONE],
@@ -1208,7 +1166,6 @@ fn merge_arena_nfa_states_recursive(
             accel: None,
             default: StateId::NONE,
         };
-        // field_transitions already initialized to empty by alloc()
         return new_id;
     }
 
@@ -1216,11 +1173,11 @@ fn merge_arena_nfa_states_recursive(
     let combined_table =
         merge_nfa_tables_bytewise(arena1, &s1.table, arena2, &s2.table, new_arena, memo);
 
-    let mut field_transitions = arena1.get_field_transitions(state1).clone();
-    field_transitions.extend(arena2.get_field_transitions(state2).iter().cloned());
+    let mut field_transitions = s1.field_transitions.clone();
+    field_transitions.extend(s2.field_transitions.iter().cloned());
 
     new_arena[new_id].table = combined_table;
-    *new_arena.get_field_transitions_mut(new_id) = field_transitions;
+    new_arena[new_id].field_transitions = field_transitions;
 
     new_id
 }
@@ -1249,8 +1206,7 @@ fn clone_state_into_arena(
     id_map.insert(state_id.0, new_id);
 
     // Clone field transitions (Arc clone is cheap) - cold data
-    *target_arena.get_field_transitions_mut(new_id) =
-        source_arena.get_field_transitions(state_id).clone();
+    target_arena[new_id].field_transitions = source_arena[state_id].field_transitions.clone();
 
     let old_state = &source_arena[state_id];
 
@@ -1502,7 +1458,7 @@ pub fn make_numeric_less_arena_fa(
 
     // Create the "match" state - has field_transitions to mark the match
     let match_state = arena.alloc();
-    arena.get_field_transitions_mut(match_state).push(next_field);
+    arena[match_state].field_transitions.push(next_field);
 
     // Build the FA recursively
     let start = make_less_arena_fa_step(&bound_q, 0, inclusive, match_state, &mut arena);
@@ -1529,7 +1485,7 @@ pub fn make_numeric_greater_arena_fa(
 
     // Create the "match" state
     let match_state = arena.alloc();
-    arena.get_field_transitions_mut(match_state).push(next_field);
+    arena[match_state].field_transitions.push(next_field);
 
     // Build the FA recursively
     let start = make_greater_arena_fa_step(&bound_q, 0, inclusive, match_state, &mut arena);
@@ -1563,7 +1519,7 @@ pub fn make_numeric_range_arena_fa(
 
     // Create the "match" state
     let match_state = arena.alloc();
-    arena.get_field_transitions_mut(match_state).push(next_field);
+    arena[match_state].field_transitions.push(next_field);
 
     // Build the FA recursively
     let start = make_range_arena_fa_step(
@@ -1808,7 +1764,7 @@ pub fn make_string_arena_fa(val: &[u8], next_field: Arc<FieldMatcher>) -> (State
 
     // Create the "match" state - has field_transitions to mark the match
     let match_state = arena.alloc();
-    arena.get_field_transitions_mut(match_state).push(next_field);
+    arena[match_state].field_transitions.push(next_field);
 
     // Build the FA chain from end to start
     let start = make_string_arena_fa_step(val, 0, match_state, &mut arena);
@@ -1869,7 +1825,7 @@ pub fn insert_string_into_arena(
         } else {
             // No transition for this byte — create the remaining chain
             let match_state = arena.alloc();
-            arena.get_field_transitions_mut(match_state).push(field_matcher);
+            arena[match_state].field_transitions.push(field_matcher);
 
             // Build chain backwards for any remaining bytes after this one
             let mut target = match_state;
@@ -1893,7 +1849,7 @@ pub fn insert_string_into_arena(
     }
 
     // Full path already exists — add field transition to the terminal state
-    arena.get_field_transitions_mut(current).push(field_matcher);
+    arena[current].field_transitions.push(field_matcher);
 }
 
 /// Build an arena-based FA that matches strings with a given prefix.
@@ -1913,7 +1869,7 @@ pub fn make_prefix_arena_fa(prefix: &[u8], next_field: Arc<FieldMatcher>) -> (St
 
     // Create the "match" state - has field_transitions to mark the match
     let match_state = arena.alloc();
-    arena.get_field_transitions_mut(match_state).push(next_field);
+    arena[match_state].field_transitions.push(next_field);
 
     // Build the FA chain from end to start
     let start = make_prefix_arena_fa_step(prefix, 0, match_state, &mut arena);
@@ -1967,7 +1923,7 @@ pub fn make_shellstyle_arena_fa(
 
     // Create the "match" state - has field_transitions to mark the match
     let match_state = arena.alloc();
-    arena.get_field_transitions_mut(match_state).push(next_field);
+    arena[match_state].field_transitions.push(next_field);
 
     // Parse the pattern into segments
     let segments = parse_shellstyle_segments(pattern);
@@ -2111,7 +2067,7 @@ pub fn make_wildcard_arena_fa(
 
     // Create the "match" state - has field_transitions to mark the match
     let match_state = arena.alloc();
-    arena.get_field_transitions_mut(match_state).push(next_field);
+    arena[match_state].field_transitions.push(next_field);
 
     // Parse the pattern into segments (handles escape sequences)
     let segments = parse_wildcard_segments(pattern);
@@ -2182,7 +2138,7 @@ pub fn make_anything_but_arena_fa(
 
     // Success state - we match if we get here
     let success = arena.alloc();
-    arena.get_field_transitions_mut(success).push(next_field);
+    arena[success].field_transitions.push(next_field);
 
     // Build the trie-like structure
     let start = build_anything_but_step(excluded, 0, success, &mut arena);
@@ -2319,7 +2275,7 @@ pub fn make_monocase_arena_fa(val: &[u8], next_field: Arc<FieldMatcher>) -> (Sta
 
     // Create the "match" state - has field_transitions to mark the match
     let match_state = arena.alloc();
-    arena.get_field_transitions_mut(match_state).push(next_field);
+    arena[match_state].field_transitions.push(next_field);
 
     // Empty string case
     if val.is_empty() {
@@ -2609,7 +2565,7 @@ fn make_ipv4_cidr_arena_fa(
 
     // Create match state
     let match_state = arena.alloc();
-    arena.get_field_transitions_mut(match_state).push(next_field);
+    arena[match_state].field_transitions.push(next_field);
 
     // Create terminator state
     let term_state = arena.alloc_with_table(ArenaSmallTable::with_mappings(
@@ -2669,7 +2625,7 @@ fn make_ipv6_cidr_arena_fa(
 
     // Create match state
     let match_state = arena.alloc();
-    arena.get_field_transitions_mut(match_state).push(next_field);
+    arena[match_state].field_transitions.push(next_field);
 
     // Create terminator state
     let term_state = arena.alloc_with_table(ArenaSmallTable::with_mappings(
@@ -2909,8 +2865,8 @@ mod tests {
         // Create states:
         // start --(a)--> match_state --(VT)--> final
         let final_state = arena.alloc();
-        arena
-            .get_field_transitions_mut(final_state)
+        arena[final_state]
+            .field_transitions
             .push(field_matcher.clone());
 
         let match_state = arena.alloc_with_table(ArenaSmallTable::with_mappings(
@@ -2953,8 +2909,8 @@ mod tests {
 
         // exit state (has VALUE_TERMINATOR transition to final)
         let final_state = arena.alloc();
-        arena
-            .get_field_transitions_mut(final_state)
+        arena[final_state]
+            .field_transitions
             .push(field_matcher.clone());
 
         let exit_state = arena.alloc_with_table(ArenaSmallTable::with_mappings(
@@ -3029,8 +2985,8 @@ mod tests {
 
         // exit state
         let final_state = arena.alloc();
-        arena
-            .get_field_transitions_mut(final_state)
+        arena[final_state]
+            .field_transitions
             .push(field_matcher.clone());
 
         let exit_state = arena.alloc_with_table(ArenaSmallTable::with_mappings(
@@ -3087,7 +3043,7 @@ mod tests {
 
         // Build [a]* with true cycle - only needs ~4 states
         let final_state = arena.alloc();
-        arena.get_field_transitions_mut(final_state).push(field_matcher);
+        arena[final_state].field_transitions.push(field_matcher);
 
         let exit_state = arena.alloc_with_table(ArenaSmallTable::with_mappings(
             StateId::NONE,
@@ -3124,8 +3080,8 @@ mod tests {
 
         // Create exit/final states
         let final_state = arena.alloc();
-        arena
-            .get_field_transitions_mut(final_state)
+        arena[final_state]
+            .field_transitions
             .push(field_matcher.clone());
 
         let exit_state = arena.alloc_with_table(ArenaSmallTable::with_mappings(
@@ -3243,7 +3199,7 @@ mod merge_tests {
 
         // End state with field transition
         let end = arena.alloc();
-        arena.get_field_transitions_mut(end).push(fm);
+        arena[end].field_transitions.push(fm);
 
         // Terminator state (required for VALUE_TERMINATOR handling)
         let term = arena.alloc_with_table(ArenaSmallTable::with_mappings(
@@ -3420,7 +3376,7 @@ mod merge_tests {
         let (arena1, start1) = {
             let mut arena = StateArena::new();
             let end = arena.alloc();
-            arena.get_field_transitions_mut(end).push(fm1.clone());
+            arena[end].field_transitions.push(fm1.clone());
 
             let term = arena.alloc_with_table(ArenaSmallTable::with_mappings(
                 StateId::NONE,
@@ -3447,7 +3403,7 @@ mod merge_tests {
         let (arena2, start2) = {
             let mut arena = StateArena::new();
             let end = arena.alloc();
-            arena.get_field_transitions_mut(end).push(fm2.clone());
+            arena[end].field_transitions.push(fm2.clone());
 
             let term = arena.alloc_with_table(ArenaSmallTable::with_mappings(
                 StateId::NONE,
@@ -3901,7 +3857,7 @@ mod nfa_merge_tests {
 
         // Create the match state (has field transition)
         let match_state = arena.alloc();
-        arena.get_field_transitions_mut(match_state).push(fm);
+        arena[match_state].field_transitions.push(fm);
 
         // Create terminator state
         let term_state = arena.alloc_with_table(ArenaSmallTable::with_mappings(
@@ -3953,7 +3909,7 @@ mod nfa_merge_tests {
 
         // Match state
         let match_state = arena.alloc();
-        arena.get_field_transitions_mut(match_state).push(fm);
+        arena[match_state].field_transitions.push(fm);
 
         // Terminal state (matches VALUE_TERMINATOR)
         let term_state = arena.alloc_with_table(ArenaSmallTable::with_mappings(
@@ -4021,7 +3977,7 @@ mod nfa_merge_tests {
         let (arena2, start2) = {
             let mut arena = StateArena::new();
             let end = arena.alloc();
-            arena.get_field_transitions_mut(end).push(fm2.clone());
+            arena[end].field_transitions.push(fm2.clone());
             let term = arena.alloc_with_table(ArenaSmallTable::with_mappings(
                 StateId::NONE,
                 &[ARENA_VALUE_TERMINATOR],
@@ -4144,7 +4100,7 @@ mod nfa_merge_tests {
 
             // Match state
             let match_state = arena.alloc();
-            arena.get_field_transitions_mut(match_state).push(fm1.clone());
+            arena[match_state].field_transitions.push(fm1.clone());
 
             // Terminal state
             let term_state = arena.alloc_with_table(ArenaSmallTable::with_mappings(
@@ -4174,7 +4130,7 @@ mod nfa_merge_tests {
         let (arena2, start2) = {
             let mut arena = StateArena::new();
             let end = arena.alloc();
-            arena.get_field_transitions_mut(end).push(fm2.clone());
+            arena[end].field_transitions.push(fm2.clone());
             let term = arena.alloc_with_table(ArenaSmallTable::with_mappings(
                 StateId::NONE,
                 &[ARENA_VALUE_TERMINATOR],
@@ -4251,7 +4207,7 @@ mod nfa_merge_tests {
 
             // Match state
             let match_state = arena.alloc();
-            arena.get_field_transitions_mut(match_state).push(fm1.clone());
+            arena[match_state].field_transitions.push(fm1.clone());
 
             // Terminal state
             let term_state = arena.alloc_with_table(ArenaSmallTable::with_mappings(
@@ -4294,7 +4250,7 @@ mod nfa_merge_tests {
             let mut arena = StateArena::new();
 
             let match_state = arena.alloc();
-            arena.get_field_transitions_mut(match_state).push(fm2.clone());
+            arena[match_state].field_transitions.push(fm2.clone());
 
             let term_state = arena.alloc_with_table(ArenaSmallTable::with_mappings(
                 StateId::NONE,
