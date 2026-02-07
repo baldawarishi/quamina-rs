@@ -2477,14 +2477,8 @@ fn test_regexp_validity() {
     }
 
     let mut problems = 0;
-    let mut tests = 0;
-    let mut implemented = 0;
-    let mut correctly_matched = 0;
-    let mut correctly_not_matched = 0;
 
     for sample in REGEXP_SAMPLES.iter() {
-        tests += 1;
-
         fn should_skip(re: &str) -> bool {
             if re.contains("-[") {
                 return true;
@@ -2545,8 +2539,6 @@ fn test_regexp_validity() {
         if sample.valid {
             match parse_result {
                 Ok(tree) => {
-                    implemented += 1;
-
                     let (arena, start, field_matcher) = make_regexp_nfa_arena(tree);
                     let mut bufs = ArenaNfaBuffers::new();
 
@@ -2564,8 +2556,6 @@ fn test_regexp_validity() {
                             .any(|m| Arc::ptr_eq(m, &field_matcher));
                         if !matched && !should_match.is_empty() {
                             problems += 1;
-                        } else if matched {
-                            correctly_matched += 1;
                         }
                     }
 
@@ -2581,16 +2571,12 @@ fn test_regexp_validity() {
                             .transitions
                             .iter()
                             .any(|m| Arc::ptr_eq(m, &field_matcher));
-                        if matched {
-                            if should_not_match.is_empty()
-                                && star_samples_matching_empty(sample.regex)
-                            {
-                                // Expected
-                            } else if !should_not_match.is_empty() {
-                                problems += 1;
-                            }
-                        } else {
-                            correctly_not_matched += 1;
+                        if matched
+                            && !(should_not_match.is_empty()
+                                && star_samples_matching_empty(sample.regex))
+                            && !should_not_match.is_empty()
+                        {
+                            problems += 1;
                         }
                     }
                 }
@@ -2599,9 +2585,7 @@ fn test_regexp_validity() {
         } else {
             if parse_result.is_ok() {
                 let is_extension = is_known_extension(sample.regex);
-                if is_extension {
-                    implemented += 1;
-                } else {
+                if !is_extension {
                     problems += 1;
                 }
             }
