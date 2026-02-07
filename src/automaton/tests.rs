@@ -123,8 +123,7 @@ fn test_arena_small_table_with_mappings() {
     let next_state = arena.alloc_with_table(ArenaSmallTable::new());
     arena[next_state].field_transitions.push(next_field);
 
-    let table =
-        ArenaSmallTable::with_mappings(StateId::NONE, &[b'a', b'b'], &[next_state, next_state]);
+    let table = ArenaSmallTable::with_mappings(StateId::NONE, b"ab", &[next_state, next_state]);
 
     let (step_a, _) = table.step(b'a');
     assert!(!step_a.is_none(), "byte 'a' should have a transition");

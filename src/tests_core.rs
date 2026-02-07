@@ -1569,3 +1569,170 @@ fn test_mixed_string_and_number_patterns_same_digits() {
         "Number 123 should match only numeric pattern"
     );
 }
+
+#[test]
+fn test_mixed_number_and_string_in_same_value_array() {
+    // Go's TestBasicMatching: a single pattern field with both numbers and strings
+    // e.g. {"b": [1, "3"]} should match number 1 OR string "3" but NOT number 3
+    let mut q = Quamina::new();
+    q.add_pattern("p1", r#"{"a": [1, 2], "b": [1, "3"]}"#)
+        .unwrap();
+
+    // String "3" on field b should match
+    let m1 = q
+        .matches_for_event(r#"{"a": 1, "b": "3"}"#.as_bytes())
+        .unwrap();
+    assert_eq!(
+        m1,
+        vec!["p1"],
+        "String '3' should match the string literal in [1, \"3\"]"
+    );
+
+    // Number 1 on field b should match
+    let m2 = q
+        .matches_for_event(r#"{"a": 2, "b": 1}"#.as_bytes())
+        .unwrap();
+    assert_eq!(
+        m2,
+        vec!["p1"],
+        "Number 1 should match the numeric literal in [1, \"3\"]"
+    );
+
+    // Number 3 on field b should NOT match (it's string "3" in the pattern, not number 3)
+    let m3 = q
+        .matches_for_event(r#"{"a": 1, "b": 3}"#.as_bytes())
+        .unwrap();
+    assert!(
+        m3.is_empty(),
+        "Number 3 should NOT match string '3' in [1, \"3\"]"
+    );
+
+    // Reversed field order in the event should still work
+    let m4 = q
+        .matches_for_event(r#"{"b": "3", "a": 1}"#.as_bytes())
+        .unwrap();
+    assert_eq!(m4, vec!["p1"], "Reversed field order should still match");
+
+    // Extra fields in the event should not interfere
+    let m5 = q
+        .matches_for_event(r#"{"a": 2, "b": "3", "x": 99}"#.as_bytes())
+        .unwrap();
+    assert_eq!(m5, vec!["p1"], "Extra fields should not prevent match");
+
+    // Missing field b should not match
+    let m6 = q.matches_for_event(r#"{"a": 1}"#.as_bytes()).unwrap();
+    assert!(m6.is_empty(), "Missing field b should not match");
+
+    // Missing field a should not match
+    let m7 = q.matches_for_event(r#"{"b": "3"}"#.as_bytes()).unwrap();
+    assert!(m7.is_empty(), "Missing field a should not match");
+
+    // Wrong value on field a should not match
+    let m8 = q
+        .matches_for_event(r#"{"b": "3", "a": 6}"#.as_bytes())
+        .unwrap();
+    assert!(m8.is_empty(), "Wrong value on field a should not match");
+}
+
+#[test]
+fn test_empty_matcher_returns_no_matches() {
+    // A brand-new Quamina with no patterns should return empty matches for any event
+    let q = Quamina::<&str>::new();
+
+    let m1 = q
+        .matches_for_event(r#"{"status": "active"}"#.as_bytes())
+        .unwrap();
+    assert!(m1.is_empty(), "Empty matcher should return no matches");
+
+    let m2 = q
+        .matches_for_event(r#"{"a": 1, "b": "hello"}"#.as_bytes())
+        .unwrap();
+    assert!(
+        m2.is_empty(),
+        "Empty matcher should return no matches for any event"
+    );
+}
+
+#[test]
+fn test_idempotent_add_and_delete() {
+    // Adding the same pattern ID with the same pattern twice, and deleting twice
+    let mut q = Quamina::new();
+
+    // Add same ID + same pattern twice
+    q.add_pattern("p1", r#"{"x": ["a"]}"#).unwrap();
+    q.add_pattern("p1", r#"{"x": ["a"]}"#).unwrap();
+
+    // Should still match (and only return "p1" once, not duplicated)
+    let m1 = q.matches_for_event(r#"{"x": "a"}"#.as_bytes()).unwrap();
+    assert_eq!(m1, vec!["p1"], "Duplicate add should still match");
+
+    // Delete once
+    q.delete_patterns(&"p1").unwrap();
+    let m2 = q.matches_for_event(r#"{"x": "a"}"#.as_bytes()).unwrap();
+    assert!(m2.is_empty(), "After delete, should not match");
+
+    // Delete again (idempotent) — should not panic
+    q.delete_patterns(&"p1").unwrap();
+    let m3 = q.matches_for_event(r#"{"x": "a"}"#.as_bytes()).unwrap();
+    assert!(m3.is_empty(), "Second delete should be idempotent");
+
+    // Rebuild after double delete should not panic
+    let purged = q.rebuild();
+    // Both adds registered under "p1", so rebuild purges them
+    assert!(purged >= 1, "Rebuild should purge the deleted pattern(s)");
+}
+
+#[test]
+fn test_delete_multi_pattern_id_removes_all() {
+    // Add multiple different patterns under the same ID, then delete that ID
+    let mut q = Quamina::new();
+    q.add_pattern("shared", r#"{"x": ["a"]}"#).unwrap();
+    q.add_pattern("shared", r#"{"x": [1]}"#).unwrap();
+    q.add_pattern("shared", r#"{"y": [{"prefix": "b"}]}"#)
+        .unwrap();
+
+    // All three patterns should match under "shared"
+    let m1 = q.matches_for_event(r#"{"x": "a"}"#.as_bytes()).unwrap();
+    assert_eq!(m1, vec!["shared"], "String pattern should match");
+
+    let m2 = q.matches_for_event(r#"{"x": 1}"#.as_bytes()).unwrap();
+    assert_eq!(m2, vec!["shared"], "Numeric pattern should match");
+
+    let m3 = q.matches_for_event(r#"{"y": "bcd"}"#.as_bytes()).unwrap();
+    assert_eq!(m3, vec!["shared"], "Prefix pattern should match");
+
+    // Delete "shared" — should remove ALL three patterns
+    q.delete_patterns(&"shared").unwrap();
+
+    let m4 = q.matches_for_event(r#"{"x": "a"}"#.as_bytes()).unwrap();
+    assert!(m4.is_empty(), "String pattern should be gone after delete");
+
+    let m5 = q.matches_for_event(r#"{"x": 1}"#.as_bytes()).unwrap();
+    assert!(m5.is_empty(), "Numeric pattern should be gone after delete");
+
+    let m6 = q.matches_for_event(r#"{"y": "bcd"}"#.as_bytes()).unwrap();
+    assert!(m6.is_empty(), "Prefix pattern should be gone after delete");
+
+    // Rebuild should purge the one deleted ID
+    let purged = q.rebuild();
+    assert_eq!(purged, 1, "Rebuild should purge 1 deleted ID");
+
+    // After rebuild, still no matches (patterns are permanently gone)
+    let m7 = q.matches_for_event(r#"{"x": "a"}"#.as_bytes()).unwrap();
+    assert!(
+        m7.is_empty(),
+        "String pattern should stay gone after rebuild"
+    );
+
+    let m8 = q.matches_for_event(r#"{"x": 1}"#.as_bytes()).unwrap();
+    assert!(
+        m8.is_empty(),
+        "Numeric pattern should stay gone after rebuild"
+    );
+
+    let m9 = q.matches_for_event(r#"{"y": "bcd"}"#.as_bytes()).unwrap();
+    assert!(
+        m9.is_empty(),
+        "Prefix pattern should stay gone after rebuild"
+    );
+}

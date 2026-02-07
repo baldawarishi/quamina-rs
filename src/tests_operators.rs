@@ -2537,57 +2537,52 @@ fn test_regexp_validity() {
         let parse_result = parse_regexp(sample.regex);
 
         if sample.valid {
-            match parse_result {
-                Ok(tree) => {
-                    let (arena, start, field_matcher) = make_regexp_nfa_arena(tree);
-                    let mut bufs = ArenaNfaBuffers::new();
+            if let Ok(tree) = parse_result {
+                let (arena, start, field_matcher) = make_regexp_nfa_arena(tree);
+                let mut bufs = ArenaNfaBuffers::new();
 
-                    for should_match in sample.matches {
-                        let mut value: Vec<u8> = Vec::new();
-                        value.push(b'"');
-                        value.extend_from_slice(should_match.as_bytes());
-                        value.push(b'"');
-                        value.push(ARENA_VALUE_TERMINATOR);
-                        bufs.clear();
-                        traverse_arena_nfa(&arena, start, &value, &mut bufs);
-                        let matched = bufs
-                            .transitions
-                            .iter()
-                            .any(|m| Arc::ptr_eq(m, &field_matcher));
-                        if !matched && !should_match.is_empty() {
-                            problems += 1;
-                        }
-                    }
-
-                    for should_not_match in sample.nomatches {
-                        let mut value: Vec<u8> = Vec::new();
-                        value.push(b'"');
-                        value.extend_from_slice(should_not_match.as_bytes());
-                        value.push(b'"');
-                        value.push(ARENA_VALUE_TERMINATOR);
-                        bufs.clear();
-                        traverse_arena_nfa(&arena, start, &value, &mut bufs);
-                        let matched = bufs
-                            .transitions
-                            .iter()
-                            .any(|m| Arc::ptr_eq(m, &field_matcher));
-                        if matched
-                            && !(should_not_match.is_empty()
-                                && star_samples_matching_empty(sample.regex))
-                            && !should_not_match.is_empty()
-                        {
-                            problems += 1;
-                        }
+                for should_match in sample.matches {
+                    let mut value: Vec<u8> = Vec::new();
+                    value.push(b'"');
+                    value.extend_from_slice(should_match.as_bytes());
+                    value.push(b'"');
+                    value.push(ARENA_VALUE_TERMINATOR);
+                    bufs.clear();
+                    traverse_arena_nfa(&arena, start, &value, &mut bufs);
+                    let matched = bufs
+                        .transitions
+                        .iter()
+                        .any(|m| Arc::ptr_eq(m, &field_matcher));
+                    if !matched && !should_match.is_empty() {
+                        problems += 1;
                     }
                 }
-                Err(_) => {}
+
+                for should_not_match in sample.nomatches {
+                    let mut value: Vec<u8> = Vec::new();
+                    value.push(b'"');
+                    value.extend_from_slice(should_not_match.as_bytes());
+                    value.push(b'"');
+                    value.push(ARENA_VALUE_TERMINATOR);
+                    bufs.clear();
+                    traverse_arena_nfa(&arena, start, &value, &mut bufs);
+                    let matched = bufs
+                        .transitions
+                        .iter()
+                        .any(|m| Arc::ptr_eq(m, &field_matcher));
+                    if matched
+                        && !(should_not_match.is_empty()
+                            && star_samples_matching_empty(sample.regex))
+                        && !should_not_match.is_empty()
+                    {
+                        problems += 1;
+                    }
+                }
             }
-        } else {
-            if parse_result.is_ok() {
-                let is_extension = is_known_extension(sample.regex);
-                if !is_extension {
-                    problems += 1;
-                }
+        } else if parse_result.is_ok() {
+            let is_extension = is_known_extension(sample.regex);
+            if !is_extension {
+                problems += 1;
             }
         }
 
@@ -3000,4 +2995,95 @@ fn test_lookaround_primary_match() {
         !matches.contains(&"lookahead".to_string()),
         "foo(?=bar) should NOT match 'foo' (lookahead fails)"
     );
+}
+
+#[test]
+fn test_shellstyle_subset_overlap_same_field() {
+    // Go's TestWildCardRuler: two shellstyle patterns on the same field where
+    // one's match set is a subset of the other (d*f matches everything d*ff does, plus more)
+    let mut q = Quamina::new();
+    q.add_pattern("r1", r#"{"b": [{"shellstyle": "d*f"}]}"#)
+        .unwrap();
+    q.add_pattern("r2", r#"{"b": [{"shellstyle": "d*ff"}]}"#)
+        .unwrap();
+
+    // "dexeff" matches both: d*f (ends in f) and d*ff (ends in ff)
+    let m1 = q
+        .matches_for_event(r#"{"b": "dexeff"}"#.as_bytes())
+        .unwrap();
+    assert!(m1.contains(&"r1"), "d*f should match 'dexeff': {:?}", m1);
+    assert!(m1.contains(&"r2"), "d*ff should match 'dexeff': {:?}", m1);
+    assert_eq!(m1.len(), 2, "Both patterns should match 'dexeff'");
+
+    // "def" matches d*f only (ends in single f, not ff)
+    let m2 = q.matches_for_event(r#"{"b": "def"}"#.as_bytes()).unwrap();
+    assert!(m2.contains(&"r1"), "d*f should match 'def': {:?}", m2);
+    assert!(!m2.contains(&"r2"), "d*ff should NOT match 'def': {:?}", m2);
+
+    // "df" matches d*f (wildcard matches zero chars)
+    let m3 = q.matches_for_event(r#"{"b": "df"}"#.as_bytes()).unwrap();
+    assert!(m3.contains(&"r1"), "d*f should match 'df': {:?}", m3);
+    assert!(!m3.contains(&"r2"), "d*ff should NOT match 'df': {:?}", m3);
+
+    // "dff" matches both: d*f (wildcard matches "f", ending in f) and d*ff (ends in ff)
+    let m4 = q.matches_for_event(r#"{"b": "dff"}"#.as_bytes()).unwrap();
+    assert!(m4.contains(&"r1"), "d*f should match 'dff': {:?}", m4);
+    assert!(m4.contains(&"r2"), "d*ff should match 'dff': {:?}", m4);
+
+    // "hello" matches neither
+    let m5 = q.matches_for_event(r#"{"b": "hello"}"#.as_bytes()).unwrap();
+    assert!(m5.is_empty(), "Neither should match 'hello': {:?}", m5);
+}
+
+#[test]
+fn test_equals_ignore_case_length_boundaries() {
+    // Go's TestEqualsIgnoreCaseMatching: verify that equals-ignore-case
+    // correctly rejects strings that are longer, shorter, or contain the
+    // pattern as a substring
+    let mut q = Quamina::new();
+    q.add_pattern("p1", r#"{"name": [{"equals-ignore-case": "XyZ"}]}"#)
+        .unwrap();
+
+    // Exact match (various cases) should match
+    let m1 = q
+        .matches_for_event(r#"{"name": "xyz"}"#.as_bytes())
+        .unwrap();
+    assert_eq!(m1, vec!["p1"], "Lowercase should match");
+
+    let m2 = q
+        .matches_for_event(r#"{"name": "XYZ"}"#.as_bytes())
+        .unwrap();
+    assert_eq!(m2, vec!["p1"], "Uppercase should match");
+
+    // Longer string with trailing chars should NOT match
+    let m3 = q
+        .matches_for_event(r#"{"name": "xyzz"}"#.as_bytes())
+        .unwrap();
+    assert!(
+        m3.is_empty(),
+        "'xyzz' (extra trailing char) should NOT match"
+    );
+
+    // Shorter string should NOT match
+    let m4 = q.matches_for_event(r#"{"name": "xy"}"#.as_bytes()).unwrap();
+    assert!(m4.is_empty(), "'xy' (shorter) should NOT match");
+
+    // Superstring containing the pattern should NOT match
+    let m5 = q
+        .matches_for_event(r#"{"name": "ABCXYZ"}"#.as_bytes())
+        .unwrap();
+    assert!(
+        m5.is_empty(),
+        "'ABCXYZ' (contains but not equal) should NOT match"
+    );
+
+    // Completely different string of same length should NOT match
+    let m6 = q
+        .matches_for_event(r#"{"name": "abc"}"#.as_bytes())
+        .unwrap();
+    assert!(m6.is_empty(), "'abc' (different) should NOT match");
+
+    // Empty string should NOT match
+    let m7 = q.matches_for_event(r#"{"name": ""}"#.as_bytes()).unwrap();
+    assert!(m7.is_empty(), "Empty string should NOT match");
 }

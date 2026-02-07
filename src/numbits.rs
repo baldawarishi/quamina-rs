@@ -433,8 +433,8 @@ mod tests {
             123456.0,
             0.000001,
             -0.000001,
-            3.14159265358979,
-            -3.14159265358979,
+            std::f64::consts::PI,
+            -std::f64::consts::PI,
             1e10,
             -1e10,
             1e-10,
@@ -489,7 +489,7 @@ mod tests {
         let q0 = q_num_stack(0.0);
         let q_large = q_num_stack(1e15);
 
-        assert!(q0.len() >= 1);
+        assert!(!q0.is_empty());
         assert!(q0.len() <= MAX_BYTES_IN_ENCODING);
         assert!(q_large.len() <= MAX_BYTES_IN_ENCODING);
         assert!(!q0.is_empty());

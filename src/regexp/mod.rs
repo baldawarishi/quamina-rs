@@ -1128,7 +1128,8 @@ mod tests {
 
         // Helper to test if a pattern matches a string
         fn matches(pattern: &str, input: &str) -> bool {
-            let root = parse_regexp(pattern).expect(&format!("Failed to parse: {}", pattern));
+            let root =
+                parse_regexp(pattern).unwrap_or_else(|_| panic!("Failed to parse: {}", pattern));
             let (arena, start, field_matcher) = make_regexp_nfa_arena(root);
             let mut bufs = ArenaNfaBuffers::with_capacity(arena.len());
 
@@ -1193,7 +1194,8 @@ mod tests {
 
         // Helper to test if a pattern matches a string
         fn matches(pattern: &str, input: &str) -> bool {
-            let root = parse_regexp(pattern).expect(&format!("Failed to parse: {}", pattern));
+            let root =
+                parse_regexp(pattern).unwrap_or_else(|_| panic!("Failed to parse: {}", pattern));
             let (arena, start, field_matcher) = make_regexp_nfa_arena(root);
             let mut bufs = ArenaNfaBuffers::with_capacity(arena.len());
 
@@ -1254,7 +1256,8 @@ mod tests {
         // Test with VALUE_TERMINATOR appended (matching test_regexp_validity behavior)
         use crate::automaton::arena::ARENA_VALUE_TERMINATOR;
         fn matches_with_vt(pattern: &str, input: &str) -> bool {
-            let root = parse_regexp(pattern).expect(&format!("Failed to parse: {}", pattern));
+            let root =
+                parse_regexp(pattern).unwrap_or_else(|_| panic!("Failed to parse: {}", pattern));
             let (arena, start, field_matcher) = make_regexp_nfa_arena(root);
             let mut bufs = ArenaNfaBuffers::with_capacity(arena.len());
 
@@ -1287,6 +1290,7 @@ mod tests {
     /// For [^x]+:
     /// - Previously: no acceleration (68+ exit bytes from UTF-8 validation)
     /// - Now: acceleration with exit_bytes = [b'x'] (just the negated char)
+    ///
     /// Coverage: regexp::parser::tests::test_detect_ascii_negated_bytes_* tests the detection logic.
     #[test]
     #[cfg_attr(miri, ignore)] // Arena NFA construction for negated classes too slow under miri
@@ -1295,7 +1299,7 @@ mod tests {
 
         // Pattern [^x]+ - ASCII-only negated, so WILL have acceleration
         let pattern = "[^x]+";
-        let root = parse_regexp(pattern).expect(&format!("Failed to parse: {}", pattern));
+        let root = parse_regexp(pattern).unwrap_or_else(|_| panic!("Failed to parse: {}", pattern));
         let (arena, start, field_matcher) = make_regexp_nfa_arena(root);
 
         // The start state is the leading-quote transition; follow it to the inner regex state
@@ -1357,7 +1361,7 @@ mod tests {
     fn test_negated_unicode_char_no_ascii_fast_path() {
         // Pattern [^ü]+ - non-ASCII negated char, so NO acceleration
         let pattern = "[^ü]+";
-        let root = parse_regexp(pattern).expect(&format!("Failed to parse: {}", pattern));
+        let root = parse_regexp(pattern).unwrap_or_else(|_| panic!("Failed to parse: {}", pattern));
         let (arena, start, _field_matcher) = make_regexp_nfa_arena(root);
 
         // Check that accel is NOT set (non-ASCII negated char)
@@ -1852,7 +1856,7 @@ mod tests {
         for (count, should_match) in test_cases {
             let mut value: Vec<u8> = Vec::with_capacity(count + 3);
             value.push(b'"');
-            value.extend(std::iter::repeat(b'a').take(count));
+            value.extend(std::iter::repeat_n(b'a', count));
             value.push(b'"');
             value.push(ARENA_VALUE_TERMINATOR);
 

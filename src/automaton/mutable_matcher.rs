@@ -1894,7 +1894,7 @@ mod tests {
         bufs.clear();
         let results = vm.transition_on(&qv(b"prewild"), false, &mut bufs);
         // Should match both prefix and shellstyle
-        assert!(results.len() >= 1);
+        assert!(!results.is_empty());
     }
 
     // MIRI SKIP RATIONALE: CIDR /24 pattern construction + 4 IP traversals takes ~46s under

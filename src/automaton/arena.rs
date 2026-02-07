@@ -3169,9 +3169,9 @@ mod tests {
         // Create start state that matches everything except 'x' (like [^x]+)
         // Build transition table that accepts all ASCII except 'x'
         let mut unpacked = [StateId::NONE; BYTE_CEILING];
-        for byte in 0..BYTE_CEILING {
+        for (byte, slot) in unpacked.iter_mut().enumerate() {
             if byte != b'x' as usize {
-                unpacked[byte] = loopback;
+                *slot = loopback;
             }
         }
 
@@ -3459,13 +3459,13 @@ mod merge_tests {
 
             let state_b = arena.alloc_with_table(ArenaSmallTable::with_mappings(
                 StateId::NONE,
-                &[b'b'],
+                b"b",
                 &[term],
             ));
 
             let start = arena.alloc_with_table(ArenaSmallTable::with_mappings(
                 StateId::NONE,
-                &[b'a'],
+                b"a",
                 &[state_b],
             ));
 
@@ -3486,13 +3486,13 @@ mod merge_tests {
 
             let state_c = arena.alloc_with_table(ArenaSmallTable::with_mappings(
                 StateId::NONE,
-                &[b'c'],
+                b"c",
                 &[term],
             ));
 
             let start = arena.alloc_with_table(ArenaSmallTable::with_mappings(
                 StateId::NONE,
-                &[b'a'],
+                b"a",
                 &[state_c],
             ));
 
@@ -4058,7 +4058,7 @@ mod nfa_merge_tests {
             ));
             let start = arena.alloc_with_table(ArenaSmallTable::with_mappings(
                 StateId::NONE,
-                &[b'c'],
+                b"c",
                 &[term],
             ));
             (arena, start)
@@ -4211,7 +4211,7 @@ mod nfa_merge_tests {
             ));
             let start = arena.alloc_with_table(ArenaSmallTable::with_mappings(
                 StateId::NONE,
-                &[b'c'],
+                b"c",
                 &[term],
             ));
             (arena, start)
@@ -4297,7 +4297,7 @@ mod nfa_merge_tests {
             // State that matches 'X' -> spinout2
             let x_state = arena.alloc_with_table(ArenaSmallTable::with_mappings(
                 StateId::NONE,
-                &[b'X'],
+                b"X",
                 &[spinout2],
             ));
 
@@ -4337,7 +4337,7 @@ mod nfa_merge_tests {
 
             let y_state = arena.alloc_with_table(ArenaSmallTable::with_mappings(
                 StateId::NONE,
-                &[b'Y'],
+                b"Y",
                 &[spinout2],
             ));
 

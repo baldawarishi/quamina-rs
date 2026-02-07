@@ -702,7 +702,7 @@ fn bench_unicode_category_letter(c: &mut Criterion) {
         .unwrap();
 
     // Test with various inputs
-    let events = vec![
+    let events = [
         r#"{"value": "a"}"#.as_bytes().to_vec(),
         r#"{"value": "Z"}"#.as_bytes().to_vec(),
         r#"{"value": "α"}"#.as_bytes().to_vec(),
@@ -737,7 +737,7 @@ fn bench_negated_char_class(c: &mut Criterion) {
     q.add_pattern("not_abc", r#"{"value": [{"regex": "[^abc]"}]}"#)
         .unwrap();
 
-    let events = vec![
+    let events = [
         r#"{"value": "x"}"#.as_bytes().to_vec(),
         r#"{"value": "日"}"#.as_bytes().to_vec(),
         r#"{"value": "a"}"#.as_bytes().to_vec(), // non-match
@@ -760,7 +760,7 @@ fn bench_unicode_categories_combined(c: &mut Criterion) {
     q.add_pattern("letter_digit", r#"{"value": [{"regex": "~p{L}~p{Nd}"}]}"#)
         .unwrap();
 
-    let events = vec![
+    let events = [
         r#"{"value": "a1"}"#.as_bytes().to_vec(),
         r#"{"value": "日5"}"#.as_bytes().to_vec(),
         r#"{"value": "12"}"#.as_bytes().to_vec(), // non-match
@@ -1082,6 +1082,7 @@ fn bench_citylots(c: &mut Criterion) {
 /// Uses ThreadSafeCoreMatcher directly (no Quamina wrapper overhead)
 fn bench_citylots_core(c: &mut Criterion) {
     // Same patterns as Go benchmark, but we need to parse them into Matcher format
+    #[allow(clippy::type_complexity)]
     let pattern_fields: Vec<(&str, Vec<(String, Vec<Matcher>)>)> = vec![
         (
             "CRANLEIGH",
