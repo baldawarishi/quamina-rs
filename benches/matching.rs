@@ -815,6 +815,9 @@ fn build_arena_nfa_plus() -> (StateArena, StateId, Arc<FieldMatcher>) {
     // Set up loopback: epsilon to exit AND back to start (CYCLE!)
     arena[loopback].table.epsilons = smallvec::smallvec![exit_state, start];
 
+    // Precompute epsilon closures for all states
+    arena.precompute_epsilon_closures();
+
     (arena, start, field_matcher)
 }
 
