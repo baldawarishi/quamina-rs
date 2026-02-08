@@ -249,7 +249,10 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
                 merge_arena_nfas(&existing_arena, existing_start, &new_arena, new_start);
             *main = Some((merged, merged_start));
         } else {
-            *main = Some((new_arena, new_start));
+            // First pattern: precompute epsilon closures for the initial arena
+            let mut arena = new_arena;
+            arena.precompute_epsilon_closures();
+            *main = Some((arena, new_start));
         }
     }
 
@@ -742,8 +745,9 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
         let next_fm = Rc::new(MutableFieldMatcher::new());
 
         // Build primary pattern automaton (with quote transitions for field values)
-        let (primary_arena, primary_start, field_matcher_arc) =
+        let (mut primary_arena, primary_start, field_matcher_arc) =
             make_regexp_nfa_arena(mc.primary.clone());
+        primary_arena.precompute_epsilon_closures();
 
         self.transition_map
             .borrow_mut()
@@ -776,7 +780,8 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
             };
 
             // Build automaton for the combined pattern (with quote transitions)
-            let (arena, start, _) = make_regexp_nfa_arena(combined_pattern);
+            let (mut arena, start, _) = make_regexp_nfa_arena(combined_pattern);
+            arena.precompute_epsilon_closures();
             condition_nfas.push(ConditionNfa {
                 arena,
                 start,
