@@ -144,13 +144,16 @@ and fall back to allocating fresh state.
 
 **Files:** `src/lib.rs`
 
-- [ ] Implement thread_local approach
-- [ ] `cargo test` — all tests pass (including concurrent tests)
-- [ ] `cargo bench --bench matching -- status_context_fields` — record improvement
-- [ ] Run the full benchmark suite to check for regressions
-- [ ] Commit & push
+- [x] Implement thread_local approach
+- [x] `cargo test` — all 442 tests pass (including concurrent tests)
+- [x] `cargo bench --bench matching -- status_context_fields` — recorded improvement
+- [x] Run the full benchmark suite to check for regressions — no regressions
+- [x] Commit & push (08490a4)
 
-**Result:** `status_context_fields` = ___ ns (delta: ___ ns)
+**Result:** `status_context_fields` = 328 ns (mutex overhead eliminated)
+**No-mutex:** `status_context_fields_no_mutex` = 329 ns (now equal — confirms Mutex is gone)
+**Note:** Delta vs Step 3 is within noise (~329→328ns). The real win is closing the
+gap between the mutex and no-mutex variants, confirming Mutex overhead is eliminated.
 
 ---
 
@@ -237,7 +240,7 @@ Update this section as each step is completed.
 | 1. Branch + baseline | Done | 2026-02-08 | 420ns baseline (machine slightly higher than original 398ns measurement) |
 | 2. from_utf8_unchecked | Done | 2026-02-08 | 420→387ns (−33ns/−8.5%), commit b7af159 |
 | 3. FxHashMap | Done | 2026-02-08 | 387→329ns (−58ns/−15%), commit e0c89dc. Cumulative: 420→329ns (−22%) |
-| 4. thread_local | Not started | | |
+| 4. thread_local | Done | 2026-02-08 | Mutex overhead eliminated, ~328ns ≈ no_mutex ~329ns, commit 08490a4 |
 | 5. Reuse match-set | Not started | | |
 | 6. Final benchmark | Not started | | |
 | 7. Cleanup | Not started | | |
