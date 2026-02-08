@@ -2,6 +2,11 @@
 //!
 //! This enables the JSON flattener to skip fields that aren't used in any pattern,
 //! providing a significant performance optimization.
+//!
+//! This module uses unsafe for:
+//! - `from_utf8_unchecked` on field name segments that are guaranteed valid UTF-8
+//!   by the JSON parser and `read_member_name` validation.
+#![allow(unsafe_code)]
 
 use rustc_hash::FxHashMap;
 use std::sync::Arc;
@@ -100,38 +105,35 @@ impl SegmentsTree {
     /// Check if a segment is used (either as a field or node)
     #[inline]
     pub fn is_segment_used(&self, segment: &[u8]) -> bool {
-        // Fast path: check as bytes first if possible
-        if let Ok(s) = std::str::from_utf8(segment) {
-            self.fields.contains_key(s) || self.nodes.contains_key(s)
-        } else {
-            false
-        }
+        // SAFETY: Segments come from the JSON parser which guarantees valid UTF-8 field names
+        // (RFC 8259). The flattener's read_member_name validates this. Same pattern as
+        // flatten_json::Field::path_str().
+        let s = unsafe { std::str::from_utf8_unchecked(segment) };
+        self.fields.contains_key(s) || self.nodes.contains_key(s)
     }
 
     /// Get a child node for a segment
     #[inline]
     pub fn get(&self, segment: &[u8]) -> Option<&SegmentsTree> {
-        std::str::from_utf8(segment)
-            .ok()
-            .and_then(|s| self.nodes.get(s))
+        // SAFETY: See is_segment_used — segments are always valid UTF-8 from JSON parser.
+        let s = unsafe { std::str::from_utf8_unchecked(segment) };
+        self.nodes.get(s)
     }
 
     /// Get the full path for a leaf segment as a slice reference
     #[inline]
     pub fn path_for_segment(&self, segment: &[u8]) -> Option<&[u8]> {
-        std::str::from_utf8(segment)
-            .ok()
-            .and_then(|s| self.fields.get(s))
-            .map(|v| v.as_ref())
+        // SAFETY: See is_segment_used — segments are always valid UTF-8 from JSON parser.
+        let s = unsafe { std::str::from_utf8_unchecked(segment) };
+        self.fields.get(s).map(|v| v.as_ref())
     }
 
     /// Get the full path for a leaf segment as an Arc (O(1) clone)
     #[inline]
     pub fn path_arc_for_segment(&self, segment: &[u8]) -> Option<Arc<[u8]>> {
-        std::str::from_utf8(segment)
-            .ok()
-            .and_then(|s| self.fields.get(s))
-            .cloned()
+        // SAFETY: See is_segment_used — segments are always valid UTF-8 from JSON parser.
+        let s = unsafe { std::str::from_utf8_unchecked(segment) };
+        self.fields.get(s).cloned()
     }
 
     /// Number of child nodes (non-leaf)

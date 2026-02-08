@@ -11,13 +11,13 @@
 //! These are verified by Miri threading tests in CI.
 #![allow(unsafe_code)]
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::hash::Hash;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use arc_swap::ArcSwap;
 use parking_lot::Mutex;
@@ -65,27 +65,27 @@ fn no_array_trail_conflict(from: &[crate::json::ArrayPos], to: &[crate::json::Ar
 #[derive(Clone, Default)]
 pub struct FrozenFieldMatcher<X: Clone + Eq + Hash> {
     /// Map from field paths to value matchers
-    pub transitions: HashMap<String, Arc<FrozenValueMatcher<X>>>,
+    pub transitions: FxHashMap<String, Arc<FrozenValueMatcher<X>>>,
     /// Pattern identifiers that match when arriving at this state
     pub matches: Vec<X>,
     /// exists:true patterns - map from field path to next field matcher
-    pub exists_true: HashMap<String, Arc<FrozenFieldMatcher<X>>>,
+    pub exists_true: FxHashMap<String, Arc<FrozenFieldMatcher<X>>>,
     /// exists:false patterns - map from field path to next field matcher
-    pub exists_false: HashMap<String, Arc<FrozenFieldMatcher<X>>>,
+    pub exists_false: FxHashMap<String, Arc<FrozenFieldMatcher<X>>>,
 }
 
-// SAFETY: FrozenFieldMatcher only contains Arc, HashMap, and Vec - all Send+Sync when X is.
+// SAFETY: FrozenFieldMatcher only contains Arc, FxHashMap, and Vec - all Send+Sync when X is.
 unsafe impl<X: Clone + Eq + Hash + Send + Sync> Send for FrozenFieldMatcher<X> {}
-// SAFETY: Same as Send - all fields (Arc, HashMap, Vec) are Send+Sync when X is.
+// SAFETY: Same as Send - all fields (Arc, FxHashMap, Vec) are Send+Sync when X is.
 unsafe impl<X: Clone + Eq + Hash + Send + Sync> Sync for FrozenFieldMatcher<X> {}
 
 impl<X: Clone + Eq + Hash> FrozenFieldMatcher<X> {
     pub fn new() -> Self {
         Self {
-            transitions: HashMap::new(),
+            transitions: FxHashMap::default(),
             matches: Vec::new(),
-            exists_true: HashMap::new(),
-            exists_false: HashMap::new(),
+            exists_true: FxHashMap::default(),
+            exists_false: FxHashMap::default(),
         }
     }
 
@@ -423,21 +423,21 @@ impl<X: Clone + Eq + Hash + Send + Sync> ThreadSafeCoreMatcher<X> {
         cache.insert(ptr, placeholder.clone());
 
         // Freeze transitions
-        let mut frozen_transitions = HashMap::new();
+        let mut frozen_transitions = FxHashMap::default();
         for (path, vm) in mutable.transitions.borrow().iter() {
             let frozen_vm = self.freeze_value_matcher(vm, cache);
             frozen_transitions.insert(path.clone(), Arc::new(frozen_vm));
         }
 
         // Freeze exists_true
-        let mut frozen_exists_true = HashMap::new();
+        let mut frozen_exists_true = FxHashMap::default();
         for (path, fm) in mutable.exists_true.borrow().iter() {
             let frozen_fm = self.freeze_field_matcher_impl(fm, cache);
             frozen_exists_true.insert(path.clone(), Arc::new(frozen_fm));
         }
 
         // Freeze exists_false
-        let mut frozen_exists_false = HashMap::new();
+        let mut frozen_exists_false = FxHashMap::default();
         for (path, fm) in mutable.exists_false.borrow().iter() {
             let frozen_fm = self.freeze_field_matcher_impl(fm, cache);
             frozen_exists_false.insert(path.clone(), Arc::new(frozen_fm));
@@ -779,22 +779,24 @@ impl<X: Clone + Eq + Hash + Send + Sync> Default for ThreadSafeCoreMatcher<X> {
     }
 }
 
-/// A set of matches (deduplicated) for frozen matcher
-struct FrozenMatchSet<X: Clone + Eq + Hash> {
-    seen: HashSet<X>,
+/// A set of matches (deduplicated) for frozen matcher.
+///
+/// Uses linear dedup on a Vec instead of a HashSet. This is faster for the
+/// common case of few matches (0-10) because it avoids hash table allocation
+/// and hashing overhead. Pattern matching typically produces few results.
+struct FrozenMatchSet<X: Clone + Eq> {
     matches: Vec<X>,
 }
 
-impl<X: Clone + Eq + Hash> FrozenMatchSet<X> {
+impl<X: Clone + Eq> FrozenMatchSet<X> {
     fn new() -> Self {
         Self {
-            seen: HashSet::new(),
             matches: Vec::new(),
         }
     }
 
     fn add(&mut self, x: X) {
-        if self.seen.insert(x.clone()) {
+        if !self.matches.contains(&x) {
             self.matches.push(x);
         }
     }
@@ -814,7 +816,7 @@ pub struct AutomatonValueMatcher<X: Clone + Eq + std::hash::Hash> {
     arena: Option<(StateArena, StateId)>,
     /// Map from match ID to pattern identifiers
     /// Uses match_id stored in FieldMatcher, which survives FA merging
-    pattern_map: HashMap<u64, X>,
+    pattern_map: FxHashMap<u64, X>,
     /// Counter for generating unique match IDs
     next_match_id: u64,
 }
@@ -824,7 +826,7 @@ impl<X: Clone + Eq + std::hash::Hash> AutomatonValueMatcher<X> {
     pub fn new() -> Self {
         Self {
             arena: None,
-            pattern_map: HashMap::new(),
+            pattern_map: FxHashMap::default(),
             next_match_id: 1,
         }
     }
@@ -891,7 +893,7 @@ impl<X: Clone + Eq + std::hash::Hash> AutomatonValueMatcher<X> {
 
         // Map transitions back to pattern identifiers using match_id
         let mut matches = Vec::new();
-        let mut seen_ids = HashSet::new();
+        let mut seen_ids = FxHashSet::default();
         for fm in &bufs.transitions {
             if let Some(match_id) = fm.match_id {
                 if seen_ids.insert(match_id) {
