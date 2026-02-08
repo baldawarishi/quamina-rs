@@ -188,6 +188,94 @@ fn bench_flatten_direct_context_fields(c: &mut Criterion) {
     });
 }
 
+/// Flatten + sort benchmark without Mutex overhead.
+/// Subtracting `flatten_direct_context_fields` from this gives sort-only cost.
+fn bench_flatten_sort_context_fields(c: &mut Criterion) {
+    let mut tree = SegmentsTree::new();
+    tree.add("context\nuser_id");
+    tree.add("context\nfriends_count");
+    let mut flattener = FlattenJsonState::new();
+    let event = load_status_json();
+
+    c.bench_function("flatten_sort_context_fields", |b| {
+        b.iter(|| {
+            let fields = flattener.flatten(black_box(&event), &tree).unwrap();
+            fields.sort_unstable_by(|a, b| a.path.cmp(&b.path));
+            black_box(fields.len())
+        })
+    });
+}
+
+/// Full matching path without Mutex overhead.
+/// Uses FlattenJsonState + ThreadSafeCoreMatcher::matches_for_fields_direct + NfaBuffers directly.
+/// The difference between this and `status_context_fields` isolates Mutex overhead.
+fn bench_status_context_fields_no_mutex(c: &mut Criterion) {
+    let mut q = Quamina::new();
+    q.add_pattern("context", PATTERN_CONTEXT).unwrap();
+    let event = load_status_json();
+
+    let automaton = q.automaton();
+    let segments_tree = q.segments_tree();
+    let mut flattener = FlattenJsonState::new();
+    let mut nfa_bufs = quamina::automaton::NfaBuffers::new();
+
+    // Verify
+    {
+        let fields = flattener.flatten(&event, segments_tree).unwrap();
+        fields.sort_unstable_by(|a, b| a.path.cmp(&b.path));
+        let matches = automaton.matches_for_fields_direct(fields, &mut nfa_bufs);
+        assert_eq!(matches.len(), 1);
+    }
+
+    c.bench_function("status_context_fields_no_mutex", |b| {
+        b.iter(|| {
+            let fields = flattener.flatten(black_box(&event), segments_tree).unwrap();
+            fields.sort_unstable_by(|a, b| a.path.cmp(&b.path));
+            automaton.matches_for_fields_direct(fields, &mut nfa_bufs)
+        })
+    });
+}
+
+/// Match-only benchmark with pre-flattened fields.
+/// Pre-flattens and pre-sorts fields once, then benchmarks only the automaton matching step.
+fn bench_match_only_context_fields(c: &mut Criterion) {
+    let mut q = Quamina::new();
+    q.add_pattern("context", PATTERN_CONTEXT).unwrap();
+    let event = load_status_json();
+
+    let automaton = q.automaton();
+    let segments_tree = q.segments_tree();
+
+    // Pre-flatten and sort, then convert to owned EventField
+    let mut flattener = FlattenJsonState::new();
+    let fields = flattener.flatten(&event, segments_tree).unwrap();
+    fields.sort_unstable_by(|a, b| a.path.cmp(&b.path));
+    let owned_fields: Vec<EventField> = fields
+        .iter()
+        .map(|f| EventField {
+            path: f.path_str().to_string(),
+            value: String::from_utf8_lossy(f.value_bytes()).to_string(),
+            array_trail: f
+                .array_trail_slice()
+                .iter()
+                .map(|ap| quamina::json::ArrayPos {
+                    array: ap.array,
+                    pos: ap.pos,
+                })
+                .collect(),
+            is_number: f.is_number,
+        })
+        .collect();
+
+    // Verify
+    let matches = automaton.matches_for_fields(&owned_fields);
+    assert_eq!(matches.len(), 1);
+
+    c.bench_function("match_only_context_fields", |b| {
+        b.iter(|| automaton.matches_for_fields(black_box(&owned_fields)))
+    });
+}
+
 /// Flatten-only benchmark for middle nested field
 fn bench_flatten_middle_nested(c: &mut Criterion) {
     let mut q = Quamina::new();
@@ -1376,10 +1464,13 @@ criterion_group!(
     // Flatten-only benchmarks (comparable to Go's Benchmark_JsonFlattener_*)
     bench_flatten_context_fields,
     bench_flatten_direct_context_fields,
+    bench_flatten_sort_context_fields,
     bench_flatten_middle_nested,
     bench_flatten_last_field,
     // Status.json full matching benchmarks (comparable to Go's Benchmark_JsonFlattner_Evaluate_*)
     bench_status_context_fields,
+    bench_status_context_fields_no_mutex,
+    bench_match_only_context_fields,
     bench_status_middle_nested,
     bench_status_last_field,
     bench_status_all_patterns,
