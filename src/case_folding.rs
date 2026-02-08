@@ -11,7 +11,7 @@
 
 /// Case folding pairs. For each pair (a, b), character 'a' can be folded to character 'b'.
 /// The array is sorted by the first element for binary search.
-static CASE_FOLDING_PAIRS: [(char, char); 2876] = [
+pub(crate) static CASE_FOLDING_PAIRS: [(char, char); 2876] = [
     ('\u{0041}', '\u{0061}'),
     ('\u{0042}', '\u{0062}'),
     ('\u{0043}', '\u{0063}'),

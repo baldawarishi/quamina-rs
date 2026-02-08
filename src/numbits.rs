@@ -26,7 +26,7 @@
 //! - Numbers within the same sign compare in the correct order
 
 /// Maximum bytes needed for base-128 encoding of a 64-bit value.
-const MAX_BYTES_IN_ENCODING: usize = 10;
+pub(crate) const MAX_BYTES_IN_ENCODING: usize = 10;
 
 /// Stack-allocated Q-number representation for zero-allocation numeric matching.
 ///
@@ -63,7 +63,7 @@ impl QNumberStack {
 }
 
 /// Convert numbits to a stack-allocated Q-number.
-fn to_q_number_stack(nb: u64) -> QNumberStack {
+pub(crate) fn to_q_number_stack(nb: u64) -> QNumberStack {
     let mut nb = nb;
     let mut bytes = [0u8; MAX_BYTES_IN_ENCODING];
 
