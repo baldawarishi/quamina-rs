@@ -17,7 +17,7 @@ mod nfa;
 mod parser;
 
 // Re-export public API
-pub use nfa::{make_regexp_nfa_arena, regexp_has_plus_star};
+pub use nfa::{clear_fa_shell_cache, make_regexp_nfa_arena, regexp_has_plus_star};
 pub use parser::{
     collect_lookarounds, has_top_level_lookaround, parse_regexp, LookaroundType, QuantifiedAtom,
     RegexpBranch, RegexpError, RegexpRoot, RunePair, RuneRange, REGEXP_QUANTIFIER_MAX, RUNE_MAX,
@@ -2372,6 +2372,150 @@ mod tests {
             !bufs.transitions.iter().any(|m| Arc::ptr_eq(m, &fm2)),
             "Second ~p{{L}} should NOT match '5'"
         );
+    }
+
+    // MIRI SKIP RATIONALE: Builds multiple Unicode category automata (~130K codepoints each).
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_shell_caching_independent_categories() {
+        use crate::automaton::arena::{
+            traverse_arena_nfa, ArenaNfaBuffers, ARENA_VALUE_TERMINATOR,
+        };
+
+        clear_fa_shell_cache();
+
+        // ~p{L} (Letters) and ~p{Nd} (Decimal digits) should cache independently
+        let root_l = parse_regexp("~p{L}").unwrap();
+        let root_nd = parse_regexp("~p{Nd}").unwrap();
+
+        let (arena_l, start_l, fm_l) = make_regexp_nfa_arena(root_l);
+        let (arena_nd, start_nd, fm_nd) = make_regexp_nfa_arena(root_nd);
+
+        let mut bufs = ArenaNfaBuffers::new();
+
+        // "A" is a letter but not a digit
+        let value_a = vec![b'"', b'A', b'"', ARENA_VALUE_TERMINATOR];
+        traverse_arena_nfa(&arena_l, start_l, &value_a, &mut bufs);
+        assert!(
+            bufs.transitions.iter().any(|m| Arc::ptr_eq(m, &fm_l)),
+            "~p{{L}} should match 'A'"
+        );
+
+        bufs.clear();
+        traverse_arena_nfa(&arena_nd, start_nd, &value_a, &mut bufs);
+        assert!(
+            !bufs.transitions.iter().any(|m| Arc::ptr_eq(m, &fm_nd)),
+            "~p{{Nd}} should NOT match 'A'"
+        );
+
+        // "5" is a digit but not a letter
+        bufs.clear();
+        let value_5 = vec![b'"', b'5', b'"', ARENA_VALUE_TERMINATOR];
+        traverse_arena_nfa(&arena_l, start_l, &value_5, &mut bufs);
+        assert!(
+            !bufs.transitions.iter().any(|m| Arc::ptr_eq(m, &fm_l)),
+            "~p{{L}} should NOT match '5'"
+        );
+
+        bufs.clear();
+        traverse_arena_nfa(&arena_nd, start_nd, &value_5, &mut bufs);
+        assert!(
+            bufs.transitions.iter().any(|m| Arc::ptr_eq(m, &fm_nd)),
+            "~p{{Nd}} should match '5'"
+        );
+    }
+
+    // MIRI SKIP RATIONALE: Builds Unicode category automata for both ~p{L} and ~P{L}.
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_shell_caching_negated_independent() {
+        use crate::automaton::arena::{
+            traverse_arena_nfa, ArenaNfaBuffers, ARENA_VALUE_TERMINATOR,
+        };
+
+        clear_fa_shell_cache();
+
+        // ~p{L} and ~P{L} (negated) should cache independently
+        let root_pos = parse_regexp("~p{L}").unwrap();
+        let root_neg = parse_regexp("~P{L}").unwrap();
+
+        let (arena_pos, start_pos, fm_pos) = make_regexp_nfa_arena(root_pos);
+        let (arena_neg, start_neg, fm_neg) = make_regexp_nfa_arena(root_neg);
+
+        let mut bufs = ArenaNfaBuffers::new();
+
+        // "A" is a letter: should match ~p{L}, NOT match ~P{L}
+        let value_a = vec![b'"', b'A', b'"', ARENA_VALUE_TERMINATOR];
+        traverse_arena_nfa(&arena_pos, start_pos, &value_a, &mut bufs);
+        assert!(
+            bufs.transitions.iter().any(|m| Arc::ptr_eq(m, &fm_pos)),
+            "~p{{L}} should match 'A'"
+        );
+
+        bufs.clear();
+        traverse_arena_nfa(&arena_neg, start_neg, &value_a, &mut bufs);
+        assert!(
+            !bufs.transitions.iter().any(|m| Arc::ptr_eq(m, &fm_neg)),
+            "~P{{L}} should NOT match 'A'"
+        );
+
+        // "5" is not a letter: should NOT match ~p{L}, should match ~P{L}
+        bufs.clear();
+        let value_5 = vec![b'"', b'5', b'"', ARENA_VALUE_TERMINATOR];
+        traverse_arena_nfa(&arena_pos, start_pos, &value_5, &mut bufs);
+        assert!(
+            !bufs.transitions.iter().any(|m| Arc::ptr_eq(m, &fm_pos)),
+            "~p{{L}} should NOT match '5'"
+        );
+
+        bufs.clear();
+        traverse_arena_nfa(&arena_neg, start_neg, &value_5, &mut bufs);
+        assert!(
+            bufs.transitions.iter().any(|m| Arc::ptr_eq(m, &fm_neg)),
+            "~P{{L}} should match '5'"
+        );
+    }
+
+    #[test]
+    fn test_shell_caching_xml_escape_cache_keys() {
+        // Verify that XML name char escapes get cache keys
+        let root = parse_regexp("~i").unwrap();
+        assert_eq!(
+            root[0][0].cache_key.as_deref(),
+            Some("i"),
+            "~i should have cache_key 'i'"
+        );
+
+        let root = parse_regexp("~I").unwrap();
+        assert_eq!(
+            root[0][0].cache_key.as_deref(),
+            Some("-i"),
+            "~I should have cache_key '-i'"
+        );
+
+        let root = parse_regexp("~c").unwrap();
+        assert_eq!(
+            root[0][0].cache_key.as_deref(),
+            Some("c"),
+            "~c should have cache_key 'c'"
+        );
+
+        let root = parse_regexp("~C").unwrap();
+        assert_eq!(
+            root[0][0].cache_key.as_deref(),
+            Some("-c"),
+            "~C should have cache_key '-c'"
+        );
+
+        // Small escapes should NOT have cache keys
+        let root = parse_regexp("~d").unwrap();
+        assert_eq!(root[0][0].cache_key, None, "~d should NOT have cache_key");
+
+        let root = parse_regexp("~w").unwrap();
+        assert_eq!(root[0][0].cache_key, None, "~w should NOT have cache_key");
+
+        let root = parse_regexp("~s").unwrap();
+        assert_eq!(root[0][0].cache_key, None, "~s should NOT have cache_key");
     }
 
     // =====================================================================

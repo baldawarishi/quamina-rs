@@ -688,49 +688,66 @@ fn xml_name_char() -> RuneRange {
 }
 
 /// Check for multi-char escape sequences that expand to character classes.
-/// Returns Some(RuneRange) for recognized escapes, None otherwise.
-fn check_multi_char_escape(c: char) -> Option<RuneRange> {
+/// Returns Some((RuneRange, Option<cache_key>)) for recognized escapes, None otherwise.
+/// Large Unicode range escapes (`~i`, `~I`, `~c`, `~C`) include a cache key
+/// so the FA shell can be cached and reused.
+fn check_multi_char_escape(c: char) -> Option<(RuneRange, Option<String>)> {
     match c {
         // ~d = digit [0-9]
-        'd' => Some(vec![RunePair { lo: '0', hi: '9' }]),
+        'd' => Some((vec![RunePair { lo: '0', hi: '9' }], None)),
         // ~D = non-digit (everything except 0-9)
-        'D' => Some(invert_rune_range(vec![RunePair { lo: '0', hi: '9' }])),
+        'D' => Some((invert_rune_range(vec![RunePair { lo: '0', hi: '9' }]), None)),
         // ~w = word char [a-zA-Z0-9_]
-        'w' => Some(vec![
-            RunePair { lo: 'a', hi: 'z' },
-            RunePair { lo: 'A', hi: 'Z' },
-            RunePair { lo: '0', hi: '9' },
-            RunePair { lo: '_', hi: '_' },
-        ]),
+        'w' => Some((
+            vec![
+                RunePair { lo: 'a', hi: 'z' },
+                RunePair { lo: 'A', hi: 'Z' },
+                RunePair { lo: '0', hi: '9' },
+                RunePair { lo: '_', hi: '_' },
+            ],
+            None,
+        )),
         // ~W = non-word char
-        'W' => Some(invert_rune_range(vec![
-            RunePair { lo: 'a', hi: 'z' },
-            RunePair { lo: 'A', hi: 'Z' },
-            RunePair { lo: '0', hi: '9' },
-            RunePair { lo: '_', hi: '_' },
-        ])),
+        'W' => Some((
+            invert_rune_range(vec![
+                RunePair { lo: 'a', hi: 'z' },
+                RunePair { lo: 'A', hi: 'Z' },
+                RunePair { lo: '0', hi: '9' },
+                RunePair { lo: '_', hi: '_' },
+            ]),
+            None,
+        )),
         // ~s = whitespace [ \t\n\r]
-        's' => Some(vec![
-            RunePair { lo: ' ', hi: ' ' },
-            RunePair { lo: '\t', hi: '\t' },
-            RunePair { lo: '\n', hi: '\n' },
-            RunePair { lo: '\r', hi: '\r' },
-        ]),
+        's' => Some((
+            vec![
+                RunePair { lo: ' ', hi: ' ' },
+                RunePair { lo: '\t', hi: '\t' },
+                RunePair { lo: '\n', hi: '\n' },
+                RunePair { lo: '\r', hi: '\r' },
+            ],
+            None,
+        )),
         // ~S = non-whitespace
-        'S' => Some(invert_rune_range(vec![
-            RunePair { lo: ' ', hi: ' ' },
-            RunePair { lo: '\t', hi: '\t' },
-            RunePair { lo: '\n', hi: '\n' },
-            RunePair { lo: '\r', hi: '\r' },
-        ])),
-        // ~i = XML NameStartChar (initial name char)
-        'i' => Some(xml_name_start_char()),
-        // ~I = NOT XML NameStartChar
-        'I' => Some(invert_rune_range(xml_name_start_char())),
-        // ~c = XML NameChar (name char)
-        'c' => Some(xml_name_char()),
-        // ~C = NOT XML NameChar
-        'C' => Some(invert_rune_range(xml_name_char())),
+        'S' => Some((
+            invert_rune_range(vec![
+                RunePair { lo: ' ', hi: ' ' },
+                RunePair { lo: '\t', hi: '\t' },
+                RunePair { lo: '\n', hi: '\n' },
+                RunePair { lo: '\r', hi: '\r' },
+            ]),
+            None,
+        )),
+        // ~i = XML NameStartChar (initial name char) — large Unicode range, cache it
+        'i' => Some((xml_name_start_char(), Some("i".to_string()))),
+        // ~I = NOT XML NameStartChar — large Unicode range, cache it
+        'I' => Some((
+            invert_rune_range(xml_name_start_char()),
+            Some("-i".to_string()),
+        )),
+        // ~c = XML NameChar (name char) — large Unicode range, cache it
+        'c' => Some((xml_name_char(), Some("c".to_string()))),
+        // ~C = NOT XML NameChar — large Unicode range, cache it
+        'C' => Some((invert_rune_range(xml_name_char()), Some("-c".to_string()))),
         _ => None,
     }
 }
@@ -890,12 +907,13 @@ fn read_atom(parse: &mut RegexpParse) -> Result<QuantifiedAtom, RegexpError> {
                 });
             }
 
-            // Check for multi-char escapes (~d, ~w, ~s, ~D, ~W, ~S)
-            if let Some(runes) = check_multi_char_escape(next) {
+            // Check for multi-char escapes (~d, ~w, ~s, ~D, ~W, ~S, ~i, ~I, ~c, ~C)
+            if let Some((runes, cache_key)) = check_multi_char_escape(next) {
                 return Ok(QuantifiedAtom {
                     runes,
                     quant_min: 1,
                     quant_max: 1,
+                    cache_key,
                     ..Default::default()
                 });
             }
@@ -1102,7 +1120,8 @@ fn read_cce1(parse: &mut RegexpParse, first: bool) -> Result<RuneRange, RegexpEr
             return Ok(runes);
         }
         // Check for multi-char escapes (can't participate in ranges)
-        if let Some(runes) = check_multi_char_escape(next) {
+        // Inside character classes, cache_key is not used since ranges are combined.
+        if let Some((runes, _cache_key)) = check_multi_char_escape(next) {
             return Ok(runes);
         }
         check_single_char_escape(next).ok_or_else(|| RegexpError {

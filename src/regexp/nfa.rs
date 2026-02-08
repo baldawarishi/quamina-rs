@@ -4,6 +4,8 @@
 //! The arena-based approach provides better cache locality and supports
 //! patterns with + or * quantifiers efficiently.
 
+use std::cell::RefCell;
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use smallvec::{smallvec, SmallVec};
@@ -291,6 +293,8 @@ fn make_arena_atom_fa(qa: &QuantifiedAtom, arena: &mut StateArena, next: StateId
         make_arena_dot_fa(arena, next)
     } else if let Some(ref subtree) = qa.subtree {
         make_arena_nfa_from_branches(subtree, arena, next)
+    } else if let Some(ref cache_key) = qa.cache_key {
+        make_cached_rune_range_fa(cache_key, &qa.runes, arena, next)
     } else {
         make_arena_rune_range_fa(&qa.runes, arena, next)
     }
@@ -391,6 +395,132 @@ fn make_arena_dot_fa(arena: &mut StateArena, dest: StateId) -> StateId {
         table.pack(&unpacked);
         table
     })
+}
+
+// ============================================================================
+// FA Shell Caching for Unicode Properties
+// ============================================================================
+
+/// A cached "shell" FA for a Unicode property (e.g., `~p{L}`, `~p{Nd}`).
+///
+/// The shell contains a set of `ArenaSmallTable`s built from the property's
+/// rune ranges, with a placeholder destination at local index 0. To use the
+/// shell, `instantiate_shell` clones the tables into a real `StateArena`,
+/// remapping the placeholder to the actual next state.
+struct CachedShell {
+    /// Tables indexed by local ID; table at index 0 is the placeholder destination.
+    tables: Vec<ArenaSmallTable>,
+    /// Local index of the root state in `tables`.
+    root: u32,
+}
+
+thread_local! {
+    static FA_SHELL_CACHE: RefCell<HashMap<String, CachedShell>> = RefCell::new(HashMap::new());
+}
+
+/// Build a shell FA from rune ranges, using a placeholder destination (local index 0).
+fn build_shell(rr: &RuneRange) -> CachedShell {
+    let mut temp_arena = StateArena::with_capacity(16);
+
+    // Local index 0 = placeholder destination
+    let placeholder = temp_arena.alloc();
+
+    // Build the rune range FA with the placeholder as the destination
+    let root_id = make_arena_rune_range_fa(rr, &mut temp_arena, placeholder);
+
+    // Extract all tables from the temp arena
+    let mut tables = Vec::with_capacity(temp_arena.len());
+    for i in 0..temp_arena.len() {
+        let id = StateId::from_index(i);
+        tables.push(temp_arena[id].table.clone());
+    }
+
+    CachedShell {
+        tables,
+        root: root_id.index() as u32,
+    }
+}
+
+/// Instantiate a cached shell into a real arena, replacing the placeholder
+/// (local index 0) with `next` and allocating fresh states for all others.
+fn instantiate_shell(shell: &CachedShell, arena: &mut StateArena, next: StateId) -> StateId {
+    // Build local-to-real ID mapping
+    let mut id_map: Vec<StateId> = Vec::with_capacity(shell.tables.len());
+    // Local index 0 (placeholder) maps to the real next state
+    id_map.push(next);
+    // Allocate real states for all other locals
+    for _ in 1..shell.tables.len() {
+        id_map.push(arena.alloc());
+    }
+
+    // Clone each non-placeholder table, remapping all StateId references
+    for (local_idx, src_table) in shell.tables.iter().enumerate() {
+        if local_idx == 0 {
+            // Placeholder — don't write into the real `next` state
+            continue;
+        }
+
+        let real_id = id_map[local_idx];
+        let mut table = src_table.clone();
+
+        // Remap steps
+        for step in table.steps.iter_mut() {
+            if !step.is_none() {
+                *step = id_map[step.index()];
+            }
+        }
+
+        // Remap epsilons
+        for eps in table.epsilons.iter_mut() {
+            if !eps.is_none() {
+                *eps = id_map[eps.index()];
+            }
+        }
+
+        // Remap spinout
+        if !table.spinout.is_none() {
+            table.spinout = id_map[table.spinout.index()];
+        }
+
+        // Remap default
+        if !table.default.is_none() {
+            table.default = id_map[table.default.index()];
+        }
+
+        arena[real_id].table = table;
+    }
+
+    id_map[shell.root as usize]
+}
+
+/// Build a rune range FA using the shell cache when a cache key is available.
+///
+/// On cache hit, instantiates from the cached shell. On miss, builds the shell,
+/// caches it, then instantiates.
+fn make_cached_rune_range_fa(
+    cache_key: &str,
+    rr: &RuneRange,
+    arena: &mut StateArena,
+    next: StateId,
+) -> StateId {
+    FA_SHELL_CACHE.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        if let Some(shell) = cache.get(cache_key) {
+            return instantiate_shell(shell, arena, next);
+        }
+
+        let shell = build_shell(rr);
+        let result = instantiate_shell(&shell, arena, next);
+        cache.insert(cache_key.to_string(), shell);
+        result
+    })
+}
+
+/// Clear the FA shell cache. Useful for testing to ensure isolation between tests.
+pub fn clear_fa_shell_cache() {
+    FA_SHELL_CACHE.with(|cache| {
+        cache.borrow_mut().clear();
+    });
 }
 
 // ============================================================================

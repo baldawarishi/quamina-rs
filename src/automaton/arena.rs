@@ -39,6 +39,12 @@ impl StateId {
     /// Special sentinel value for "no state" / null reference.
     pub const NONE: StateId = StateId(u32::MAX);
 
+    /// Create a `StateId` from an index.
+    #[inline]
+    pub fn from_index(index: usize) -> Self {
+        StateId(index as u32)
+    }
+
     #[inline]
     pub fn is_none(self) -> bool {
         self.0 == u32::MAX
