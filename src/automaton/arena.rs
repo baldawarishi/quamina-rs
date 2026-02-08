@@ -382,11 +382,6 @@ pub struct ArenaNfaBuffers {
     pub next_states: Vec<StateId>,
     /// Accumulated field matcher transitions
     pub transitions: Vec<Arc<FieldMatcher>>,
-    /// Seen state IDs (for epsilon closure deduplication) - O(1) clear
-    seen_states: SparseSet,
-    /// Closure buffer
-    closure_stack: Vec<StateId>,
-    closure_result: Vec<StateId>,
     /// Seen field matcher transitions (for deduplication, stored as pointer addresses).
     seen_transitions: FxHashSet<usize>,
 }
@@ -396,14 +391,11 @@ impl ArenaNfaBuffers {
         Self::default()
     }
 
-    pub fn with_capacity(state_capacity: usize) -> Self {
+    pub fn with_capacity(_state_capacity: usize) -> Self {
         Self {
             current_states: Vec::with_capacity(16),
             next_states: Vec::with_capacity(16),
             transitions: Vec::new(),
-            seen_states: SparseSet::new(state_capacity),
-            closure_stack: Vec::with_capacity(16),
-            closure_result: Vec::with_capacity(16),
             seen_transitions: FxHashSet::default(),
         }
     }
@@ -413,14 +405,6 @@ impl ArenaNfaBuffers {
         self.next_states.clear();
         self.transitions.clear();
         self.seen_transitions.clear();
-        // Note: seen_states is reset during epsilon closure
-    }
-
-    /// Ensure seen_states buffer is large enough for the arena.
-    fn ensure_seen_capacity(&mut self, arena_size: usize) {
-        if self.seen_states.capacity() < arena_size {
-            self.seen_states.resize(arena_size);
-        }
     }
 }
 
@@ -467,8 +451,6 @@ pub fn traverse_arena_nfa(
     bufs: &mut ArenaNfaBuffers,
 ) {
     bufs.clear();
-    bufs.ensure_seen_capacity(arena.len());
-
     if start.is_none() {
         return;
     }
@@ -510,23 +492,13 @@ pub fn traverse_arena_nfa(
         let states_to_process = std::mem::take(&mut bufs.current_states);
 
         for state_id in states_to_process {
-            // Use precomputed epsilon closure when available (set by
-            // precompute_epsilon_closures), otherwise fall back to DFS.
-            let precomputed = &arena[state_id].epsilon_closure;
-            if !precomputed.is_empty() {
-                bufs.closure_result.clear();
-                bufs.closure_result.extend_from_slice(precomputed);
-            } else {
-                fill_epsilon_closure(arena, state_id, bufs);
-            }
-
-            // Iterate by index to avoid borrow conflicts
-            for ec_idx in 0..bufs.closure_result.len() {
-                let ec_state_id = bufs.closure_result[ec_idx];
+            // Iterate precomputed epsilon closure directly (no copy needed
+            // since arena and bufs are independent borrows).
+            for &ec_state_id in &arena[state_id].epsilon_closure {
                 let ec_state = &arena[ec_state_id];
 
                 // Collect field transitions from cold storage (deduplicated)
-                for ft in &arena[ec_state_id].field_transitions {
+                for ft in &ec_state.field_transitions {
                     let ptr = Arc::as_ptr(ft) as usize;
                     if bufs.seen_transitions.insert(ptr) {
                         bufs.transitions.push(ft.clone());
@@ -556,18 +528,7 @@ pub fn traverse_arena_nfa(
     // Check final states for matches
     let final_states = std::mem::take(&mut bufs.current_states);
     for state_id in final_states {
-        let precomputed = &arena[state_id].epsilon_closure;
-        if !precomputed.is_empty() {
-            bufs.closure_result.clear();
-            bufs.closure_result.extend_from_slice(precomputed);
-        } else {
-            fill_epsilon_closure(arena, state_id, bufs);
-        }
-
-        // Iterate by index to avoid borrow conflicts
-        for ec_idx in 0..bufs.closure_result.len() {
-            let ec_state_id = bufs.closure_result[ec_idx];
-            // Collect field transitions from cold storage (deduplicated)
+        for &ec_state_id in &arena[state_id].epsilon_closure {
             for ft in &arena[ec_state_id].field_transitions {
                 let ptr = Arc::as_ptr(ft) as usize;
                 if bufs.seen_transitions.insert(ptr) {
@@ -623,60 +584,6 @@ pub fn traverse_arena_dfa(
     transitions.extend(arena[current].field_transitions.iter().cloned());
 }
 
-/// Compute the epsilon closure of a state in the arena.
-///
-/// For DFA-only patterns (no epsilon transitions), this is a fast O(1) operation.
-/// For NFA patterns, this computes the full epsilon closure.
-///
-/// Results are written to `bufs.closure_result`. Callers should iterate
-/// `bufs.closure_result` directly after calling this function.
-fn fill_epsilon_closure(arena: &StateArena, start: StateId, bufs: &mut ArenaNfaBuffers) {
-    bufs.closure_result.clear();
-
-    if start.is_none() {
-        return;
-    }
-
-    // Fast path: DFA state with no epsilon transitions (common case for numeric patterns)
-    let start_state = &arena[start];
-    if start_state.table.epsilons.is_empty() {
-        bufs.closure_result.push(start);
-        return;
-    }
-
-    // Slow path: compute full epsilon closure
-    bufs.closure_stack.clear();
-    bufs.seen_states.clear();
-
-    bufs.closure_result.push(start);
-    bufs.closure_stack.push(start);
-
-    // Mark start as seen
-    if start.index() < bufs.seen_states.capacity() {
-        bufs.seen_states.insert(start.index());
-    }
-
-    while let Some(current_id) = bufs.closure_stack.pop() {
-        if current_id.is_none() {
-            continue;
-        }
-
-        let state = &arena[current_id];
-        for &eps_id in &state.table.epsilons {
-            if eps_id.is_none() {
-                continue;
-            }
-
-            let idx = eps_id.index();
-            if idx < bufs.seen_states.capacity() && bufs.seen_states.insert(idx) {
-                bufs.closure_result.push(eps_id);
-                bufs.closure_stack.push(eps_id);
-            }
-        }
-    }
-    // SparseSet: no manual cleanup needed - O(1) clear on next call
-}
-
 /// Merge two arena-based DFAs into one that matches either pattern.
 ///
 /// This is the arena equivalent of `merge_fas` for chain-based FAs.
@@ -723,6 +630,7 @@ pub fn merge_arena_dfas(
     let start =
         merge_arena_states_recursive(arena1, start1, arena2, start2, &mut new_arena, &mut memo);
 
+    new_arena.precompute_epsilon_closures();
     (new_arena, start)
 }
 
@@ -1600,6 +1508,7 @@ pub fn make_numeric_less_arena_fa(
     // Build the FA recursively
     let start = make_less_arena_fa_step(&bound_q, 0, inclusive, match_state, &mut arena);
 
+    arena.precompute_epsilon_closures();
     (arena, start)
 }
 
@@ -1627,6 +1536,7 @@ pub fn make_numeric_greater_arena_fa(
     // Build the FA recursively
     let start = make_greater_arena_fa_step(&bound_q, 0, inclusive, match_state, &mut arena);
 
+    arena.precompute_epsilon_closures();
     (arena, start)
 }
 
@@ -1669,6 +1579,7 @@ pub fn make_numeric_range_arena_fa(
         &mut arena,
     );
 
+    arena.precompute_epsilon_closures();
     (arena, start)
 }
 
@@ -1906,6 +1817,7 @@ pub fn make_string_arena_fa(val: &[u8], next_field: Arc<FieldMatcher>) -> (State
     // Build the FA chain from end to start
     let start = make_string_arena_fa_step(val, 0, match_state, &mut arena);
 
+    arena.precompute_epsilon_closures();
     (arena, start)
 }
 
@@ -1963,6 +1875,7 @@ pub fn insert_string_into_arena(
             // No transition for this byte — create the remaining chain
             let match_state = arena.alloc();
             arena[match_state].field_transitions.push(field_matcher);
+            arena[match_state].epsilon_closure = smallvec![match_state];
 
             // Build chain backwards for any remaining bytes after this one
             let mut target = match_state;
@@ -1977,6 +1890,7 @@ pub fn insert_string_into_arena(
                     &[b],
                     &[target],
                 ));
+                arena[target].epsilon_closure = smallvec![target];
             }
 
             // Add transition from current state to the new chain
@@ -2011,6 +1925,7 @@ pub fn make_prefix_arena_fa(prefix: &[u8], next_field: Arc<FieldMatcher>) -> (St
     // Build the FA chain from end to start
     let start = make_prefix_arena_fa_step(prefix, 0, match_state, &mut arena);
 
+    arena.precompute_epsilon_closures();
     (arena, start)
 }
 
@@ -2068,6 +1983,7 @@ pub fn make_shellstyle_arena_fa(
     // Build the FA from segments
     let start = build_shellstyle_arena_segments(&segments, 0, match_state, &mut arena);
 
+    arena.precompute_epsilon_closures();
     (arena, start)
 }
 
@@ -2212,6 +2128,7 @@ pub fn make_wildcard_arena_fa(
     // Build the FA from segments (reuse shellstyle segment builder)
     let start = build_shellstyle_arena_segments(&segments, 0, match_state, &mut arena);
 
+    arena.precompute_epsilon_closures();
     (arena, start)
 }
 
@@ -2280,6 +2197,7 @@ pub fn make_anything_but_arena_fa(
     // Build the trie-like structure
     let start = build_anything_but_step(excluded, 0, success, &mut arena);
 
+    arena.precompute_epsilon_closures();
     (arena, start)
 }
 
@@ -2415,49 +2333,42 @@ pub fn make_monocase_arena_fa(val: &[u8], next_field: Arc<FieldMatcher>) -> (Sta
     arena[match_state].field_transitions.push(next_field);
 
     // Empty string case
-    if val.is_empty() {
-        let start = arena.alloc_with_table(ArenaSmallTable::with_mappings(
+    let start = if val.is_empty() {
+        arena.alloc_with_table(ArenaSmallTable::with_mappings(
             StateId::NONE,
             &[ARENA_VALUE_TERMINATOR],
             &[match_state],
-        ));
-        return (arena, start);
-    }
+        ))
+    } else if let Ok(s) = std::str::from_utf8(val) {
+        // Collect character info: (original bytes, alternate bytes if any)
+        let chars: Vec<(Vec<u8>, Option<Vec<u8>>)> = s
+            .char_indices()
+            .map(|(offset, ch)| {
+                let next_offset = s[offset..]
+                    .chars()
+                    .next()
+                    .map(|c| offset + c.len_utf8())
+                    .unwrap_or(val.len());
+                let orig = val[offset..next_offset].to_vec();
 
-    // Try to convert to UTF-8 for proper Unicode case folding
-    let s = match std::str::from_utf8(val) {
-        Ok(s) => s,
-        Err(_) => {
-            // Invalid UTF-8 - fall back to ASCII-only case folding
-            let start = build_monocase_ascii_chain(val, match_state, &mut arena);
-            return (arena, start);
-        }
+                let alt = case_fold_char(ch).map(|alt_char| {
+                    let mut buf = [0u8; 4];
+                    alt_char.encode_utf8(&mut buf);
+                    buf[..alt_char.len_utf8()].to_vec()
+                });
+
+                (orig, alt)
+            })
+            .collect();
+
+        // Build the FA recursively
+        build_monocase_arena_recursive(&chars, 0, match_state, &mut arena)
+    } else {
+        // Invalid UTF-8 - fall back to ASCII-only case folding
+        build_monocase_ascii_chain(val, match_state, &mut arena)
     };
 
-    // Collect character info: (original bytes, alternate bytes if any)
-    let chars: Vec<(Vec<u8>, Option<Vec<u8>>)> = s
-        .char_indices()
-        .map(|(offset, ch)| {
-            let next_offset = s[offset..]
-                .chars()
-                .next()
-                .map(|c| offset + c.len_utf8())
-                .unwrap_or(val.len());
-            let orig = val[offset..next_offset].to_vec();
-
-            let alt = case_fold_char(ch).map(|alt_char| {
-                let mut buf = [0u8; 4];
-                alt_char.encode_utf8(&mut buf);
-                buf[..alt_char.len_utf8()].to_vec()
-            });
-
-            (orig, alt)
-        })
-        .collect();
-
-    // Build the FA recursively
-    let start = build_monocase_arena_recursive(&chars, 0, match_state, &mut arena);
-
+    arena.precompute_epsilon_closures();
     (arena, start)
 }
 
@@ -2680,7 +2591,7 @@ pub fn make_cidr_arena_fa(
 ) -> (StateArena, StateId) {
     use crate::json::CidrPattern;
 
-    match cidr {
+    let (mut arena, start) = match cidr {
         CidrPattern::V4 {
             network,
             prefix_len,
@@ -2689,7 +2600,9 @@ pub fn make_cidr_arena_fa(
             network,
             prefix_len,
         } => make_ipv6_cidr_arena_fa(network, *prefix_len, next_field),
-    }
+    };
+    arena.precompute_epsilon_closures();
+    (arena, start)
 }
 
 /// Build arena FA for IPv4 CIDR matching.
@@ -3043,6 +2956,7 @@ mod tests {
             &[match_state],
         ));
 
+        arena.precompute_epsilon_closures();
         let mut bufs = ArenaNfaBuffers::with_capacity(arena.len());
 
         // Should match "a"
@@ -3096,6 +3010,7 @@ mod tests {
         // Now set up loopback's epsilons: to exit AND back to start (CYCLE!)
         arena[loopback].table.epsilons = smallvec![exit_state, start];
 
+        arena.precompute_epsilon_closures();
         let mut bufs = ArenaNfaBuffers::with_capacity(arena.len());
 
         // Should match empty string (zero times)
@@ -3171,6 +3086,7 @@ mod tests {
         // Set up loopback's epsilons: to exit AND back to start (CYCLE!)
         arena[loopback].table.epsilons = smallvec![exit_state, start];
 
+        arena.precompute_epsilon_closures();
         let mut bufs = ArenaNfaBuffers::with_capacity(arena.len());
 
         // Should NOT match empty string (+ requires at least one)
@@ -3228,6 +3144,7 @@ mod tests {
         assert_eq!(arena.len(), 4, "Arena [a]* should only need 4 states");
 
         // Verify it works
+        arena.precompute_epsilon_closures();
         let mut bufs = ArenaNfaBuffers::with_capacity(arena.len());
         traverse_arena_nfa(&arena, start, b"aaaaaaaaaa", &mut bufs);
         assert_eq!(bufs.transitions.len(), 1);
@@ -3281,6 +3198,7 @@ mod tests {
             len: 1,
         });
 
+        arena.precompute_epsilon_closures();
         let mut bufs = ArenaNfaBuffers::with_capacity(arena.len());
 
         // Test with a long string where 'x' is at the end
@@ -4053,6 +3971,7 @@ mod nfa_merge_tests {
         let start = arena.alloc();
         arena[start].table.epsilons = SmallVec::from_vec(branches);
 
+        arena.precompute_epsilon_closures();
         (arena, start)
     }
 
@@ -4109,23 +4028,25 @@ mod nfa_merge_tests {
         // Build prefix chain
         let mut current = spinout_state;
         // Add epsilon from start of spinout to after_spinout for zero-width wildcard
-        if prefix.is_empty() {
+        let start = if prefix.is_empty() {
             // No prefix - start is the spinout with epsilon to continuation
             let start = arena.alloc();
             arena[start].table.epsilons.push(spinout_state);
-            return (arena, start);
-        }
+            start
+        } else {
+            for &byte in prefix.iter().rev() {
+                let state = arena.alloc_with_table(ArenaSmallTable::with_mappings(
+                    StateId::NONE,
+                    &[byte],
+                    &[current],
+                ));
+                current = state;
+            }
+            current
+        };
 
-        for &byte in prefix.iter().rev() {
-            let state = arena.alloc_with_table(ArenaSmallTable::with_mappings(
-                StateId::NONE,
-                &[byte],
-                &[current],
-            ));
-            current = state;
-        }
-
-        (arena, current)
+        arena.precompute_epsilon_closures();
+        (arena, start)
     }
 
     #[test]

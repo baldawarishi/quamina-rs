@@ -874,9 +874,7 @@ impl<X: Clone + Eq + std::hash::Hash> AutomatonValueMatcher<X> {
                 self.arena = Some((merged_arena, merged_start));
             }
             None => {
-                let mut arena = new_arena;
-                arena.precompute_epsilon_closures();
-                self.arena = Some((arena, new_start));
+                self.arena = Some((new_arena, new_start));
             }
         }
     }

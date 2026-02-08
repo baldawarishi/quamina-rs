@@ -76,7 +76,7 @@ pub fn make_regexp_nfa_arena(root: RegexpRoot) -> (StateArena, StateId, Arc<Fiel
     let next_field = Arc::new(FieldMatcher::new());
 
     // Handle empty regexp specially - it matches only the empty string
-    if root.is_empty() {
+    let (mut arena, start) = if root.is_empty() {
         let mut arena = StateArena::with_capacity(4);
 
         // Create match state
@@ -104,42 +104,45 @@ pub fn make_regexp_nfa_arena(root: RegexpRoot) -> (StateArena, StateId, Arc<Fiel
             b"\"",
             &[closing_quote],
         ));
-        return (arena, start, next_field);
-    }
+        (arena, start)
+    } else {
+        // Build the arena NFA
+        let mut arena = StateArena::with_capacity(16);
 
-    // Build the arena NFA
-    let mut arena = StateArena::with_capacity(16);
+        // Create match state (reached at end of value)
+        let match_state = arena.alloc();
+        arena[match_state]
+            .field_transitions
+            .push(next_field.clone());
 
-    // Create match state (reached at end of value)
-    let match_state = arena.alloc();
-    arena[match_state]
-        .field_transitions
-        .push(next_field.clone());
+        // Create VALUE_TERMINATOR transition state
+        let vt_state = arena.alloc_with_table(ArenaSmallTable::with_mappings(
+            StateId::NONE,
+            &[ARENA_VALUE_TERMINATOR],
+            &[match_state],
+        ));
 
-    // Create VALUE_TERMINATOR transition state
-    let vt_state = arena.alloc_with_table(ArenaSmallTable::with_mappings(
-        StateId::NONE,
-        &[ARENA_VALUE_TERMINATOR],
-        &[match_state],
-    ));
+        // Add trailing quote: regexp content → " → VALUE_TERMINATOR → match
+        let next_step = arena.alloc_with_table(ArenaSmallTable::with_mappings(
+            StateId::NONE,
+            b"\"",
+            &[vt_state],
+        ));
 
-    // Add trailing quote: regexp content → " → VALUE_TERMINATOR → match
-    let next_step = arena.alloc_with_table(ArenaSmallTable::with_mappings(
-        StateId::NONE,
-        b"\"",
-        &[vt_state],
-    ));
+        // Build the NFA from branches
+        let branch_start = make_arena_nfa_from_branches(&root, &mut arena, next_step);
 
-    // Build the NFA from branches
-    let branch_start = make_arena_nfa_from_branches(&root, &mut arena, next_step);
+        // Wrap with leading quote at the top level only
+        let start = arena.alloc_with_table(ArenaSmallTable::with_mappings(
+            StateId::NONE,
+            b"\"",
+            &[branch_start],
+        ));
 
-    // Wrap with leading quote at the top level only
-    let start = arena.alloc_with_table(ArenaSmallTable::with_mappings(
-        StateId::NONE,
-        b"\"",
-        &[branch_start],
-    ));
+        (arena, start)
+    };
 
+    arena.precompute_epsilon_closures();
     (arena, start, next_field)
 }
 
