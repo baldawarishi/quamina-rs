@@ -530,6 +530,18 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
         Ok(matches)
     }
 
+    /// Access the underlying automaton (for direct matching without Mutex).
+    #[doc(hidden)]
+    pub fn automaton(&self) -> &ThreadSafeCoreMatcher<X> {
+        &self.automaton
+    }
+
+    /// Access the segments tree (for direct flattening without Mutex).
+    #[doc(hidden)]
+    pub fn segments_tree(&self) -> &SegmentsTree {
+        &self.segments_tree
+    }
+
     /// Flatten an event without matching (for benchmarking)
     #[doc(hidden)]
     pub fn flatten_only(&self, event: &[u8]) -> Result<usize, QuaminaError> {
