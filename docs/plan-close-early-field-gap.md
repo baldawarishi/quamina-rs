@@ -36,13 +36,13 @@ Update the plan doc with progress after each step.
 - [ ] Run baseline: `cargo bench --bench matching -- status_context_fields`
 - [ ] Record baseline numbers below
 
-**Baseline (fill in):**
+**Baseline (2026-02-08):**
 ```
-status_context_fields          = ___ ns
-status_context_fields_no_mutex = ___ ns
-flatten_direct_context_fields  = ___ ns
-flatten_sort_context_fields    = ___ ns
-match_only_context_fields      = ___ ns
+status_context_fields          = 420 ns
+status_context_fields_no_mutex = 385 ns
+flatten_direct_context_fields  = 155 ns
+flatten_sort_context_fields    = 161 ns
+match_only_context_fields      = 232 ns
 ```
 
 ---
@@ -65,12 +65,13 @@ comes from the JSON parser.
 
 **Files:** `src/segments_tree.rs`
 
-- [ ] Make the 4 changes
-- [ ] `cargo test` — all tests pass
-- [ ] `cargo bench --bench matching -- status_context_fields` — record improvement
-- [ ] Commit & push
+- [x] Make the 4 changes
+- [x] `cargo test` — all 442 tests pass
+- [x] `cargo bench --bench matching -- status_context_fields` — recorded improvement
+- [x] Commit & push (b7af159)
 
-**Result:** `status_context_fields` = ___ ns (delta: ___ ns)
+**Result:** `status_context_fields` = 387 ns (delta: −33 ns / −8.5%)
+**No-mutex:** `status_context_fields_no_mutex` = 379 ns (delta: −6 ns / −1.6%)
 
 ---
 
@@ -96,12 +97,14 @@ The `SegmentsTree` already uses `FxHashMap` for the same reason.
 
 **Files:** `src/automaton/thread_safe.rs`
 
-- [ ] Make the changes
-- [ ] `cargo test` — all tests pass
-- [ ] `cargo bench --bench matching -- status_context_fields` — record improvement
-- [ ] Commit & push
+- [x] Make the changes
+- [x] `cargo test` — all 442 tests pass
+- [x] `cargo bench --bench matching -- status_context_fields` — recorded improvement
+- [x] Commit & push (e0c89dc)
 
-**Result:** `status_context_fields` = ___ ns (delta: ___ ns)
+**Result:** `status_context_fields` = 329 ns (delta: −58 ns / −15% from Step 2)
+**No-mutex:** `status_context_fields_no_mutex` = 322 ns (delta: −57 ns / −15% from Step 2)
+**Cumulative:** 420 → 329 ns (−91 ns / −22%, now 14% faster than Go's 382 ns)
 
 ---
 
@@ -231,9 +234,9 @@ Update this section as each step is completed.
 
 | Step | Status | Date | Notes |
 |------|--------|------|-------|
-| 1. Branch + baseline | Not started | | |
-| 2. from_utf8_unchecked | Not started | | |
-| 3. FxHashMap | Not started | | |
+| 1. Branch + baseline | Done | 2026-02-08 | 420ns baseline (machine slightly higher than original 398ns measurement) |
+| 2. from_utf8_unchecked | Done | 2026-02-08 | 420→387ns (−33ns/−8.5%), commit b7af159 |
+| 3. FxHashMap | Done | 2026-02-08 | 387→329ns (−58ns/−15%), commit e0c89dc. Cumulative: 420→329ns (−22%) |
 | 4. thread_local | Not started | | |
 | 5. Reuse match-set | Not started | | |
 | 6. Final benchmark | Not started | | |
