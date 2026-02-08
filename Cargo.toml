@@ -41,6 +41,12 @@ harness = false
 name = "memory"
 harness = false
 
+[profile.bench]
+debug = 1  # Line tables for flamegraph/samply
+
+[profile.release]
+debug = 1  # Line tables for flamegraph/samply
+
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)'] }
 unsafe_code = "warn"
