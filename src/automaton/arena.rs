@@ -64,6 +64,11 @@ pub struct ArenaFaState {
     /// Field matchers to transition to when this state is reached at end of value.
     /// SmallVec<[_; 1]> avoids heap allocation for the common case (0 or 1 transitions).
     pub field_transitions: SmallVec<[Arc<FieldMatcher>; 1]>,
+    /// Precomputed epsilon closure (all states reachable via epsilon transitions,
+    /// including self). Computed once at build time by `precompute_epsilon_closures()`.
+    /// For DFA states (no epsilons), this is `[self]`.
+    /// For NFA states, this is `[self, eps1, eps2, ...]`.
+    pub epsilon_closure: SmallVec<[StateId; 4]>,
 }
 
 impl std::fmt::Debug for ArenaFaState {
@@ -84,6 +89,7 @@ impl ArenaFaState {
         Self {
             table,
             field_transitions: SmallVec::new(),
+            epsilon_closure: SmallVec::new(),
         }
     }
 }
@@ -289,6 +295,66 @@ impl StateArena {
     pub fn is_empty(&self) -> bool {
         self.states.is_empty()
     }
+
+    /// Precompute epsilon closures for all states in the arena.
+    ///
+    /// For each state, computes the set of all states reachable via epsilon
+    /// transitions (including the state itself) and stores it on the state.
+    /// This eliminates per-byte DFS computation during NFA traversal.
+    ///
+    /// Must be called after the arena structure is finalized (e.g., after merging).
+    pub fn precompute_epsilon_closures(&mut self) {
+        let arena_len = self.states.len();
+        if arena_len == 0 {
+            return;
+        }
+
+        let mut seen = SparseSet::new(arena_len);
+        let mut stack: Vec<StateId> = Vec::new();
+
+        // Compute closures into a separate buffer to avoid borrow conflicts
+        let mut closures: Vec<SmallVec<[StateId; 4]>> = Vec::with_capacity(arena_len);
+
+        for state_idx in 0..arena_len {
+            let state_id = StateId::from_index(state_idx);
+
+            if self.states[state_idx].table.epsilons.is_empty() {
+                // DFA state: closure is just [self]
+                closures.push(smallvec![state_id]);
+            } else {
+                // NFA state: compute full epsilon closure via DFS
+                seen.clear();
+                stack.clear();
+
+                let mut closure: SmallVec<[StateId; 4]> = SmallVec::new();
+                closure.push(state_id);
+                stack.push(state_id);
+                seen.insert(state_idx);
+
+                while let Some(current_id) = stack.pop() {
+                    if current_id.is_none() {
+                        continue;
+                    }
+                    for &eps_id in &self.states[current_id.index()].table.epsilons {
+                        if !eps_id.is_none() {
+                            let idx = eps_id.index();
+                            if idx < seen.capacity() && seen.insert(idx) {
+                                closure.push(eps_id);
+                                stack.push(eps_id);
+                            }
+                        }
+                    }
+                }
+
+                closures.push(closure);
+            }
+        }
+
+        // Write closures back into arena states
+        for (state_idx, closure) in closures.into_iter().enumerate() {
+            self.states[state_idx].epsilon_closure = closure;
+        }
+    }
 }
 
 impl std::ops::Index<StateId> for StateArena {
@@ -444,8 +510,15 @@ pub fn traverse_arena_nfa(
         let states_to_process = std::mem::take(&mut bufs.current_states);
 
         for state_id in states_to_process {
-            // Get epsilon closure into bufs.closure_result
-            fill_epsilon_closure(arena, state_id, bufs);
+            // Use precomputed epsilon closure when available (set by
+            // precompute_epsilon_closures), otherwise fall back to DFS.
+            let precomputed = &arena[state_id].epsilon_closure;
+            if !precomputed.is_empty() {
+                bufs.closure_result.clear();
+                bufs.closure_result.extend_from_slice(precomputed);
+            } else {
+                fill_epsilon_closure(arena, state_id, bufs);
+            }
 
             // Iterate by index to avoid borrow conflicts
             for ec_idx in 0..bufs.closure_result.len() {
@@ -483,8 +556,13 @@ pub fn traverse_arena_nfa(
     // Check final states for matches
     let final_states = std::mem::take(&mut bufs.current_states);
     for state_id in final_states {
-        // Get epsilon closure into bufs.closure_result
-        fill_epsilon_closure(arena, state_id, bufs);
+        let precomputed = &arena[state_id].epsilon_closure;
+        if !precomputed.is_empty() {
+            bufs.closure_result.clear();
+            bufs.closure_result.extend_from_slice(precomputed);
+        } else {
+            fill_epsilon_closure(arena, state_id, bufs);
+        }
 
         // Iterate by index to avoid borrow conflicts
         for ec_idx in 0..bufs.closure_result.len() {
@@ -662,6 +740,7 @@ fn clone_arena_subset(arena: &StateArena, start: StateId) -> (StateArena, StateI
     clone_state_recursive(arena, start, &mut new_arena, &mut id_map);
 
     let new_start = id_map.get(&start.0).copied().unwrap_or(StateId::NONE);
+    new_arena.precompute_epsilon_closures();
     (new_arena, new_start)
 }
 
@@ -1043,6 +1122,10 @@ pub fn merge_arena_nfas(
 
     let start =
         merge_arena_nfa_states_recursive(arena1, start1, arena2, start2, &mut new_arena, &mut memo);
+
+    // Precompute epsilon closures for all states in the merged arena.
+    // This eliminates per-byte DFS computation during NFA traversal.
+    new_arena.precompute_epsilon_closures();
 
     (new_arena, start)
 }
