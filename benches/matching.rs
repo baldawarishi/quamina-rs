@@ -206,36 +206,6 @@ fn bench_flatten_sort_context_fields(c: &mut Criterion) {
     });
 }
 
-/// Full matching path without Mutex overhead.
-/// Uses FlattenJsonState + ThreadSafeCoreMatcher::matches_for_fields_direct + NfaBuffers directly.
-/// The difference between this and `status_context_fields` isolates Mutex overhead.
-fn bench_status_context_fields_no_mutex(c: &mut Criterion) {
-    let mut q = Quamina::new();
-    q.add_pattern("context", PATTERN_CONTEXT).unwrap();
-    let event = load_status_json();
-
-    let automaton = q.automaton();
-    let segments_tree = q.segments_tree();
-    let mut flattener = FlattenJsonState::new();
-    let mut nfa_bufs = quamina::automaton::NfaBuffers::new();
-
-    // Verify
-    {
-        let fields = flattener.flatten(&event, segments_tree).unwrap();
-        fields.sort_unstable_by(|a, b| a.path.cmp(&b.path));
-        let matches = automaton.matches_for_fields_direct(fields, &mut nfa_bufs);
-        assert_eq!(matches.len(), 1);
-    }
-
-    c.bench_function("status_context_fields_no_mutex", |b| {
-        b.iter(|| {
-            let fields = flattener.flatten(black_box(&event), segments_tree).unwrap();
-            fields.sort_unstable_by(|a, b| a.path.cmp(&b.path));
-            automaton.matches_for_fields_direct(fields, &mut nfa_bufs)
-        })
-    });
-}
-
 /// Match-only benchmark with pre-flattened fields.
 /// Pre-flattens and pre-sorts fields once, then benchmarks only the automaton matching step.
 fn bench_match_only_context_fields(c: &mut Criterion) {
@@ -1469,7 +1439,6 @@ criterion_group!(
     bench_flatten_last_field,
     // Status.json full matching benchmarks (comparable to Go's Benchmark_JsonFlattner_Evaluate_*)
     bench_status_context_fields,
-    bench_status_context_fields_no_mutex,
     bench_match_only_context_fields,
     bench_status_middle_nested,
     bench_status_last_field,
