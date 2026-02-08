@@ -779,22 +779,24 @@ impl<X: Clone + Eq + Hash + Send + Sync> Default for ThreadSafeCoreMatcher<X> {
     }
 }
 
-/// A set of matches (deduplicated) for frozen matcher
-struct FrozenMatchSet<X: Clone + Eq + Hash> {
-    seen: FxHashSet<X>,
+/// A set of matches (deduplicated) for frozen matcher.
+///
+/// Uses linear dedup on a Vec instead of a HashSet. This is faster for the
+/// common case of few matches (0-10) because it avoids hash table allocation
+/// and hashing overhead. Pattern matching typically produces few results.
+struct FrozenMatchSet<X: Clone + Eq> {
     matches: Vec<X>,
 }
 
-impl<X: Clone + Eq + Hash> FrozenMatchSet<X> {
+impl<X: Clone + Eq> FrozenMatchSet<X> {
     fn new() -> Self {
         Self {
-            seen: FxHashSet::default(),
             matches: Vec::new(),
         }
     }
 
     fn add(&mut self, x: X) {
-        if self.seen.insert(x.clone()) {
+        if !self.matches.contains(&x) {
             self.matches.push(x);
         }
     }
