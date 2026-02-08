@@ -197,22 +197,15 @@ match q.add_pattern("bad", r#"{"x": "not-an-array"}"#) {
 
 ## Concurrency
 
-A single `Quamina` instance can be safely shared across threads. However, matching uses internal buffers protected by locks, so if multiple threads call `matches_for_event()` on the same instance simultaneously, they'll wait for each other rather than run in parallel.
+A single `Quamina` instance can be safely shared across threads via `Arc`. Matching uses thread-local buffers, so multiple threads calling `matches_for_event()` on the same `Arc<Quamina>` run in parallel without contention.
 
-For truly parallel matching, clone the instance:
-
-```rust
-let q2 = q.clone();
-// q and q2 can now match events in parallel without contention
-```
-
-Note: `clone()` rebuilds the automaton from stored patterns. It's not a cheap operation for instances with many patterns.
-
-For concurrent writes, you can also wrap Quamina in a lock:
+Pattern addition (`add_pattern`) requires `&mut self`. For concurrent writes, wrap in a lock:
 
 ```rust
 let q = Arc::new(RwLock::new(Quamina::new()));
 ```
+
+`clone()` rebuilds the automaton from stored patterns. It's not a cheap operation for instances with many patterns.
 
 ## Performance
 
@@ -224,28 +217,28 @@ On an M3 Max:
 
 | Patterns | Match time |
 |----------|-----------|
-| 100 | 218 ns |
-| 10,000 | 188 ns |
+| 100 | 144 ns |
+| 10,000 | 147 ns |
 
 ### Comparison with Go quamina
 
 | Benchmark | Go | Rust | Speedup |
 |-----------|---:|-----:|--------:|
-| citylots (4 patterns, 206k GeoJSON) | 3,239 ns | 2,070 ns | 1.6x |
-| nested field match (14KB JSON) | 7,482 ns | 5,393 ns | 1.4x |
-| early field match (14KB JSON) | 393 ns | 409 ns | 0.96x |
+| citylots (4 patterns, 206k GeoJSON) | 3,239 ns | 1,731 ns | 1.9x |
+| early field match (14KB JSON) | 403 ns | 272 ns | 1.5x |
+| nested field match (14KB JSON) | 7,482 ns | 5,469 ns | 1.4x |
 
 ### Pattern type benchmarks
 
 | Benchmark | Time | Description |
 |-----------|-----:|-------------|
-| exact_match | 137 ns | Single exact match |
-| nested_match | 187 ns | Nested field exact match |
-| regex_match | 131 ns | Simple regex pattern |
-| anything_but_match | 153 ns | Anything-but with 3 values |
-| numeric_range | 164 ns | Two-sided numeric (`>= 0, < 100`) |
-| 100_prefix_patterns | 230 ns | 100 prefix patterns |
-| shellstyle_26_patterns | 477 ns | 26 shellstyle patterns (A*-Z*) |
+| exact_match | 90 ns | Single exact match |
+| nested_match | 134 ns | Nested field exact match |
+| regex_match | 104 ns | Simple regex pattern |
+| anything_but_match | 110 ns | Anything-but with 3 values |
+| numeric_range | 110 ns | Two-sided numeric (`>= 0, < 100`) |
+| 100_prefix_patterns | 158 ns | 100 prefix patterns |
+| shellstyle_26_patterns | 415 ns | 26 shellstyle patterns (A*-Z*) |
 
 ### What affects performance
 
