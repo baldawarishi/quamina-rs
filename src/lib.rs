@@ -28,10 +28,18 @@ use flatten_json::FlattenJsonState;
 use json::Matcher;
 use parking_lot::Mutex;
 use segments_tree::SegmentsTree;
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::hash::Hash;
 use std::sync::atomic::{AtomicU64, Ordering};
+
+thread_local! {
+    /// Thread-local JSON flattener state, avoiding per-call Mutex overhead.
+    static TL_FLATTENER: RefCell<FlattenJsonState> = RefCell::new(FlattenJsonState::new());
+    /// Thread-local NFA traversal buffers, avoiding per-call Mutex overhead.
+    static TL_NFA_BUFS: RefCell<NfaBuffers> = RefCell::new(NfaBuffers::new());
+}
 
 /// Statistics for pruner rebuilding decisions
 #[derive(Debug, Default)]
@@ -295,9 +303,7 @@ impl<X: Clone + Eq + Hash + Send + Sync> QuaminaBuilder<X> {
             pattern_defs: HashMap::new(),
             deleted_patterns: HashSet::new(),
             segments_tree: SegmentsTree::new(),
-            flattener: Mutex::new(FlattenJsonState::new()),
             custom_flattener: self.custom_flattener.map(Mutex::new),
-            nfa_bufs: Mutex::new(NfaBuffers::new()),
             pruner_stats: PrunerStats::new(),
             auto_rebuild_enabled: self.auto_rebuild_enabled,
         })
@@ -343,12 +349,8 @@ pub struct Quamina<X: Clone + Eq + Hash + Send + Sync = String> {
     deleted_patterns: HashSet<X>,
     /// Segments tree for fast field skipping during event parsing
     segments_tree: SegmentsTree,
-    /// Reusable JSON flattener state (Mutex for thread-safe access)
-    flattener: Mutex<FlattenJsonState>,
     /// Custom flattener for non-JSON formats (if provided)
     custom_flattener: Option<Mutex<Box<dyn flattener::Flattener>>>,
-    /// Reusable NFA traversal buffers (Mutex for thread-safe access)
-    nfa_bufs: Mutex<NfaBuffers>,
     /// Statistics for auto-rebuild decisions
     pruner_stats: PrunerStats,
     /// Whether auto-rebuild is enabled (default: true)
@@ -382,9 +384,7 @@ impl<X: Clone + Eq + Hash + Send + Sync> Clone for Quamina<X> {
             pattern_defs: self.pattern_defs.clone(),
             deleted_patterns: self.deleted_patterns.clone(),
             segments_tree: self.segments_tree.clone(),
-            flattener: Mutex::new(FlattenJsonState::new()),
             custom_flattener,
-            nfa_bufs: Mutex::new(NfaBuffers::new()),
             pruner_stats: self.pruner_stats.clone(),
             auto_rebuild_enabled: self.auto_rebuild_enabled,
         }
@@ -399,9 +399,7 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
             pattern_defs: HashMap::new(),
             deleted_patterns: HashSet::new(),
             segments_tree: SegmentsTree::new(),
-            flattener: Mutex::new(FlattenJsonState::new()),
             custom_flattener: None,
-            nfa_bufs: Mutex::new(NfaBuffers::new()),
             pruner_stats: PrunerStats::new(),
             auto_rebuild_enabled: true,
         }
@@ -441,39 +439,40 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
             return self.matches_for_event_custom_flattener(event, custom_flattener_mutex);
         }
 
-        // Default path: use optimized JSON flattener with borrowed data
-        let mut flattener = self.flattener.lock();
-        let streaming_fields = flattener.flatten(event, &self.segments_tree)?;
+        // Default path: use thread-local flattener + NFA buffers (no Mutex overhead)
+        TL_FLATTENER.with(|flattener_cell| {
+            TL_NFA_BUFS.with(|bufs_cell| {
+                let mut flattener = flattener_cell.borrow_mut();
+                let mut bufs = bufs_cell.borrow_mut();
 
-        // Sort by path for automaton matching (using byte comparison which is equivalent to str for ASCII paths)
-        streaming_fields.sort_unstable_by(|a, b| a.path.cmp(&b.path));
+                let streaming_fields = flattener.flatten(event, &self.segments_tree)?;
 
-        // Get matches from automaton using fields directly (no intermediate EventFieldRef)
-        let matches: Vec<X> = {
-            let mut bufs = self.nfa_bufs.lock();
-            let raw_matches = self
-                .automaton
-                .matches_for_fields_direct(streaming_fields, &mut bufs);
-            // Fast path: skip filtering if no patterns have been deleted
-            if self.deleted_patterns.is_empty() {
-                // Track stats: all matches are emitted
-                self.pruner_stats.add_emitted(raw_matches.len() as u64);
-                raw_matches
-            } else {
-                // Slow path: filter deleted patterns and track stats
-                let raw_count = raw_matches.len();
-                let filtered: Vec<X> = raw_matches
-                    .into_iter()
-                    .filter(|x| !self.deleted_patterns.contains(x))
-                    .collect();
-                let filtered_count = raw_count - filtered.len();
-                self.pruner_stats.add_emitted(filtered.len() as u64);
-                self.pruner_stats.add_filtered(filtered_count as u64);
-                filtered
-            }
-        };
+                // Sort by path for automaton matching
+                streaming_fields.sort_unstable_by(|a, b| a.path.cmp(&b.path));
 
-        Ok(matches)
+                let raw_matches = self
+                    .automaton
+                    .matches_for_fields_direct(streaming_fields, &mut bufs);
+
+                // Fast path: skip filtering if no patterns have been deleted
+                let matches = if self.deleted_patterns.is_empty() {
+                    self.pruner_stats.add_emitted(raw_matches.len() as u64);
+                    raw_matches
+                } else {
+                    let raw_count = raw_matches.len();
+                    let filtered: Vec<X> = raw_matches
+                        .into_iter()
+                        .filter(|x| !self.deleted_patterns.contains(x))
+                        .collect();
+                    let filtered_count = raw_count - filtered.len();
+                    self.pruner_stats.add_emitted(filtered.len() as u64);
+                    self.pruner_stats.add_filtered(filtered_count as u64);
+                    filtered
+                };
+
+                Ok(matches)
+            })
+        })
     }
 
     /// Match using a custom flattener (slower path with owned data)
@@ -484,7 +483,7 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
     ) -> Result<Vec<X>, QuaminaError> {
         use std::sync::Arc;
 
-        // Get owned fields from custom flattener
+        // Get owned fields from custom flattener (still needs Mutex — user-provided)
         let mut custom_flattener = custom_flattener_mutex.lock();
         let owned_fields = custom_flattener.flatten(event, &self.segments_tree)?;
         drop(custom_flattener); // Release lock early
@@ -503,9 +502,9 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
         // Sort by path for automaton matching
         streaming_fields.sort_unstable_by(|a, b| a.path.cmp(&b.path));
 
-        // Get matches from automaton
-        let matches: Vec<X> = {
-            let mut bufs = self.nfa_bufs.lock();
+        // Get matches from automaton using thread-local NFA buffers
+        let matches = TL_NFA_BUFS.with(|bufs_cell| {
+            let mut bufs = bufs_cell.borrow_mut();
             let raw_matches = self
                 .automaton
                 .matches_for_fields_direct(&streaming_fields, &mut bufs);
@@ -514,7 +513,6 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
                 self.pruner_stats.add_emitted(raw_matches.len() as u64);
                 raw_matches
             } else {
-                // Slow path: filter deleted patterns and track stats
                 let raw_count = raw_matches.len();
                 let filtered: Vec<X> = raw_matches
                     .into_iter()
@@ -525,7 +523,7 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
                 self.pruner_stats.add_filtered(filtered_count as u64);
                 filtered
             }
-        };
+        });
 
         Ok(matches)
     }
@@ -545,9 +543,11 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
     /// Flatten an event without matching (for benchmarking)
     #[doc(hidden)]
     pub fn flatten_only(&self, event: &[u8]) -> Result<usize, QuaminaError> {
-        let mut flattener = self.flattener.lock();
-        let fields = flattener.flatten(event, &self.segments_tree)?;
-        Ok(fields.len())
+        TL_FLATTENER.with(|flattener_cell| {
+            let mut flattener = flattener_cell.borrow_mut();
+            let fields = flattener.flatten(event, &self.segments_tree)?;
+            Ok(fields.len())
+        })
     }
 
     /// Delete all patterns with the given identifier
