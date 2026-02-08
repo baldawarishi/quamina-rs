@@ -75,3 +75,48 @@ of fixing the correctness bug where string `"123"` matched number `123`.
 Note: These are single-run numbers, not A/B criterion comparisons. The regex
 and shellstyle regressions reflect 2 extra NFA state transitions per match.
 Numbers and booleans are unaffected (no quotes added).
+
+### Precomputed Epsilon Closures (Go PR #482)
+
+**Change:** Precompute epsilon closures at build time (after merge or FA
+construction) and store them on each `ArenaFaState`. During NFA traversal,
+read the precomputed closure directly instead of running a DFS with SparseSet
+on every state for every byte.
+
+Go PR #482 introduced this as "Precomputed epsilon closures" — the initial
+assessment focused on the generation counter (vs Rust's SparseSet) and
+missed the larger architectural difference: Go precomputes closures at build
+time while Rust was computing them dynamically at match time.
+
+**Implementation:** Added `epsilon_closure: SmallVec<[StateId; 4]>` to
+`ArenaFaState`. Called `precompute_epsilon_closures()` after all arena creation
+paths: `merge_arena_nfas`, `clone_arena_subset`, all FA builders, and when
+first setting `main_arena`. No fallback — all arenas must have precomputed
+closures.
+
+**Results (same machine, single-run):**
+
+| Benchmark | Before | After | Change |
+|-----------|--------|-------|--------|
+| shellstyle_26 | 549 ns | 512 ns | **-6.7%** |
+| shellstyle_multi | 97.2 µs | 84.5 µs | **-13.1%** |
+| regexp_plus_short | 402 ns | 374 ns | **-7.0%** |
+| regexp_plus_long | 3.510 µs | 3.073 µs | **-12.4%** |
+| regexp_star_long | 3.574 µs | 3.063 µs | **-14.3%** |
+| regexp_dot_star | 782 ns | 693 ns | **-11.4%** |
+| arena_nfa_100chars | 3.141 µs | 2.688 µs | **-14.4%** |
+| arena_nfa_5chars | 217 ns | 196 ns | **-9.7%** |
+| accel_suffix_10k | 257 µs | 233 µs | **-9.3%** |
+| accel_suffix_1k | 26.1 µs | 23.4 µs | **-10.3%** |
+| accel_suffix_short | 423 ns | 399 ns | **-5.7%** |
+| regexp_negated_short | 138 ns | 141 ns | +2.2% (noise) |
+| regexp_negated_long | 187 ns | 187 ns | 0% |
+| regexp_negated_1k | 682 ns | 686 ns | +0.6% (noise) |
+| exact_match (DFA) | 124 ns | 121 ns | -2.4% (noise) |
+| nested_match (DFA) | 178 ns | 179 ns | +0.6% (noise) |
+| 10k_1_match (DFA) | 183 ns | 181 ns | -1.1% (noise) |
+
+NFA-heavy benchmarks: **-6% to -14%** improvement. DFA benchmarks: no
+regression. regexp_negated benchmarks flat because memchr acceleration
+dominates (epsilon closure is only computed at transition boundaries, not
+during the memchr-skipped middle section).

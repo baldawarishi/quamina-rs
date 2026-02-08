@@ -815,13 +815,16 @@ fn build_arena_nfa_plus() -> (StateArena, StateId, Arc<FieldMatcher>) {
     // Set up loopback: epsilon to exit AND back to start (CYCLE!)
     arena[loopback].table.epsilons = smallvec::smallvec![exit_state, start];
 
+    // Precompute epsilon closures for all states
+    arena.precompute_epsilon_closures();
+
     (arena, start, field_matcher)
 }
 
 /// Benchmark: Arena-based NFA traversal for [a-z]+ pattern
 fn bench_arena_nfa_traversal(c: &mut Criterion) {
     let (arena, start, _field_matcher) = build_arena_nfa_plus();
-    let mut bufs = ArenaNfaBuffers::with_capacity(arena.len());
+    let mut bufs = ArenaNfaBuffers::with_capacity();
 
     // Test with 100-character string
     let value: Vec<u8> = (0..100).map(|_| b'a').collect();
@@ -838,7 +841,7 @@ fn bench_arena_nfa_traversal(c: &mut Criterion) {
 /// Benchmark: Arena-based NFA traversal with short string
 fn bench_arena_nfa_short(c: &mut Criterion) {
     let (arena, start, _field_matcher) = build_arena_nfa_plus();
-    let mut bufs = ArenaNfaBuffers::with_capacity(arena.len());
+    let mut bufs = ArenaNfaBuffers::with_capacity();
 
     // Test with 5-character string
     let value: Vec<u8> = (0..5).map(|_| b'a').collect();

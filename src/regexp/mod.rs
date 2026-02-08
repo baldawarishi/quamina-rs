@@ -1069,7 +1069,7 @@ mod tests {
         // Build arena NFA
         let (arena, start, field_matcher) = make_regexp_nfa_arena(root);
 
-        let mut bufs = ArenaNfaBuffers::with_capacity(arena.len());
+        let mut bufs = ArenaNfaBuffers::with_capacity();
 
         // Test: "alice@example.com" should match
         let mut value = Vec::new();
@@ -1099,7 +1099,7 @@ mod tests {
         let root = parse_regexp(pattern).unwrap();
         let (arena, start, field_matcher) = make_regexp_nfa_arena(root);
 
-        let mut bufs = ArenaNfaBuffers::with_capacity(arena.len());
+        let mut bufs = ArenaNfaBuffers::with_capacity();
 
         // Test: "abc" should match
         let mut value = Vec::new();
@@ -1131,7 +1131,7 @@ mod tests {
             let root =
                 parse_regexp(pattern).unwrap_or_else(|_| panic!("Failed to parse: {}", pattern));
             let (arena, start, field_matcher) = make_regexp_nfa_arena(root);
-            let mut bufs = ArenaNfaBuffers::with_capacity(arena.len());
+            let mut bufs = ArenaNfaBuffers::with_capacity();
 
             let mut value: Vec<u8> = Vec::new();
             value.push(b'"');
@@ -1197,7 +1197,7 @@ mod tests {
             let root =
                 parse_regexp(pattern).unwrap_or_else(|_| panic!("Failed to parse: {}", pattern));
             let (arena, start, field_matcher) = make_regexp_nfa_arena(root);
-            let mut bufs = ArenaNfaBuffers::with_capacity(arena.len());
+            let mut bufs = ArenaNfaBuffers::with_capacity();
 
             // Wrap input in quotes (NFA now always expects leading/trailing ")
             let mut value: Vec<u8> = Vec::new();
@@ -1259,7 +1259,7 @@ mod tests {
             let root =
                 parse_regexp(pattern).unwrap_or_else(|_| panic!("Failed to parse: {}", pattern));
             let (arena, start, field_matcher) = make_regexp_nfa_arena(root);
-            let mut bufs = ArenaNfaBuffers::with_capacity(arena.len());
+            let mut bufs = ArenaNfaBuffers::with_capacity();
 
             // Add quotes and VALUE_TERMINATOR to input (like test_regexp_validity does)
             let mut value: Vec<u8> = Vec::new();
@@ -1315,7 +1315,7 @@ mod tests {
         assert_eq!(accel.exit_bytes[0], b'x', "Exit byte should be 'x'");
 
         // Verify the pattern still works correctly
-        let mut bufs = ArenaNfaBuffers::with_capacity(arena.len());
+        let mut bufs = ArenaNfaBuffers::with_capacity();
         traverse_arena_nfa(&arena, start, b"\"abc\"", &mut bufs);
         assert!(
             bufs.transitions

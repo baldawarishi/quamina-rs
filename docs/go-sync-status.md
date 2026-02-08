@@ -31,9 +31,9 @@ Checked: Feb 2026. ~20 non-merge commits since `e3d13cd`, all optimizations (no 
 
 ### 1. Epsilon Closure Refactoring (PR #482)
 
-**Go change:** Generation counter on `smallTable.lastVisitedGen` replaces per-call `map[*smallTable]bool` allocation. Reusable `closureBuffers` struct with `clear()` instead of fresh maps.
+**Go change:** Precomputed epsilon closures at build time. Each state stores its closure (`state.epsilonClosure`) so match-time traversal just iterates a slice instead of running DFS. Generation counter on `smallTable.lastVisitedGen` optimizes the build-time computation.
 
-**Rust status:** SKIP. Arena code already uses `SparseSet` with O(1) clear (superior). Non-arena code uses `FxHashSet` which is adequate since buffers are reused per traversal.
+**Rust status:** PORTED. Added `epsilon_closure: SmallVec<[StateId; 4]>` to `ArenaFaState`. Closures precomputed after merges and FA construction via `precompute_epsilon_closures()`. Match-time `traverse_arena_nfa` reads precomputed closures directly, eliminating per-byte DFS + SparseSet overhead. Generation counter not needed (SparseSet with O(1) clear used for build-time computation).
 
 ### 2. Flatten Epsilon Targets (PR #486)
 
@@ -68,7 +68,7 @@ Investigate each Go optimization empirically - one per session. Measure before/a
 | # | Optimization | Initial Assessment | Empirical Result | Session |
 |---|---|---|---|---|
 | 1 | Flatten Epsilon Targets (#486) | PORT CANDIDATE | PORTED (one-level), -3% to -7% | Feb 2026 |
-| 2 | Epsilon Closure Refactoring (#482) | SKIP (arena already has SparseSet) | SKIP confirmed: SparseSet > generation counter, ArenaNfaBuffers already reused, StateId=u32 (no alloc) | Feb 2026 |
+| 2 | Epsilon Closure Refactoring (#482) | SKIP (arena already has SparseSet) | PORTED: precomputed closures at build time, -6% to -14% on NFA benchmarks | Feb 2026 |
 | 3 | Cache startState (#490) | SKIP (marginal in Rust) | SKIP confirmed: StateId=u32 (no alloc), closure computed in-place in reusable Vec | Feb 2026 |
 | 4 | SkinnyRuneTree (#483) | DEFER (no Unicode prop automata) | PORTED (FA caching only; skinny tree structure not needed — Rust uses range-based tree building) | Feb 2026 |
 | 5 | forField Removal | N/A (different design) | PORTED: removed `for_field` param, fixed string/number type distinction bug | Feb 2026 |
