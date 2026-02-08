@@ -183,25 +183,22 @@ avoids hash table allocation + string clone + hashing per call, not just clear()
 
 ## Step 6: Final benchmark and comparison
 
-- [ ] Run full decomposed benchmarks:
-  ```
-  cargo bench --bench matching -- 'flatten_direct_context|flatten_sort_context|status_context_fields|match_only_context'
-  ```
-- [ ] Run Go comparison:
-  ```
-  cd ~/workspaces/quamina && go test -bench='Benchmark_JsonFlattner_Evaluate_ContextFields|Benchmark_JsonFlattener_ContextFields' -benchtime=5s -benchmem
-  ```
-- [ ] Fill in comparison table:
+- [x] Run full decomposed benchmarks
+- [x] Run Go comparison (fresh numbers, same machine, 2026-02-08)
+- [x] Fill in comparison table:
 
-| Metric | Rust (before) | Rust (after) | Go | Winner |
+| Metric | Rust (before) | Rust (after) | Go (fresh) | Winner |
 |--------|--------------|-------------|-----|--------|
-| Full path | 398 ns | ___ ns | 382 ns | |
-| Flatten only | 151 ns | ___ ns | 140 ns | |
-| Match only | 227 ns | ___ ns | ~242 ns | |
+| Full path | 420 ns | 275 ns | 403 ns | **Rust (32% faster)** |
+| Flatten+sort | 161 ns | 124 ns | 151 ns | **Rust (18% faster)** |
+| Match only | 232 ns | 157 ns | ~252 ns | **Rust (38% faster)** |
 
-- [ ] Run full test suite: `cargo test`
-- [ ] Run full benchmark suite to check for regressions: `cargo bench --bench matching`
-- [ ] Update `docs/profile-early-field-gap.md` with final numbers
+*Rust "Full path" ranges 272-285ns across runs; 275ns is representative median.*
+*Go "Match only" estimated as full path minus flatten (403 − 151 = 252ns).*
+
+- [x] Run full test suite: `cargo test` — 442 unit + 10 doc tests pass
+- [x] Run full benchmark suite to check for regressions — no regressions
+- [x] Update `docs/profile-early-field-gap.md` with final numbers
 
 ---
 
@@ -246,5 +243,5 @@ Update this section as each step is completed.
 | 3. FxHashMap | Done | 2026-02-08 | 387→329ns (−58ns/−15%), commit e0c89dc. Cumulative: 420→329ns (−22%) |
 | 4. thread_local | Done | 2026-02-08 | Mutex overhead eliminated, ~328ns ≈ no_mutex ~329ns, commit 08490a4 |
 | 5. Reuse match-set | Done | 2026-02-08 | Vec linear dedup, 328→272ns (−17%), commit 407a26d |
-| 6. Final benchmark | Not started | | |
+| 6. Final benchmark | Done | 2026-02-08 | Rust 275ns vs Go 403ns (32% faster), all tests pass |
 | 7. Cleanup | Not started | | |

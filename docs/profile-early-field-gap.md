@@ -5,7 +5,7 @@
 **Pattern:** `{ "context": { "user_id": [9034], "friends_count": [158] } }`
 **Test data:** `testdata/status.json` (identical in both repos)
 
-## Headline Numbers
+## Headline Numbers (Before Optimization)
 
 | Metric | Rust | Go | Delta |
 |--------|------|----|-------|
@@ -16,6 +16,24 @@
 | Match cost (derived: full - flatten - sort) | 223 ns | 242 ns | **Rust -19ns (-7.9%)** |
 | Mutex overhead (full - no_mutex) | ~18 ns | 0 ns | Rust pays ~18ns |
 | Allocs/op (hot path) | 0 (reused) | 2 (16B) | Rust wins |
+
+## Final Numbers (After Optimization — 2026-02-08)
+
+| Metric | Rust (before) | Rust (after) | Go (fresh) | Winner |
+|--------|--------------|-------------|-----|--------|
+| Full path | 420 ns | **275 ns** | 403 ns | **Rust (32% faster)** |
+| Flatten+sort | 161 ns | **124 ns** | 151 ns | **Rust (18% faster)** |
+| Match only | 232 ns | **157 ns** | ~252 ns | **Rust (38% faster)** |
+
+### Optimizations applied (branch `perf/close-early-field-gap`):
+
+| Step | Change | Delta |
+|------|--------|-------|
+| 2. `from_utf8_unchecked` | Skip redundant UTF-8 validation in SegmentsTree | −33 ns |
+| 3. `FxHashMap` | Switch FrozenFieldMatcher maps from SipHash to FxHash | −58 ns |
+| 4. `thread_local!` | Replace Mutex with thread-local flattener/NFA buffers | −1 ns |
+| 5. Vec linear dedup | Replace FxHashSet with Vec linear scan in FrozenMatchSet | −56 ns |
+| **Total** | | **−148 ns (−35%)** |
 
 ## Gap Decomposition
 
