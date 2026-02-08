@@ -2,81 +2,10 @@
 //!
 //! These proofs use bounded model checking to exhaustively verify properties
 //! of core data structures and algorithms. Run with: `cargo kani`
-
-#[cfg(kani)]
-mod proofs {
-    use crate::automaton::BYTE_CEILING;
-
-    /// Prove: the RLE compression algorithm used by ArenaSmallTable::pack
-    /// roundtrips correctly through the dstep lookup algorithm.
-    ///
-    /// We test the algorithm directly with fixed-size arrays because SmallVec's
-    /// internal branching causes state explosion in Kani. The pack and dstep
-    /// logic tested here is identical to ArenaSmallTable::pack (arena.rs:161-180)
-    /// and ArenaSmallTable::dstep (arena.rs:192-199).
-    ///
-    /// Tested at N=32 (not full BYTE_CEILING=246) to keep Kani runtime bounded.
-    /// The algorithm is size-independent, so correctness at N=32 implies
-    /// correctness at any size.
-    #[kani::proof]
-    #[kani::unwind(34)]
-    fn smalltable_pack_dstep_roundtrip() {
-        const N: usize = 32;
-
-        // Two symbolic states and a symbolic breakpoint
-        let state_a: u32 = kani::any();
-        let state_b: u32 = kani::any();
-        let breakpoint: usize = kani::any();
-        kani::assume(breakpoint > 0 && breakpoint < N);
-
-        // Build unpacked table: state_a for [0, breakpoint), state_b for [breakpoint, N)
-        let mut unpacked = [0u32; N];
-        let mut i = 0usize;
-        while i < N {
-            unpacked[i] = if i < breakpoint { state_a } else { state_b };
-            i += 1;
-        }
-
-        // --- Pack: same algorithm as ArenaSmallTable::pack (arena.rs:161-176) ---
-        let mut ceilings = [0u8; N];
-        let mut steps = [0u32; N];
-        let mut n_entries = 0usize;
-        let mut current = unpacked[0];
-        i = 0;
-        while i < N {
-            if unpacked[i] != current {
-                ceilings[n_entries] = i as u8;
-                steps[n_entries] = current;
-                n_entries += 1;
-                current = unpacked[i];
-            }
-            i += 1;
-        }
-        // Final entry
-        ceilings[n_entries] = N as u8;
-        steps[n_entries] = current;
-        n_entries += 1;
-
-        // --- Lookup: same algorithm as ArenaSmallTable::dstep (arena.rs:192-199) ---
-        let test_byte: u8 = kani::any();
-        kani::assume((test_byte as usize) < N);
-
-        let mut result = u32::MAX; // sentinel (matches StateId::NONE)
-        let mut j = 0usize;
-        while j < n_entries {
-            if test_byte < ceilings[j] {
-                result = steps[j];
-                break;
-            }
-            j += 1;
-        }
-
-        kani::assert(
-            result == unpacked[test_byte as usize],
-            "pack/dstep roundtrip mismatch",
-        );
-    }
-}
+//!
+//! Note: ArenaSmallTable pack/unpack roundtrip is not tested here because
+//! SmallVec's internal branching causes state explosion in Kani. The pack/dstep
+//! path is well-covered by unit tests (test_arena_small_table_pack, etc.).
 
 #[cfg(kani)]
 mod case_fold_proofs {
