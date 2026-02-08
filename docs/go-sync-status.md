@@ -53,7 +53,7 @@ Checked: Feb 2026. ~20 non-merge commits since `e3d13cd`, all optimizations (no 
 
 **Go change:** Replaced 256-entry arrays with parallel `byteVals`/`entries` arrays for Unicode property FA construction. Added caching via `cachedFaShells` map.
 
-**Rust status:** DEFER. Not applicable - Rust doesn't build Unicode property automata. Revisit if Unicode properties are added.
+**Rust status:** PORTED (FA caching only). Rust uses range-based tree building (`add_arena_rune_pair_tree_entry`) rather than Go's per-codepoint iteration, so the skinny tree structure optimization is unnecessary. However, the FA shell caching is ported: a thread-local `CachedShell` cache stores pre-built FA shells for Unicode property categories (`~p{L}`, `~p{Nd}`, etc.) and XML name char escapes (`~i`, `~I`, `~c`, `~C`). On repeated use, shells are instantiated by cloning and remapping state IDs instead of rebuilding from scratch.
 
 ### 5. forField Removal + String/Number Type Distinction Fix
 
@@ -70,7 +70,7 @@ Investigate each Go optimization empirically - one per session. Measure before/a
 | 1 | Flatten Epsilon Targets (#486) | PORT CANDIDATE | PORTED (one-level), -3% to -7% | Feb 2026 |
 | 2 | Epsilon Closure Refactoring (#482) | SKIP (arena already has SparseSet) | SKIP confirmed: SparseSet > generation counter, ArenaNfaBuffers already reused, StateId=u32 (no alloc) | Feb 2026 |
 | 3 | Cache startState (#490) | SKIP (marginal in Rust) | SKIP confirmed: StateId=u32 (no alloc), closure computed in-place in reusable Vec | Feb 2026 |
-| 4 | SkinnyRuneTree (#483) | DEFER (no Unicode prop automata) | DEFER confirmed: no \\p{} support in Rust | Feb 2026 |
+| 4 | SkinnyRuneTree (#483) | DEFER (no Unicode prop automata) | PORTED (FA caching only; skinny tree structure not needed — Rust uses range-based tree building) | Feb 2026 |
 | 5 | forField Removal | N/A (different design) | PORTED: removed `for_field` param, fixed string/number type distinction bug | Feb 2026 |
 
 ---
