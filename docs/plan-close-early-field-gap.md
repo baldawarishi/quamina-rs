@@ -170,10 +170,14 @@ the match-set a separate thread-local / passed-in buffer.
 **Decision point:** If Steps 2-4 already close the gap sufficiently, skip this.
 The complexity of making `NfaBuffers` generic may not be worth 2-3ns.
 
-- [ ] Decide: implement or skip
-- [ ] If implementing: make changes, test, bench, commit & push
+- [x] Decide: implement — replaced FxHashSet with Vec-based linear dedup
+- [x] Make changes, test (442 pass), bench, commit & push (407a26d)
 
-**Result:** `status_context_fields` = ___ ns (delta: ___ ns) OR skipped
+**Result:** `status_context_fields` = 272 ns (delta: −56 ns / −17% from Step 4)
+**No-mutex:** `status_context_fields_no_mutex` = 281 ns (delta: −48 ns / −15% from Step 4)
+**Cumulative:** 420 → 272 ns (−148 ns / −35%, now 29% faster than Go's 382 ns)
+**Note:** Gain was much larger than estimated 2-3ns because eliminating the FxHashSet
+avoids hash table allocation + string clone + hashing per call, not just clear() overhead.
 
 ---
 
@@ -241,6 +245,6 @@ Update this section as each step is completed.
 | 2. from_utf8_unchecked | Done | 2026-02-08 | 420→387ns (−33ns/−8.5%), commit b7af159 |
 | 3. FxHashMap | Done | 2026-02-08 | 387→329ns (−58ns/−15%), commit e0c89dc. Cumulative: 420→329ns (−22%) |
 | 4. thread_local | Done | 2026-02-08 | Mutex overhead eliminated, ~328ns ≈ no_mutex ~329ns, commit 08490a4 |
-| 5. Reuse match-set | Not started | | |
+| 5. Reuse match-set | Done | 2026-02-08 | Vec linear dedup, 328→272ns (−17%), commit 407a26d |
 | 6. Final benchmark | Not started | | |
 | 7. Cleanup | Not started | | |
