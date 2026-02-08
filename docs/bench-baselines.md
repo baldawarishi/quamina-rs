@@ -89,9 +89,10 @@ missed the larger architectural difference: Go precomputes closures at build
 time while Rust was computing them dynamically at match time.
 
 **Implementation:** Added `epsilon_closure: SmallVec<[StateId; 4]>` to
-`ArenaFaState`. Called `precompute_epsilon_closures()` after `merge_arena_nfas`,
-after `clone_arena_subset`, and when first setting `main_arena`. Fallback to
-dynamic `fill_epsilon_closure()` for arenas without precomputation.
+`ArenaFaState`. Called `precompute_epsilon_closures()` after all arena creation
+paths: `merge_arena_nfas`, `clone_arena_subset`, all FA builders, and when
+first setting `main_arena`. No fallback — all arenas must have precomputed
+closures.
 
 **Results (same machine, single-run):**
 

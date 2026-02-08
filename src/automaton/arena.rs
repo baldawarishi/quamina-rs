@@ -391,7 +391,7 @@ impl ArenaNfaBuffers {
         Self::default()
     }
 
-    pub fn with_capacity(_state_capacity: usize) -> Self {
+    pub fn with_capacity() -> Self {
         Self {
             current_states: Vec::with_capacity(16),
             next_states: Vec::with_capacity(16),
@@ -1875,7 +1875,6 @@ pub fn insert_string_into_arena(
             // No transition for this byte — create the remaining chain
             let match_state = arena.alloc();
             arena[match_state].field_transitions.push(field_matcher);
-            arena[match_state].epsilon_closure = smallvec![match_state];
 
             // Build chain backwards for any remaining bytes after this one
             let mut target = match_state;
@@ -1890,7 +1889,6 @@ pub fn insert_string_into_arena(
                     &[b],
                     &[target],
                 ));
-                arena[target].epsilon_closure = smallvec![target];
             }
 
             // Add transition from current state to the new chain
@@ -2957,7 +2955,7 @@ mod tests {
         ));
 
         arena.precompute_epsilon_closures();
-        let mut bufs = ArenaNfaBuffers::with_capacity(arena.len());
+        let mut bufs = ArenaNfaBuffers::with_capacity();
 
         // Should match "a"
         let value = b"a";
@@ -3011,7 +3009,7 @@ mod tests {
         arena[loopback].table.epsilons = smallvec![exit_state, start];
 
         arena.precompute_epsilon_closures();
-        let mut bufs = ArenaNfaBuffers::with_capacity(arena.len());
+        let mut bufs = ArenaNfaBuffers::with_capacity();
 
         // Should match empty string (zero times)
         traverse_arena_nfa(&arena, start, b"", &mut bufs);
@@ -3087,7 +3085,7 @@ mod tests {
         arena[loopback].table.epsilons = smallvec![exit_state, start];
 
         arena.precompute_epsilon_closures();
-        let mut bufs = ArenaNfaBuffers::with_capacity(arena.len());
+        let mut bufs = ArenaNfaBuffers::with_capacity();
 
         // Should NOT match empty string (+ requires at least one)
         traverse_arena_nfa(&arena, start, b"", &mut bufs);
@@ -3145,7 +3143,7 @@ mod tests {
 
         // Verify it works
         arena.precompute_epsilon_closures();
-        let mut bufs = ArenaNfaBuffers::with_capacity(arena.len());
+        let mut bufs = ArenaNfaBuffers::with_capacity();
         traverse_arena_nfa(&arena, start, b"aaaaaaaaaa", &mut bufs);
         assert_eq!(bufs.transitions.len(), 1);
     }
@@ -3199,7 +3197,7 @@ mod tests {
         });
 
         arena.precompute_epsilon_closures();
-        let mut bufs = ArenaNfaBuffers::with_capacity(arena.len());
+        let mut bufs = ArenaNfaBuffers::with_capacity();
 
         // Test with a long string where 'x' is at the end
         // The acceleration should skip directly to 'x'
@@ -3321,7 +3319,7 @@ mod merge_tests {
         let (merged, start) = merge_arena_dfas(&arena1, start1, &StateArena::new(), StateId::NONE);
 
         // Should work like arena1
-        let mut bufs = ArenaNfaBuffers::with_capacity(merged.len());
+        let mut bufs = ArenaNfaBuffers::with_capacity();
         traverse_arena_nfa(&merged, start, b"a", &mut bufs);
         assert_eq!(bufs.transitions.len(), 1, "Should match 'a'");
     }
@@ -3337,7 +3335,7 @@ mod merge_tests {
 
         let (merged, start) = merge_arena_dfas(&arena1, start1, &arena2, start2);
 
-        let mut bufs = ArenaNfaBuffers::with_capacity(merged.len());
+        let mut bufs = ArenaNfaBuffers::with_capacity();
 
         // Should match 'a'
         traverse_arena_nfa(&merged, start, b"a", &mut bufs);
@@ -3367,7 +3365,7 @@ mod merge_tests {
 
         let (merged, start) = merge_arena_dfas(&arena1, start1, &arena2, start2);
 
-        let mut bufs = ArenaNfaBuffers::with_capacity(merged.len());
+        let mut bufs = ArenaNfaBuffers::with_capacity();
         traverse_arena_nfa(&merged, start, b"a", &mut bufs);
 
         // Should have both field matchers
@@ -3388,7 +3386,7 @@ mod merge_tests {
 
         let (merged, start) = merge_arena_dfas(&arena1, start1, &arena2, start2);
 
-        let mut bufs = ArenaNfaBuffers::with_capacity(merged.len());
+        let mut bufs = ArenaNfaBuffers::with_capacity();
 
         // Check 'x' has fm1
         traverse_arena_nfa(&merged, start, b"x", &mut bufs);
@@ -3422,8 +3420,8 @@ mod merge_tests {
         let (abc_right, abc_right_start) = merge_arena_dfas(&arena_a, start_a, &bc, bc_start);
 
         // Both should match 'a', 'b', 'c'
-        let mut bufs1 = ArenaNfaBuffers::with_capacity(abc_left.len());
-        let mut bufs2 = ArenaNfaBuffers::with_capacity(abc_right.len());
+        let mut bufs1 = ArenaNfaBuffers::with_capacity();
+        let mut bufs2 = ArenaNfaBuffers::with_capacity();
 
         for byte in [b'a', b'b', b'c'] {
             bufs1.clear();
@@ -3508,7 +3506,7 @@ mod merge_tests {
 
         let (merged, start) = merge_arena_dfas(&arena1, start1, &arena2, start2);
 
-        let mut bufs = ArenaNfaBuffers::with_capacity(merged.len());
+        let mut bufs = ArenaNfaBuffers::with_capacity();
 
         // Should match "ab"
         traverse_arena_nfa(&merged, start, b"ab", &mut bufs);
@@ -3541,7 +3539,7 @@ mod numeric_arena_tests {
 
     /// Helper to test if a Q-number matches against an arena FA
     fn matches_arena(arena: &StateArena, start: StateId, q_num: &[u8]) -> bool {
-        let mut bufs = ArenaNfaBuffers::with_capacity(arena.len());
+        let mut bufs = ArenaNfaBuffers::with_capacity();
         traverse_arena_nfa(arena, start, q_num, &mut bufs);
         !bufs.transitions.is_empty()
     }
@@ -3822,7 +3820,7 @@ mod numeric_arena_tests {
         let q75 = q_num_from_f64(75.0);
         let q150 = q_num_from_f64(150.0);
 
-        let mut bufs = ArenaNfaBuffers::with_capacity(merged.len());
+        let mut bufs = ArenaNfaBuffers::with_capacity();
 
         // 25 should match (< 50)
         traverse_arena_nfa(&merged, merged_start, &q25, &mut bufs);
@@ -3909,14 +3907,14 @@ mod nfa_merge_tests {
 
     /// Helper to check if a value matches against an arena FA
     fn matches_value(arena: &StateArena, start: StateId, value: &[u8]) -> bool {
-        let mut bufs = ArenaNfaBuffers::with_capacity(arena.len());
+        let mut bufs = ArenaNfaBuffers::with_capacity();
         traverse_arena_nfa(arena, start, value, &mut bufs);
         !bufs.transitions.is_empty()
     }
 
     /// Helper to get field matcher match IDs from traversal
     fn get_match_ids(arena: &StateArena, start: StateId, value: &[u8]) -> Vec<u64> {
-        let mut bufs = ArenaNfaBuffers::with_capacity(arena.len());
+        let mut bufs = ArenaNfaBuffers::with_capacity();
         traverse_arena_nfa(arena, start, value, &mut bufs);
         bufs.transitions
             .iter()
@@ -4497,7 +4495,7 @@ mod string_arena_tests {
 
     /// Helper to check if a value matches against an arena FA
     fn matches_value(arena: &StateArena, start: StateId, value: &[u8]) -> bool {
-        let mut bufs = ArenaNfaBuffers::with_capacity(arena.len());
+        let mut bufs = ArenaNfaBuffers::with_capacity();
         traverse_arena_nfa(arena, start, value, &mut bufs);
         !bufs.transitions.is_empty()
     }
@@ -4654,7 +4652,7 @@ mod prefix_arena_tests {
 
     /// Helper to check if a value matches against an arena FA
     fn matches_value(arena: &StateArena, start: StateId, value: &[u8]) -> bool {
-        let mut bufs = ArenaNfaBuffers::with_capacity(arena.len());
+        let mut bufs = ArenaNfaBuffers::with_capacity();
         traverse_arena_nfa(arena, start, value, &mut bufs);
         !bufs.transitions.is_empty()
     }
@@ -4802,7 +4800,7 @@ mod shellstyle_arena_tests {
 
     /// Helper to check if a value matches against an arena FA
     fn matches_value(arena: &StateArena, start: StateId, value: &[u8]) -> bool {
-        let mut bufs = ArenaNfaBuffers::with_capacity(arena.len());
+        let mut bufs = ArenaNfaBuffers::with_capacity();
         traverse_arena_nfa(arena, start, value, &mut bufs);
         !bufs.transitions.is_empty()
     }
@@ -4990,7 +4988,7 @@ mod wildcard_arena_tests {
 
     /// Helper to check if a value matches against an arena FA
     fn matches_value(arena: &StateArena, start: StateId, value: &[u8]) -> bool {
-        let mut bufs = ArenaNfaBuffers::with_capacity(arena.len());
+        let mut bufs = ArenaNfaBuffers::with_capacity();
         traverse_arena_nfa(arena, start, value, &mut bufs);
         !bufs.transitions.is_empty()
     }
@@ -5142,7 +5140,7 @@ mod anything_but_arena_tests {
 
     /// Helper to check if a value matches against an arena FA
     fn matches_value(arena: &StateArena, start: StateId, value: &[u8]) -> bool {
-        let mut bufs = ArenaNfaBuffers::with_capacity(arena.len());
+        let mut bufs = ArenaNfaBuffers::with_capacity();
         traverse_arena_nfa(arena, start, value, &mut bufs);
         !bufs.transitions.is_empty()
     }
@@ -5268,7 +5266,7 @@ mod monocase_arena_tests {
 
     /// Helper to check if a value matches against an arena FA
     fn matches_value(arena: &StateArena, start: StateId, value: &[u8]) -> bool {
-        let mut bufs = ArenaNfaBuffers::with_capacity(arena.len());
+        let mut bufs = ArenaNfaBuffers::with_capacity();
         traverse_arena_nfa(arena, start, value, &mut bufs);
         !bufs.transitions.is_empty()
     }
@@ -5479,7 +5477,7 @@ mod cidr_arena_tests {
     use crate::json::CidrPattern;
 
     fn matches_value(arena: &StateArena, start: StateId, value: &[u8]) -> bool {
-        let mut bufs = ArenaNfaBuffers::with_capacity(arena.len());
+        let mut bufs = ArenaNfaBuffers::with_capacity();
         traverse_arena_nfa(arena, start, value, &mut bufs);
         !bufs.transitions.is_empty()
     }

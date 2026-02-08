@@ -269,6 +269,9 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
                 let mut main = self.main_arena.borrow_mut();
                 let (arena, start) = main.as_mut().unwrap();
                 insert_string_into_arena(arena, *start, &singleton_val, singleton_arc);
+                if *self.main_arena_is_nfa.borrow() {
+                    arena.precompute_epsilon_closures();
+                }
 
                 *self.singleton_match.borrow_mut() = None;
                 *self.singleton_transition.borrow_mut() = None;
@@ -294,6 +297,7 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
             // Create empty arena with a start state
             let mut arena = StateArena::new();
             let start = arena.alloc();
+            arena.precompute_epsilon_closures();
             *self.main_arena.borrow_mut() = Some((arena, start));
         }
     }
@@ -383,6 +387,9 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
         for val in values {
             insert_string_into_arena(arena, *start, val, next_arc.clone());
         }
+        if *self.main_arena_is_nfa.borrow() {
+            arena.precompute_epsilon_closures();
+        }
 
         next_fm
     }
@@ -430,6 +437,9 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
         let mut main = self.main_arena.borrow_mut();
         let (arena, start) = main.as_mut().unwrap();
         insert_string_into_arena(arena, *start, val, next_arc);
+        if *self.main_arena_is_nfa.borrow() {
+            arena.precompute_epsilon_closures();
+        }
 
         next_fm
     }
@@ -460,6 +470,9 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
         let (arena, start) = main.as_mut().unwrap();
         insert_string_into_arena(arena, *start, val, next_arc.clone());
         insert_string_into_arena(arena, *start, &q_num, next_arc);
+        if *self.main_arena_is_nfa.borrow() {
+            arena.precompute_epsilon_closures();
+        }
 
         next_fm
     }
