@@ -224,28 +224,28 @@ On an M3 Max:
 
 | Patterns | Match time |
 |----------|-----------|
-| 100 | 250 ns |
-| 10,000 | 189 ns |
+| 100 | 218 ns |
+| 10,000 | 188 ns |
 
 ### Comparison with Go quamina
 
 | Benchmark | Go | Rust | Speedup |
 |-----------|---:|-----:|--------:|
-| citylots (4 patterns, 206k GeoJSON) | 5,625 ns | 2,133 ns | 2.6x |
-| nested field match (14KB JSON) | 7,862 ns | 5,634 ns | 1.4x |
-| early field match (14KB JSON) | 500 ns | 426 ns | 1.2x |
+| citylots (4 patterns, 206k GeoJSON) | 3,239 ns | 2,070 ns | 1.6x |
+| nested field match (14KB JSON) | 7,482 ns | 5,393 ns | 1.4x |
+| early field match (14KB JSON) | 393 ns | 409 ns | 0.96x |
 
 ### Pattern type benchmarks
 
 | Benchmark | Time | Description |
 |-----------|-----:|-------------|
-| exact_match | 133 ns | Single exact match |
-| nested_match | 186 ns | Nested field exact match |
-| regex_match | 104 ns | Simple regex pattern |
-| anything_but_match | 152 ns | Anything-but with 3 values |
-| numeric_range | 161 ns | Two-sided numeric (`>= 0, < 100`) |
-| 100_prefix_patterns | 278 ns | 100 prefix patterns |
-| shellstyle_26_patterns | 464 ns | 26 shellstyle patterns (A*-Z*) |
+| exact_match | 137 ns | Single exact match |
+| nested_match | 187 ns | Nested field exact match |
+| regex_match | 131 ns | Simple regex pattern |
+| anything_but_match | 153 ns | Anything-but with 3 values |
+| numeric_range | 164 ns | Two-sided numeric (`>= 0, < 100`) |
+| 100_prefix_patterns | 230 ns | 100 prefix patterns |
+| shellstyle_26_patterns | 477 ns | 26 shellstyle patterns (A*-Z*) |
 
 ### What affects performance
 

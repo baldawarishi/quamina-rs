@@ -4,13 +4,13 @@ Rust port of [quamina](https://github.com/timbray/quamina) - fast pattern-matchi
 
 ## Status
 
-**434 tests passing.** Rust 1.5-2x faster than Go. Synced with Go commit e3d13cd (Jan 2026).
+**434 tests passing.** Rust 1.4-1.6x faster than Go on large events; near-parity on small events. Synced with Go commit e3d13cd (Jan 2026).
 
 | Benchmark | Go (ns) | Rust (ns) | Speedup |
 |-----------|---------|-----------|---------|
-| citylots | 3,971 | 2,117 | 1.9x |
-| shellstyle_26_patterns | 731 | 454 | 1.6x |
-| status_middle_nested | 7,437 | 5,400 | 1.4x |
+| citylots | 3,239 | 2,070 | 1.6x |
+| shellstyle_26_patterns | - | 477 | - |
+| status_middle_nested | 7,482 | 5,393 | 1.4x |
 
 **Matchers:** `"value"`, `{"prefix"}`, `{"suffix"}`, `{"wildcard"}`, `{"shellstyle"}`, `{"exists"}`, `{"anything-but"}`, `{"equals-ignore-case"}`, `{"regexp"}`, `{"cidr"}`, `{"numeric"}`
 
@@ -143,7 +143,6 @@ open flamegraph.svg           # view in browser
 ## References
 
 - `../quamina` - Go implementation (read source directly)
-- [Go sync status](go-sync-status.md) - Feature parity, Go commit delta analysis, porting decisions
 - [Hyperscan paper](https://www.usenix.org/system/files/nsdi19-wang-xiang.pdf)
 - [regex-automata](https://docs.rs/regex-automata/latest/regex_automata/)
 - [ripgrep internals](https://blog.burntsushi.net/ripgrep/)
