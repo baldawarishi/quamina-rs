@@ -7,8 +7,7 @@
 use quamina::Quamina;
 
 fn main() {
-    let event =
-        std::fs::read("testdata/status.json").expect("Failed to read testdata/status.json");
+    let event = std::fs::read("testdata/status.json").expect("Failed to read testdata/status.json");
     let pattern = r#"{ "context": { "user_id": [9034], "friends_count": [158] } }"#;
 
     let mut q = Quamina::new();

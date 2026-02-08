@@ -6,3 +6,7 @@ fuzz/target/
 fuzz/corpus/
 fuzz/artifacts/
 flamegraph.svg
+
+# Profiling artifacts
+profile_status.json
+sample_output.txt

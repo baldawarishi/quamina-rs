@@ -2,6 +2,11 @@
 //!
 //! This enables the JSON flattener to skip fields that aren't used in any pattern,
 //! providing a significant performance optimization.
+//!
+//! This module uses unsafe for:
+//! - `from_utf8_unchecked` on field name segments that are guaranteed valid UTF-8
+//!   by the JSON parser and `read_member_name` validation.
+#![allow(unsafe_code)]
 
 use rustc_hash::FxHashMap;
 use std::sync::Arc;

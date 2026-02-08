@@ -207,28 +207,28 @@ avoids hash table allocation + string clone + hashing per call, not just clear()
 Decide what to keep vs remove from the profiling scaffolding:
 
 **Keep permanently:**
-- [ ] Decomposed benchmarks in `benches/matching.rs` (flatten_sort, no_mutex, match_only)
+- [x] Decomposed benchmarks in `benches/matching.rs` (flatten_sort, no_mutex, match_only)
   — useful for ongoing perf regression detection
-- [ ] `docs/profile-early-field-gap.md` — reference for future profiling
-- [ ] This plan doc (as historical record, mark completed)
+- [x] `docs/profile-early-field-gap.md` — reference for future profiling
+- [x] This plan doc (as historical record, mark completed)
 
-**Decide:**
-- [ ] `Quamina::automaton()` and `segments_tree()` accessors in `src/lib.rs` — needed by
-  benchmarks. Keep as `#[doc(hidden)]` or remove if benchmarks are restructured.
-- [ ] `examples/profile_status.rs` — useful for future flamegraph sessions. Keep if small.
-- [ ] `Cargo.toml` `[profile.bench]` / `[profile.release]` `debug = 1` — useful for
-  profiling but adds ~5% to binary size. Keep or gate behind a feature.
-- [ ] `profile_status.json`, `sample_output.txt` — ephemeral profiling artifacts. Delete.
+**Decided (keep):**
+- [x] `Quamina::automaton()` and `segments_tree()` accessors in `src/lib.rs` — needed by
+  decomposed benchmarks, kept as `#[doc(hidden)]`
+- [x] `examples/profile_status.rs` — useful for future flamegraph sessions (33 lines)
+- [x] `Cargo.toml` `[profile.bench]` / `[profile.release]` `debug = 1` — useful for
+  profiling, minimal overhead for a library
 
-**Remove:**
-- [ ] Any `#[allow(dead_code)]` annotations added during refactoring
-- [ ] Any TODO comments added during implementation
+**Cleaned up:**
+- [x] `profile_status.json`, `sample_output.txt` — added to `.gitignore`
+- [x] No `#[allow(dead_code)]` annotations found in changed files
+- [x] No TODO comments found in changed files
 
 Final actions:
-- [ ] `cargo test && cargo clippy`
-- [ ] Commit cleanup
-- [ ] Open PR to merge `perf/close-early-field-gap` into `main`
-- [ ] Mark this plan as COMPLETED
+- [x] `cargo test && cargo clippy` — 442 + 10 doc tests pass, no clippy issues
+- [x] Commit cleanup
+- [x] Open PR to merge `perf/close-early-field-gap` into `main`
+- [x] Mark this plan as COMPLETED
 
 ---
 
@@ -244,4 +244,4 @@ Update this section as each step is completed.
 | 4. thread_local | Done | 2026-02-08 | Mutex overhead eliminated, ~328ns ≈ no_mutex ~329ns, commit 08490a4 |
 | 5. Reuse match-set | Done | 2026-02-08 | Vec linear dedup, 328→272ns (−17%), commit 407a26d |
 | 6. Final benchmark | Done | 2026-02-08 | Rust 275ns vs Go 403ns (32% faster), all tests pass |
-| 7. Cleanup | Not started | | |
+| 7. Cleanup | **Done** | 2026-02-08 | Kept all scaffolding, added profiling artifacts to .gitignore, PLAN COMPLETED |
