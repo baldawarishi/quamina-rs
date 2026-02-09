@@ -166,6 +166,13 @@ let q = QuaminaBuilder::<String>::new()
 
 // With custom ID type
 let q = Quamina::<u64>::new();
+
+// With custom pattern complexity limits
+let q = QuaminaBuilder::<String>::new()
+    .with_max_pattern_depth(128)
+    .with_max_fields_per_pattern(64)
+    .with_arena_byte_budget(5 * 1024 * 1024)
+    .build()?;
 ```
 
 ### Adding and removing patterns
@@ -186,11 +193,12 @@ let count = q.count_matches(event.as_bytes())?;        // number of matches
 
 ### Errors
 
-`add_pattern` returns an error if the pattern JSON is malformed or uses invalid syntax. `matches_for_event` returns an error if the event isn't valid JSON.
+`add_pattern` returns an error if the pattern JSON is malformed, uses invalid syntax, or exceeds complexity limits. `matches_for_event` returns an error if the event isn't valid JSON.
 
 ```rust
 match q.add_pattern("bad", r#"{"x": "not-an-array"}"#) {
     Err(QuaminaError::InvalidPattern(msg)) => println!("{}", msg),
+    Err(QuaminaError::PatternTooComplex(msg)) => println!("{}", msg),
     _ => {}
 }
 ```
@@ -252,6 +260,23 @@ On an M3 Max:
 cargo bench --bench matching              # all benchmarks
 cargo bench --bench matching -- citylots  # specific benchmark
 ```
+
+## Limitations
+
+Patterns are subject to complexity limits to prevent resource exhaustion from deeply nested or extremely wide patterns:
+
+| Limit | Default | Builder method |
+|-------|---------|----------------|
+| Max nesting depth | 256 | `with_max_pattern_depth` |
+| Max fields per pattern | 256 | `with_max_fields_per_pattern` |
+| Arena byte budget | 10 MB | `with_arena_byte_budget` |
+
+Patterns exceeding these limits return `QuaminaError::PatternTooComplex`. The defaults are generous enough for any realistic use case; they're primarily a safety net against adversarial input.
+
+Other limitations:
+- Only JSON events are supported (media type `application/json`)
+- Pattern field names are case-sensitive
+- `shellstyle` patterns don't support `\*` or `\\` escapes — prefer `wildcard` or `regexp` instead
 
 ## Credits
 

@@ -118,6 +118,7 @@ pub enum QuaminaError {
     InvalidPattern(String),
     InvalidUtf8,
     UnsupportedMediaType(String),
+    PatternTooComplex(String),
 }
 
 impl fmt::Display for QuaminaError {
@@ -129,6 +130,40 @@ impl fmt::Display for QuaminaError {
             QuaminaError::UnsupportedMediaType(mt) => {
                 write!(f, "media type \"{}\" is not supported by Quamina", mt)
             }
+            QuaminaError::PatternTooComplex(msg) => {
+                write!(f, "pattern too complex: {}", msg)
+            }
+        }
+    }
+}
+
+/// Limits on pattern complexity to prevent OOM and stack exhaustion.
+///
+/// Three complementary limits, each catching a different attack vector:
+/// - **Nesting depth**: prevents stack exhaustion and deep-nesting attacks
+/// - **Field count**: prevents wide patterns with hundreds of fields
+/// - **Arena byte budget**: essential backstop that catches all forms of automaton complexity
+///
+/// # Defaults
+/// - `max_pattern_depth`: 256 (jq precedent)
+/// - `max_fields_per_pattern`: 256
+/// - `arena_byte_budget`: 10 MB (regex crate precedent)
+#[derive(Debug, Clone)]
+pub struct PatternLimits {
+    /// Maximum nesting depth of a pattern (default: 256)
+    pub max_pattern_depth: usize,
+    /// Maximum number of fields per pattern (default: 256)
+    pub max_fields_per_pattern: usize,
+    /// Maximum arena byte size for the automaton (default: 10 MB)
+    pub arena_byte_budget: usize,
+}
+
+impl Default for PatternLimits {
+    fn default() -> Self {
+        Self {
+            max_pattern_depth: 256,
+            max_fields_per_pattern: 256,
+            arena_byte_budget: 10 * 1024 * 1024, // 10 MB
         }
     }
 }
@@ -158,6 +193,8 @@ pub struct QuaminaBuilder<X: Clone + Eq + Hash + Send + Sync = String> {
     media_type_validated: bool,
     /// Custom flattener (if provided, replaces default JSON flattener)
     custom_flattener: Option<Box<dyn flattener::Flattener>>,
+    /// Pattern complexity limits
+    pattern_limits: PatternLimits,
     /// PhantomData to carry the X type parameter
     _phantom: std::marker::PhantomData<X>,
 }
@@ -169,6 +206,7 @@ impl<X: Clone + Eq + Hash + Send + Sync> QuaminaBuilder<X> {
             auto_rebuild_enabled: true,
             media_type_validated: false,
             custom_flattener: None,
+            pattern_limits: PatternLimits::default(),
             _phantom: std::marker::PhantomData,
         }
     }
@@ -266,6 +304,24 @@ impl<X: Clone + Eq + Hash + Send + Sync> QuaminaBuilder<X> {
         Ok(self)
     }
 
+    /// Set the maximum nesting depth for patterns (default: 256)
+    pub fn with_max_pattern_depth(mut self, depth: usize) -> Self {
+        self.pattern_limits.max_pattern_depth = depth;
+        self
+    }
+
+    /// Set the maximum number of fields per pattern (default: 256)
+    pub fn with_max_fields_per_pattern(mut self, count: usize) -> Self {
+        self.pattern_limits.max_fields_per_pattern = count;
+        self
+    }
+
+    /// Set the arena byte budget for the automaton (default: 10 MB)
+    pub fn with_arena_byte_budget(mut self, budget: usize) -> Self {
+        self.pattern_limits.arena_byte_budget = budget;
+        self
+    }
+
     /// Enable or disable automatic pruner rebuilding
     ///
     /// When enabled (default), the matcher will automatically rebuild its internal
@@ -299,13 +355,16 @@ impl<X: Clone + Eq + Hash + Send + Sync> QuaminaBuilder<X> {
     /// ```
     pub fn build(self) -> Result<Quamina<X>, QuaminaError> {
         Ok(Quamina {
-            automaton: ThreadSafeCoreMatcher::new(),
+            automaton: ThreadSafeCoreMatcher::with_arena_budget(
+                self.pattern_limits.arena_byte_budget,
+            ),
             pattern_defs: HashMap::new(),
             deleted_patterns: HashSet::new(),
             segments_tree: SegmentsTree::new(),
             custom_flattener: self.custom_flattener.map(Mutex::new),
             pruner_stats: PrunerStats::new(),
             auto_rebuild_enabled: self.auto_rebuild_enabled,
+            pattern_limits: self.pattern_limits,
         })
     }
 }
@@ -355,12 +414,15 @@ pub struct Quamina<X: Clone + Eq + Hash + Send + Sync = String> {
     pruner_stats: PrunerStats,
     /// Whether auto-rebuild is enabled (default: true)
     auto_rebuild_enabled: bool,
+    /// Pattern complexity limits
+    pattern_limits: PatternLimits,
 }
 
 impl<X: Clone + Eq + Hash + Send + Sync> Clone for Quamina<X> {
     fn clone(&self) -> Self {
-        // Create a new automaton and rebuild from pattern_defs
-        let automaton = ThreadSafeCoreMatcher::new();
+        // Create a new automaton and rebuild from pattern_defs.
+        // Use usize::MAX budget — patterns were already validated on first add.
+        let automaton = ThreadSafeCoreMatcher::with_arena_budget(usize::MAX);
 
         for (id, patterns) in &self.pattern_defs {
             if self.deleted_patterns.contains(id) {
@@ -369,7 +431,9 @@ impl<X: Clone + Eq + Hash + Send + Sync> Clone for Quamina<X> {
             for fields in patterns {
                 let pattern_fields: Vec<(String, Vec<Matcher>)> =
                     fields.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
-                automaton.add_pattern(id.clone(), &pattern_fields);
+                automaton
+                    .add_pattern(id.clone(), &pattern_fields)
+                    .expect("pre-validated pattern should not fail on rebuild");
             }
         }
 
@@ -387,27 +451,30 @@ impl<X: Clone + Eq + Hash + Send + Sync> Clone for Quamina<X> {
             custom_flattener,
             pruner_stats: self.pruner_stats.clone(),
             auto_rebuild_enabled: self.auto_rebuild_enabled,
+            pattern_limits: self.pattern_limits.clone(),
         }
     }
 }
 
 impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
-    /// Create a new Quamina instance
+    /// Create a new Quamina instance with default pattern complexity limits.
     pub fn new() -> Self {
+        let limits = PatternLimits::default();
         Quamina {
-            automaton: ThreadSafeCoreMatcher::new(),
+            automaton: ThreadSafeCoreMatcher::with_arena_budget(limits.arena_byte_budget),
             pattern_defs: HashMap::new(),
             deleted_patterns: HashSet::new(),
             segments_tree: SegmentsTree::new(),
             custom_flattener: None,
             pruner_stats: PrunerStats::new(),
             auto_rebuild_enabled: true,
+            pattern_limits: limits,
         }
     }
 
     /// Add a pattern with the given identifier
     pub fn add_pattern(&mut self, x: X, pattern_json: &str) -> Result<(), QuaminaError> {
-        let fields = json::parse_pattern(pattern_json)?;
+        let fields = json::parse_pattern(pattern_json, &self.pattern_limits)?;
 
         // Add field paths to segments tree (convert dot-separated to newline-separated)
         for field_path in fields.keys() {
@@ -426,7 +493,7 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
 
         // Route to automaton
         let pattern_fields: Vec<(String, Vec<Matcher>)> = fields.into_iter().collect();
-        self.automaton.add_pattern(x, &pattern_fields);
+        self.automaton.add_pattern(x, &pattern_fields)?;
 
         Ok(())
     }
@@ -613,8 +680,9 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
             return 0;
         }
 
-        // Create new automaton with only live patterns
-        let new_automaton = ThreadSafeCoreMatcher::new();
+        // Create new automaton with only live patterns.
+        // Use usize::MAX budget — patterns were already validated on first add.
+        let new_automaton = ThreadSafeCoreMatcher::with_arena_budget(usize::MAX);
 
         for (id, patterns) in &self.pattern_defs {
             if self.deleted_patterns.contains(id) {
@@ -623,7 +691,9 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
             for fields in patterns {
                 let pattern_fields: Vec<(String, Vec<Matcher>)> =
                     fields.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
-                new_automaton.add_pattern(id.clone(), &pattern_fields);
+                new_automaton
+                    .add_pattern(id.clone(), &pattern_fields)
+                    .expect("pre-validated pattern should not fail on rebuild");
             }
         }
 

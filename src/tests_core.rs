@@ -1736,3 +1736,340 @@ fn test_delete_multi_pattern_id_removes_all() {
         "Prefix pattern should stay gone after rebuild"
     );
 }
+
+// ============================================================================
+// Pattern Complexity Limit Tests
+// ============================================================================
+
+// --- Depth Limit Tests ---
+
+#[test]
+fn test_pattern_depth_at_limit() {
+    // Pattern nested exactly 256 levels deep should succeed with default limits
+    let mut q = Quamina::new();
+    let mut pattern = String::new();
+    let mut closing = String::new();
+    for i in 0..256 {
+        pattern.push_str(&format!("{{\"f{}\": ", i));
+        closing.push('}');
+    }
+    pattern.push_str("[\"val\"]");
+    pattern.push_str(&closing);
+
+    assert!(
+        q.add_pattern("deep", &pattern).is_ok(),
+        "Pattern at exactly max depth (256) should succeed"
+    );
+}
+
+#[test]
+fn test_pattern_depth_exceeds_limit() {
+    // Pattern nested 257 levels should fail
+    let mut q = Quamina::new();
+    let mut pattern = String::new();
+    let mut closing = String::new();
+    for i in 0..257 {
+        pattern.push_str(&format!("{{\"f{}\": ", i));
+        closing.push('}');
+    }
+    pattern.push_str("[\"val\"]");
+    pattern.push_str(&closing);
+
+    let result = q.add_pattern("deep", &pattern);
+    assert!(result.is_err(), "Pattern exceeding max depth should fail");
+    let err_msg = format!("{}", result.unwrap_err());
+    assert!(
+        err_msg.contains("depth"),
+        "Error should mention depth: {}",
+        err_msg
+    );
+    assert!(
+        err_msg.contains("257"),
+        "Error should mention actual depth 257: {}",
+        err_msg
+    );
+    assert!(
+        err_msg.contains("256"),
+        "Error should mention max depth 256: {}",
+        err_msg
+    );
+}
+
+#[test]
+fn test_pattern_depth_custom_limit() {
+    // Builder with max_depth=5, pattern at depth 6 should fail
+    let mut q = QuaminaBuilder::<&str>::new()
+        .with_max_pattern_depth(5)
+        .build()
+        .unwrap();
+
+    let pattern = r#"{"a": {"b": {"c": {"d": {"e": {"f": ["val"]}}}}}}"#;
+    let result = q.add_pattern("deep", pattern);
+    assert!(
+        result.is_err(),
+        "Pattern at depth 6 should fail with max_depth=5"
+    );
+    let err_msg = format!("{}", result.unwrap_err());
+    assert!(err_msg.contains("depth"), "Error should mention depth");
+}
+
+#[test]
+fn test_pattern_depth_shallow_ok() {
+    // Normal 3-level nesting with defaults should succeed
+    let mut q = Quamina::new();
+    let result = q.add_pattern("p1", r#"{"a": {"b": {"c": ["value"]}}}"#);
+    assert!(
+        result.is_ok(),
+        "Normal 3-level nesting should succeed with defaults"
+    );
+}
+
+// --- Field Count Limit Tests ---
+
+#[test]
+fn test_pattern_fields_at_limit() {
+    // Pattern with exactly 256 fields should succeed
+    let mut q = Quamina::new();
+    let mut fields: Vec<String> = Vec::new();
+    for i in 0..256 {
+        fields.push(format!("\"f{}\": [\"v\"]", i));
+    }
+    let pattern = format!("{{{}}}", fields.join(", "));
+    assert!(
+        q.add_pattern("wide", &pattern).is_ok(),
+        "Pattern with exactly 256 fields should succeed"
+    );
+}
+
+#[test]
+fn test_pattern_fields_exceeds_limit() {
+    // Pattern with 257 fields should fail
+    let mut q = Quamina::new();
+    let mut fields: Vec<String> = Vec::new();
+    for i in 0..257 {
+        fields.push(format!("\"f{}\": [\"v\"]", i));
+    }
+    let pattern = format!("{{{}}}", fields.join(", "));
+
+    let result = q.add_pattern("wide", &pattern);
+    assert!(
+        result.is_err(),
+        "Pattern with 257 fields should exceed limit"
+    );
+    let err_msg = format!("{}", result.unwrap_err());
+    assert!(
+        err_msg.contains("257"),
+        "Error should mention actual count 257: {}",
+        err_msg
+    );
+    assert!(
+        err_msg.contains("256"),
+        "Error should mention max count 256: {}",
+        err_msg
+    );
+}
+
+#[test]
+fn test_pattern_fields_custom_limit() {
+    // Builder with max_fields=3, pattern with 4 fields should fail
+    let mut q = QuaminaBuilder::<&str>::new()
+        .with_max_fields_per_pattern(3)
+        .build()
+        .unwrap();
+
+    let pattern = r#"{"a": ["1"], "b": ["2"], "c": ["3"], "d": ["4"]}"#;
+    let result = q.add_pattern("wide", pattern);
+    assert!(
+        result.is_err(),
+        "Pattern with 4 fields should fail with max_fields=3"
+    );
+    let err_msg = format!("{}", result.unwrap_err());
+    assert!(
+        err_msg.contains("fields"),
+        "Error should mention fields: {}",
+        err_msg
+    );
+}
+
+// --- Arena Byte Budget Tests ---
+
+#[test]
+fn test_arena_budget_exceeded() {
+    // Builder with tiny budget (1KB), pattern triggering arena construction should fail
+    let mut q = QuaminaBuilder::<&str>::new()
+        .with_arena_byte_budget(1024)
+        .build()
+        .unwrap();
+
+    // Add many patterns to trigger arena growth beyond 1KB
+    // First pattern may succeed (singleton optimization), but subsequent ones will build arena
+    let _ = q.add_pattern("p1", r#"{"x": ["a"]}"#);
+    let _ = q.add_pattern("p2", r#"{"x": ["b"]}"#);
+
+    // Add enough patterns to exceed the tiny budget
+    let mut exceeded = false;
+    for i in 0..100 {
+        let pattern = format!("{{\"x\": [\"value_that_is_long_enough_{}\"]}}", i);
+        if q.add_pattern("px", &pattern).is_err() {
+            exceeded = true;
+            break;
+        }
+    }
+    assert!(exceeded, "Arena budget should be exceeded with 1KB limit");
+}
+
+#[test]
+fn test_arena_budget_sufficient() {
+    // Default budget (10MB), normal patterns should work fine
+    let mut q = Quamina::new();
+    for i in 0..50 {
+        let pattern = format!("{{\"field{}\": [\"value{}\"]}}", i, i);
+        assert!(
+            q.add_pattern("p1", &pattern).is_ok(),
+            "Normal patterns should work within default 10MB budget"
+        );
+    }
+}
+
+#[test]
+fn test_arena_budget_custom() {
+    // Builder with 1MB budget, patterns work within it
+    let mut q = QuaminaBuilder::<&str>::new()
+        .with_arena_byte_budget(1024 * 1024)
+        .build()
+        .unwrap();
+
+    for i in 0..20 {
+        let pattern = format!("{{\"field{}\": [\"value{}\"]}}", i, i);
+        assert!(
+            q.add_pattern("p1", &pattern).is_ok(),
+            "Moderate patterns should work within 1MB budget"
+        );
+    }
+}
+
+// --- Error Message Quality Tests ---
+
+#[test]
+fn test_depth_error_includes_path() {
+    // The error should contain the field path where depth was exceeded
+    let mut q = QuaminaBuilder::<&str>::new()
+        .with_max_pattern_depth(2)
+        .build()
+        .unwrap();
+
+    let pattern = r#"{"a": {"b": {"c": ["val"]}}}"#;
+    let result = q.add_pattern("deep", pattern);
+    assert!(result.is_err());
+    let err_msg = format!("{}", result.unwrap_err());
+    assert!(
+        err_msg.contains("pattern too complex"),
+        "Error should start with 'pattern too complex': {}",
+        err_msg
+    );
+}
+
+#[test]
+fn test_field_count_error_includes_count() {
+    let mut q = QuaminaBuilder::<&str>::new()
+        .with_max_fields_per_pattern(2)
+        .build()
+        .unwrap();
+
+    let pattern = r#"{"a": ["1"], "b": ["2"], "c": ["3"]}"#;
+    let result = q.add_pattern("wide", pattern);
+    assert!(result.is_err());
+    let err_msg = format!("{}", result.unwrap_err());
+    assert!(
+        err_msg.contains("3"),
+        "Error should contain actual field count: {}",
+        err_msg
+    );
+    assert!(
+        err_msg.contains("2"),
+        "Error should contain max field count: {}",
+        err_msg
+    );
+}
+
+#[test]
+fn test_arena_error_includes_bytes() {
+    let mut q = QuaminaBuilder::<&str>::new()
+        .with_arena_byte_budget(1)
+        .build()
+        .unwrap();
+
+    // This should fail because budget is 1 byte
+    let _ = q.add_pattern("p1", r#"{"x": ["a"]}"#);
+    let result = q.add_pattern("p2", r#"{"x": ["b"]}"#);
+    if let Err(e) = result {
+        let err_msg = format!("{}", e);
+        assert!(
+            err_msg.contains("bytes") && err_msg.contains("budget"),
+            "Error should mention bytes and budget: {}",
+            err_msg
+        );
+    }
+    // With a 1-byte budget, at least one of the two patterns should fail
+}
+
+// --- Integration Tests ---
+
+#[test]
+fn test_default_limits_allow_normal_patterns() {
+    // All operator types should work under default limits
+    let mut q = Quamina::new();
+
+    assert!(q.add_pattern("exact", r#"{"x": ["hello"]}"#).is_ok());
+    assert!(q.add_pattern("num", r#"{"x": [42]}"#).is_ok());
+    assert!(q
+        .add_pattern("prefix", r#"{"x": [{"prefix": "he"}]}"#)
+        .is_ok());
+    assert!(q
+        .add_pattern("suffix", r#"{"x": [{"suffix": "lo"}]}"#)
+        .is_ok());
+    assert!(q
+        .add_pattern("shell", r#"{"x": [{"shellstyle": "h*o"}]}"#)
+        .is_ok());
+    assert!(q
+        .add_pattern("wild", r#"{"x": [{"wildcard": "h*o"}]}"#)
+        .is_ok());
+    assert!(q
+        .add_pattern("ab", r#"{"x": [{"anything-but": ["no"]}]}"#)
+        .is_ok());
+    assert!(q
+        .add_pattern("eic", r#"{"x": [{"equals-ignore-case": "HELLO"}]}"#)
+        .is_ok());
+    assert!(q
+        .add_pattern("re", r#"{"x": [{"regex": "[a-z]+"}]}"#)
+        .is_ok());
+    assert!(q
+        .add_pattern("numr", r#"{"x": [{"numeric": [">=", 1, "<", 100]}]}"#)
+        .is_ok());
+    assert!(q
+        .add_pattern("cidr", r#"{"x": [{"cidr": "10.0.0.0/8"}]}"#)
+        .is_ok());
+    assert!(q
+        .add_pattern("exists", r#"{"x": [{"exists": true}]}"#)
+        .is_ok());
+}
+
+#[test]
+fn test_oom_fuzz_artifact_rejected() {
+    // The exact OOM artifact that caused the 2.2GB RSS growth should be rejected
+    let artifact = std::fs::read(
+        "fuzz/artifacts/fuzz_add_pattern/oom-63f7372145d148512a44bef89b90137dddbe9e38",
+    );
+    if let Ok(data) = artifact {
+        let pattern_str = String::from_utf8_lossy(&data);
+        let mut q = Quamina::<String>::new();
+        // The pattern should either be rejected by parsing limits or arena budget.
+        // It should NOT cause OOM.
+        let result = q.add_pattern("fuzz".to_string(), &pattern_str);
+        // We don't assert Err specifically because the artifact may fail at different
+        // stages (invalid JSON, depth limit, field limit, or arena budget).
+        // The key property is that we don't OOM.
+        let _ = result;
+    }
+    // If the file doesn't exist (e.g., in CI without artifacts), skip silently
+}

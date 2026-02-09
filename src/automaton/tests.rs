@@ -146,13 +146,15 @@ fn test_core_matcher_single_field_exact() {
     let matcher: CoreMatcher<String> = CoreMatcher::new();
 
     // Add pattern: {"status": ["active"]}
-    matcher.add_pattern(
-        "p1".to_string(),
-        &[(
-            "status".to_string(),
-            vec![Matcher::Exact("active".to_string())],
-        )],
-    );
+    matcher
+        .add_pattern(
+            "p1".to_string(),
+            &[(
+                "status".to_string(),
+                vec![Matcher::Exact("active".to_string())],
+            )],
+        )
+        .unwrap();
 
     // Create event fields (sorted by path)
     let fields = vec![EventField {
@@ -173,13 +175,15 @@ fn test_core_matcher_single_field_no_match() {
 
     let matcher: CoreMatcher<String> = CoreMatcher::new();
 
-    matcher.add_pattern(
-        "p1".to_string(),
-        &[(
-            "status".to_string(),
-            vec![Matcher::Exact("active".to_string())],
-        )],
-    );
+    matcher
+        .add_pattern(
+            "p1".to_string(),
+            &[(
+                "status".to_string(),
+                vec![Matcher::Exact("active".to_string())],
+            )],
+        )
+        .unwrap();
 
     let fields = vec![EventField {
         path: "status".to_string(),
@@ -199,10 +203,12 @@ fn test_core_matcher_exists_true() {
     let matcher: CoreMatcher<String> = CoreMatcher::new();
 
     // Pattern: {"name": [{"exists": true}]}
-    matcher.add_pattern(
-        "p1".to_string(),
-        &[("name".to_string(), vec![Matcher::Exists(true)])],
-    );
+    matcher
+        .add_pattern(
+            "p1".to_string(),
+            &[("name".to_string(), vec![Matcher::Exists(true)])],
+        )
+        .unwrap();
 
     // Event with name field present
     let fields = vec![EventField {
@@ -227,10 +233,12 @@ fn test_core_matcher_exists_false() {
     let matcher: CoreMatcher<String> = CoreMatcher::new();
 
     // Pattern: {"name": [{"exists": false}]}
-    matcher.add_pattern(
-        "p1".to_string(),
-        &[("name".to_string(), vec![Matcher::Exists(false)])],
-    );
+    matcher
+        .add_pattern(
+            "p1".to_string(),
+            &[("name".to_string(), vec![Matcher::Exists(false)])],
+        )
+        .unwrap();
 
     // Event without name field
     let fields = vec![EventField {
@@ -256,16 +264,18 @@ fn test_core_matcher_multi_field_and() {
 
     // Pattern: {"status": ["active"], "type": ["user"]}
     // Both fields must match (AND semantics)
-    matcher.add_pattern(
-        "p1".to_string(),
-        &[
-            (
-                "status".to_string(),
-                vec![Matcher::Exact("active".to_string())],
-            ),
-            ("type".to_string(), vec![Matcher::Exact("user".to_string())]),
-        ],
-    );
+    matcher
+        .add_pattern(
+            "p1".to_string(),
+            &[
+                (
+                    "status".to_string(),
+                    vec![Matcher::Exact("active".to_string())],
+                ),
+                ("type".to_string(), vec![Matcher::Exact("user".to_string())]),
+            ],
+        )
+        .unwrap();
 
     // Event with both fields matching
     let fields = vec![
@@ -298,16 +308,18 @@ fn test_core_matcher_multi_field_partial_no_match() {
     let matcher: CoreMatcher<String> = CoreMatcher::new();
 
     // Pattern: {"status": ["active"], "type": ["user"]}
-    matcher.add_pattern(
-        "p1".to_string(),
-        &[
-            (
-                "status".to_string(),
-                vec![Matcher::Exact("active".to_string())],
-            ),
-            ("type".to_string(), vec![Matcher::Exact("user".to_string())]),
-        ],
-    );
+    matcher
+        .add_pattern(
+            "p1".to_string(),
+            &[
+                (
+                    "status".to_string(),
+                    vec![Matcher::Exact("active".to_string())],
+                ),
+                ("type".to_string(), vec![Matcher::Exact("user".to_string())]),
+            ],
+        )
+        .unwrap();
 
     // Event with only status matching
     let fields = vec![
@@ -339,16 +351,18 @@ fn test_core_matcher_or_within_field() {
     let matcher: CoreMatcher<String> = CoreMatcher::new();
 
     // Pattern: {"status": ["active", "pending"]} - OR within field
-    matcher.add_pattern(
-        "p1".to_string(),
-        &[(
-            "status".to_string(),
-            vec![
-                Matcher::Exact("active".to_string()),
-                Matcher::Exact("pending".to_string()),
-            ],
-        )],
-    );
+    matcher
+        .add_pattern(
+            "p1".to_string(),
+            &[(
+                "status".to_string(),
+                vec![
+                    Matcher::Exact("active".to_string()),
+                    Matcher::Exact("pending".to_string()),
+                ],
+            )],
+        )
+        .unwrap();
 
     // Should match "active"
     let fields1 = vec![EventField {
@@ -391,22 +405,26 @@ fn test_core_matcher_multiple_patterns() {
     let matcher: CoreMatcher<String> = CoreMatcher::new();
 
     // Pattern 1: {"status": ["active"]}
-    matcher.add_pattern(
-        "p1".to_string(),
-        &[(
-            "status".to_string(),
-            vec![Matcher::Exact("active".to_string())],
-        )],
-    );
+    matcher
+        .add_pattern(
+            "p1".to_string(),
+            &[(
+                "status".to_string(),
+                vec![Matcher::Exact("active".to_string())],
+            )],
+        )
+        .unwrap();
 
     // Pattern 2: {"status": ["pending"]}
-    matcher.add_pattern(
-        "p2".to_string(),
-        &[(
-            "status".to_string(),
-            vec![Matcher::Exact("pending".to_string())],
-        )],
-    );
+    matcher
+        .add_pattern(
+            "p2".to_string(),
+            &[(
+                "status".to_string(),
+                vec![Matcher::Exact("pending".to_string())],
+            )],
+        )
+        .unwrap();
 
     // Should match p1 only
     let fields = vec![EventField {
@@ -439,13 +457,15 @@ fn test_thread_safe_core_matcher_single_field() {
     let matcher: ThreadSafeCoreMatcher<String> = ThreadSafeCoreMatcher::new();
 
     // Add pattern: {"status": ["active"]}
-    matcher.add_pattern(
-        "p1".to_string(),
-        &[(
-            "status".to_string(),
-            vec![Matcher::Exact("active".to_string())],
-        )],
-    );
+    matcher
+        .add_pattern(
+            "p1".to_string(),
+            &[(
+                "status".to_string(),
+                vec![Matcher::Exact("active".to_string())],
+            )],
+        )
+        .unwrap();
 
     // Create event fields
     let fields = vec![EventField {
@@ -466,13 +486,15 @@ fn test_thread_safe_core_matcher_no_match() {
 
     let matcher: ThreadSafeCoreMatcher<String> = ThreadSafeCoreMatcher::new();
 
-    matcher.add_pattern(
-        "p1".to_string(),
-        &[(
-            "status".to_string(),
-            vec![Matcher::Exact("active".to_string())],
-        )],
-    );
+    matcher
+        .add_pattern(
+            "p1".to_string(),
+            &[(
+                "status".to_string(),
+                vec![Matcher::Exact("active".to_string())],
+            )],
+        )
+        .unwrap();
 
     let fields = vec![EventField {
         path: "status".to_string(),
@@ -492,10 +514,12 @@ fn test_thread_safe_core_matcher_exists_true() {
     let matcher: ThreadSafeCoreMatcher<String> = ThreadSafeCoreMatcher::new();
 
     // Pattern: {"name": [{"exists": true}]}
-    matcher.add_pattern(
-        "p1".to_string(),
-        &[("name".to_string(), vec![Matcher::Exists(true)])],
-    );
+    matcher
+        .add_pattern(
+            "p1".to_string(),
+            &[("name".to_string(), vec![Matcher::Exists(true)])],
+        )
+        .unwrap();
 
     // Event with name field present
     let fields = vec![EventField {
@@ -520,10 +544,12 @@ fn test_thread_safe_core_matcher_exists_false() {
     let matcher: ThreadSafeCoreMatcher<String> = ThreadSafeCoreMatcher::new();
 
     // Pattern: {"name": [{"exists": false}]}
-    matcher.add_pattern(
-        "p1".to_string(),
-        &[("name".to_string(), vec![Matcher::Exists(false)])],
-    );
+    matcher
+        .add_pattern(
+            "p1".to_string(),
+            &[("name".to_string(), vec![Matcher::Exists(false)])],
+        )
+        .unwrap();
 
     // Event without name field
     let fields = vec![EventField {
@@ -548,22 +574,26 @@ fn test_thread_safe_core_matcher_multiple_patterns() {
     let matcher: ThreadSafeCoreMatcher<String> = ThreadSafeCoreMatcher::new();
 
     // Pattern 1: {"status": ["active"]}
-    matcher.add_pattern(
-        "p1".to_string(),
-        &[(
-            "status".to_string(),
-            vec![Matcher::Exact("active".to_string())],
-        )],
-    );
+    matcher
+        .add_pattern(
+            "p1".to_string(),
+            &[(
+                "status".to_string(),
+                vec![Matcher::Exact("active".to_string())],
+            )],
+        )
+        .unwrap();
 
     // Pattern 2: {"status": ["pending"]}
-    matcher.add_pattern(
-        "p2".to_string(),
-        &[(
-            "status".to_string(),
-            vec![Matcher::Exact("pending".to_string())],
-        )],
-    );
+    matcher
+        .add_pattern(
+            "p2".to_string(),
+            &[(
+                "status".to_string(),
+                vec![Matcher::Exact("pending".to_string())],
+            )],
+        )
+        .unwrap();
 
     // Should match p1 only
     let fields = vec![EventField {

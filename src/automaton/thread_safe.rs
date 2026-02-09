@@ -304,6 +304,8 @@ pub struct ThreadSafeCoreMatcher<X: Clone + Eq + Hash + Send + Sync> {
     /// When true, the next match operation will freeze before reading.
     /// This avoids O(n²) cost from freezing after every add_pattern.
     needs_freeze: AtomicBool,
+    /// Arena byte budget for pattern complexity limiting
+    arena_byte_budget: usize,
 }
 
 // ThreadSafeCoreMatcher is Send + Sync because:
@@ -314,12 +316,18 @@ pub struct ThreadSafeCoreMatcher<X: Clone + Eq + Hash + Send + Sync> {
 //   the ThreadSafeCoreMatcher itself Send + Sync
 
 impl<X: Clone + Eq + Hash + Send + Sync> ThreadSafeCoreMatcher<X> {
-    /// Create a new ThreadSafeCoreMatcher
+    /// Create a new ThreadSafeCoreMatcher with default arena budget (10 MB).
     pub fn new() -> Self {
+        Self::with_arena_budget(crate::PatternLimits::default().arena_byte_budget)
+    }
+
+    /// Create a new ThreadSafeCoreMatcher with a custom arena byte budget.
+    pub fn with_arena_budget(arena_byte_budget: usize) -> Self {
         Self {
             root: ArcSwap::from_pointee(FrozenFieldMatcher::new()),
             build_lock: Mutex::new(BuildState::new()),
             needs_freeze: AtomicBool::new(false),
+            arena_byte_budget,
         }
     }
 
@@ -347,7 +355,11 @@ impl<X: Clone + Eq + Hash + Send + Sync> ThreadSafeCoreMatcher<X> {
     /// The pattern is not frozen immediately; the frozen snapshot is updated lazily on
     /// the next match operation, amortizing the freeze cost across batches of adds.
     /// The pattern_fields should be a list of (path, matchers) tuples.
-    pub fn add_pattern(&self, x: X, pattern_fields: &[(String, Vec<crate::json::Matcher>)]) {
+    pub fn add_pattern(
+        &self,
+        x: X,
+        pattern_fields: &[(String, Vec<crate::json::Matcher>)],
+    ) -> Result<(), crate::QuaminaError> {
         // Acquire build lock
         let build_state = self.build_lock.lock();
 
@@ -377,7 +389,7 @@ impl<X: Clone + Eq + Hash + Send + Sync> ThreadSafeCoreMatcher<X> {
                         next_states.push(next);
                     }
                     _ => {
-                        let nexts = state.add_transition(path, matchers);
+                        let nexts = state.add_transition(path, matchers, self.arena_byte_budget)?;
                         next_states.extend(nexts);
                     }
                 }
@@ -395,6 +407,7 @@ impl<X: Clone + Eq + Hash + Send + Sync> ThreadSafeCoreMatcher<X> {
         // Freeze is deferred to the next match operation (ensure_frozen),
         // avoiding O(n²) cost from cloning the growing arena after every add.
         self.needs_freeze.store(true, Ordering::Release);
+        Ok(())
     }
 
     /// Freeze a MutableFieldMatcher into a FrozenFieldMatcher
@@ -918,13 +931,15 @@ mod tests {
         let matcher: ThreadSafeCoreMatcher<String> = ThreadSafeCoreMatcher::new();
 
         // Add patterns (thread-safe, serialized)
-        matcher.add_pattern(
-            "p1".to_string(),
-            &[(
-                "status".to_string(),
-                vec![Matcher::Exact("active".to_string())],
-            )],
-        );
+        matcher
+            .add_pattern(
+                "p1".to_string(),
+                &[(
+                    "status".to_string(),
+                    vec![Matcher::Exact("active".to_string())],
+                )],
+            )
+            .unwrap();
 
         // Match events (thread-safe, concurrent)
         let fields = vec![EventField {

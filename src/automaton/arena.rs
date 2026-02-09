@@ -252,6 +252,11 @@ impl StateArena {
         }
     }
 
+    /// Estimate the byte size of this arena (state vector capacity * per-state size).
+    pub fn estimated_byte_size(&self) -> usize {
+        self.states.capacity() * std::mem::size_of::<ArenaFaState>()
+    }
+
     /// Allocate a new default state, returning its ID.
     pub fn alloc(&mut self) -> StateId {
         let id = StateId(self.states.len() as u32);
