@@ -13,6 +13,7 @@
 
 use std::collections::HashMap;
 use std::hash::Hash;
+use std::marker::PhantomData;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -66,12 +67,15 @@ fn no_array_trail_conflict(from: &[crate::json::ArrayPos], to: &[crate::json::Ar
 pub struct FrozenFieldMatcher<X: Clone + Eq + Hash> {
     /// Map from field paths to value matchers
     pub transitions: FxHashMap<String, Arc<FrozenValueMatcher<X>>>,
-    /// Pattern identifiers that match when arriving at this state
-    pub matches: Vec<X>,
+    /// Dense u32 indices of patterns that match when arriving at this state.
+    /// Translated back to `X` values via `index_to_id` at the return boundary.
+    pub matches: Vec<u32>,
     /// exists:true patterns - map from field path to next field matcher
     pub exists_true: FxHashMap<String, Arc<FrozenFieldMatcher<X>>>,
     /// exists:false patterns - map from field path to next field matcher
     pub exists_false: FxHashMap<String, Arc<FrozenFieldMatcher<X>>>,
+    /// PhantomData to carry the X type (matches are stored as u32 indices)
+    _phantom: PhantomData<X>,
 }
 
 // SAFETY: FrozenFieldMatcher only contains Arc, FxHashMap, and Vec - all Send+Sync when X is.
@@ -86,6 +90,7 @@ impl<X: Clone + Eq + Hash> FrozenFieldMatcher<X> {
             matches: Vec::new(),
             exists_true: FxHashMap::default(),
             exists_false: FxHashMap::default(),
+            _phantom: PhantomData,
         }
     }
 
@@ -272,6 +277,10 @@ impl<X: Clone + Eq + Hash> FrozenValueMatcher<X> {
 struct BuildState<X: Clone + Eq + Hash> {
     /// The mutable root for building
     root: Rc<MutableFieldMatcher<X>>,
+    /// Bidirectional mapping: pattern identifier → dense u32 index
+    id_to_index: FxHashMap<X, u32>,
+    /// Reverse mapping: dense u32 index → pattern identifier
+    index_to_id: Vec<X>,
 }
 
 // SAFETY: BuildState is only ever accessed through a Mutex lock in ThreadSafeCoreMatcher.
@@ -283,9 +292,39 @@ impl<X: Clone + Eq + Hash> BuildState<X> {
     fn new() -> Self {
         Self {
             root: Rc::new(MutableFieldMatcher::new()),
+            id_to_index: FxHashMap::default(),
+            index_to_id: Vec::new(),
+        }
+    }
+
+    /// Get or assign a dense u32 index for a pattern identifier.
+    fn get_or_assign_index(&mut self, x: &X) -> u32
+    where
+        X: Clone,
+    {
+        if let Some(&idx) = self.id_to_index.get(x) {
+            idx
+        } else {
+            let idx = self.index_to_id.len() as u32;
+            self.index_to_id.push(x.clone());
+            self.id_to_index.insert(x.clone(), idx);
+            idx
         }
     }
 }
+
+/// Frozen root + index mapping, swapped atomically as one unit.
+/// Keeps the root matcher and index_to_id in a single ArcSwap load.
+struct FrozenRoot<X: Clone + Eq + Hash> {
+    matcher: FrozenFieldMatcher<X>,
+    /// Reverse mapping: dense u32 index → pattern identifier
+    index_to_id: Vec<X>,
+}
+
+// SAFETY: FrozenRoot only contains FrozenFieldMatcher (Send+Sync when X is) and Vec<X> (Send+Sync when X is).
+unsafe impl<X: Clone + Eq + Hash + Send + Sync> Send for FrozenRoot<X> {}
+// SAFETY: Same as Send - all fields (FrozenFieldMatcher, Vec) are Send+Sync when X is.
+unsafe impl<X: Clone + Eq + Hash + Send + Sync> Sync for FrozenRoot<X> {}
 
 /// Thread-safe core matcher using automaton-based matching.
 ///
@@ -296,8 +335,8 @@ impl<X: Clone + Eq + Hash> BuildState<X> {
 ///
 /// See `tests::test_thread_safe_core_matcher_basic` for usage example.
 pub struct ThreadSafeCoreMatcher<X: Clone + Eq + Hash + Send + Sync> {
-    /// The frozen root - atomically swappable, lock-free reads
-    root: ArcSwap<FrozenFieldMatcher<X>>,
+    /// The frozen root + index_to_id — single ArcSwap for lock-free reads
+    root: ArcSwap<FrozenRoot<X>>,
     /// Mutex protecting pattern building
     build_lock: Mutex<BuildState<X>>,
     /// Flag indicating that patterns were added since the last freeze.
@@ -317,7 +356,10 @@ impl<X: Clone + Eq + Hash + Send + Sync> ThreadSafeCoreMatcher<X> {
     /// Create a new ThreadSafeCoreMatcher
     pub fn new() -> Self {
         Self {
-            root: ArcSwap::from_pointee(FrozenFieldMatcher::new()),
+            root: ArcSwap::from_pointee(FrozenRoot {
+                matcher: FrozenFieldMatcher::new(),
+                index_to_id: Vec::new(),
+            }),
             build_lock: Mutex::new(BuildState::new()),
             needs_freeze: AtomicBool::new(false),
         }
@@ -334,8 +376,11 @@ impl<X: Clone + Eq + Hash + Send + Sync> ThreadSafeCoreMatcher<X> {
             let build_state = self.build_lock.lock();
             // Double-check under lock: another thread may have frozen already
             if self.needs_freeze.load(Ordering::Relaxed) {
-                let frozen = self.freeze_field_matcher(&build_state.root);
-                self.root.store(Arc::new(frozen));
+                let frozen = self.freeze_field_matcher(&build_state.root, &build_state.id_to_index);
+                self.root.store(Arc::new(FrozenRoot {
+                    matcher: frozen,
+                    index_to_id: build_state.index_to_id.clone(),
+                }));
                 self.needs_freeze.store(false, Ordering::Release);
             }
         }
@@ -349,7 +394,10 @@ impl<X: Clone + Eq + Hash + Send + Sync> ThreadSafeCoreMatcher<X> {
     /// The pattern_fields should be a list of (path, matchers) tuples.
     pub fn add_pattern(&self, x: X, pattern_fields: &[(String, Vec<crate::json::Matcher>)]) {
         // Acquire build lock
-        let build_state = self.build_lock.lock();
+        let mut build_state = self.build_lock.lock();
+
+        // Assign a dense u32 index for this pattern identifier
+        let _idx = build_state.get_or_assign_index(&x);
 
         // Sort fields lexically by path (like Go)
         let mut sorted_fields: Vec<_> = pattern_fields.to_vec();
@@ -398,17 +446,22 @@ impl<X: Clone + Eq + Hash + Send + Sync> ThreadSafeCoreMatcher<X> {
     }
 
     /// Freeze a MutableFieldMatcher into a FrozenFieldMatcher
-    fn freeze_field_matcher(&self, mutable: &Rc<MutableFieldMatcher<X>>) -> FrozenFieldMatcher<X> {
+    fn freeze_field_matcher(
+        &self,
+        mutable: &Rc<MutableFieldMatcher<X>>,
+        id_to_index: &FxHashMap<X, u32>,
+    ) -> FrozenFieldMatcher<X> {
         // Use a cache to handle cycles and sharing
         let mut cache: HashMap<*const MutableFieldMatcher<X>, Arc<FrozenFieldMatcher<X>>> =
             HashMap::new();
-        self.freeze_field_matcher_impl(mutable, &mut cache)
+        self.freeze_field_matcher_impl(mutable, &mut cache, id_to_index)
     }
 
     fn freeze_field_matcher_impl(
         &self,
         mutable: &Rc<MutableFieldMatcher<X>>,
         cache: &mut HashMap<*const MutableFieldMatcher<X>, Arc<FrozenFieldMatcher<X>>>,
+        id_to_index: &FxHashMap<X, u32>,
     ) -> FrozenFieldMatcher<X> {
         let ptr = Rc::as_ptr(mutable);
 
@@ -425,29 +478,38 @@ impl<X: Clone + Eq + Hash + Send + Sync> ThreadSafeCoreMatcher<X> {
         // Freeze transitions
         let mut frozen_transitions = FxHashMap::default();
         for (path, vm) in mutable.transitions.borrow().iter() {
-            let frozen_vm = self.freeze_value_matcher(vm, cache);
+            let frozen_vm = self.freeze_value_matcher(vm, cache, id_to_index);
             frozen_transitions.insert(path.clone(), Arc::new(frozen_vm));
         }
 
         // Freeze exists_true
         let mut frozen_exists_true = FxHashMap::default();
         for (path, fm) in mutable.exists_true.borrow().iter() {
-            let frozen_fm = self.freeze_field_matcher_impl(fm, cache);
+            let frozen_fm = self.freeze_field_matcher_impl(fm, cache, id_to_index);
             frozen_exists_true.insert(path.clone(), Arc::new(frozen_fm));
         }
 
         // Freeze exists_false
         let mut frozen_exists_false = FxHashMap::default();
         for (path, fm) in mutable.exists_false.borrow().iter() {
-            let frozen_fm = self.freeze_field_matcher_impl(fm, cache);
+            let frozen_fm = self.freeze_field_matcher_impl(fm, cache, id_to_index);
             frozen_exists_false.insert(path.clone(), Arc::new(frozen_fm));
         }
 
+        // Translate Vec<X> matches to Vec<u32> indices
+        let matches: Vec<u32> = mutable
+            .matches
+            .borrow()
+            .iter()
+            .filter_map(|x| id_to_index.get(x).copied())
+            .collect();
+
         FrozenFieldMatcher {
             transitions: frozen_transitions,
-            matches: mutable.matches.borrow().clone(),
+            matches,
             exists_true: frozen_exists_true,
             exists_false: frozen_exists_false,
+            _phantom: PhantomData,
         }
     }
 
@@ -455,11 +517,12 @@ impl<X: Clone + Eq + Hash + Send + Sync> ThreadSafeCoreMatcher<X> {
         &self,
         mutable: &Rc<MutableValueMatcher<X>>,
         cache: &mut HashMap<*const MutableFieldMatcher<X>, Arc<FrozenFieldMatcher<X>>>,
+        id_to_index: &FxHashMap<X, u32>,
     ) -> FrozenValueMatcher<X> {
         // Handle singleton optimization
         let singleton_match = mutable.singleton_match.borrow().clone();
         let singleton_transition = mutable.singleton_transition.borrow().as_ref().map(|fm| {
-            let frozen = self.freeze_field_matcher_impl(fm, cache);
+            let frozen = self.freeze_field_matcher_impl(fm, cache, id_to_index);
             Arc::new(frozen)
         });
 
@@ -467,7 +530,7 @@ impl<X: Clone + Eq + Hash + Send + Sync> ThreadSafeCoreMatcher<X> {
         // Use the pointer address as the key - matches what arena traversal returns
         let mut transition_map = FxHashMap::default();
         for (ptr, mutable_fm) in mutable.transition_map.borrow().iter() {
-            let frozen_fm = self.freeze_field_matcher_impl(mutable_fm, cache);
+            let frozen_fm = self.freeze_field_matcher_impl(mutable_fm, cache, id_to_index);
             // Use the raw pointer value as the key (cast to usize for hash stability)
             transition_map.insert(*ptr as usize, Arc::new(frozen_fm));
         }
@@ -499,7 +562,7 @@ impl<X: Clone + Eq + Hash + Send + Sync> ThreadSafeCoreMatcher<X> {
         let root = self.root.load();
 
         if fields.is_empty() {
-            return self.collect_exists_false_matches(&root);
+            return self.collect_exists_false_matches(&root.matcher, &root.index_to_id);
         }
 
         let mut matches = FrozenMatchSet::new();
@@ -507,26 +570,26 @@ impl<X: Clone + Eq + Hash + Send + Sync> ThreadSafeCoreMatcher<X> {
 
         // For each field, try to match from the start state
         for i in 0..fields.len() {
-            self.try_to_match(fields, i, &root, &mut matches, &mut bufs);
+            self.try_to_match(fields, i, &root.matcher, &mut matches, &mut bufs);
         }
 
-        matches.into_vec()
+        matches.into_vec(&root.index_to_id)
     }
 
     fn try_to_match(
         &self,
         fields: &[EventField],
         index: usize,
-        state: &Arc<FrozenFieldMatcher<X>>,
-        matches: &mut FrozenMatchSet<X>,
+        state: &FrozenFieldMatcher<X>,
+        matches: &mut FrozenMatchSet,
         bufs: &mut NfaBuffers,
     ) {
         let field = &fields[index];
 
         // Check exists:true transition
         if let Some(exists_trans) = state.exists_true.get(&field.path) {
-            for m in &exists_trans.matches {
-                matches.add(m.clone());
+            for &m in &exists_trans.matches {
+                matches.add(m);
             }
             for next_idx in (index + 1)..fields.len() {
                 if no_array_trail_conflict(&field.array_trail, &fields[next_idx].array_trail) {
@@ -544,8 +607,8 @@ impl<X: Clone + Eq + Hash + Send + Sync> ThreadSafeCoreMatcher<X> {
             state.transition_on(&field.path, field.value.as_bytes(), field.is_number, bufs);
 
         for next_state in next_states {
-            for m in &next_state.matches {
-                matches.add(m.clone());
+            for &m in &next_state.matches {
+                matches.add(m);
             }
 
             for next_idx in (index + 1)..fields.len() {
@@ -560,28 +623,36 @@ impl<X: Clone + Eq + Hash + Send + Sync> ThreadSafeCoreMatcher<X> {
 
     fn check_exists_false(
         &self,
-        state: &Arc<FrozenFieldMatcher<X>>,
+        state: &FrozenFieldMatcher<X>,
         fields: &[EventField],
         index: usize,
-        matches: &mut FrozenMatchSet<X>,
+        matches: &mut FrozenMatchSet,
         bufs: &mut NfaBuffers,
     ) {
         for (path, exists_trans) in &state.exists_false {
             let field_exists = fields.iter().any(|f| &f.path == path);
 
             if !field_exists {
-                for m in &exists_trans.matches {
-                    matches.add(m.clone());
+                for &m in &exists_trans.matches {
+                    matches.add(m);
                 }
                 self.try_to_match(fields, index, exists_trans, matches, bufs);
             }
         }
     }
 
-    fn collect_exists_false_matches(&self, state: &Arc<FrozenFieldMatcher<X>>) -> Vec<X> {
+    fn collect_exists_false_matches(
+        &self,
+        state: &FrozenFieldMatcher<X>,
+        index_to_id: &[X],
+    ) -> Vec<X> {
         let mut result = Vec::new();
         for exists_trans in state.exists_false.values() {
-            result.extend(exists_trans.matches.iter().cloned());
+            for &idx in &exists_trans.matches {
+                if let Some(x) = index_to_id.get(idx as usize) {
+                    result.push(x.clone());
+                }
+            }
         }
         result
     }
@@ -600,33 +671,33 @@ impl<X: Clone + Eq + Hash + Send + Sync> ThreadSafeCoreMatcher<X> {
         let root = self.root.load();
 
         if fields.is_empty() {
-            return self.collect_exists_false_matches(&root);
+            return self.collect_exists_false_matches(&root.matcher, &root.index_to_id);
         }
 
         let mut matches = FrozenMatchSet::new();
         bufs.clear(); // Reset buffers for reuse
 
         for i in 0..fields.len() {
-            self.try_to_match_ref(fields, i, &root, &mut matches, bufs);
+            self.try_to_match_ref(fields, i, &root.matcher, &mut matches, bufs);
         }
 
-        matches.into_vec()
+        matches.into_vec(&root.index_to_id)
     }
 
     fn try_to_match_ref(
         &self,
         fields: &[EventFieldRef<'_>],
         index: usize,
-        state: &Arc<FrozenFieldMatcher<X>>,
-        matches: &mut FrozenMatchSet<X>,
+        state: &FrozenFieldMatcher<X>,
+        matches: &mut FrozenMatchSet,
         bufs: &mut NfaBuffers,
     ) {
         let field = &fields[index];
 
         // Check exists:true transition
         if let Some(exists_trans) = state.exists_true.get(field.path) {
-            for m in &exists_trans.matches {
-                matches.add(m.clone());
+            for &m in &exists_trans.matches {
+                matches.add(m);
             }
             for next_idx in (index + 1)..fields.len() {
                 if no_array_trail_conflict_ref(field.array_trail, fields[next_idx].array_trail) {
@@ -643,8 +714,8 @@ impl<X: Clone + Eq + Hash + Send + Sync> ThreadSafeCoreMatcher<X> {
         let next_states = state.transition_on(field.path, field.value, field.is_number, bufs);
 
         for next_state in next_states {
-            for m in &next_state.matches {
-                matches.add(m.clone());
+            for &m in &next_state.matches {
+                matches.add(m);
             }
 
             for next_idx in (index + 1)..fields.len() {
@@ -659,18 +730,18 @@ impl<X: Clone + Eq + Hash + Send + Sync> ThreadSafeCoreMatcher<X> {
 
     fn check_exists_false_ref(
         &self,
-        state: &Arc<FrozenFieldMatcher<X>>,
+        state: &FrozenFieldMatcher<X>,
         fields: &[EventFieldRef<'_>],
         index: usize,
-        matches: &mut FrozenMatchSet<X>,
+        matches: &mut FrozenMatchSet,
         bufs: &mut NfaBuffers,
     ) {
         for (path, exists_trans) in &state.exists_false {
             let field_exists = fields.iter().any(|f| f.path == path);
 
             if !field_exists {
-                for m in &exists_trans.matches {
-                    matches.add(m.clone());
+                for &m in &exists_trans.matches {
+                    matches.add(m);
                 }
                 self.try_to_match_ref(fields, index, exists_trans, matches, bufs);
             }
@@ -692,25 +763,25 @@ impl<X: Clone + Eq + Hash + Send + Sync> ThreadSafeCoreMatcher<X> {
         let root = self.root.load();
 
         if fields.is_empty() {
-            return self.collect_exists_false_matches(&root);
+            return self.collect_exists_false_matches(&root.matcher, &root.index_to_id);
         }
 
         let mut matches = FrozenMatchSet::new();
         bufs.clear();
 
         for i in 0..fields.len() {
-            self.try_to_match_direct(fields, i, &root, &mut matches, bufs);
+            self.try_to_match_direct(fields, i, &root.matcher, &mut matches, bufs);
         }
 
-        matches.into_vec()
+        matches.into_vec(&root.index_to_id)
     }
 
     fn try_to_match_direct(
         &self,
         fields: &[crate::flatten_json::Field<'_>],
         index: usize,
-        state: &Arc<FrozenFieldMatcher<X>>,
-        matches: &mut FrozenMatchSet<X>,
+        state: &FrozenFieldMatcher<X>,
+        matches: &mut FrozenMatchSet,
         bufs: &mut NfaBuffers,
     ) {
         let field = &fields[index];
@@ -720,8 +791,8 @@ impl<X: Clone + Eq + Hash + Send + Sync> ThreadSafeCoreMatcher<X> {
 
         // Check exists:true transition
         if let Some(exists_trans) = state.exists_true.get(path) {
-            for m in &exists_trans.matches {
-                matches.add(m.clone());
+            for &m in &exists_trans.matches {
+                matches.add(m);
             }
             for next_idx in (index + 1)..fields.len() {
                 if no_array_trail_conflict_ref(array_trail, fields[next_idx].array_trail_slice()) {
@@ -738,8 +809,8 @@ impl<X: Clone + Eq + Hash + Send + Sync> ThreadSafeCoreMatcher<X> {
         let next_states = state.transition_on(path, value, field.is_number, bufs);
 
         for next_state in next_states {
-            for m in &next_state.matches {
-                matches.add(m.clone());
+            for &m in &next_state.matches {
+                matches.add(m);
             }
 
             for next_idx in (index + 1)..fields.len() {
@@ -754,18 +825,18 @@ impl<X: Clone + Eq + Hash + Send + Sync> ThreadSafeCoreMatcher<X> {
 
     fn check_exists_false_direct(
         &self,
-        state: &Arc<FrozenFieldMatcher<X>>,
+        state: &FrozenFieldMatcher<X>,
         fields: &[crate::flatten_json::Field<'_>],
         index: usize,
-        matches: &mut FrozenMatchSet<X>,
+        matches: &mut FrozenMatchSet,
         bufs: &mut NfaBuffers,
     ) {
         for (path, exists_trans) in &state.exists_false {
             let field_exists = fields.iter().any(|f| f.path_str() == path);
 
             if !field_exists {
-                for m in &exists_trans.matches {
-                    matches.add(m.clone());
+                for &m in &exists_trans.matches {
+                    matches.add(m);
                 }
                 self.try_to_match_direct(fields, index, exists_trans, matches, bufs);
             }
@@ -779,30 +850,63 @@ impl<X: Clone + Eq + Hash + Send + Sync> Default for ThreadSafeCoreMatcher<X> {
     }
 }
 
-/// A set of matches (deduplicated) for frozen matcher.
+/// A set of matches (deduplicated) for frozen matcher using a bitset.
 ///
-/// Uses linear dedup on a Vec instead of a HashSet. This is faster for the
-/// common case of few matches (0-10) because it avoids hash table allocation
-/// and hashing overhead. Pattern matching typically produces few results.
-struct FrozenMatchSet<X: Clone + Eq> {
-    matches: Vec<X>,
+/// Uses a `u64` bitfield for the common case of ≤64 patterns (zero allocation,
+/// O(1) insert and membership test). Falls back to a `Vec<u64>` for >64 patterns.
+/// Eliminates all string clones and comparisons during matching.
+struct FrozenMatchSet {
+    /// Inline bitset for pattern indices 0..63
+    bits: u64,
+    /// Overflow for pattern indices ≥ 64 (empty Vec doesn't allocate)
+    overflow: Vec<u64>,
 }
 
-impl<X: Clone + Eq> FrozenMatchSet<X> {
+impl FrozenMatchSet {
     fn new() -> Self {
         Self {
-            matches: Vec::new(),
+            bits: 0,
+            overflow: Vec::new(),
         }
     }
 
-    fn add(&mut self, x: X) {
-        if !self.matches.contains(&x) {
-            self.matches.push(x);
+    #[inline]
+    fn add(&mut self, idx: u32) {
+        let i = idx as usize;
+        if i < 64 {
+            self.bits |= 1u64 << i;
+        } else {
+            let word = (i - 64) / 64;
+            let bit = (i - 64) % 64;
+            if word >= self.overflow.len() {
+                self.overflow.resize(word + 1, 0);
+            }
+            self.overflow[word] |= 1u64 << bit;
         }
     }
 
-    fn into_vec(self) -> Vec<X> {
-        self.matches
+    fn into_vec<X: Clone>(self, index_to_id: &[X]) -> Vec<X> {
+        let mut result = Vec::new();
+        let mut bits = self.bits;
+        while bits != 0 {
+            let idx = bits.trailing_zeros() as usize;
+            if idx < index_to_id.len() {
+                result.push(index_to_id[idx].clone());
+            }
+            bits &= bits - 1;
+        }
+        for (word_idx, &word) in self.overflow.iter().enumerate() {
+            let mut w = word;
+            while w != 0 {
+                let bit = w.trailing_zeros() as usize;
+                let idx = 64 + word_idx * 64 + bit;
+                if idx < index_to_id.len() {
+                    result.push(index_to_id[idx].clone());
+                }
+                w &= w - 1;
+            }
+        }
+        result
     }
 }
 

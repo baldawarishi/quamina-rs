@@ -1,8 +1,8 @@
 # Future: Bitset-based match deduplication
 
-**Status:** Proposed
-**Expected gain:** 5-15ns on `status_context_fields`
-**Complexity:** ~90 lines across 2 files, moderate risk
+**Status:** Explored — net neutral for current benchmarks
+**Expected gain:** 5-15ns on `status_context_fields` (predicted); ~0ns measured
+**Complexity:** ~100 lines in `thread_safe.rs`, moderate risk
 
 ---
 
@@ -76,11 +76,59 @@ bits: u64,  // for ≤64 patterns; tier to Vec<u64> for more
 - Moderate risk: touches the hottest code path and the most correctness-critical
   matching logic (try_to_match recursion, exists-false, array-trail conflicts)
 
-## Why not now
+## Exploration results
 
-Steps 2-5 already closed the gap: 420ns → 272ns (−35%), now 29% faster than Go's
-382ns. The remaining gain from bitset dedup (~5-15ns) doesn't justify the risk of
-changing the core data flow. Worth revisiting if:
-- A new benchmark reveals match-heavy workloads where clone overhead matters
-- The codebase needs a larger refactor that touches these types anyway
-- Someone wants to push below 260ns
+A full implementation was built and benchmarked (see branch
+`claude/explore-bitset-dedup-yoHkY`). The changes only touch the frozen
+(thread-safe) matching path — `MutableFieldMatcher` and `CoreMatcher` are
+unchanged. Key design choices:
+
+- `FrozenRoot` wrapper bundles the root `FrozenFieldMatcher` and `index_to_id`
+  into a single `ArcSwap` load (eliminates double-ArcSwap overhead)
+- `try_to_match*` signatures changed from `&Arc<FrozenFieldMatcher<X>>` to
+  `&FrozenFieldMatcher<X>` to remove pointer indirection
+- `PhantomData<X>` added to `FrozenFieldMatcher` since `X` is no longer used
+  non-recursively after `matches: Vec<X>` → `Vec<u32>`
+
+### Benchmark results (noisy VM, back-to-back A/B runs)
+
+| Benchmark (X=String) | Main | Bitset | Delta |
+|---|---|---|---|
+| status_context_fields | 472ns | 479ns | +7ns (~0) |
+| match_only_context | 243-249ns | 252-260ns | +6-11ns |
+| 100_patterns | 218ns | 220ns | ~0ns |
+| 100_patterns_no_match | 141ns | 130ns | **-11ns** |
+
+| Benchmark (X=usize) | Main | Bitset | Delta |
+|---|---|---|---|
+| 10k_patterns_1_match | 229-242ns | 308-351ns | **+70-80ns** |
+| 10k_patterns_no_match | 127ns | 143ns | +16ns |
+
+### Why it's neutral (not the expected win)
+
+The predicted gain assumed eliminating clone overhead at match sites. In reality:
+
+1. **Total clone count is unchanged for single-match.** The bitset moves 1
+   `X::clone()` from the match site to the return boundary — it doesn't
+   eliminate it. The net gain is zero for the common 1-match case.
+
+2. **Bitset overhead offsets dedup savings.** The `FrozenRoot` wrapper, bitset
+   iteration (`trailing_zeros` loop), and `index_to_id` lookup add ~5-10ns of
+   overhead that roughly cancels any savings from avoiding `Vec::contains`.
+
+3. **Cheap-to-clone X types regress.** When `X = usize`, `clone()` is a
+   register copy. The bitset + index translation is strictly slower. The
+   `10k_patterns` benchmark (usize) regresses ~70ns.
+
+4. **Benefit requires high dedup ratio.** The bitset wins when N match-site
+   visits produce D << N unique matches (eliminating N-D clones). Current
+   benchmarks are single-match or low-match — the dedup ratio is ~1.
+
+### Worth revisiting if
+
+- A benchmark reveals **multi-match dedup-heavy** workloads (e.g., 50+ patterns
+  matching the same event with many duplicate visits)
+- Rust gains specialization, allowing the bitset path only for expensive-clone
+  types
+- The dominant X type becomes something with truly expensive clone (e.g.,
+  `String` with long pattern IDs)
