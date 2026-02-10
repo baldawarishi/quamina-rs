@@ -420,9 +420,9 @@ pub struct Quamina<X: Clone + Eq + Hash + Send + Sync = String> {
 
 impl<X: Clone + Eq + Hash + Send + Sync> Clone for Quamina<X> {
     fn clone(&self) -> Self {
-        // Create a new automaton and rebuild from pattern_defs.
-        // Use usize::MAX budget — patterns were already validated on first add.
-        let automaton = ThreadSafeCoreMatcher::with_arena_budget(usize::MAX);
+        // Rebuild automaton from pattern_defs using the configured budget.
+        let automaton =
+            ThreadSafeCoreMatcher::with_arena_budget(self.pattern_limits.arena_byte_budget);
 
         for (id, patterns) in &self.pattern_defs {
             if self.deleted_patterns.contains(id) {
@@ -476,7 +476,12 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
     pub fn add_pattern(&mut self, x: X, pattern_json: &str) -> Result<(), QuaminaError> {
         let fields = json::parse_pattern(pattern_json, &self.pattern_limits)?;
 
-        // Add field paths to segments tree (convert dot-separated to newline-separated)
+        // Route to automaton first — if this fails (e.g. budget exceeded),
+        // we must NOT store the pattern in pattern_defs, segments_tree, etc.
+        let pattern_fields: Vec<(String, Vec<Matcher>)> = fields.clone().into_iter().collect();
+        self.automaton.add_pattern(x.clone(), &pattern_fields)?;
+
+        // Automaton accepted — now commit to bookkeeping state
         for field_path in fields.keys() {
             let segment_path = field_path.replace('.', "\n");
             self.segments_tree.add(&segment_path);
@@ -485,15 +490,8 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
         // If pattern was previously deleted, un-delete it
         self.deleted_patterns.remove(&x);
 
-        // Store pattern definition for cloning
-        self.pattern_defs
-            .entry(x.clone())
-            .or_default()
-            .push(fields.clone());
-
-        // Route to automaton
-        let pattern_fields: Vec<(String, Vec<Matcher>)> = fields.into_iter().collect();
-        self.automaton.add_pattern(x, &pattern_fields)?;
+        // Store pattern definition for cloning/rebuild
+        self.pattern_defs.entry(x).or_default().push(fields);
 
         Ok(())
     }
@@ -680,9 +678,9 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
             return 0;
         }
 
-        // Create new automaton with only live patterns.
-        // Use usize::MAX budget — patterns were already validated on first add.
-        let new_automaton = ThreadSafeCoreMatcher::with_arena_budget(usize::MAX);
+        // Create new automaton with only live patterns, using the configured budget.
+        let new_automaton =
+            ThreadSafeCoreMatcher::with_arena_budget(self.pattern_limits.arena_byte_budget);
 
         for (id, patterns) in &self.pattern_defs {
             if self.deleted_patterns.contains(id) {
@@ -729,7 +727,8 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
 
     /// Removes all patterns
     pub fn clear(&mut self) {
-        self.automaton = ThreadSafeCoreMatcher::new();
+        self.automaton =
+            ThreadSafeCoreMatcher::with_arena_budget(self.pattern_limits.arena_byte_budget);
         self.pattern_defs.clear();
         self.deleted_patterns.clear();
         self.pruner_stats.reset();
