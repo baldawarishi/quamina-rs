@@ -304,20 +304,32 @@ impl<X: Clone + Eq + Hash + Send + Sync> QuaminaBuilder<X> {
         Ok(self)
     }
 
-    /// Set the maximum nesting depth for patterns (default: 256)
+    /// Set the maximum nesting depth for patterns (default: 256).
+    ///
+    /// # Panics
+    /// Panics if `depth` is 0.
     pub fn with_max_pattern_depth(mut self, depth: usize) -> Self {
+        assert!(depth > 0, "max_pattern_depth must be at least 1");
         self.pattern_limits.max_pattern_depth = depth;
         self
     }
 
-    /// Set the maximum number of fields per pattern (default: 256)
+    /// Set the maximum number of fields per pattern (default: 256).
+    ///
+    /// # Panics
+    /// Panics if `count` is 0.
     pub fn with_max_fields_per_pattern(mut self, count: usize) -> Self {
+        assert!(count > 0, "max_fields_per_pattern must be at least 1");
         self.pattern_limits.max_fields_per_pattern = count;
         self
     }
 
-    /// Set the arena byte budget for the automaton (default: 10 MB)
+    /// Set the arena byte budget for the automaton (default: 10 MB).
+    ///
+    /// # Panics
+    /// Panics if `budget` is 0.
     pub fn with_arena_byte_budget(mut self, budget: usize) -> Self {
+        assert!(budget > 0, "arena_byte_budget must be at least 1");
         self.pattern_limits.arena_byte_budget = budget;
         self
     }
