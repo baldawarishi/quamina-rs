@@ -389,12 +389,12 @@ pub static REGEXP_SAMPLES: &[RegexpSample] = &[
         nomatches: &["aaz", "a-z"],
         valid: true,
     },
-    // Sample 55
+    // Sample 55 — character class subtraction: [a-d] minus [b-c] = {a, d}
     RegexpSample {
         regex: "[a-d-[b-c]]",
-        matches: &[],
-        nomatches: &[],
-        valid: false,
+        matches: &["a", "d"],
+        nomatches: &["b", "c", "e", "0"],
+        valid: true,
     },
     // Sample 56
     RegexpSample {
@@ -417,26 +417,26 @@ pub static REGEXP_SAMPLES: &[RegexpSample] = &[
         nomatches: &[""],
         valid: true,
     },
-    // Sample 59
+    // Sample 59 — subtraction with no overlap: [a-b] minus [0-9] = {a, b}
     RegexpSample {
         regex: "[a-b-[0-9]]+",
-        matches: &[],
-        nomatches: &[],
-        valid: false,
+        matches: &["a", "ab", "ba", "b"],
+        nomatches: &["", "0", "5", "9"],
+        valid: true,
     },
-    // Sample 60
+    // Sample 60 — subtract negated class: [a-c] minus [^a-c] = {a, b, c}
     RegexpSample {
         regex: "[a-c-[^a-c]]",
-        matches: &[],
-        nomatches: &[],
-        valid: false,
+        matches: &["a", "b", "c"],
+        nomatches: &["d", "0", "z"],
+        valid: true,
     },
-    // Sample 61
+    // Sample 61 — subtract negated single char: [a-z] minus [^a] = {a}
     RegexpSample {
         regex: "[a-z-[^a]]",
-        matches: &[],
-        nomatches: &[],
-        valid: false,
+        matches: &["a"],
+        nomatches: &["b", "z", "0"],
+        valid: true,
     },
     // Sample 62
     RegexpSample {
@@ -5219,12 +5219,12 @@ pub static REGEXP_SAMPLES: &[RegexpSample] = &[
         nomatches: &[],
         valid: false,
     },
-    // Sample 745
+    // Sample 745 — subtraction: [a-zA-Z] minus vowels = consonants
     RegexpSample {
         regex: "[a-zA-Z-[aeiouAEIOU]]+",
-        matches: &[],
-        nomatches: &[],
-        valid: false,
+        matches: &["bcdfg", "BCDFG", "b", "Z"],
+        nomatches: &["", "a", "e", "A", "E"],
+        valid: true,
     },
     // Sample 746
     RegexpSample {

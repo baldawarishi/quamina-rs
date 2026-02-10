@@ -996,9 +996,23 @@ fn read_char_class_expr(
 
     let mut rr = read_cce1s(parse)?;
 
-    // Check for trailing -
+    // Check for character class subtraction -[...] or trailing -
     if let Ok(true) = parse.bypass_optional('-') {
-        rr.push(RunePair { lo: '-', hi: '-' });
+        // Peek ahead to see if this is subtraction syntax -[
+        let next = parse.next_rune().map_err(|_| RegexpError {
+            message: "unclosed character class".into(),
+            offset: parse.index,
+        })?;
+        if next == '[' {
+            // Character class subtraction: base-[subtract]
+            // Recursively parse the subtracted class (which may itself contain subtraction)
+            let (subtract_rr, _) = read_char_class_expr(parse)?;
+            rr = subtract_rune_range(rr, subtract_rr);
+        } else {
+            // Not subtraction — it's a trailing literal '-'
+            parse.backup1(next);
+            rr.push(RunePair { lo: '-', hi: '-' });
+        }
     }
 
     parse.require(']')?;
@@ -1190,6 +1204,53 @@ fn read_cce1(parse: &mut RegexpParse, first: bool) -> Result<RuneRange, RegexpEr
     }
 
     Ok(vec![RunePair { lo, hi }])
+}
+
+/// Subtract one rune range from another: `base - subtract`.
+/// Returns characters that are in `base` but NOT in `subtract`.
+/// Both inputs are simplified before processing.
+pub(crate) fn subtract_rune_range(base: RuneRange, subtract: RuneRange) -> RuneRange {
+    let base = simplify_rune_range(base);
+    let subtract = simplify_rune_range(subtract);
+
+    let mut result = Vec::new();
+    let mut sub_idx = 0;
+
+    for pair in &base {
+        let mut lo = pair.lo as u32;
+        let hi = pair.hi as u32;
+
+        // Walk through subtract ranges that might overlap this base range
+        while sub_idx < subtract.len() && (subtract[sub_idx].hi as u32) < lo {
+            sub_idx += 1;
+        }
+
+        let mut si = sub_idx;
+        while si < subtract.len() && (subtract[si].lo as u32) <= hi {
+            let sub_lo = subtract[si].lo as u32;
+            let sub_hi = subtract[si].hi as u32;
+
+            // Add the gap before this subtract range (if any)
+            if lo < sub_lo {
+                if let (Some(r_lo), Some(r_hi)) = (char::from_u32(lo), char::from_u32(sub_lo - 1)) {
+                    result.push(RunePair { lo: r_lo, hi: r_hi });
+                }
+            }
+
+            // Advance past the subtracted portion
+            lo = sub_hi + 1;
+            si += 1;
+        }
+
+        // Add remaining portion of base range after all subtract ranges
+        if lo <= hi {
+            if let (Some(r_lo), Some(r_hi)) = (char::from_u32(lo), char::from_u32(hi)) {
+                result.push(RunePair { lo: r_lo, hi: r_hi });
+            }
+        }
+    }
+
+    result
 }
 
 /// Simplify and merge overlapping rune ranges
