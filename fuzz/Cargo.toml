@@ -41,3 +41,10 @@ path = "fuzz_targets/fuzz_match_event.rs"
 test = false
 doc = false
 bench = false
+
+[[bin]]
+name = "fuzz_lifecycle"
+path = "fuzz_targets/fuzz_lifecycle.rs"
+test = false
+doc = false
+bench = false

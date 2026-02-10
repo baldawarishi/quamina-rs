@@ -27,9 +27,10 @@ use automaton::{NfaBuffers, ThreadSafeCoreMatcher};
 use flatten_json::FlattenJsonState;
 use json::Matcher;
 use parking_lot::Mutex;
+use rustc_hash::FxHashSet;
 use segments_tree::SegmentsTree;
 use std::cell::RefCell;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::fmt;
 use std::hash::Hash;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -301,7 +302,7 @@ impl<X: Clone + Eq + Hash + Send + Sync> QuaminaBuilder<X> {
         Ok(Quamina {
             automaton: ThreadSafeCoreMatcher::new(),
             pattern_defs: HashMap::new(),
-            deleted_patterns: HashSet::new(),
+            deleted_patterns: FxHashSet::default(),
             segments_tree: SegmentsTree::new(),
             custom_flattener: self.custom_flattener.map(Mutex::new),
             pruner_stats: PrunerStats::new(),
@@ -346,7 +347,7 @@ pub struct Quamina<X: Clone + Eq + Hash + Send + Sync = String> {
     /// All pattern definitions (source of truth for cloning)
     pattern_defs: HashMap<X, Vec<PatternDef>>,
     /// Deleted patterns (filtered from automaton results since automaton doesn't support deletion)
-    deleted_patterns: HashSet<X>,
+    deleted_patterns: FxHashSet<X>,
     /// Segments tree for fast field skipping during event parsing
     segments_tree: SegmentsTree,
     /// Custom flattener for non-JSON formats (if provided)
@@ -397,7 +398,7 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
         Quamina {
             automaton: ThreadSafeCoreMatcher::new(),
             pattern_defs: HashMap::new(),
-            deleted_patterns: HashSet::new(),
+            deleted_patterns: FxHashSet::default(),
             segments_tree: SegmentsTree::new(),
             custom_flattener: None,
             pruner_stats: PrunerStats::new(),

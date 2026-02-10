@@ -52,5 +52,6 @@ unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)'] }
 unsafe_code = "warn"
 
 [lints.clippy]
+perf = { level = "warn", priority = -1 }
 undocumented_unsafe_blocks = "warn"
 transmute_ptr_to_ptr = "warn"
