@@ -74,10 +74,13 @@ fn profile_pattern_add_simple() -> MemoryStats {
     #[cfg(feature = "dhat-heap")]
     let _profiler = dhat::Profiler::builder().testing().build();
 
-    let mut q = Quamina::<usize>::new();
+    let mut q = Quamina::new();
     for i in 0..100 {
-        q.add_pattern(i, &format!(r#"{{"field_{}": ["value_{}"]}}"#, i, i))
-            .unwrap();
+        q.add_pattern(
+            format!("p{}", i),
+            &format!(r#"{{"field_{}": ["value_{}"]}}"#, i, i),
+        )
+        .unwrap();
     }
 
     let stats = MemoryStats::capture("pattern_add_100_simple");
@@ -90,14 +93,14 @@ fn profile_pattern_add_multivalue() -> MemoryStats {
     #[cfg(feature = "dhat-heap")]
     let _profiler = dhat::Profiler::builder().testing().build();
 
-    let mut q = Quamina::<usize>::new();
+    let mut q = Quamina::new();
     for i in 0..100 {
         let values: String = (0..10)
             .map(|j| format!("\"value_{}_{}\"", i, j))
             .collect::<Vec<_>>()
             .join(", ");
         let pattern = format!(r#"{{"field": [{}]}}"#, values);
-        q.add_pattern(i, &pattern).unwrap();
+        q.add_pattern(format!("p{}", i), &pattern).unwrap();
     }
 
     let stats = MemoryStats::capture("pattern_add_100x10_multivalue");
@@ -110,7 +113,7 @@ fn profile_regex_patterns() -> MemoryStats {
     #[cfg(feature = "dhat-heap")]
     let _profiler = dhat::Profiler::builder().testing().build();
 
-    let mut q = Quamina::<usize>::new();
+    let mut q = Quamina::new();
     let patterns = [
         r#"{"email": [{"regex": "^[a-z]+@[a-z]+\\.[a-z]+$"}]}"#,
         r#"{"path": [{"regex": "/api/v[0-9]+/.*"}]}"#,
@@ -125,7 +128,7 @@ fn profile_regex_patterns() -> MemoryStats {
     ];
 
     for (i, pattern) in patterns.iter().enumerate() {
-        q.add_pattern(i, pattern).unwrap();
+        q.add_pattern(format!("p{}", i), pattern).unwrap();
     }
 
     let stats = MemoryStats::capture("pattern_add_10_regex");
@@ -138,9 +141,9 @@ fn profile_unicode_category() -> MemoryStats {
     #[cfg(feature = "dhat-heap")]
     let _profiler = dhat::Profiler::builder().testing().build();
 
-    let mut q = Quamina::<usize>::new();
+    let mut q = Quamina::new();
     // ~p{L} matches any Unicode letter (~131k code points across many ranges)
-    q.add_pattern(0, r#"{"value": [{"regex": "~p{L}"}]}"#)
+    q.add_pattern("p0".to_string(), r#"{"value": [{"regex": "~p{L}"}]}"#)
         .unwrap();
 
     let stats = MemoryStats::capture("pattern_add_unicode_category_L");
@@ -153,8 +156,8 @@ fn profile_negated_char_class() -> MemoryStats {
     #[cfg(feature = "dhat-heap")]
     let _profiler = dhat::Profiler::builder().testing().build();
 
-    let mut q = Quamina::<usize>::new();
-    q.add_pattern(0, r#"{"value": [{"regex": "[^abc]"}]}"#)
+    let mut q = Quamina::new();
+    q.add_pattern("p0".to_string(), r#"{"value": [{"regex": "[^abc]"}]}"#)
         .unwrap();
 
     let stats = MemoryStats::capture("pattern_add_negated_char_class");
@@ -167,12 +170,12 @@ fn profile_numeric_patterns() -> MemoryStats {
     #[cfg(feature = "dhat-heap")]
     let _profiler = dhat::Profiler::builder().testing().build();
 
-    let mut q = Quamina::<usize>::new();
+    let mut q = Quamina::new();
     for i in 0..100 {
         let lower = i * 100;
         let upper = (i + 1) * 100;
         q.add_pattern(
-            i,
+            format!("p{}", i),
             &format!(
                 r#"{{"score": [{{"numeric": [">=", {}, "<", {}]}}]}}"#,
                 lower, upper
@@ -191,10 +194,13 @@ fn profile_steady_state_1000() -> MemoryStats {
     #[cfg(feature = "dhat-heap")]
     let _profiler = dhat::Profiler::builder().testing().build();
 
-    let mut q = Quamina::<usize>::new();
+    let mut q = Quamina::new();
     for i in 0..1000 {
-        q.add_pattern(i, &format!(r#"{{"field_{}": ["value_{}"]}}"#, i, i))
-            .unwrap();
+        q.add_pattern(
+            format!("p{}", i),
+            &format!(r#"{{"field_{}": ["value_{}"]}}"#, i, i),
+        )
+        .unwrap();
     }
 
     let stats = MemoryStats::capture("steady_state_1000_patterns");
@@ -205,10 +211,13 @@ fn profile_steady_state_1000() -> MemoryStats {
 /// Profile: Matching hot path (1000 matches against 100 patterns)
 fn profile_matching_hot_path() -> MemoryStats {
     // Build matcher outside profiling
-    let mut q = Quamina::<usize>::new();
+    let mut q = Quamina::new();
     for i in 0..100 {
-        q.add_pattern(i, &format!(r#"{{"status": ["status_{}"]}}"#, i))
-            .unwrap();
+        q.add_pattern(
+            format!("p{}", i),
+            &format!(r#"{{"status": ["status_{}"]}}"#, i),
+        )
+        .unwrap();
     }
 
     #[cfg(feature = "dhat-heap")]
@@ -245,10 +254,13 @@ fn profile_matching_large_json() -> MemoryStats {
 
 /// Profile: Matching with no matches (worst case traversal)
 fn profile_matching_no_match() -> MemoryStats {
-    let mut q = Quamina::<usize>::new();
+    let mut q = Quamina::new();
     for i in 0..100 {
-        q.add_pattern(i, &format!(r#"{{"status": ["status_{}"]}}"#, i))
-            .unwrap();
+        q.add_pattern(
+            format!("p{}", i),
+            &format!(r#"{{"status": ["status_{}"]}}"#, i),
+        )
+        .unwrap();
     }
 
     #[cfg(feature = "dhat-heap")]

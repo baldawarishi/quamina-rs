@@ -927,11 +927,12 @@ fn bench_bulk_100x10(c: &mut Criterion) {
             format!(r#"{{"field": [{}]}}"#, values)
         })
         .collect();
+    let names: Vec<String> = (0..100).map(|i| format!("p{}", i)).collect();
     c.bench_function("bulk_100x10", |b| {
         b.iter(|| {
-            let mut q = Quamina::<usize>::new();
+            let mut q = Quamina::new();
             for (i, pattern) in patterns.iter().enumerate() {
-                q.add_pattern(i, pattern).unwrap();
+                q.add_pattern(names[i].clone(), pattern).unwrap();
             }
         })
     });
@@ -948,11 +949,12 @@ fn bench_bulk_1000x10(c: &mut Criterion) {
             format!(r#"{{"field": [{}]}}"#, values)
         })
         .collect();
+    let names: Vec<String> = (0..1000).map(|i| format!("p{}", i)).collect();
     c.bench_function("bulk_1000x10", |b| {
         b.iter(|| {
-            let mut q = Quamina::<usize>::new();
+            let mut q = Quamina::new();
             for (i, pattern) in patterns.iter().enumerate() {
-                q.add_pattern(i, pattern).unwrap();
+                q.add_pattern(names[i].clone(), pattern).unwrap();
             }
         })
     });
@@ -969,11 +971,12 @@ fn bench_bulk_100x100(c: &mut Criterion) {
             format!(r#"{{"field": [{}]}}"#, values)
         })
         .collect();
+    let names: Vec<String> = (0..100).map(|i| format!("p{}", i)).collect();
     c.bench_function("bulk_100x100", |b| {
         b.iter(|| {
-            let mut q = Quamina::<usize>::new();
+            let mut q = Quamina::new();
             for (i, pattern) in patterns.iter().enumerate() {
-                q.add_pattern(i, pattern).unwrap();
+                q.add_pattern(names[i].clone(), pattern).unwrap();
             }
         })
     });
@@ -993,11 +996,12 @@ fn bench_bulk_100x10_multifield(c: &mut Criterion) {
             )
         })
         .collect();
+    let names: Vec<String> = (0..100).map(|i| format!("p{}", i)).collect();
     c.bench_function("bulk_100x10_multifield", |b| {
         b.iter(|| {
-            let mut q = Quamina::<usize>::new();
+            let mut q = Quamina::new();
             for (i, pattern) in patterns.iter().enumerate() {
-                q.add_pattern(i, pattern).unwrap();
+                q.add_pattern(names[i].clone(), pattern).unwrap();
             }
         })
     });
@@ -1009,10 +1013,13 @@ fn bench_bulk_100x10_multifield(c: &mut Criterion) {
 /// Benchmark for matching against 10,000 patterns on same field
 /// Tests automaton traversal at scale
 fn bench_10k_patterns_match(c: &mut Criterion) {
-    let mut q = Quamina::<usize>::new();
+    let mut q = Quamina::new();
     for i in 0..10_000 {
-        q.add_pattern(i, &format!(r#"{{"status": ["status_{}"]}}"#, i))
-            .unwrap();
+        q.add_pattern(
+            format!("p{}", i),
+            &format!(r#"{{"status": ["status_{}"]}}"#, i),
+        )
+        .unwrap();
     }
 
     // Event that matches pattern 5000 (middle of the set)
@@ -1023,7 +1030,7 @@ fn bench_10k_patterns_match(c: &mut Criterion) {
     // Verify
     let matches = q.matches_for_event(event_match).unwrap();
     assert_eq!(matches.len(), 1);
-    assert_eq!(matches[0], 5000);
+    assert_eq!(matches[0], "p5000");
 
     c.bench_function("10k_patterns_1_match", |b| {
         b.iter(|| q.matches_for_event(black_box(event_match)).unwrap())
@@ -1037,10 +1044,13 @@ fn bench_10k_patterns_match(c: &mut Criterion) {
 /// Benchmark for matching against 10,000 diverse patterns (different fields)
 /// Tests field indexing at scale - should be much faster than same-field
 fn bench_10k_diverse_patterns(c: &mut Criterion) {
-    let mut q = Quamina::<usize>::new();
+    let mut q = Quamina::new();
     for i in 0..10_000 {
-        q.add_pattern(i, &format!(r#"{{"field_{}": ["value_{}"]}}"#, i, i))
-            .unwrap();
+        q.add_pattern(
+            format!("p{}", i),
+            &format!(r#"{{"field_{}": ["value_{}"]}}"#, i, i),
+        )
+        .unwrap();
     }
 
     // Event with only field_5000, so only 1 of 10k patterns could match
@@ -1058,23 +1068,32 @@ fn bench_10k_diverse_patterns(c: &mut Criterion) {
 /// Benchmark for 10,000 patterns with mixed types
 /// Realistic scenario with exact, prefix, and numeric patterns
 fn bench_10k_mixed_patterns(c: &mut Criterion) {
-    let mut q = Quamina::<usize>::new();
+    let mut q = Quamina::new();
 
     // Add mix of pattern types
     for i in 0..3_334 {
         // Exact match patterns
-        q.add_pattern(i, &format!(r#"{{"type": ["exact_{}"]}}"#, i))
-            .unwrap();
+        q.add_pattern(
+            format!("p{}", i),
+            &format!(r#"{{"type": ["exact_{}"]}}"#, i),
+        )
+        .unwrap();
     }
     for i in 3_334..6_667 {
         // Prefix patterns
-        q.add_pattern(i, &format!(r#"{{"path": [{{"prefix": "/api/v{}"}}]}}"#, i))
-            .unwrap();
+        q.add_pattern(
+            format!("p{}", i),
+            &format!(r#"{{"path": [{{"prefix": "/api/v{}"}}]}}"#, i),
+        )
+        .unwrap();
     }
     for i in 6_667..10_000 {
         // Numeric patterns
-        q.add_pattern(i, &format!(r#"{{"score": [{{"numeric": ["=", {}]}}]}}"#, i))
-            .unwrap();
+        q.add_pattern(
+            format!("p{}", i),
+            &format!(r#"{{"score": [{{"numeric": ["=", {}]}}]}}"#, i),
+        )
+        .unwrap();
     }
 
     // Events for each type

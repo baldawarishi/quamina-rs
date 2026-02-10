@@ -12,11 +12,12 @@ fn bench_bulk_10000x1(c: &mut Criterion) {
     let patterns: Vec<String> = (0..10_000)
         .map(|i| format!(r#"{{"field": ["value_{}"]}}"#, i))
         .collect();
+    let names: Vec<String> = (0..10_000).map(|i| format!("p{}", i)).collect();
     c.bench_function("bulk_10000x1", |b| {
         b.iter(|| {
-            let mut q = Quamina::<usize>::new();
+            let mut q = Quamina::new();
             for (i, pattern) in patterns.iter().enumerate() {
-                q.add_pattern(i, pattern).unwrap();
+                q.add_pattern(names[i].clone(), pattern).unwrap();
             }
         })
     });
