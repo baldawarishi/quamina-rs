@@ -1063,27 +1063,20 @@ fn test_anything_but_with_shellstyle() {
 fn test_anything_but_with_overlapping_exclusions() {
     // Based on Go quamina's TestAnythingButAlgo
     // Tests anything-but with overlapping prefix exclusions
-    let mut q = Quamina::new();
-    q.add_pattern(
-        "notTTT",
-        r#"{"x": [{"anything-but": ["tim", "time", "timed"]}]}"#,
-    )
-    .unwrap();
+    let q = q!("notTTT" => r#"{"x": [{"anything-but": ["tim", "time", "timed"]}]}"#);
 
     // All excluded values should not match
     let excluded = ["tim", "time", "timed"];
     for val in excluded {
         let event = format!(r#"{{"x": "{}"}}"#, val);
-        let matches = q.matches_for_event(event.as_bytes()).unwrap();
-        assert!(matches.is_empty(), "{} should be excluded", val);
+        assert_no_match!(q, event);
     }
 
     // Similar but non-excluded values should match
     let included = ["t", "ti", "timer", "timely", "timekeeper"];
     for val in included {
         let event = format!(r#"{{"x": "{}"}}"#, val);
-        let matches = q.matches_for_event(event.as_bytes()).unwrap();
-        assert_eq!(matches.len(), 1, "{} should match notTTT", val);
+        assert_match_count!(q, event, 1);
     }
 }
 
@@ -1147,24 +1140,20 @@ fn test_anything_but_wordle_words() {
 fn test_shellstyle_repeated_sequences() {
     // Based on Go quamina's TestLongCase
     // Tests shellstyle suffix patterns with overlapping sequences
-    let mut q = Quamina::new();
-    q.add_pattern("p1", r#"{"x": [{"shellstyle": "*abab"}]}"#)
-        .unwrap();
+    let q = q!("p1" => r#"{"x": [{"shellstyle": "*abab"}]}"#);
 
     // These should all match *abab
     let should_match = ["abab", "abaabab", "ababab", "ababaabab", "xxabab"];
     for val in should_match {
         let event = format!(r#"{{"x": "{}"}}"#, val);
-        let matches = q.matches_for_event(event.as_bytes()).unwrap();
-        assert_eq!(matches, vec!["p1"], "*abab should match '{}'", val);
+        assert_matches!(q, event, vec!["p1"]);
     }
 
     // These should not match
     let should_not = ["abab_", "aba", "ab", "xaba"];
     for val in should_not {
         let event = format!(r#"{{"x": "{}"}}"#, val);
-        let matches = q.matches_for_event(event.as_bytes()).unwrap();
-        assert!(matches.is_empty(), "*abab should NOT match '{}'", val);
+        assert_no_match!(q, event);
     }
 }
 
@@ -1179,17 +1168,10 @@ fn test_shellstyle_suffix_merged_bug() {
     ];
 
     // Verify each pattern works individually
-    for (pattern, name) in &patterns {
-        let mut q = Quamina::new();
-        q.add_pattern(*name, pattern).unwrap();
-        let matches = q.matches_for_event(j.as_bytes()).unwrap();
-        assert_eq!(
-            matches.len(),
-            1,
-            "Pattern {} should match individually",
-            name
-        );
-        assert!(matches.contains(name));
+    for &(pattern, name) in &patterns {
+        let q = q!(name => pattern);
+        assert_match_count!(q, j, 1);
+        assert_has_match!(q, j, name);
     }
 
     // Verify both patterns work when merged
@@ -1197,15 +1179,9 @@ fn test_shellstyle_suffix_merged_bug() {
     for (pattern, name) in &patterns {
         q.add_pattern(*name, pattern).unwrap();
     }
-    let matches = q.matches_for_event(j.as_bytes()).unwrap();
-    assert_eq!(
-        matches.len(),
-        2,
-        "Both patterns should match when merged, got {:?}",
-        matches
-    );
-    assert!(matches.contains(&"p0"));
-    assert!(matches.contains(&"p1"));
+    assert_match_count!(q, j, 2);
+    assert_has_match!(q, j, "p0");
+    assert_has_match!(q, j, "p1");
 }
 
 #[test]
@@ -1228,19 +1204,16 @@ fn test_shellstyle_complex_wildcards() {
     ];
 
     for (pattern, should_match, should_not) in test_cases {
-        let mut q = Quamina::new();
-        q.add_pattern("p1", pattern).unwrap();
+        let q = q!("p1" => pattern);
 
         for val in should_match {
             let event = format!(r#"{{"x": "{}"}}"#, val);
-            let matches = q.matches_for_event(event.as_bytes()).unwrap();
-            assert_eq!(matches, vec!["p1"], "{} should match '{}'", pattern, val);
+            assert_matches!(q, event, vec!["p1"]);
         }
 
         for val in should_not {
             let event = format!(r#"{{"x": "{}"}}"#, val);
-            let matches = q.matches_for_event(event.as_bytes()).unwrap();
-            assert!(matches.is_empty(), "{} should NOT match '{}'", pattern, val);
+            assert_no_match!(q, event);
         }
     }
 }
@@ -1784,15 +1757,10 @@ fn test_wildcard_escape_backslash_star() {
     // After JSON parse: he\\\*llo (escaped backslash + escaped star)
     // Wildcard meaning: he + literal_backslash + literal_star + llo
     // Should match literal string "he\*llo" (6 chars)
-    let mut q = Quamina::new();
-    q.add_pattern("p1", r#"{"x": [{"wildcard": "he\\\\\\*llo"}]}"#)
-        .unwrap();
+    let q = q!("p1" => r#"{"x": [{"wildcard": "he\\\\\\*llo"}]}"#);
 
     // Should match "he\*llo" - in JSON, backslash needs escaping: "he\\*llo"
-    let matches = q
-        .matches_for_event(r#"{"x": "he\\*llo"}"#.as_bytes())
-        .unwrap();
-    assert_eq!(matches, vec!["p1"], "Should match he\\*llo");
+    assert_matches!(q, r#"{"x": "he\\*llo"}"#, vec!["p1"]);
 
     // Should NOT match - use raw strings for JSON to avoid double-escaping confusion
     let no_match_events = [
@@ -1802,8 +1770,7 @@ fn test_wildcard_escape_backslash_star() {
         r#"{"x": "he\\xxllo"}"#, // he\xxllo
     ];
     for event in no_match_events {
-        let matches = q.matches_for_event(event.as_bytes()).unwrap();
-        assert!(matches.is_empty(), "Should not match {}", event);
+        assert_no_match!(q, event);
     }
 }
 
@@ -1813,9 +1780,7 @@ fn test_wildcard_escape_backslash_wildcard() {
     // After JSON parse: he\\*llo (escaped backslash + wildcard)
     // Wildcard meaning: he + literal_backslash + wildcard + llo
     // Should match "he\" followed by anything followed by "llo"
-    let mut q = Quamina::new();
-    q.add_pattern("p1", r#"{"x": [{"wildcard": "he\\\\*llo"}]}"#)
-        .unwrap();
+    let q = q!("p1" => r#"{"x": [{"wildcard": "he\\\\*llo"}]}"#);
 
     // Should match - values with "he\" prefix and "llo" suffix
     let match_events = [
@@ -1825,8 +1790,7 @@ fn test_wildcard_escape_backslash_wildcard() {
         r#"{"x": "he\\xxllo"}"#, // he\xxllo
     ];
     for event in match_events {
-        let matches = q.matches_for_event(event.as_bytes()).unwrap();
-        assert_eq!(matches, vec!["p1"], "Should match {}", event);
+        assert_matches!(q, event, vec!["p1"]);
     }
 
     // Should NOT match
@@ -1835,8 +1799,7 @@ fn test_wildcard_escape_backslash_wildcard() {
         r#"{"x": "he\\ll"}"#, // doesn't end with llo
     ];
     for event in no_match_events {
-        let matches = q.matches_for_event(event.as_bytes()).unwrap();
-        assert!(matches.is_empty(), "Should not match {}", event);
+        assert_no_match!(q, event);
     }
 }
 
