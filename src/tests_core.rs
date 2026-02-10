@@ -2054,22 +2054,138 @@ fn test_default_limits_allow_normal_patterns() {
         .is_ok());
 }
 
+/// Patterns with many distinct values on the same field must be rejected
+/// once the arena byte budget is exhausted. This is a regression test for C3
+/// (add_string_transition previously skipped the budget check entirely).
 #[test]
-fn test_oom_fuzz_artifact_rejected() {
-    // The exact OOM artifact that caused the 2.2GB RSS growth should be rejected
-    let artifact = std::fs::read(
-        "fuzz/artifacts/fuzz_add_pattern/oom-63f7372145d148512a44bef89b90137dddbe9e38",
-    );
-    if let Ok(data) = artifact {
-        let pattern_str = String::from_utf8_lossy(&data);
-        let mut q = Quamina::<String>::new();
-        // The pattern should either be rejected by parsing limits or arena budget.
-        // It should NOT cause OOM.
-        let result = q.add_pattern("fuzz".to_string(), &pattern_str);
-        // We don't assert Err specifically because the artifact may fail at different
-        // stages (invalid JSON, depth limit, field limit, or arena budget).
-        // The key property is that we don't OOM.
-        let _ = result;
+fn test_arena_budget_enforced_on_repeated_exact_strings() {
+    let mut q = QuaminaBuilder::<&str>::new()
+        .with_arena_byte_budget(4096)
+        .build()
+        .unwrap();
+
+    let mut rejected = false;
+    for i in 0..500 {
+        let pattern = format!(r#"{{"x": ["long_value_string_number_{}"]}}"#, i);
+        if q.add_pattern("p", &pattern).is_err() {
+            rejected = true;
+            break;
+        }
     }
-    // If the file doesn't exist (e.g., in CI without artifacts), skip silently
+    assert!(
+        rejected,
+        "Budget should be enforced when many exact strings are added to the same field"
+    );
+}
+
+/// After a rejected add_pattern, existing patterns must still match correctly.
+/// This is a regression test for C1 (rejected patterns must not corrupt state)
+/// and for M4 (partial transitions must not produce false positives).
+#[test]
+fn test_matcher_correct_after_rejected_pattern() {
+    let mut q = QuaminaBuilder::<&str>::new()
+        .with_arena_byte_budget(4096)
+        .build()
+        .unwrap();
+
+    // Add a pattern that succeeds
+    q.add_pattern("good", r#"{"x": ["hello"]}"#).unwrap();
+
+    // Keep adding until one is rejected
+    let mut rejected = false;
+    for i in 0..500 {
+        let pattern = format!(r#"{{"x": ["overflow_value_{}"]}}"#, i);
+        if q.add_pattern("bad", &pattern).is_err() {
+            rejected = true;
+            break;
+        }
+    }
+    assert!(rejected, "Should have hit budget limit");
+
+    // The original "good" pattern must still match
+    let matches = q.matches_for_event(r#"{"x": "hello"}"#.as_bytes()).unwrap();
+    assert!(
+        matches.contains(&"good"),
+        "Original pattern must still match after a rejected add_pattern"
+    );
+
+    // A non-matching event must still return empty
+    let matches = q.matches_for_event(r#"{"x": "nope"}"#.as_bytes()).unwrap();
+    assert!(
+        matches.is_empty(),
+        "Non-matching event must not produce false positives"
+    );
+}
+
+/// Clone must preserve the configured arena budget.
+/// This is a regression test for C2 (clone previously used usize::MAX).
+#[test]
+fn test_clone_preserves_arena_budget() {
+    let mut q = QuaminaBuilder::<String>::new()
+        .with_arena_byte_budget(4096)
+        .build()
+        .unwrap();
+
+    q.add_pattern("a".into(), r#"{"x": ["val"]}"#).unwrap();
+    let mut cloned = q.clone();
+
+    // The clone should enforce the same budget
+    let mut rejected = false;
+    for i in 0..500 {
+        let pattern = format!(r#"{{"x": ["clone_test_value_{}"]}}"#, i);
+        if cloned.add_pattern("b".into(), &pattern).is_err() {
+            rejected = true;
+            break;
+        }
+    }
+    assert!(
+        rejected,
+        "Cloned instance must enforce the original arena budget"
+    );
+}
+
+/// Errors must return the PatternTooComplex variant specifically.
+#[test]
+fn test_errors_return_pattern_too_complex_variant() {
+    let mut q = QuaminaBuilder::<&str>::new()
+        .with_max_pattern_depth(1)
+        .build()
+        .unwrap();
+
+    let result = q.add_pattern("deep", r#"{"a": {"b": ["val"]}}"#);
+    assert!(
+        matches!(result, Err(QuaminaError::PatternTooComplex(_))),
+        "Depth violation must return PatternTooComplex, got {:?}",
+        result
+    );
+
+    let mut q2 = QuaminaBuilder::<&str>::new()
+        .with_max_fields_per_pattern(1)
+        .build()
+        .unwrap();
+    let result = q2.add_pattern("wide", r#"{"a": ["1"], "b": ["2"]}"#);
+    assert!(
+        matches!(result, Err(QuaminaError::PatternTooComplex(_))),
+        "Field count violation must return PatternTooComplex, got {:?}",
+        result
+    );
+}
+
+/// Zero limits must panic at build time, not silently reject all patterns.
+#[test]
+#[should_panic(expected = "max_pattern_depth must be at least 1")]
+fn test_zero_depth_panics() {
+    QuaminaBuilder::<&str>::new().with_max_pattern_depth(0);
+}
+
+#[test]
+#[should_panic(expected = "max_fields_per_pattern must be at least 1")]
+fn test_zero_fields_panics() {
+    QuaminaBuilder::<&str>::new().with_max_fields_per_pattern(0);
+}
+
+#[test]
+#[should_panic(expected = "arena_byte_budget must be at least 1")]
+fn test_zero_budget_panics() {
+    QuaminaBuilder::<&str>::new().with_arena_byte_budget(0);
 }
