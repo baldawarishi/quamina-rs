@@ -481,7 +481,10 @@ fn compute_branch_byte_length(branch: &RegexpBranch) -> Result<usize, String> {
 /// Parse a pattern JSON into field -> matchers map
 /// e.g., {"status": ["active"]} -> {"status": [Exact("active")]}
 /// e.g., {"name": [{"exists": true}]} -> {"name": [Exists(true)]}
-pub fn parse_pattern(json: &str) -> Result<HashMap<String, Vec<Matcher>>, QuaminaError> {
+pub fn parse_pattern(
+    json: &str,
+    limits: &crate::PatternLimits,
+) -> Result<HashMap<String, Vec<Matcher>>, QuaminaError> {
     let mut parser = Parser::new(json);
     let value = parser.parse_value()?;
 
@@ -492,7 +495,7 @@ pub fn parse_pattern(json: &str) -> Result<HashMap<String, Vec<Matcher>>, Quamin
     };
 
     let mut fields = HashMap::new();
-    extract_pattern_fields(&obj, String::new(), &mut fields)?;
+    extract_pattern_fields(&obj, String::new(), &mut fields, 0, limits)?;
     Ok(fields)
 }
 
@@ -500,7 +503,17 @@ fn extract_pattern_fields(
     obj: &[(String, Value)],
     prefix: String,
     fields: &mut HashMap<String, Vec<Matcher>>,
+    depth: usize,
+    limits: &crate::PatternLimits,
 ) -> Result<(), QuaminaError> {
+    if depth >= limits.max_pattern_depth {
+        return Err(QuaminaError::PatternTooComplex(format!(
+            "pattern nesting depth {} exceeds maximum of {} (at path '{}')",
+            depth + 1,
+            limits.max_pattern_depth,
+            prefix
+        )));
+    }
     for (key, value) in obj {
         let path = if prefix.is_empty() {
             key.clone()
@@ -512,9 +525,16 @@ fn extract_pattern_fields(
                 let matchers: Result<Vec<Matcher>, QuaminaError> =
                     arr.iter().map(value_to_matcher).collect();
                 fields.insert(path, matchers?);
+                if fields.len() > limits.max_fields_per_pattern {
+                    return Err(QuaminaError::PatternTooComplex(format!(
+                        "pattern has {} fields, exceeding maximum of {}",
+                        fields.len(),
+                        limits.max_fields_per_pattern
+                    )));
+                }
             }
             Value::Object(nested) => {
-                extract_pattern_fields(nested, path, fields)?;
+                extract_pattern_fields(nested, path, fields, depth + 1, limits)?;
             }
             _ => {
                 return Err(QuaminaError::InvalidPattern(format!(

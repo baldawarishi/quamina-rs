@@ -26,7 +26,10 @@ fn test_stress_fuzz_strings() {
     use std::collections::HashSet;
 
     let mut rng = rand::rngs::StdRng::seed_from_u64(12345);
-    let mut q = Quamina::new();
+    let mut q = QuaminaBuilder::new()
+        .with_arena_byte_budget(100 * 1024 * 1024)
+        .build()
+        .unwrap();
     let mut pattern_names: Vec<String> = Vec::new();
     let mut used: HashSet<String> = HashSet::new();
     let chars = b"abcdefghijklmnopqrstuvwxyz";
@@ -101,7 +104,10 @@ fn test_stress_fuzz_numbers() {
     use std::collections::HashSet;
 
     let mut rng = rand::rngs::StdRng::seed_from_u64(98543);
-    let mut q = Quamina::new();
+    let mut q = QuaminaBuilder::new()
+        .with_arena_byte_budget(100 * 1024 * 1024)
+        .build()
+        .unwrap();
     let mut pattern_names: Vec<i64> = Vec::new();
     let mut used: HashSet<i64> = HashSet::new();
 
@@ -1260,7 +1266,10 @@ fn test_pattern_insertion_scales_linearly() {
 
     // Warmup: add patterns to a throwaway instance to warm caches/allocator
     {
-        let mut warmup = Quamina::new();
+        let mut warmup = QuaminaBuilder::new()
+            .with_arena_byte_budget(100 * 1024 * 1024)
+            .build()
+            .unwrap();
         for i in 0..100 {
             let pattern = format!(r#"{{"key": ["warmup_{}"]}}"#, i);
             warmup.add_pattern(format!("w{}", i), &pattern).unwrap();
@@ -1271,7 +1280,10 @@ fn test_pattern_insertion_scales_linearly() {
     let mut costs: Vec<(usize, f64)> = Vec::new();
 
     for &n in layers {
-        let mut q = Quamina::new();
+        let mut q = QuaminaBuilder::new()
+            .with_arena_byte_budget(100 * 1024 * 1024)
+            .build()
+            .unwrap();
         let start = Instant::now();
         for i in 0..n {
             let pattern = format!(r#"{{"key": ["value_{}"]}}"#, i);

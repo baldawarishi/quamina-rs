@@ -1199,7 +1199,7 @@ fn bench_citylots_core(c: &mut Criterion) {
         for (path, _) in fields {
             segments_tree.add(&path.replace('.', "\n"));
         }
-        matcher.add_pattern(*name, fields);
+        matcher.add_pattern(*name, fields).unwrap();
     }
 
     // Pre-flatten all lines to avoid flattening overhead in the benchmark

@@ -10,3 +10,6 @@ flamegraph.svg
 # Profiling artifacts
 profile_status.json
 sample_output.txt
+
+# Debug/fuzz logs
+docs/long_fuzz_output.log

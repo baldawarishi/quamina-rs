@@ -252,6 +252,11 @@ impl StateArena {
         }
     }
 
+    /// Estimate the byte size of this arena (state vector capacity * per-state size).
+    pub fn estimated_byte_size(&self) -> usize {
+        self.states.capacity() * std::mem::size_of::<ArenaFaState>()
+    }
+
     /// Allocate a new default state, returning its ID.
     pub fn alloc(&mut self) -> StateId {
         let id = StateId(self.states.len() as u32);
@@ -5638,5 +5643,54 @@ mod cidr_arena_tests {
             !matches_value(&arena, start, b"\"2001:db9:0:0:0:0:0:1\""),
             "Should NOT match 2001:db9:..."
         );
+    }
+}
+
+#[cfg(kani)]
+mod kani_arena_proofs {
+    use super::*;
+
+    /// Prove: dstep returns the correct state for any byte on a real
+    /// ArenaSmallTable with symbolic ceilings, steps, and lookup byte.
+    ///
+    /// Constructs a 3-entry packed table directly (bypassing pack() which
+    /// triggers SmallVec state explosion at 246 iterations). This verifies
+    /// the actual dstep() code path with fully symbolic inputs.
+    #[kani::proof]
+    #[kani::unwind(4)]
+    fn arena_dstep_symbolic_lookup() {
+        let c0: u8 = kani::any();
+        let c1: u8 = kani::any();
+        let c2: u8 = kani::any();
+        kani::assume(c0 > 0);
+        kani::assume(c1 > c0);
+        kani::assume(c2 > c1);
+        kani::assume((c2 as usize) <= BYTE_CEILING);
+
+        let s0 = StateId::from_index(kani::any::<u8>() as usize);
+        let s1 = StateId::from_index(kani::any::<u8>() as usize);
+        let s2 = StateId::from_index(kani::any::<u8>() as usize);
+
+        let mut table = ArenaSmallTable::new();
+        table.ceilings = smallvec![c0, c1, c2];
+        table.steps = smallvec![s0, s1, s2];
+
+        let byte: u8 = kani::any();
+        kani::assume((byte as usize) < BYTE_CEILING);
+
+        let result = table.dstep(byte);
+
+        if byte < c0 {
+            kani::assert(result == s0, "byte in first range must return s0");
+        } else if byte < c1 {
+            kani::assert(result == s1, "byte in second range must return s1");
+        } else if byte < c2 {
+            kani::assert(result == s2, "byte in third range must return s2");
+        } else {
+            kani::assert(
+                result == StateId::NONE,
+                "byte past last ceiling must return NONE",
+            );
+        }
     }
 }
