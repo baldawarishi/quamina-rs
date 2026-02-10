@@ -49,6 +49,8 @@ jobs:
         run: cargo +nightly fuzz run fuzz_add_pattern -- -max_total_time=200
       - name: Fuzz match_event (200s)
         run: cargo +nightly fuzz run fuzz_match_event -- -max_total_time=200
+      - name: Fuzz lifecycle (200s)
+        run: cargo +nightly fuzz run fuzz_lifecycle -- -max_total_time=200
       - name: Log crash inputs (if any)
         if: failure()
         run: |
