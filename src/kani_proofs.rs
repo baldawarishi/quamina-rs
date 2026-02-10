@@ -3,9 +3,9 @@
 //! These proofs use bounded model checking to exhaustively verify properties
 //! of core data structures and algorithms. Run with: `cargo kani`
 //!
-//! Note: ArenaSmallTable pack/unpack roundtrip is not tested here because
-//! SmallVec's internal branching causes state explosion in Kani. The pack/dstep
-//! path is well-covered by unit tests (test_arena_small_table_pack, etc.).
+//! ArenaSmallTable pack/dstep roundtrip is verified in
+//! src/automaton/arena.rs::kani_arena_proofs::smalltable_pack_dstep_roundtrip
+//! (bounded to 3-region tables to keep the proof tractable).
 
 #[cfg(kani)]
 mod case_fold_proofs {
