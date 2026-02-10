@@ -21,83 +21,63 @@ use super::*;
 
 #[test]
 fn test_exact_match() {
-    let mut q = Quamina::new();
-    q.add_pattern("p1", r#"{"status": ["active"]}"#).unwrap();
-
-    let matches = q
-        .matches_for_event(r#"{"status": "active"}"#.as_bytes())
-        .unwrap();
-    assert_eq!(matches, vec!["p1"]);
+    let q = q!("p1" => r#"{"status": ["active"]}"#);
+    assert_matches!(q, r#"{"status": "active"}"#, vec!["p1"]);
 }
 
 #[test]
 fn test_no_match() {
-    let mut q = Quamina::new();
-    q.add_pattern("p1", r#"{"status": ["active"]}"#).unwrap();
-
-    let matches = q
-        .matches_for_event(r#"{"status": "inactive"}"#.as_bytes())
-        .unwrap();
-    assert!(matches.is_empty());
+    let q = q!("p1" => r#"{"status": ["active"]}"#);
+    assert_no_match!(q, r#"{"status": "inactive"}"#);
 }
 
 #[test]
 fn test_numeric_match() {
-    let mut q = Quamina::new();
-    q.add_pattern("p1", r#"{"count": [42]}"#).unwrap();
-
-    let matches = q.matches_for_event(r#"{"count": 42}"#.as_bytes()).unwrap();
-    assert_eq!(matches, vec!["p1"], "Should match numeric value 42");
+    let q = q!("p1" => r#"{"count": [42]}"#);
+    assert_matches!(
+        q,
+        r#"{"count": 42}"#,
+        vec!["p1"],
+        "Should match numeric value 42"
+    );
 }
 
 #[test]
 fn test_numeric_variant_matching() {
     // All these numeric representations of 35 should match pattern [35]
-    let mut q = Quamina::new();
-    q.add_pattern("p1", r#"{"x": [35]}"#).unwrap();
+    let q = q!("p1" => r#"{"x": [35]}"#);
 
-    // Integer form
-    let m1 = q.matches_for_event(r#"{"x": 35}"#.as_bytes()).unwrap();
-    assert_eq!(m1, vec!["p1"], "35 should match");
-
-    // Decimal with trailing zero
-    let m2 = q.matches_for_event(r#"{"x": 35.0}"#.as_bytes()).unwrap();
-    assert_eq!(m2, vec!["p1"], "35.0 should match [35]");
-
-    // Scientific notation
-    let m3 = q.matches_for_event(r#"{"x": 3.5e1}"#.as_bytes()).unwrap();
-    assert_eq!(m3, vec!["p1"], "3.5e1 should match [35]");
-
-    // Additional variants from Go's TestMatcherNumerics (numbers_test.go:174)
-    let m4 = q.matches_for_event(r#"{"x": 35.000}"#.as_bytes()).unwrap();
-    assert_eq!(m4, vec!["p1"], "35.000 should match [35]");
-
-    let m5 = q
-        .matches_for_event(r#"{"x": 0.000035e6}"#.as_bytes())
-        .unwrap();
-    assert_eq!(m5, vec!["p1"], "0.000035e6 should match [35]");
+    for (event, desc) in [
+        (r#"{"x": 35}"#, "integer"),
+        (r#"{"x": 35.0}"#, "decimal trailing zero"),
+        (r#"{"x": 3.5e1}"#, "scientific notation"),
+        (r#"{"x": 35.000}"#, "multiple trailing zeros"),
+        (r#"{"x": 0.000035e6}"#, "small mantissa with exponent"),
+    ] {
+        assert_matches!(q, event, vec!["p1"], desc);
+    }
 }
 
 #[test]
 fn test_boolean_match() {
-    let mut q = Quamina::new();
-    q.add_pattern("p1", r#"{"enabled": [true]}"#).unwrap();
-
-    let matches = q
-        .matches_for_event(r#"{"enabled": true}"#.as_bytes())
-        .unwrap();
-    assert_eq!(matches, vec!["p1"], "Should match boolean true");
+    let q = q!("p1" => r#"{"enabled": [true]}"#);
+    assert_matches!(
+        q,
+        r#"{"enabled": true}"#,
+        vec!["p1"],
+        "Should match boolean true"
+    );
 }
 
 #[test]
 fn test_null_match() {
-    let mut q = Quamina::new();
-    q.add_pattern("p1", r#"{"value": [null]}"#).unwrap();
-
-    let matches = q
-        .matches_for_event(r#"{"value": null}"#.as_bytes())
-        .unwrap();
-    assert_eq!(matches, vec!["p1"], "Should match null value");
+    let q = q!("p1" => r#"{"value": [null]}"#);
+    assert_matches!(
+        q,
+        r#"{"value": null}"#,
+        vec!["p1"],
+        "Should match null value"
+    );
 }
 
 // ============================================================================
@@ -106,65 +86,51 @@ fn test_null_match() {
 
 #[test]
 fn test_exists_true() {
-    let mut q = Quamina::new();
-    q.add_pattern("p1", r#"{"name": [{"exists": true}]}"#)
-        .unwrap();
-
-    let matches = q
-        .matches_for_event(r#"{"name": "anything", "other": 1}"#.as_bytes())
-        .unwrap();
-    assert_eq!(matches, vec!["p1"], "Should match when field exists");
-
-    let no_match = q.matches_for_event(r#"{"other": 1}"#.as_bytes()).unwrap();
-    assert!(
-        no_match.is_empty(),
+    let q = q!("p1" => r#"{"name": [{"exists": true}]}"#);
+    assert_matches!(
+        q,
+        r#"{"name": "anything", "other": 1}"#,
+        vec!["p1"],
+        "Should match when field exists"
+    );
+    assert_no_match!(
+        q,
+        r#"{"other": 1}"#,
         "Should not match when field is missing"
     );
 }
 
 #[test]
 fn test_exists_false() {
-    let mut q = Quamina::new();
-    q.add_pattern("p1", r#"{"name": [{"exists": false}]}"#)
-        .unwrap();
-
-    let matches = q.matches_for_event(r#"{"other": 1}"#.as_bytes()).unwrap();
-    assert_eq!(matches, vec!["p1"], "Should match when field is absent");
-
-    let no_match = q
-        .matches_for_event(r#"{"name": "value"}"#.as_bytes())
-        .unwrap();
-    assert!(no_match.is_empty(), "Should not match when field exists");
+    let q = q!("p1" => r#"{"name": [{"exists": false}]}"#);
+    assert_matches!(
+        q,
+        r#"{"other": 1}"#,
+        vec!["p1"],
+        "Should match when field is absent"
+    );
+    assert_no_match!(
+        q,
+        r#"{"name": "value"}"#,
+        "Should not match when field exists"
+    );
 }
 
 #[test]
 fn test_exists_with_empty_array() {
     // Per Go quamina: {"a": []} with exists:true does NOT match
     // but exists:false DOES match (no leaf values)
-    let mut q_true = Quamina::new();
-    q_true
-        .add_pattern("p1", r#"{"a": [{"exists": true}]}"#)
-        .unwrap();
-
-    let mut q_false = Quamina::new();
-    q_false
-        .add_pattern("p2", r#"{"a": [{"exists": false}]}"#)
-        .unwrap();
-
-    // Event with empty array
+    let q_true = q!("p1" => r#"{"a": [{"exists": true}]}"#);
+    let q_false = q!("p2" => r#"{"a": [{"exists": false}]}"#);
     let event = r#"{"a": []}"#;
 
     // exists:true should NOT match (no leaf values in empty array)
-    let matches_true = q_true.matches_for_event(event.as_bytes()).unwrap();
-    assert!(
-        matches_true.is_empty(),
-        "exists:true should not match empty array"
-    );
+    assert_no_match!(q_true, event, "exists:true should not match empty array");
 
     // exists:false SHOULD match (no leaf values means field effectively absent)
-    let matches_false = q_false.matches_for_event(event.as_bytes()).unwrap();
-    assert_eq!(
-        matches_false,
+    assert_matches!(
+        q_false,
+        event,
         vec!["p2"],
         "exists:false should match empty array"
     );
@@ -176,31 +142,20 @@ fn test_exists_with_empty_array() {
 
 #[test]
 fn test_nested_object_pattern() {
-    let mut q = Quamina::new();
-    q.add_pattern("p1", r#"{"user": {"role": ["admin"]}}"#)
-        .unwrap();
-
-    let matches = q
-        .matches_for_event(r#"{"user": {"role": "admin", "name": "alice"}}"#.as_bytes())
-        .unwrap();
-    assert_eq!(matches, vec!["p1"], "Should match nested field");
-
-    let no_match = q
-        .matches_for_event(r#"{"user": {"role": "guest"}}"#.as_bytes())
-        .unwrap();
-    assert!(no_match.is_empty());
+    let q = q!("p1" => r#"{"user": {"role": ["admin"]}}"#);
+    assert_matches!(
+        q,
+        r#"{"user": {"role": "admin", "name": "alice"}}"#,
+        vec!["p1"],
+        "Should match nested field"
+    );
+    assert_no_match!(q, r#"{"user": {"role": "guest"}}"#);
 }
 
 #[test]
 fn test_deeply_nested() {
-    let mut q = Quamina::new();
-    q.add_pattern("p1", r#"{"a": {"b": {"c": ["value"]}}}"#)
-        .unwrap();
-
-    let matches = q
-        .matches_for_event(r#"{"a": {"b": {"c": "value"}}}"#.as_bytes())
-        .unwrap();
-    assert_eq!(matches, vec!["p1"]);
+    let q = q!("p1" => r#"{"a": {"b": {"c": ["value"]}}}"#);
+    assert_matches!(q, r#"{"a": {"b": {"c": "value"}}}"#, vec!["p1"]);
 }
 
 // ============================================================================
@@ -210,14 +165,10 @@ fn test_deeply_nested() {
 #[test]
 fn test_array_element_matching() {
     // Pattern should match if value is ANY element of the array
-    let mut q = Quamina::new();
-    q.add_pattern("p1", r#"{"ids": [943]}"#).unwrap();
-
-    // Event has array - should match if 943 is in the array
-    let event = r#"{"ids": [116, 943, 234]}"#;
-    let matches = q.matches_for_event(event.as_bytes()).unwrap();
-    assert_eq!(
-        matches,
+    let q = q!("p1" => r#"{"ids": [943]}"#);
+    assert_matches!(
+        q,
+        r#"{"ids": [116, 943, 234]}"#,
         vec!["p1"],
         "Should match when pattern value is in event array"
     );
@@ -1500,73 +1451,50 @@ fn test_condition_cost_ordering() {
 #[test]
 fn test_string_number_type_distinction() {
     // Verify that string patterns don't match number events and vice versa.
-    // In Go, the outer quotes on string values act as an implicit type tag
-    // (NFA expects `"123"` for strings vs `123` for numbers).
-    // In Rust, quotes are stripped by value_bytes(), so we need to verify
-    // the type distinction is maintained by other means.
-
-    let mut q = Quamina::new();
-    q.add_pattern("string_pat", r#"{"key": ["123"]}"#).unwrap();
-
-    // String "123" SHOULD match
-    let m1 = q.matches_for_event(r#"{"key": "123"}"#.as_bytes()).unwrap();
-    assert_eq!(
-        m1,
+    let q = q!("string_pat" => r#"{"key": ["123"]}"#);
+    assert_matches!(
+        q,
+        r#"{"key": "123"}"#,
         vec!["string_pat"],
-        "String '123' should match string pattern '123'"
+        "String '123' should match string pattern"
     );
-
-    // Number 123 should NOT match string pattern "123"
-    let m2 = q.matches_for_event(r#"{"key": 123}"#.as_bytes()).unwrap();
-    assert!(
-        m2.is_empty(),
-        "Number 123 should NOT match string pattern '123' - type distinction must be preserved"
+    assert_no_match!(
+        q,
+        r#"{"key": 123}"#,
+        "Number 123 should NOT match string pattern"
     );
 }
 
 #[test]
 fn test_numeric_pattern_should_not_match_string_event() {
-    // The reverse: numeric pattern should not match a string with the same digits
-    let mut q = Quamina::new();
-    q.add_pattern("num_pat", r#"{"key": [42]}"#).unwrap();
-
-    // Number 42 SHOULD match
-    let m1 = q.matches_for_event(r#"{"key": 42}"#.as_bytes()).unwrap();
-    assert_eq!(
-        m1,
+    let q = q!("num_pat" => r#"{"key": [42]}"#);
+    assert_matches!(
+        q,
+        r#"{"key": 42}"#,
         vec!["num_pat"],
         "Number 42 should match numeric pattern"
     );
-
-    // String "42" should NOT match numeric pattern
-    let m2 = q.matches_for_event(r#"{"key": "42"}"#.as_bytes()).unwrap();
-    assert!(
-        m2.is_empty(),
-        "String '42' should NOT match numeric pattern 42"
+    assert_no_match!(
+        q,
+        r#"{"key": "42"}"#,
+        "String '42' should NOT match numeric pattern"
     );
 }
 
 #[test]
 fn test_mixed_string_and_number_patterns_same_digits() {
-    // Both a string pattern and a numeric pattern for "123"/123
-    let mut q = Quamina::new();
-    q.add_pattern("str", r#"{"key": ["123"]}"#).unwrap();
-    q.add_pattern("num", r#"{"key": [123]}"#).unwrap();
-
-    // String event should only match string pattern
-    let m1 = q.matches_for_event(r#"{"key": "123"}"#.as_bytes()).unwrap();
-    assert_eq!(
-        m1,
+    let q = q!("str" => r#"{"key": ["123"]}"#, "num" => r#"{"key": [123]}"#);
+    assert_matches!(
+        q,
+        r#"{"key": "123"}"#,
         vec!["str"],
-        "String '123' should match only string pattern"
+        "String should match only string pattern"
     );
-
-    // Number event should only match numeric pattern
-    let m2 = q.matches_for_event(r#"{"key": 123}"#.as_bytes()).unwrap();
-    assert_eq!(
-        m2,
+    assert_matches!(
+        q,
+        r#"{"key": 123}"#,
         vec!["num"],
-        "Number 123 should match only numeric pattern"
+        "Number should match only numeric pattern"
     );
 }
 
@@ -1574,81 +1502,53 @@ fn test_mixed_string_and_number_patterns_same_digits() {
 fn test_mixed_number_and_string_in_same_value_array() {
     // Go's TestBasicMatching: a single pattern field with both numbers and strings
     // e.g. {"b": [1, "3"]} should match number 1 OR string "3" but NOT number 3
-    let mut q = Quamina::new();
-    q.add_pattern("p1", r#"{"a": [1, 2], "b": [1, "3"]}"#)
-        .unwrap();
+    let q = q!("p1" => r#"{"a": [1, 2], "b": [1, "3"]}"#);
 
-    // String "3" on field b should match
-    let m1 = q
-        .matches_for_event(r#"{"a": 1, "b": "3"}"#.as_bytes())
-        .unwrap();
-    assert_eq!(
-        m1,
+    assert_matches!(
+        q,
+        r#"{"a": 1, "b": "3"}"#,
         vec!["p1"],
-        "String '3' should match the string literal in [1, \"3\"]"
+        "String '3' should match"
     );
-
-    // Number 1 on field b should match
-    let m2 = q
-        .matches_for_event(r#"{"a": 2, "b": 1}"#.as_bytes())
-        .unwrap();
-    assert_eq!(
-        m2,
+    assert_matches!(
+        q,
+        r#"{"a": 2, "b": 1}"#,
         vec!["p1"],
-        "Number 1 should match the numeric literal in [1, \"3\"]"
+        "Number 1 should match"
     );
-
-    // Number 3 on field b should NOT match (it's string "3" in the pattern, not number 3)
-    let m3 = q
-        .matches_for_event(r#"{"a": 1, "b": 3}"#.as_bytes())
-        .unwrap();
-    assert!(
-        m3.is_empty(),
-        "Number 3 should NOT match string '3' in [1, \"3\"]"
+    assert_no_match!(
+        q,
+        r#"{"a": 1, "b": 3}"#,
+        "Number 3 should NOT match string '3'"
     );
-
-    // Reversed field order in the event should still work
-    let m4 = q
-        .matches_for_event(r#"{"b": "3", "a": 1}"#.as_bytes())
-        .unwrap();
-    assert_eq!(m4, vec!["p1"], "Reversed field order should still match");
-
-    // Extra fields in the event should not interfere
-    let m5 = q
-        .matches_for_event(r#"{"a": 2, "b": "3", "x": 99}"#.as_bytes())
-        .unwrap();
-    assert_eq!(m5, vec!["p1"], "Extra fields should not prevent match");
-
-    // Missing field b should not match
-    let m6 = q.matches_for_event(r#"{"a": 1}"#.as_bytes()).unwrap();
-    assert!(m6.is_empty(), "Missing field b should not match");
-
-    // Missing field a should not match
-    let m7 = q.matches_for_event(r#"{"b": "3"}"#.as_bytes()).unwrap();
-    assert!(m7.is_empty(), "Missing field a should not match");
-
-    // Wrong value on field a should not match
-    let m8 = q
-        .matches_for_event(r#"{"b": "3", "a": 6}"#.as_bytes())
-        .unwrap();
-    assert!(m8.is_empty(), "Wrong value on field a should not match");
+    assert_matches!(
+        q,
+        r#"{"b": "3", "a": 1}"#,
+        vec!["p1"],
+        "Reversed field order"
+    );
+    assert_matches!(
+        q,
+        r#"{"a": 2, "b": "3", "x": 99}"#,
+        vec!["p1"],
+        "Extra fields"
+    );
+    assert_no_match!(q, r#"{"a": 1}"#, "Missing field b");
+    assert_no_match!(q, r#"{"b": "3"}"#, "Missing field a");
+    assert_no_match!(q, r#"{"b": "3", "a": 6}"#, "Wrong value on field a");
 }
 
 #[test]
 fn test_empty_matcher_returns_no_matches() {
-    // A brand-new Quamina with no patterns should return empty matches for any event
     let q = Quamina::<&str>::new();
-
-    let m1 = q
-        .matches_for_event(r#"{"status": "active"}"#.as_bytes())
-        .unwrap();
-    assert!(m1.is_empty(), "Empty matcher should return no matches");
-
-    let m2 = q
-        .matches_for_event(r#"{"a": 1, "b": "hello"}"#.as_bytes())
-        .unwrap();
-    assert!(
-        m2.is_empty(),
+    assert_no_match!(
+        q,
+        r#"{"status": "active"}"#,
+        "Empty matcher should return no matches"
+    );
+    assert_no_match!(
+        q,
+        r#"{"a": 1, "b": "hello"}"#,
         "Empty matcher should return no matches for any event"
     );
 }
@@ -1692,48 +1592,46 @@ fn test_delete_multi_pattern_id_removes_all() {
         .unwrap();
 
     // All three patterns should match under "shared"
-    let m1 = q.matches_for_event(r#"{"x": "a"}"#.as_bytes()).unwrap();
-    assert_eq!(m1, vec!["shared"], "String pattern should match");
-
-    let m2 = q.matches_for_event(r#"{"x": 1}"#.as_bytes()).unwrap();
-    assert_eq!(m2, vec!["shared"], "Numeric pattern should match");
-
-    let m3 = q.matches_for_event(r#"{"y": "bcd"}"#.as_bytes()).unwrap();
-    assert_eq!(m3, vec!["shared"], "Prefix pattern should match");
+    assert_matches!(
+        q,
+        r#"{"x": "a"}"#,
+        vec!["shared"],
+        "String pattern should match"
+    );
+    assert_matches!(
+        q,
+        r#"{"x": 1}"#,
+        vec!["shared"],
+        "Numeric pattern should match"
+    );
+    assert_matches!(
+        q,
+        r#"{"y": "bcd"}"#,
+        vec!["shared"],
+        "Prefix pattern should match"
+    );
 
     // Delete "shared" — should remove ALL three patterns
     q.delete_patterns(&"shared").unwrap();
-
-    let m4 = q.matches_for_event(r#"{"x": "a"}"#.as_bytes()).unwrap();
-    assert!(m4.is_empty(), "String pattern should be gone after delete");
-
-    let m5 = q.matches_for_event(r#"{"x": 1}"#.as_bytes()).unwrap();
-    assert!(m5.is_empty(), "Numeric pattern should be gone after delete");
-
-    let m6 = q.matches_for_event(r#"{"y": "bcd"}"#.as_bytes()).unwrap();
-    assert!(m6.is_empty(), "Prefix pattern should be gone after delete");
+    assert_no_match!(q, r#"{"x": "a"}"#, "String pattern gone after delete");
+    assert_no_match!(q, r#"{"x": 1}"#, "Numeric pattern gone after delete");
+    assert_no_match!(q, r#"{"y": "bcd"}"#, "Prefix pattern gone after delete");
 
     // Rebuild should purge the one deleted ID
     let purged = q.rebuild();
     assert_eq!(purged, 1, "Rebuild should purge 1 deleted ID");
 
     // After rebuild, still no matches (patterns are permanently gone)
-    let m7 = q.matches_for_event(r#"{"x": "a"}"#.as_bytes()).unwrap();
-    assert!(
-        m7.is_empty(),
-        "String pattern should stay gone after rebuild"
+    assert_no_match!(
+        q,
+        r#"{"x": "a"}"#,
+        "String pattern stays gone after rebuild"
     );
-
-    let m8 = q.matches_for_event(r#"{"x": 1}"#.as_bytes()).unwrap();
-    assert!(
-        m8.is_empty(),
-        "Numeric pattern should stay gone after rebuild"
-    );
-
-    let m9 = q.matches_for_event(r#"{"y": "bcd"}"#.as_bytes()).unwrap();
-    assert!(
-        m9.is_empty(),
-        "Prefix pattern should stay gone after rebuild"
+    assert_no_match!(q, r#"{"x": 1}"#, "Numeric pattern stays gone after rebuild");
+    assert_no_match!(
+        q,
+        r#"{"y": "bcd"}"#,
+        "Prefix pattern stays gone after rebuild"
     );
 }
 

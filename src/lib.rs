@@ -824,6 +824,9 @@ impl<X: Clone + Eq + Hash + Send + Sync> Default for Quamina<X> {
 }
 
 #[cfg(test)]
+#[macro_use]
+mod test_helpers;
+#[cfg(test)]
 mod tests_core;
 #[cfg(test)]
 mod tests_operators;

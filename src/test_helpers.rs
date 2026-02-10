@@ -1,0 +1,157 @@
+//! Shared test helper macros and functions to reduce duplication across test modules.
+
+/// Create a `Quamina` matcher pre-loaded with one or more patterns.
+///
+/// ```ignore
+/// let q = q!("p1" => r#"{"x": ["a"]}"#, "p2" => r#"{"y": [1]}"#);
+/// ```
+macro_rules! q {
+    ($($name:expr => $pattern:expr),+ $(,)?) => {{
+        let mut q = $crate::Quamina::new();
+        $( q.add_pattern($name, $pattern).unwrap(); )+
+        q
+    }};
+}
+
+/// Assert that matching an event yields exactly the expected pattern IDs.
+///
+/// ```ignore
+/// assert_matches!(q, r#"{"x": "a"}"#, vec!["p1"]);
+/// assert_matches!(q, r#"{"x": "a"}"#, vec!["p1"], "custom message");
+/// ```
+macro_rules! assert_matches {
+    ($q:expr, $event:expr, $expected:expr) => {{
+        let matches = $q.matches_for_event($event.as_bytes()).unwrap();
+        assert_eq!(matches, $expected, "Event: {}", $event);
+    }};
+    ($q:expr, $event:expr, $expected:expr, $msg:expr) => {{
+        let matches = $q.matches_for_event($event.as_bytes()).unwrap();
+        assert_eq!(matches, $expected, "{} (event: {})", $msg, $event);
+    }};
+}
+
+/// Assert that matching an event yields no results.
+///
+/// ```ignore
+/// assert_no_match!(q, r#"{"x": "z"}"#);
+/// assert_no_match!(q, r#"{"x": "z"}"#, "should not match z");
+/// ```
+macro_rules! assert_no_match {
+    ($q:expr, $event:expr) => {{
+        let matches = $q.matches_for_event($event.as_bytes()).unwrap();
+        assert!(matches.is_empty(), "Expected no match for: {}", $event);
+    }};
+    ($q:expr, $event:expr, $msg:expr) => {{
+        let matches = $q.matches_for_event($event.as_bytes()).unwrap();
+        assert!(matches.is_empty(), "{} (event: {})", $msg, $event);
+    }};
+}
+
+/// Assert that matching an event returns results containing a specific pattern ID.
+///
+/// ```ignore
+/// assert_has_match!(q, r#"{"x": "a"}"#, "p1");
+/// ```
+macro_rules! assert_has_match {
+    ($q:expr, $event:expr, $name:expr) => {{
+        let matches = $q.matches_for_event($event.as_bytes()).unwrap();
+        assert!(
+            matches.contains(&$name),
+            "Expected {:?} in matches for {}, got {:?}",
+            $name,
+            $event,
+            matches
+        );
+    }};
+    ($q:expr, $event:expr, $name:expr, $msg:expr) => {{
+        let matches = $q.matches_for_event($event.as_bytes()).unwrap();
+        assert!(
+            matches.contains(&$name),
+            "{}: expected {:?} in matches for {}, got {:?}",
+            $msg,
+            $name,
+            $event,
+            matches
+        );
+    }};
+}
+
+/// Assert that matching an event does NOT contain a specific pattern ID.
+///
+/// ```ignore
+/// assert_no_has_match!(q, r#"{"x": "z"}"#, "p1");
+/// ```
+macro_rules! assert_no_has_match {
+    ($q:expr, $event:expr, $name:expr) => {{
+        let matches = $q.matches_for_event($event.as_bytes()).unwrap();
+        assert!(
+            !matches.contains(&$name),
+            "Expected {:?} NOT in matches for {}, got {:?}",
+            $name,
+            $event,
+            matches
+        );
+    }};
+}
+
+/// Assert that matching an event returns exactly N results.
+///
+/// ```ignore
+/// assert_match_count!(q, r#"{"x": "a"}"#, 2);
+/// ```
+macro_rules! assert_match_count {
+    ($q:expr, $event:expr, $count:expr) => {{
+        let matches = $q.matches_for_event($event.as_bytes()).unwrap();
+        assert_eq!(
+            matches.len(),
+            $count,
+            "Expected {} matches for {}, got {:?}",
+            $count,
+            $event,
+            matches
+        );
+    }};
+    ($q:expr, $event:expr, $count:expr, $msg:expr) => {{
+        let matches = $q.matches_for_event($event.as_bytes()).unwrap();
+        assert_eq!(
+            matches.len(),
+            $count,
+            "{}: expected {} matches for {}, got {:?}",
+            $msg,
+            $count,
+            $event,
+            matches
+        );
+    }};
+}
+
+/// Helper for wildcard pattern tests — tests a single pattern against match/no-match lists.
+pub(crate) fn exercise_wildcard(pattern: &str, should_match: &[&str], should_not_match: &[&str]) {
+    let mut q = crate::Quamina::new();
+    let full_pattern = format!(r#"{{"x": [{{"wildcard": "{}"}}]}}"#, pattern);
+    q.add_pattern(pattern, &full_pattern)
+        .unwrap_or_else(|_| panic!("Pattern should be valid: {}", pattern));
+
+    for text in should_match {
+        let event = format!(r#"{{"x": "{}"}}"#, text);
+        let matches = q.matches_for_event(event.as_bytes()).unwrap();
+        assert!(
+            matches.contains(&pattern),
+            "Pattern '{}' should match '{}', got {:?}",
+            pattern,
+            text,
+            matches
+        );
+    }
+
+    for text in should_not_match {
+        let event = format!(r#"{{"x": "{}"}}"#, text);
+        let matches = q.matches_for_event(event.as_bytes()).unwrap();
+        assert!(
+            !matches.contains(&pattern),
+            "Pattern '{}' should NOT match '{}'",
+            pattern,
+            text
+        );
+    }
+}
