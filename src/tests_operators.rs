@@ -1941,42 +1941,32 @@ fn test_shellstyle_suffix_negative() {
 #[test]
 fn test_shellstyle_contains_negative() {
     // Go TestMakeShellStyleFA: *foo* negative cases
-    let mut q = Quamina::new();
-    q.add_pattern("p1", r#"{"x": [{"shellstyle": "*foo*"}]}"#)
-        .unwrap();
-
-    let no1 = q.matches_for_event(r#"{"x": "afoa"}"#.as_bytes()).unwrap();
-    assert!(no1.is_empty(), "*foo* should not match 'afoa'");
-
-    let no2 = q
-        .matches_for_event(r#"{"x": "fofofoxooxoo"}"#.as_bytes())
-        .unwrap();
-    assert!(no2.is_empty(), "*foo* should not match 'fofofoxooxoo'");
+    let q = q!("p1" => r#"{"x": [{"shellstyle": "*foo*"}]}"#);
+    assert_no_match!(q, r#"{"x": "afoa"}"#, "*foo* should not match 'afoa'");
+    assert_no_match!(
+        q,
+        r#"{"x": "fofofoxooxoo"}"#,
+        "*foo* should not match 'fofofoxooxoo'"
+    );
 }
 
 #[test]
 fn test_shellstyle_double_wildcard_variations() {
     // Go TestMakeShellStyleFA: xx*yy*zz and *xx*yy* additional cases
-    let mut q = Quamina::new();
-    q.add_pattern("p1", r#"{"x": [{"shellstyle": "xx*yy*zz"}]}"#)
-        .unwrap();
+    let q = q!("p1" => r#"{"x": [{"shellstyle": "xx*yy*zz"}]}"#);
 
     // Additional positive cases from Go
     for val in ["xxyycdzz", "xxabyyzz"] {
         let event = format!(r#"{{"x": "{}"}}"#, val);
-        let matches = q.matches_for_event(event.as_bytes()).unwrap();
-        assert_eq!(matches, vec!["p1"], "xx*yy*zz should match {}", val);
+        assert_matches!(q, event, vec!["p1"]);
     }
 
     // Test *xx*yy* additional cases
-    let mut q2 = Quamina::new();
-    q2.add_pattern("p2", r#"{"x": [{"shellstyle": "*xx*yy*"}]}"#)
-        .unwrap();
+    let q2 = q!("p2" => r#"{"x": [{"shellstyle": "*xx*yy*"}]}"#);
 
     for val in ["abxxcdyyef", "xxcdyyef", "abxxyyef", "xxcdyy", "xxyyef"] {
         let event = format!(r#"{{"x": "{}"}}"#, val);
-        let matches = q2.matches_for_event(event.as_bytes()).unwrap();
-        assert_eq!(matches, vec!["p2"], "*xx*yy* should match {}", val);
+        assert_matches!(q2, event, vec!["p2"]);
     }
 }
 
@@ -2249,38 +2239,51 @@ fn test_json_all_escape_sequences() {
     // Tests all 8 standard JSON escape sequences plus unicode escapes
 
     // Test: \" (quote)
-    let mut q1 = Quamina::new();
-    q1.add_pattern("p1", r#"{"x": ["hello\"world"]}"#).unwrap();
-    let m1 = q1
-        .matches_for_event(r#"{"x": "hello\"world"}"#.as_bytes())
-        .unwrap();
-    assert_eq!(m1, vec!["p1"], "Quote escape should match");
+    let q1 = q!("p1" => r#"{"x": ["hello\"world"]}"#);
+    assert_matches!(
+        q1,
+        r#"{"x": "hello\"world"}"#,
+        vec!["p1"],
+        "Quote escape should match"
+    );
 
     // Test: \/ (forward slash - optional in JSON but must be handled)
-    let mut q2 = Quamina::new();
-    q2.add_pattern("p2", r#"{"x": ["a/b"]}"#).unwrap();
-    let m2 = q2.matches_for_event(r#"{"x": "a\/b"}"#.as_bytes()).unwrap();
-    assert_eq!(m2, vec!["p2"], "Forward slash escape should match");
+    let q2 = q!("p2" => r#"{"x": ["a/b"]}"#);
+    assert_matches!(
+        q2,
+        r#"{"x": "a\/b"}"#,
+        vec!["p2"],
+        "Forward slash escape should match"
+    );
 
     // Test: \b (backspace, 0x08)
-    let mut q3 = Quamina::new();
     let pattern_with_backspace = format!(r#"{{"x": ["a{}b"]}}"#, '\x08');
-    q3.add_pattern("p3", &pattern_with_backspace).unwrap();
-    let m3 = q3.matches_for_event(r#"{"x": "a\bb"}"#.as_bytes()).unwrap();
-    assert_eq!(m3, vec!["p3"], "Backspace escape should match");
+    let q3 = q!("p3" => &pattern_with_backspace);
+    assert_matches!(
+        q3,
+        r#"{"x": "a\bb"}"#,
+        vec!["p3"],
+        "Backspace escape should match"
+    );
 
     // Test: \f (form feed, 0x0c)
-    let mut q4 = Quamina::new();
     let pattern_with_formfeed = format!(r#"{{"x": ["a{}b"]}}"#, '\x0c');
-    q4.add_pattern("p4", &pattern_with_formfeed).unwrap();
-    let m4 = q4.matches_for_event(r#"{"x": "a\fb"}"#.as_bytes()).unwrap();
-    assert_eq!(m4, vec!["p4"], "Form feed escape should match");
+    let q4 = q!("p4" => &pattern_with_formfeed);
+    assert_matches!(
+        q4,
+        r#"{"x": "a\fb"}"#,
+        vec!["p4"],
+        "Form feed escape should match"
+    );
 
     // Test: \r (carriage return)
-    let mut q5 = Quamina::new();
-    q5.add_pattern("p5", r#"{"x": ["a\rb"]}"#).unwrap();
-    let m5 = q5.matches_for_event(r#"{"x": "a\rb"}"#.as_bytes()).unwrap();
-    assert_eq!(m5, vec!["p5"], "Carriage return escape should match");
+    let q5 = q!("p5" => r#"{"x": ["a\rb"]}"#);
+    assert_matches!(
+        q5,
+        r#"{"x": "a\rb"}"#,
+        vec!["p5"],
+        "Carriage return escape should match"
+    );
 }
 
 // MIRI SKIP RATIONALE: CIDR tests with multiple prefixes are slow under Miri
@@ -2327,21 +2330,18 @@ fn test_cidr_ipv6_basic() {
 #[test]
 #[cfg_attr(miri, ignore)]
 fn test_cidr_ipv6_shorthand() {
-    let mut q = Quamina::new();
-    q.add_pattern("loopback", r#"{"ip": [{"cidr": "::1/128"}]}"#)
-        .unwrap();
-
-    // Loopback should match (using full form)
-    let m1 = q
-        .matches_for_event(r#"{"ip": "0:0:0:0:0:0:0:1"}"#.as_bytes())
-        .unwrap();
-    assert_eq!(m1, vec!["loopback"], "Loopback should match");
-
-    // Different IP should not match
-    let m2 = q
-        .matches_for_event(r#"{"ip": "0:0:0:0:0:0:0:2"}"#.as_bytes())
-        .unwrap();
-    assert!(m2.is_empty(), "Non-loopback should not match /128");
+    let q = q!("loopback" => r#"{"ip": [{"cidr": "::1/128"}]}"#);
+    assert_matches!(
+        q,
+        r#"{"ip": "0:0:0:0:0:0:0:1"}"#,
+        vec!["loopback"],
+        "Loopback should match"
+    );
+    assert_no_match!(
+        q,
+        r#"{"ip": "0:0:0:0:0:0:0:2"}"#,
+        "Non-loopback should not match /128"
+    );
 }
 
 // MIRI SKIP RATIONALE: CIDR pattern construction + matching against non-IP values takes ~151s
@@ -2350,23 +2350,14 @@ fn test_cidr_ipv6_shorthand() {
 #[test]
 #[cfg_attr(miri, ignore)]
 fn test_cidr_non_ip_values() {
-    let mut q = Quamina::new();
-    q.add_pattern("p1", r#"{"ip": [{"cidr": "10.0.0.0/8"}]}"#)
-        .unwrap();
-
-    // Non-IP string should not match (and not panic)
-    let m1 = q
-        .matches_for_event(r#"{"ip": "not-an-ip"}"#.as_bytes())
-        .unwrap();
-    assert!(m1.is_empty(), "Non-IP string should not match CIDR");
-
-    // Empty string
-    let m2 = q.matches_for_event(r#"{"ip": ""}"#.as_bytes()).unwrap();
-    assert!(m2.is_empty(), "Empty string should not match CIDR");
-
-    // Number (not a string)
-    let m3 = q.matches_for_event(r#"{"ip": 12345}"#.as_bytes()).unwrap();
-    assert!(m3.is_empty(), "Number should not match CIDR");
+    let q = q!("p1" => r#"{"ip": [{"cidr": "10.0.0.0/8"}]}"#);
+    assert_no_match!(
+        q,
+        r#"{"ip": "not-an-ip"}"#,
+        "Non-IP string should not match CIDR"
+    );
+    assert_no_match!(q, r#"{"ip": ""}"#, "Empty string should not match CIDR");
+    assert_no_match!(q, r#"{"ip": 12345}"#, "Number should not match CIDR");
 }
 
 /// Miri-only: verifies CIDR pattern rejects invalid inputs without full automaton traversal.
@@ -2433,16 +2424,8 @@ fn test_lookaround_pattern_parsing() {
 #[test]
 fn test_lookaround_transformation() {
     // Test that lookaround patterns are properly transformed for matching
-    let mut q = Quamina::new();
-
-    // foo followed by bar (lookahead)
-    q.add_pattern("la", r#"{"x": [{"regexp": "foo(?=bar)bar"}]}"#)
-        .unwrap();
-
-    let m1 = q
-        .matches_for_event(r#"{"x": "foobar"}"#.as_bytes())
-        .unwrap();
-    assert!(m1.contains(&"la"), "foo(?=bar)bar should match foobar");
+    let q = q!("la" => r#"{"x": [{"regexp": "foo(?=bar)bar"}]}"#);
+    assert_has_match!(q, r#"{"x": "foobar"}"#, "la");
 }
 
 #[test]
@@ -2498,38 +2481,30 @@ fn test_lookaround_primary_match() {
 fn test_shellstyle_subset_overlap_same_field() {
     // Go's TestWildCardRuler: two shellstyle patterns on the same field where
     // one's match set is a subset of the other (d*f matches everything d*ff does, plus more)
-    let mut q = Quamina::new();
-    q.add_pattern("r1", r#"{"b": [{"shellstyle": "d*f"}]}"#)
-        .unwrap();
-    q.add_pattern("r2", r#"{"b": [{"shellstyle": "d*ff"}]}"#)
-        .unwrap();
+    let q = q!(
+        "r1" => r#"{"b": [{"shellstyle": "d*f"}]}"#,
+        "r2" => r#"{"b": [{"shellstyle": "d*ff"}]}"#
+    );
 
     // "dexeff" matches both: d*f (ends in f) and d*ff (ends in ff)
-    let m1 = q
-        .matches_for_event(r#"{"b": "dexeff"}"#.as_bytes())
-        .unwrap();
-    assert!(m1.contains(&"r1"), "d*f should match 'dexeff': {:?}", m1);
-    assert!(m1.contains(&"r2"), "d*ff should match 'dexeff': {:?}", m1);
-    assert_eq!(m1.len(), 2, "Both patterns should match 'dexeff'");
+    assert_has_match!(q, r#"{"b": "dexeff"}"#, "r1");
+    assert_has_match!(q, r#"{"b": "dexeff"}"#, "r2");
+    assert_match_count!(q, r#"{"b": "dexeff"}"#, 2);
 
     // "def" matches d*f only (ends in single f, not ff)
-    let m2 = q.matches_for_event(r#"{"b": "def"}"#.as_bytes()).unwrap();
-    assert!(m2.contains(&"r1"), "d*f should match 'def': {:?}", m2);
-    assert!(!m2.contains(&"r2"), "d*ff should NOT match 'def': {:?}", m2);
+    assert_has_match!(q, r#"{"b": "def"}"#, "r1");
+    assert_no_has_match!(q, r#"{"b": "def"}"#, "r2");
 
     // "df" matches d*f (wildcard matches zero chars)
-    let m3 = q.matches_for_event(r#"{"b": "df"}"#.as_bytes()).unwrap();
-    assert!(m3.contains(&"r1"), "d*f should match 'df': {:?}", m3);
-    assert!(!m3.contains(&"r2"), "d*ff should NOT match 'df': {:?}", m3);
+    assert_has_match!(q, r#"{"b": "df"}"#, "r1");
+    assert_no_has_match!(q, r#"{"b": "df"}"#, "r2");
 
     // "dff" matches both: d*f (wildcard matches "f", ending in f) and d*ff (ends in ff)
-    let m4 = q.matches_for_event(r#"{"b": "dff"}"#.as_bytes()).unwrap();
-    assert!(m4.contains(&"r1"), "d*f should match 'dff': {:?}", m4);
-    assert!(m4.contains(&"r2"), "d*ff should match 'dff': {:?}", m4);
+    assert_has_match!(q, r#"{"b": "dff"}"#, "r1");
+    assert_has_match!(q, r#"{"b": "dff"}"#, "r2");
 
     // "hello" matches neither
-    let m5 = q.matches_for_event(r#"{"b": "hello"}"#.as_bytes()).unwrap();
-    assert!(m5.is_empty(), "Neither should match 'hello': {:?}", m5);
+    assert_no_match!(q, r#"{"b": "hello"}"#);
 }
 
 #[test]
