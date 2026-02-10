@@ -612,71 +612,32 @@ fn test_invalid_json_events() {
     // Based on Go quamina's TestFJErrorCases
     let q = q!("p1" => r#"{"a": [1]}"#);
 
-    // Truncated JSON
-    assert!(
-        q.matches_for_event(r#"{"a"#.as_bytes()).is_err(),
-        "Truncated JSON should error"
-    );
-    assert!(
-        q.matches_for_event(r#"{"a": "#.as_bytes()).is_err(),
-        "Truncated value should error"
-    );
-    assert!(
-        q.matches_for_event(r#"{"a": ["#.as_bytes()).is_err(),
-        "Truncated array should error"
-    );
+    let bad_events: &[(&[u8], &str)] = &[
+        // Truncated JSON
+        (br#"{"a"#, "Truncated JSON"),
+        (br#"{"a": "#, "Truncated value"),
+        (br#"{"a": ["#, "Truncated array"),
+        // Empty input
+        (b"", "Empty input"),
+        // Non-object at top level
+        (br#""string""#, "String at top level"),
+        (br#"[1, 2]"#, "Array at top level"),
+        (b"123", "Number at top level"),
+        // Malformed JSON
+        (br#"{ "a" : }"#, "Missing value"),
+        // Invalid escape sequences
+        (br#"{"a": "a\zb"}"#, "Invalid escape \\z in value"),
+        (br#"{"a\zb": 2}"#, "Invalid escape in field name"),
+        // Invalid value identifier
+        (br#"{"a": xx}"#, "Invalid value xx"),
+        // Truncated/invalid literals
+        (br#"{"a": tru}"#, "Truncated 'tru'"),
+        (br#"{"a": truse}"#, "Invalid 'truse'"),
+    ];
 
-    // Empty input
-    assert!(
-        q.matches_for_event(r#""#.as_bytes()).is_err(),
-        "Empty input should error"
-    );
-
-    // Non-object at top level
-    assert!(
-        q.matches_for_event(r#""string""#.as_bytes()).is_err(),
-        "String at top level should error"
-    );
-    assert!(
-        q.matches_for_event(r#"[1, 2]"#.as_bytes()).is_err(),
-        "Array at top level should error"
-    );
-    assert!(
-        q.matches_for_event(r#"123"#.as_bytes()).is_err(),
-        "Number at top level should error"
-    );
-
-    // Malformed JSON
-    assert!(
-        q.matches_for_event(r#"{ "a" : }"#.as_bytes()).is_err(),
-        "Missing value should error"
-    );
-
-    // Invalid escape sequences
-    assert!(
-        q.matches_for_event(r#"{"a": "a\zb"}"#.as_bytes()).is_err(),
-        "Invalid escape \\z should error"
-    );
-    assert!(
-        q.matches_for_event(r#"{"a\zb": 2}"#.as_bytes()).is_err(),
-        "Invalid escape in field name should error"
-    );
-
-    // Invalid value identifier
-    assert!(
-        q.matches_for_event(r#"{"a": xx}"#.as_bytes()).is_err(),
-        "Invalid value xx should error"
-    );
-
-    // Truncated/invalid literals
-    assert!(
-        q.matches_for_event(r#"{"a": tru}"#.as_bytes()).is_err(),
-        "Truncated 'tru' should error"
-    );
-    assert!(
-        q.matches_for_event(r#"{"a": truse}"#.as_bytes()).is_err(),
-        "Invalid 'truse' should error"
-    );
+    for (event, desc) in bad_events {
+        assert!(q.matches_for_event(event).is_err(), "{} should error", desc);
+    }
 }
 
 #[test]

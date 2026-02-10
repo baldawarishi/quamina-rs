@@ -512,21 +512,34 @@ cargo +nightly miri test                       # Memory safety under Miri
 | `src/segments_tree.rs` | 2026-01-31 | Made `SEGMENT_SEPARATOR` `pub(crate)` |
 | `src/flatten_json.rs` | 2026-01-31 | Removed unused `len()` and `is_empty()` methods |
 
+### Completed (Test Dedup)
+
+| Item | Date | Changes |
+|------|------|---------|
+| Add `q!`, `assert_matches!`, `assert_no_match!` test macros | 2026-02-10 | Created `src/test_helpers.rs` with 6 macros + `exercise_wildcard()` helper; ~1000 lines saved across 4 test files |
+| Add `field()` helper to `automaton/tests.rs` | 2026-02-10 | Replaced ~20 verbose `EventField` constructions |
+| Consolidate Miri full/friendly test pairs | 2026-02-10 | Extracted `verify_ordering_random(count)` in numbits.rs, `verify_bulk_add_correctness(count)` in tests_stress.rs |
+| Table-drive `test_invalid_json_events` | 2026-02-10 | Converted 13 cases to `&[(&[u8], &str)]` table |
+
+### Completed (Source Dedup)
+
+| Item | Date | Changes |
+|------|------|---------|
+| Extract `replay_patterns_into` helper | 2026-02-10 | Shared by `clone()` and `rebuild()` in lib.rs |
+| Extract `filter_deleted_matches` helper | 2026-02-10 | Shared by `matches_for_event` and `matches_for_event_custom_flattener` in lib.rs |
+
+### Completed (Visibility Audit — Phase 2)
+
+| Item | Date | Changes |
+|------|------|---------|
+| `src/lib.rs` module visibility | 2026-02-10 | Added `#[doc(hidden)]` to `automaton`, `numbits`, `regexp` modules |
+| `src/automaton/mod.rs` | 2026-02-10 | Added `#[doc(hidden)]` to `arena` submodule; changed `sparse_set` to `pub(crate)` |
+
 ### Pending Work
 
 | Item | Category | Priority | Notes |
 |------|----------|----------|-------|
-| Add `q!`, `assert_matches!`, `assert_no_match!` test macros | Test dedup | High | Define in each test module; ~800 lines saved |
-| Consolidate Miri full/friendly test pairs | Test dedup | Medium | 6 pairs can share parameterized helpers |
-| Add `field()` helper to `automaton/tests.rs` | Test dedup | Medium | Reduces ~20 verbose `EventField` constructions |
-| Table-drive `test_invalid_pattern_validation` | Test dedup | Low | 14 cases as `&[(&str, &str)]` loop |
-| Table-drive `test_invalid_json_events` | Test dedup | Low | 12 cases as `&[&[u8]]` loop |
-| Visibility audit: `src/json.rs` | Visibility | Medium | `#[doc(hidden)]` — review if should stay public |
-| Visibility audit: `src/flattener.rs` | Visibility | Medium | Review what actually needs re-export |
-| Visibility audit: `src/automaton/*.rs` | Visibility | Medium | Large module, audit incrementally |
-| Visibility audit: `src/lib.rs` | Visibility | Low | Verify public API is intentional |
-| Extract `replay_patterns_into` helper | Src dedup | Low | Shared by `clone()` and `rebuild()` |
-| Extract `filter_deleted_matches` helper | Src dedup | Low | Shared by both `matches_for_event` paths |
+| Table-drive `test_invalid_pattern_validation` | Test dedup | Low | Already table-driven (done in prior session) |
 | Evaluate clippy nursery lints | Lints | Low | Enable incrementally, fix warnings |
 | Upgrade to edition 2024 | Toolchain | Low | Wait for dependency readiness |
 

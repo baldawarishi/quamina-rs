@@ -49,6 +49,7 @@ impl SparseSet {
     ///
     /// The set is automatically cleared.
     #[inline]
+    #[allow(dead_code)] // API completeness: ported from regex-automata
     pub fn resize(&mut self, new_capacity: usize) {
         self.clear();
         self.dense.resize(new_capacity, 0);
@@ -63,12 +64,14 @@ impl SparseSet {
 
     /// Returns the number of elements in this set.
     #[inline]
+    #[allow(dead_code)] // API completeness: ported from regex-automata
     pub fn len(&self) -> usize {
         self.len
     }
 
     /// Returns true if the set is empty.
     #[inline]
+    #[allow(dead_code)] // API completeness: ported from regex-automata
     pub fn is_empty(&self) -> bool {
         self.len == 0
     }
@@ -110,12 +113,14 @@ impl SparseSet {
 
     /// Iterate over elements in insertion order.
     #[inline]
+    #[allow(dead_code)] // API completeness: ported from regex-automata
     pub fn iter(&self) -> impl Iterator<Item = usize> + '_ {
         self.dense[..self.len].iter().copied()
     }
 
     /// Returns the memory usage in bytes.
     #[inline]
+    #[allow(dead_code)] // API completeness: ported from regex-automata
     pub fn memory_usage(&self) -> usize {
         self.dense.len() * std::mem::size_of::<usize>()
             + self.sparse.len() * std::mem::size_of::<usize>()
@@ -127,11 +132,13 @@ impl SparseSet {
 /// Useful for epsilon closure computation where you alternate between
 /// current states and next states.
 #[derive(Clone, Debug)]
+#[allow(dead_code)] // API completeness: ported from regex-automata
 pub struct SparseSets {
     pub set1: SparseSet,
     pub set2: SparseSet,
 }
 
+#[allow(dead_code)] // API completeness: ported from regex-automata
 impl SparseSets {
     /// Create a new pair of sparse sets with the given capacity.
     #[inline]

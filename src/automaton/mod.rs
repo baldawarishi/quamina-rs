@@ -13,10 +13,11 @@
 //! - `mutable_matcher`: Single-threaded mutable matchers (CoreMatcher)
 //! - `thread_safe`: Thread-safe matchers (ThreadSafeCoreMatcher)
 
+#[doc(hidden)]
 pub mod arena;
 mod mutable_matcher;
 mod small_table;
-pub mod sparse_set;
+pub(crate) mod sparse_set;
 mod thread_safe;
 
 // Re-export from small_table

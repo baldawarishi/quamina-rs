@@ -544,16 +544,10 @@ fn test_concurrent_citylots_stress() {
 // Bulk Add Correctness Test
 // ============================================================================
 
-// MIRI SKIP RATIONALE: Adding 50 patterns across 50 distinct fields takes ~83s under Miri
-// due to cumulative automaton construction overhead. Coverage: test_bulk_add_correctness_miri_friendly
-// exercises the same add + match path with 5 patterns.
-#[test]
-#[cfg_attr(miri, ignore)]
-fn test_bulk_add_correctness() {
-    // Test adding many patterns and verifying all work
+/// Shared helper: add `count` patterns across distinct fields and verify all match.
+fn verify_bulk_add_correctness(count: usize) {
     let mut q = Quamina::new();
 
-    let count = 50;
     for i in 0..count {
         let pattern = format!(r#"{{"field{}": ["value{}"]}}"#, i, i);
         q.add_pattern(format!("p{}", i), &pattern).unwrap();
@@ -561,8 +555,7 @@ fn test_bulk_add_correctness() {
 
     assert_eq!(q.pattern_count(), count);
 
-    // Test a few patterns
-    for i in [0, 10, 25, 49].iter() {
+    for i in 0..count {
         let event = format!(r#"{{"field{}": "value{}"}}"#, i, i);
         assert_matches!(
             q,
@@ -573,29 +566,19 @@ fn test_bulk_add_correctness() {
     }
 }
 
-/// Miri-only: exercises the same bulk-add + match logic with 5 patterns instead of 50.
+// MIRI SKIP RATIONALE: Adding 50 patterns across 50 distinct fields takes ~83s under Miri
+// due to cumulative automaton construction overhead.
+#[test]
+#[cfg_attr(miri, ignore)]
+fn test_bulk_add_correctness() {
+    verify_bulk_add_correctness(50);
+}
+
+/// Miri-friendly version — 5 patterns instead of 50.
 #[test]
 #[cfg(miri)]
 fn test_bulk_add_correctness_miri_friendly() {
-    let mut q = Quamina::new();
-
-    let count = 5;
-    for i in 0..count {
-        let pattern = format!(r#"{{"field{}": ["value{}"]}}"#, i, i);
-        q.add_pattern(format!("p{}", i), &pattern).unwrap();
-    }
-
-    assert_eq!(q.pattern_count(), count);
-
-    for i in 0..count {
-        let event = format!(r#"{{"field{}": "value{}"}}"#, i, i);
-        assert_matches!(
-            q,
-            event,
-            vec![format!("p{}", i)],
-            format!("Pattern {} should match", i)
-        );
-    }
+    verify_bulk_add_correctness(5);
 }
 
 // ============================================================================
