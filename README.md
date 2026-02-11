@@ -172,6 +172,7 @@ let q = QuaminaBuilder::<String>::new()
     .with_max_pattern_depth(128)
     .with_max_fields_per_pattern(64)
     .with_arena_byte_budget(5 * 1024 * 1024)
+    .with_max_states_per_pattern(512)
     .build()?;
 ```
 
@@ -270,6 +271,7 @@ Patterns are subject to complexity limits to prevent resource exhaustion from de
 | Max nesting depth | 256 | `with_max_pattern_depth` |
 | Max fields per pattern | 256 | `with_max_fields_per_pattern` |
 | Arena byte budget | 10 MB | `with_arena_byte_budget` |
+| Max states per pattern | 1024 | `with_max_states_per_pattern` |
 
 Patterns exceeding these limits return `QuaminaError::PatternTooComplex`. The defaults are generous enough for any realistic use case; they're primarily a safety net against adversarial input.
 

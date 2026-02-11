@@ -346,6 +346,16 @@ impl<X: Clone + Eq + Hash + Send + Sync> QuaminaBuilder<X> {
         self
     }
 
+    /// Set the maximum field-matcher states per pattern (default: 1024).
+    ///
+    /// # Panics
+    /// Panics if `max_states` is 0.
+    pub fn with_max_states_per_pattern(mut self, max_states: usize) -> Self {
+        assert!(max_states > 0, "max_states_per_pattern must be at least 1");
+        self.pattern_limits.max_states_per_pattern = max_states;
+        self
+    }
+
     /// Enable or disable automatic pruner rebuilding
     ///
     /// When enabled (default), the matcher will automatically rebuild its internal
