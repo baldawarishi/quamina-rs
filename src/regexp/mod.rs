@@ -2753,4 +2753,29 @@ mod tests {
         assert_eq!(runes[0], RunePair { lo: 'b', hi: 'c' });
         assert_eq!(runes[1], RunePair { lo: 'e', hi: 'e' });
     }
+
+    #[test]
+    fn test_parse_char_class_subtraction_depth_limit() {
+        // 9 levels of nesting should exceed MAX_CLASS_SUBTRACTION_DEPTH (8)
+        // [a-z-[a-z-[a-z-[a-z-[a-z-[a-z-[a-z-[a-z-[a-z-[a]]]]]]]]]]
+        let mut pattern = String::from("[a-z");
+        for _ in 0..9 {
+            pattern.push_str("-[a-z");
+        }
+        pattern.push_str("-[a]");
+        for _ in 0..10 {
+            pattern.push(']');
+        }
+        let result = parse_regexp(&pattern);
+        assert!(
+            result.is_err(),
+            "deeply nested subtraction should be rejected"
+        );
+        let err = result.unwrap_err();
+        assert!(
+            err.message.contains("nested too deeply"),
+            "error should mention nesting: {}",
+            err.message
+        );
+    }
 }

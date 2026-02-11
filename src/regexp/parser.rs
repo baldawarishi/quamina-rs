@@ -980,6 +980,23 @@ fn read_atom(parse: &mut RegexpParse) -> Result<QuantifiedAtom, RegexpError> {
 fn read_char_class_expr(
     parse: &mut RegexpParse,
 ) -> Result<(RuneRange, Option<Vec<u8>>), RegexpError> {
+    read_char_class_expr_depth(parse, 0)
+}
+
+/// Maximum nesting depth for character class subtraction (e.g., [a-[b-[c-[...]]]]).
+const MAX_CLASS_SUBTRACTION_DEPTH: usize = 8;
+
+fn read_char_class_expr_depth(
+    parse: &mut RegexpParse,
+    depth: usize,
+) -> Result<(RuneRange, Option<Vec<u8>>), RegexpError> {
+    if depth > MAX_CLASS_SUBTRACTION_DEPTH {
+        return Err(RegexpError {
+            message: "character class subtraction nested too deeply".into(),
+            offset: parse.index,
+        });
+    }
+
     // Check for unclosed bracket (EOF immediately after '[')
     if parse.is_empty() {
         return Err(RegexpError {
@@ -1006,7 +1023,7 @@ fn read_char_class_expr(
         if next == '[' {
             // Character class subtraction: base-[subtract]
             // Recursively parse the subtracted class (which may itself contain subtraction)
-            let (subtract_rr, _) = read_char_class_expr(parse)?;
+            let (subtract_rr, _) = read_char_class_expr_depth(parse, depth + 1)?;
             rr = subtract_rune_range(rr, subtract_rr);
         } else {
             // Not subtraction — it's a trailing literal '-'
