@@ -2189,3 +2189,64 @@ fn test_zero_fields_panics() {
 fn test_zero_budget_panics() {
     QuaminaBuilder::<&str>::new().with_arena_byte_budget(0);
 }
+
+#[test]
+#[should_panic(expected = "max_states_per_pattern must be at least 1")]
+fn test_zero_states_panics() {
+    QuaminaBuilder::<&str>::new().with_max_states_per_pattern(0);
+}
+
+// --- State Count Limit Tests ---
+
+#[test]
+fn test_state_limit_exceeded() {
+    // With a tiny state limit of 2, a pattern with 2 mixed-type fields
+    // each having 2 matchers would produce 4 states (2^2), exceeding the limit.
+    let mut q = QuaminaBuilder::<&str>::new()
+        .with_max_states_per_pattern(2)
+        .build()
+        .unwrap();
+
+    // Single field with mixed matchers: exact + prefix → 2 states (within limit)
+    let r1 = q.add_pattern("ok", r#"{"a": ["x", {"prefix": "y"}]}"#);
+    assert!(r1.is_ok(), "2 states should be within limit of 2");
+
+    // Two fields with mixed matchers: 2 * 2 = 4 states (exceeds limit)
+    let r2 = q.add_pattern(
+        "bad",
+        r#"{"a": ["x", {"prefix": "y"}], "b": ["m", {"prefix": "n"}]}"#,
+    );
+    assert!(r2.is_err(), "4 states should exceed limit of 2");
+    assert!(
+        r2.unwrap_err()
+            .to_string()
+            .contains("field-matcher state count"),
+        "error should mention state count"
+    );
+}
+
+#[test]
+fn test_state_limit_default_allows_normal_patterns() {
+    // Default limit (1024) should easily handle normal mixed-type patterns
+    let mut q = Quamina::new();
+
+    // Mixed exact + prefix on one field
+    assert!(q
+        .add_pattern("p1", r#"{"status": ["active", {"prefix": "pend"}]}"#)
+        .is_ok());
+
+    // Multiple fields with single matchers (no multiplication)
+    assert!(q
+        .add_pattern("p2", r#"{"a": ["1"], "b": ["2"], "c": ["3"]}"#)
+        .is_ok());
+
+    // Verify matching still works
+    let matches = q
+        .matches_for_event(r#"{"status": "active"}"#.as_bytes())
+        .unwrap();
+    assert!(matches.contains(&&"p1"));
+    let matches = q
+        .matches_for_event(r#"{"status": "pending"}"#.as_bytes())
+        .unwrap();
+    assert!(matches.contains(&&"p1"));
+}
