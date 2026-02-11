@@ -2720,4 +2720,37 @@ mod tests {
         assert_eq!(runes[0], RunePair { lo: '0', hi: '3' });
         assert_eq!(runes[1], RunePair { lo: '7', hi: '9' });
     }
+
+    #[test]
+    fn test_parse_char_class_subtraction_single_chars_before_bracket() {
+        // [abcd-[d]]+ — individual chars before -[ should NOT be parsed as range d-[
+        let root = parse_regexp("[abcd-[d]]+").unwrap();
+        assert_eq!(root.len(), 1);
+        assert_eq!(root[0].len(), 1);
+        let runes = &root[0][0].runes;
+        // {a,b,c,d} - {d} = {a,b,c} = [{a,c}] (merged)
+        assert_eq!(runes.len(), 1);
+        assert_eq!(runes[0], RunePair { lo: 'a', hi: 'c' });
+        assert!(root[0][0].is_plus());
+    }
+
+    #[test]
+    fn test_parse_char_class_subtraction_alternation() {
+        // ([0-9-[02468]]|[0-9-[13579]])+ — odd|even digits = all digits
+        let root = parse_regexp("([0-9-[02468]]|[0-9-[13579]])+").unwrap();
+        assert_eq!(root.len(), 1);
+        assert_eq!(root[0].len(), 1); // one group atom
+        let subtree = root[0][0].subtree.as_ref().unwrap();
+        assert_eq!(subtree.len(), 2); // two branches via |
+    }
+
+    #[test]
+    fn test_parse_char_class_subtraction_negated_subtract() {
+        // [abcdef-[^bce]]+ — {a-f} minus NOT{b,c,e} = {b,c,e}
+        let root = parse_regexp("[abcdef-[^bce]]+").unwrap();
+        let runes = &root[0][0].runes;
+        assert_eq!(runes.len(), 2);
+        assert_eq!(runes[0], RunePair { lo: 'b', hi: 'c' });
+        assert_eq!(runes[1], RunePair { lo: 'e', hi: 'e' });
+    }
 }

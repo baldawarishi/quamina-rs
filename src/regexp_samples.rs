@@ -4897,12 +4897,12 @@ pub static REGEXP_SAMPLES: &[RegexpSample] = &[
         nomatches: &[],
         valid: false,
     },
-    // Sample 699
+    // Sample 699 — subtraction: {a,b,c,d} minus {d} = {a,b,c}
     RegexpSample {
         regex: "[abcd-[d]]+",
-        matches: &[],
-        nomatches: &[],
-        valid: false,
+        matches: &["a", "abc", "cab"],
+        nomatches: &["", "d", "0"],
+        valid: true,
     },
     // Sample 700
     RegexpSample {
@@ -4960,12 +4960,12 @@ pub static REGEXP_SAMPLES: &[RegexpSample] = &[
         nomatches: &[],
         valid: false,
     },
-    // Sample 708
+    // Sample 708 — subtraction: {a,b,c,d} minus {d,e,f} = {a,b,c}
     RegexpSample {
         regex: "[abcd-[def]]+",
-        matches: &[],
-        nomatches: &[],
-        valid: false,
+        matches: &["a", "abc", "cab"],
+        nomatches: &["", "d", "e", "f"],
+        valid: true,
     },
     // Sample 709
     RegexpSample {
@@ -5065,12 +5065,12 @@ pub static REGEXP_SAMPLES: &[RegexpSample] = &[
         nomatches: &[],
         valid: false,
     },
-    // Sample 723
+    // Sample 723 — subtraction: {a,b,c} minus {d,e,f,g} = {a,b,c} (no overlap)
     RegexpSample {
         regex: "[abc-[defg]]+",
-        matches: &[],
-        nomatches: &[],
-        valid: false,
+        matches: &["a", "abc", "bca"],
+        nomatches: &["", "d", "e"],
+        valid: true,
     },
     // Sample 724
     RegexpSample {
@@ -5163,12 +5163,12 @@ pub static REGEXP_SAMPLES: &[RegexpSample] = &[
         nomatches: &[],
         valid: false,
     },
-    // Sample 737
+    // Sample 737 — subtraction in alternation: odd|even digits = all digits
     RegexpSample {
         regex: "([0-9-[02468]]|[0-9-[13579]])+",
-        matches: &[],
-        nomatches: &[],
-        valid: false,
+        matches: &["0", "123", "99"],
+        nomatches: &["", "a", "x"],
+        valid: true,
     },
     // Sample 738
     RegexpSample {
@@ -5198,19 +5198,19 @@ pub static REGEXP_SAMPLES: &[RegexpSample] = &[
         nomatches: &[],
         valid: false,
     },
-    // Sample 742
+    // Sample 742 — subtract negated: {a-f} minus NOT{b,c,e} = {b,c,e}
     RegexpSample {
         regex: "[abcdef-[^bce]]+",
-        matches: &[],
-        nomatches: &[],
-        valid: false,
+        matches: &["b", "bce", "ecb"],
+        nomatches: &["", "a", "d", "f"],
+        valid: true,
     },
-    // Sample 743
+    // Sample 743 — negated outer with subtraction: NOT({c,d,e} minus {a,g}) = NOT{c,d,e}
     RegexpSample {
         regex: "[^cde-[ag]]+",
-        matches: &[],
-        nomatches: &[],
-        valid: false,
+        matches: &["a", "b", "xyz"],
+        nomatches: &["", "c", "d", "e"],
+        valid: true,
     },
     // Sample 744
     RegexpSample {
@@ -5226,12 +5226,12 @@ pub static REGEXP_SAMPLES: &[RegexpSample] = &[
         nomatches: &["", "a", "e", "A", "E"],
         valid: true,
     },
-    // Sample 746
+    // Sample 746 — subtraction with escaped dash: {a-d,-} minus {b,c} = {a,d,-}
     RegexpSample {
         regex: "[abcd~-d-[bc]]+",
-        matches: &[],
-        nomatches: &[],
-        valid: false,
+        matches: &["a", "d", "-"],
+        nomatches: &["", "b", "c", "e"],
+        valid: true,
     },
     // Sample 747
     RegexpSample {
@@ -5275,26 +5275,26 @@ pub static REGEXP_SAMPLES: &[RegexpSample] = &[
         nomatches: &[],
         valid: false,
     },
-    // Sample 753
+    // Sample 753 — subtraction resulting in empty set: {a} minus {a-f} = {}
     RegexpSample {
         regex: "[a-[a-f]]",
         matches: &[],
         nomatches: &[],
-        valid: false,
+        valid: true,
     },
-    // Sample 754
+    // Sample 754 — subtraction with no overlap: {a} minus {c-e} = {a}
     RegexpSample {
         regex: "[a-[c-e]]+",
-        matches: &[],
-        nomatches: &[],
-        valid: false,
+        matches: &["a", "aaa"],
+        nomatches: &["", "b", "c"],
+        valid: true,
     },
-    // Sample 755
+    // Sample 755 — subtraction with escaped dash: {a-d,-} minus {b,c} = {a,d,-}
     RegexpSample {
         regex: "[a-d~--[bc]]+",
-        matches: &[],
-        nomatches: &[],
-        valid: false,
+        matches: &["a", "d", "-"],
+        nomatches: &["", "b", "c", "e"],
+        valid: true,
     },
     // Sample 756
     RegexpSample {
@@ -5359,19 +5359,19 @@ pub static REGEXP_SAMPLES: &[RegexpSample] = &[
         nomatches: &["```bbbaaa---[[[cccddd"],
         valid: true,
     },
-    // Sample 765
+    // Sample 765 — subtraction with escaped dash: {a,b,c,-} minus {b} = {a,c,-}
     RegexpSample {
         regex: "[abc~--[b]]+",
-        matches: &[],
-        nomatches: &[],
-        valid: false,
+        matches: &["a", "c", "-"],
+        nomatches: &["", "b", "d"],
+        valid: true,
     },
-    // Sample 766
+    // Sample 766 — subtraction: {a,b,c,-,z} minus {b} = {a,c,-,z}
     RegexpSample {
         regex: "[abc~-z-[b]]+",
-        matches: &[],
-        nomatches: &[],
-        valid: false,
+        matches: &["a", "c", "-", "z"],
+        nomatches: &["", "b", "d"],
+        valid: true,
     },
     // Sample 767
     RegexpSample {

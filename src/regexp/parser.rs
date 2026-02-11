@@ -1177,6 +1177,14 @@ fn read_cce1(parse: &mut RegexpParse, first: bool) -> Result<RuneRange, RegexpEr
         return Ok(vec![RunePair { lo, hi: lo }, RunePair { lo: '-', hi: '-' }]);
     }
 
+    // Character class subtraction: d-[ should NOT be a range attempt.
+    // Back up both '[' and '-' so the caller can handle subtraction syntax.
+    if range_end == '[' {
+        parse.backup1(range_end);
+        parse.backup1('-');
+        return Ok(vec![RunePair { lo, hi: lo }]);
+    }
+
     let hi = if range_end == ESCAPE {
         let escaped = parse.next_rune().map_err(|_| RegexpError {
             message: "unclosed character class".into(),
