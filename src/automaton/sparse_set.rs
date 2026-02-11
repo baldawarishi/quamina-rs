@@ -38,7 +38,7 @@ impl SparseSet {
     /// Elements must be in range [0, capacity).
     #[inline]
     pub fn new(capacity: usize) -> Self {
-        SparseSet {
+        Self {
             len: 0,
             dense: vec![0; capacity],
             sparse: vec![0; capacity],
@@ -143,7 +143,7 @@ impl SparseSets {
     /// Create a new pair of sparse sets with the given capacity.
     #[inline]
     pub fn new(capacity: usize) -> Self {
-        SparseSets {
+        Self {
             set1: SparseSet::new(capacity),
             set2: SparseSet::new(capacity),
         }

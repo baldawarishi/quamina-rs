@@ -126,18 +126,12 @@ pub enum LookaroundType {
 impl LookaroundType {
     /// Returns true if this is a negative lookaround ((?!...) or (?<!...))
     pub fn is_negative(&self) -> bool {
-        matches!(
-            self,
-            LookaroundType::NegativeLookahead | LookaroundType::NegativeLookbehind
-        )
+        matches!(self, Self::NegativeLookahead | Self::NegativeLookbehind)
     }
 
     /// Returns true if this is a lookbehind ((?<=...) or (?<!...))
     pub fn is_lookbehind(&self) -> bool {
-        matches!(
-            self,
-            LookaroundType::PositiveLookbehind | LookaroundType::NegativeLookbehind
-        )
+        matches!(self, Self::PositiveLookbehind | Self::NegativeLookbehind)
     }
 }
 
@@ -244,7 +238,7 @@ impl RegexpParse {
             offset: self.index,
         })?;
 
-        let c = s.chars().next().ok_or(RegexpError {
+        let c = s.chars().next().ok_or_else(|| RegexpError {
             message: "empty string".into(),
             offset: self.index,
         })?;
@@ -1014,6 +1008,7 @@ fn read_char_class_expr_depth(
     let mut rr = read_cce1s(parse)?;
 
     // Check for character class subtraction -[...] or trailing -
+    #[allow(clippy::equatable_if_let)] // RegexpError doesn't impl PartialEq
     if let Ok(true) = parse.bypass_optional('-') {
         // Peek ahead to see if this is subtraction syntax -[
         let next = parse.next_rune().map_err(|_| RegexpError {
@@ -1472,10 +1467,7 @@ fn read_category(parse: &mut RegexpParse) -> Result<(RuneRange, Option<String>),
     }
 
     // Build the cache key (e.g., "L", "Lu", "Nd")
-    let cache_key = match detail {
-        Some(d) => format!("{}{}", initial, d),
-        None => initial.to_string(),
-    };
+    let cache_key = detail.map_or_else(|| initial.to_string(), |d| format!("{}{}", initial, d));
 
     // Look up the category ranges
     if let Some(ranges) = get_category_ranges(initial, detail) {

@@ -108,9 +108,9 @@ pub struct MutableFieldMatcher<X: Clone + Eq + std::hash::Hash> {
     /// Pattern identifiers that match when arriving at this state
     pub matches: RefCell<Vec<X>>,
     /// exists:true patterns - map from field path to next field matcher
-    pub exists_true: RefCell<HashMap<String, Rc<MutableFieldMatcher<X>>>>,
+    pub exists_true: RefCell<HashMap<String, Rc<Self>>>,
     /// exists:false patterns - map from field path to next field matcher
-    pub exists_false: RefCell<HashMap<String, Rc<MutableFieldMatcher<X>>>>,
+    pub exists_false: RefCell<HashMap<String, Rc<Self>>>,
 }
 
 impl<X: Clone + Eq + std::hash::Hash> MutableFieldMatcher<X> {
@@ -129,7 +129,7 @@ impl<X: Clone + Eq + std::hash::Hash> MutableFieldMatcher<X> {
     }
 
     /// Add an exists transition (true or false)
-    pub fn add_exists(&self, exists: bool, path: &str) -> Rc<MutableFieldMatcher<X>> {
+    pub fn add_exists(&self, exists: bool, path: &str) -> Rc<Self> {
         let map = if exists {
             &self.exists_true
         } else {
@@ -140,7 +140,7 @@ impl<X: Clone + Eq + std::hash::Hash> MutableFieldMatcher<X> {
         if let Some(existing) = map_borrow.get(path) {
             existing.clone()
         } else {
-            let new_fm = Rc::new(MutableFieldMatcher::new());
+            let new_fm = Rc::new(Self::new());
             map_borrow.insert(path.to_string(), new_fm.clone());
             new_fm
         }
@@ -152,7 +152,7 @@ impl<X: Clone + Eq + std::hash::Hash> MutableFieldMatcher<X> {
         path: &str,
         matchers: &[crate::json::Matcher],
         arena_byte_budget: usize,
-    ) -> Result<Vec<Rc<MutableFieldMatcher<X>>>, crate::QuaminaError> {
+    ) -> Result<Vec<Rc<Self>>, crate::QuaminaError> {
         use crate::json::Matcher;
 
         let mut transitions = self.transitions.borrow_mut();
@@ -192,7 +192,7 @@ impl<X: Clone + Eq + std::hash::Hash> MutableFieldMatcher<X> {
         value: &[u8],
         is_number: bool,
         bufs: &mut NfaBuffers,
-    ) -> Vec<Rc<MutableFieldMatcher<X>>> {
+    ) -> Vec<Rc<Self>> {
         let transitions = self.transitions.borrow();
         if let Some(vm) = transitions.get(path) {
             vm.transition_on(value, is_number, bufs)
@@ -980,7 +980,7 @@ pub struct EventField {
 
 impl From<&crate::json::Field> for EventField {
     fn from(f: &crate::json::Field) -> Self {
-        EventField {
+        Self {
             path: f.path.clone(),
             value: f.value.clone(),
             array_trail: f.array_trail.clone(),

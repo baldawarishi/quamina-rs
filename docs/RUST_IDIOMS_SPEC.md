@@ -331,8 +331,8 @@ The source code is generally well-factored. Key observations:
 
 | Area | Status | Action |
 |------|--------|--------|
-| `matches_for_event` / `matches_for_event_custom_flattener` share filtering logic | Minor duplication | Extract filter-and-count helper (low priority). |
-| `clone()` / `rebuild()` share pattern-replay logic | Minor duplication | Extract `replay_patterns_into` helper. |
+| `matches_for_event` / `matches_for_event_custom_flattener` share filtering logic | **Done** | Extracted `filter_deleted_matches()` helper. |
+| `clone()` / `rebuild()` share pattern-replay logic | **Done** | Extracted `replay_patterns_into()` helper. |
 
 ### Test Code (7,216 lines across 4 files)
 
@@ -369,7 +369,7 @@ fn test_thread_safe_matcher_exact() { test_matcher_exact_impl(ThreadSafeCoreMatc
 
 ## 8. Clippy & Lints Configuration
 
-### Current Configuration (Cargo.toml)
+### Configuration (Cargo.toml)
 
 ```toml
 [lints.rust]
@@ -380,28 +380,32 @@ unsafe_code = "warn"
 perf = { level = "warn", priority = -1 }
 undocumented_unsafe_blocks = "warn"
 transmute_ptr_to_ptr = "warn"
+# Nursery lints (selectively enabled)
+use_self = "warn"
+derive_partial_eq_without_eq = "warn"
+redundant_clone = "warn"
+unused_peekable = "warn"
+or_fun_call = "warn"
+branches_sharing_code = "warn"
+equatable_if_let = "warn"
 ```
 
-### Recommended Additions
+### Nursery Lint Evaluation
 
-Consider enabling these lint groups incrementally:
-
-```toml
-[lints.clippy]
-# Already enabled:
-perf = { level = "warn", priority = -1 }
-undocumented_unsafe_blocks = "warn"
-transmute_ptr_to_ptr = "warn"
-
-# Recommended additions:
-nursery = { level = "warn", priority = -1 }       # Catches common oversights
-cast_lossless = "warn"                              # Prefer .into() over as casts
-cloned_instead_of_copied = "warn"                   # Use .copied() for Copy types
-manual_let_else = "warn"                            # Use let-else for early returns
-needless_pass_by_value = "warn"                     # Accept &T instead of T when not consumed
-redundant_clone = "warn"                            # Remove unnecessary .clone() calls
-uninlined_format_args = "warn"                      # Use f-string style: format!("{x}")
-```
+| Lint | Status | Rationale |
+|------|--------|-----------|
+| `use_self` | **Enabled** | 52 fixes, purely mechanical, improves readability |
+| `derive_partial_eq_without_eq` | **Enabled** | 1 fix, correct |
+| `redundant_clone` | **Enabled** | Performance improvement |
+| `unused_peekable` | **Enabled** | Catches dead code |
+| `or_fun_call` | **Enabled** | Avoids unnecessary allocation in `ok_or` |
+| `branches_sharing_code` | **Enabled** | Deduplicates shared code at end of if/else |
+| `equatable_if_let` | **Enabled** | Cleaner pattern matching |
+| `option_if_let_else` | Skipped | Too many false positives where `map_or` hurts readability |
+| `missing_const_for_fn` | Skipped | 41 warnings, `const fn` restrictions evolve too quickly |
+| `significant_drop_tightening` | Skipped | False positives on intentional lock scopes |
+| `non_send_fields_in_send_ty` | Skipped | False positives on safe wrappers |
+| `redundant_pub_crate` | Skipped | `pub(crate)` inside private modules is harmless |
 
 ### Formatting
 
@@ -535,12 +539,16 @@ cargo +nightly miri test                       # Memory safety under Miri
 | `src/lib.rs` module visibility | 2026-02-10 | Added `#[doc(hidden)]` to `automaton`, `numbits`, `regexp` modules |
 | `src/automaton/mod.rs` | 2026-02-10 | Added `#[doc(hidden)]` to `arena` submodule; changed `sparse_set` to `pub(crate)` |
 
+### Completed (Clippy Nursery Lints)
+
+| Item | Date | Changes |
+|------|------|---------|
+| Evaluate and enable nursery lints | 2026-02-11 | Enabled 7 nursery lints in Cargo.toml; fixed 52 `use_self`, 1 `unused_peekable`, 1 `or_fun_call`, 1 `branches_sharing_code`, 3 `option_if_let_else` (easy cases); skipped 5 noisy/false-positive lints |
+
 ### Pending Work
 
 | Item | Category | Priority | Notes |
 |------|----------|----------|-------|
-| Table-drive `test_invalid_pattern_validation` | Test dedup | Low | Already table-driven (done in prior session) |
-| Evaluate clippy nursery lints | Lints | Low | Enable incrementally, fix warnings |
 | Upgrade to edition 2024 | Toolchain | Low | Wait for dependency readiness |
 
 ---

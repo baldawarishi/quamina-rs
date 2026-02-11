@@ -69,9 +69,9 @@ pub struct FrozenFieldMatcher<X: Clone + Eq + Hash> {
     /// Pattern identifiers that match when arriving at this state
     pub matches: Vec<X>,
     /// exists:true patterns - map from field path to next field matcher
-    pub exists_true: FxHashMap<String, Arc<FrozenFieldMatcher<X>>>,
+    pub exists_true: FxHashMap<String, Arc<Self>>,
     /// exists:false patterns - map from field path to next field matcher
-    pub exists_false: FxHashMap<String, Arc<FrozenFieldMatcher<X>>>,
+    pub exists_false: FxHashMap<String, Arc<Self>>,
 }
 
 // SAFETY: FrozenFieldMatcher only contains Arc, FxHashMap, and Vec - all Send+Sync when X is.
@@ -96,7 +96,7 @@ impl<X: Clone + Eq + Hash> FrozenFieldMatcher<X> {
         value: &[u8],
         is_number: bool,
         bufs: &mut NfaBuffers,
-    ) -> Vec<Arc<FrozenFieldMatcher<X>>> {
+    ) -> Vec<Arc<Self>> {
         if let Some(vm) = self.transitions.get(path) {
             vm.transition_on(value, is_number, bufs)
         } else {
@@ -187,13 +187,6 @@ impl<X: Clone + Eq + Hash> FrozenValueMatcher<X> {
                 // NFA path: handles epsilon transitions and spinout states
                 bufs.arena_bufs.clear();
                 traverse_arena_nfa(arena, start, value_to_match, &mut bufs.arena_bufs);
-
-                for arc_fm in &bufs.arena_bufs.transitions {
-                    let ptr = Arc::as_ptr(arc_fm) as usize;
-                    if let Some(frozen_fm) = self.transition_map.get(&ptr) {
-                        result.push(frozen_fm.clone());
-                    }
-                }
             } else {
                 // DFA fast path: tight loop, no buffer management overhead
                 bufs.arena_bufs.transitions.clear();
@@ -203,12 +196,12 @@ impl<X: Clone + Eq + Hash> FrozenValueMatcher<X> {
                     value_to_match,
                     &mut bufs.arena_bufs.transitions,
                 );
+            }
 
-                for arc_fm in &bufs.arena_bufs.transitions {
-                    let ptr = Arc::as_ptr(arc_fm) as usize;
-                    if let Some(frozen_fm) = self.transition_map.get(&ptr) {
-                        result.push(frozen_fm.clone());
-                    }
+            for arc_fm in &bufs.arena_bufs.transitions {
+                let ptr = Arc::as_ptr(arc_fm) as usize;
+                if let Some(frozen_fm) = self.transition_map.get(&ptr) {
+                    result.push(frozen_fm.clone());
                 }
             }
         }
@@ -445,7 +438,7 @@ impl<X: Clone + Eq + Hash + Send + Sync> ThreadSafeCoreMatcher<X> {
 
         // Create a placeholder to handle cycles
         let placeholder = Arc::new(FrozenFieldMatcher::new());
-        cache.insert(ptr, placeholder.clone());
+        cache.insert(ptr, placeholder);
 
         // Freeze transitions
         let mut frozen_transitions = FxHashMap::default();

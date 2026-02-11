@@ -167,27 +167,27 @@ pub trait Flattener: Send + Sync {
 
 impl SegmentsTreeTracker for SegmentsTree {
     fn get(&self, segment: &[u8]) -> Option<&dyn SegmentsTreeTracker> {
-        SegmentsTree::get(self, segment).map(|t| t as &dyn SegmentsTreeTracker)
+        Self::get(self, segment).map(|t| t as &dyn SegmentsTreeTracker)
     }
 
     fn is_root(&self) -> bool {
-        SegmentsTree::is_root(self)
+        Self::is_root(self)
     }
 
     fn is_segment_used(&self, segment: &[u8]) -> bool {
-        SegmentsTree::is_segment_used(self, segment)
+        Self::is_segment_used(self, segment)
     }
 
     fn path_for_segment(&self, segment: &[u8]) -> Option<&[u8]> {
-        SegmentsTree::path_for_segment(self, segment)
+        Self::path_for_segment(self, segment)
     }
 
     fn nodes_count(&self) -> usize {
-        SegmentsTree::nodes_count(self)
+        Self::nodes_count(self)
     }
 
     fn fields_count(&self) -> usize {
-        SegmentsTree::fields_count(self)
+        Self::fields_count(self)
     }
 
     fn as_any(&self) -> &dyn Any {
@@ -247,7 +247,7 @@ impl Flattener for JsonFlattener {
     }
 
     fn copy(&self) -> Box<dyn Flattener> {
-        Box::new(JsonFlattener::new())
+        Box::new(Self::new())
     }
 }
 

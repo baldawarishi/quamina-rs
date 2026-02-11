@@ -268,7 +268,7 @@ fn create_arena_plus_star_loop(
     // Compute acceleration for the loop.
     // Only ASCII-only negated patterns can be accelerated.
     // Unicode patterns have too many exit bytes (68+) for memchr to help.
-    let accel = if let Some(ref bytes) = qa.ascii_negated_bytes {
+    let accel = qa.ascii_negated_bytes.as_ref().map(|bytes| {
         // ASCII-only negated pattern: use the negated bytes as exit bytes directly
         let mut accel = crate::automaton::AccelInfo {
             exit_bytes: [0; 3],
@@ -277,10 +277,8 @@ fn create_arena_plus_star_loop(
         for (i, &b) in bytes.iter().enumerate() {
             accel.exit_bytes[i] = b;
         }
-        Some(accel)
-    } else {
-        None
-    };
+        accel
+    });
 
     if let Some(accel) = accel {
         arena[start].table.accel = Some(accel.clone());

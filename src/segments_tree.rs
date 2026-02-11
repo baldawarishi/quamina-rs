@@ -36,7 +36,7 @@ pub struct SegmentsTree {
     is_root: bool,
     /// Child nodes (for nested objects)
     /// Maps segment name -> child tree
-    nodes: FxHashMap<String, SegmentsTree>,
+    nodes: FxHashMap<String, Self>,
     /// Leaf fields at this level
     /// Maps segment name -> full path bytes (Arc for O(1) cloning)
     fields: FxHashMap<String, Arc<[u8]>>,
@@ -91,7 +91,7 @@ impl SegmentsTree {
                 node = node
                     .nodes
                     .entry((*segment).to_string())
-                    .or_insert_with(SegmentsTree::new_node);
+                    .or_insert_with(Self::new_node);
             }
         }
     }
@@ -114,7 +114,7 @@ impl SegmentsTree {
 
     /// Get a child node for a segment
     #[inline]
-    pub fn get(&self, segment: &[u8]) -> Option<&SegmentsTree> {
+    pub fn get(&self, segment: &[u8]) -> Option<&Self> {
         // SAFETY: See is_segment_used — segments are always valid UTF-8 from JSON parser.
         let s = unsafe { std::str::from_utf8_unchecked(segment) };
         self.nodes.get(s)

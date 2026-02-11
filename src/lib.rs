@@ -128,13 +128,13 @@ pub enum QuaminaError {
 impl fmt::Display for QuaminaError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            QuaminaError::InvalidJson(msg) => write!(f, "invalid JSON: {}", msg),
-            QuaminaError::InvalidPattern(msg) => write!(f, "invalid pattern: {}", msg),
-            QuaminaError::InvalidUtf8 => write!(f, "invalid UTF-8"),
-            QuaminaError::UnsupportedMediaType(mt) => {
+            Self::InvalidJson(msg) => write!(f, "invalid JSON: {}", msg),
+            Self::InvalidPattern(msg) => write!(f, "invalid pattern: {}", msg),
+            Self::InvalidUtf8 => write!(f, "invalid UTF-8"),
+            Self::UnsupportedMediaType(mt) => {
                 write!(f, "media type \"{}\" is not supported by Quamina", mt)
             }
-            QuaminaError::PatternTooComplex(msg) => {
+            Self::PatternTooComplex(msg) => {
                 write!(f, "pattern too complex: {}", msg)
             }
         }
@@ -217,7 +217,7 @@ pub struct QuaminaBuilder<X: Clone + Eq + Hash + Send + Sync = String> {
 impl<X: Clone + Eq + Hash + Send + Sync> QuaminaBuilder<X> {
     /// Create a new QuaminaBuilder with default settings
     pub fn new() -> Self {
-        QuaminaBuilder {
+        Self {
             auto_rebuild_enabled: true,
             media_type_validated: false,
             custom_flattener: None,
@@ -472,7 +472,7 @@ impl<X: Clone + Eq + Hash + Send + Sync> Clone for Quamina<X> {
             Mutex::new(flattener.copy())
         });
 
-        Quamina {
+        Self {
             automaton,
             pattern_defs: self.pattern_defs.clone(),
             deleted_patterns: self.deleted_patterns.clone(),
@@ -489,7 +489,7 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
     /// Create a new Quamina instance with default pattern complexity limits.
     pub fn new() -> Self {
         let limits = PatternLimits::default();
-        Quamina {
+        Self {
             automaton: ThreadSafeCoreMatcher::with_limits(
                 limits.arena_byte_budget,
                 limits.max_states_per_pattern,
