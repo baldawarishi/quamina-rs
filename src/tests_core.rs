@@ -47,29 +47,16 @@ fn test_numeric_variant_matching() {
     // All these numeric representations of 35 should match pattern [35]
     let q = q!("p1" => r#"{"x": [35]}"#);
 
-    // Integer form
-    assert_matches!(q, r#"{"x": 35}"#, vec!["p1"], "35 should match");
-
-    // Decimal with trailing zero
-    assert_matches!(q, r#"{"x": 35.0}"#, vec!["p1"], "35.0 should match [35]");
-
-    // Scientific notation
-    assert_matches!(q, r#"{"x": 3.5e1}"#, vec!["p1"], "3.5e1 should match [35]");
-
-    // Additional variants from Go's TestMatcherNumerics (numbers_test.go:174)
-    assert_matches!(
-        q,
+    // All numeric representations of 35 should match (Go's numbers_test.go:174)
+    for event in [
+        r#"{"x": 35}"#,
+        r#"{"x": 35.0}"#,
+        r#"{"x": 3.5e1}"#,
         r#"{"x": 35.000}"#,
-        vec!["p1"],
-        "35.000 should match [35]"
-    );
-
-    assert_matches!(
-        q,
         r#"{"x": 0.000035e6}"#,
-        vec!["p1"],
-        "0.000035e6 should match [35]"
-    );
+    ] {
+        assert_matches!(q, event, vec!["p1"]);
+    }
 }
 
 #[test]
@@ -119,17 +106,8 @@ fn test_exists_true() {
 fn test_exists_false() {
     let q = q!("p1" => r#"{"name": [{"exists": false}]}"#);
 
-    assert_matches!(
-        q,
-        r#"{"other": 1}"#,
-        vec!["p1"],
-        "Should match when field is absent"
-    );
-    assert_no_match!(
-        q,
-        r#"{"name": "value"}"#,
-        "Should not match when field exists"
-    );
+    assert_matches!(q, r#"{"other": 1}"#, vec!["p1"]);
+    assert_no_match!(q, r#"{"name": "value"}"#);
 }
 
 #[test]

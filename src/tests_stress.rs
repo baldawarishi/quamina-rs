@@ -380,22 +380,10 @@ fn test_numbits_through_numeric_matching() {
     // Test various numeric formats through the public API
     let q = q!("p1" => r#"{"x": [{"numeric": ["=", 42]}]}"#);
 
-    // Integer
-    assert_matches!(q, r#"{"x": 42}"#, vec!["p1"], "Integer 42 should match");
-
-    // Float
-    assert_matches!(q, r#"{"x": 42.0}"#, vec!["p1"], "Float 42.0 should match");
-
-    // Scientific notation
-    assert_matches!(
-        q,
-        r#"{"x": 4.2e1}"#,
-        vec!["p1"],
-        "Scientific 4.2e1 should match"
-    );
-
-    // Non-matching
-    assert_no_match!(q, r#"{"x": 43}"#, "43 should not match 42");
+    for event in [r#"{"x": 42}"#, r#"{"x": 42.0}"#, r#"{"x": 4.2e1}"#] {
+        assert_matches!(q, event, vec!["p1"]);
+    }
+    assert_no_match!(q, r#"{"x": 43}"#);
 }
 
 #[test]

@@ -1,5 +1,7 @@
 //! quamina-rs: Fast pattern-matching library for filtering JSON events
 
+// Internal modules exposed as `pub` only for benchmarks (benches/matching.rs).
+// Not part of the public API — use `Quamina` instead.
 #[doc(hidden)]
 pub mod automaton;
 mod case_folding;

@@ -182,7 +182,7 @@ struct RegexpParse {
 }
 
 /// Error type for regexp parsing.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RegexpError {
     pub message: String,
     pub offset: usize,
@@ -1008,8 +1008,7 @@ fn read_char_class_expr_depth(
     let mut rr = read_cce1s(parse)?;
 
     // Check for character class subtraction -[...] or trailing -
-    #[allow(clippy::equatable_if_let)] // RegexpError doesn't impl PartialEq
-    if let Ok(true) = parse.bypass_optional('-') {
+    if parse.bypass_optional('-') == Ok(true) {
         // Peek ahead to see if this is subtraction syntax -[
         let next = parse.next_rune().map_err(|_| RegexpError {
             message: "unclosed character class".into(),

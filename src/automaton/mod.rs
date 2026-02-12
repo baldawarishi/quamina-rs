@@ -13,7 +13,7 @@
 //! - `mutable_matcher`: Single-threaded mutable matchers (CoreMatcher)
 //! - `thread_safe`: Thread-safe matchers (ThreadSafeCoreMatcher)
 
-#[doc(hidden)]
+#[doc(hidden)] // pub for benchmarks only
 pub mod arena;
 mod mutable_matcher;
 mod small_table;
