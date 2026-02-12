@@ -33,7 +33,7 @@ jobs:
         with:
           components: miri
       - name: Clean stale miri artifacts
-        run: cargo +nightly miri clean
+        run: rm -rf target/miri
       - name: Run Miri
         run: cargo +nightly miri test
 
