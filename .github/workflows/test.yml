@@ -31,9 +31,10 @@ jobs:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@nightly
         with:
+          toolchain: nightly-2026-01-26
           components: miri
       - name: Run Miri
-        run: cargo +nightly miri test
+        run: cargo +nightly-2026-01-26 miri test
 
   fuzz:
     runs-on: ubuntu-latest
