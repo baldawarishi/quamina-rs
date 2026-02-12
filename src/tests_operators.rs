@@ -2480,9 +2480,6 @@ fn test_regexp_validity() {
 
     for sample in REGEXP_SAMPLES.iter() {
         fn should_skip(re: &str) -> bool {
-            if re.contains("-[") {
-                return true;
-            }
             let chars: Vec<char> = re.chars().collect();
             for i in 0..chars.len().saturating_sub(1) {
                 if chars[i] == '~' {

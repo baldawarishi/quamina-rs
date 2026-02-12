@@ -140,15 +140,17 @@ impl fmt::Display for QuaminaError {
 
 /// Limits on pattern complexity to prevent OOM and stack exhaustion.
 ///
-/// Three complementary limits, each catching a different attack vector:
+/// Four complementary limits, each catching a different attack vector:
 /// - **Nesting depth**: prevents stack exhaustion and deep-nesting attacks
 /// - **Field count**: prevents wide patterns with hundreds of fields
 /// - **Arena byte budget**: essential backstop that catches all forms of automaton complexity
+/// - **State count**: prevents exponential field-matcher blowup from mixed-type matchers
 ///
 /// # Defaults
 /// - `max_pattern_depth`: 256 (jq precedent)
 /// - `max_fields_per_pattern`: 256
 /// - `arena_byte_budget`: 10 MB (regex crate precedent)
+/// - `max_states_per_pattern`: 1024
 #[derive(Debug, Clone)]
 pub struct PatternLimits {
     /// Maximum nesting depth of a pattern (default: 256)
@@ -157,6 +159,14 @@ pub struct PatternLimits {
     pub max_fields_per_pattern: usize,
     /// Maximum arena byte size for the automaton (default: 10 MB)
     pub arena_byte_budget: usize,
+    /// Maximum number of field-matcher states during pattern construction (default: 1024).
+    ///
+    /// When a field has N mixed-type matchers (e.g. exact + prefix), the state count
+    /// multiplies by N for each such field. With K fields of N matchers each, states
+    /// grow as N^K. This limit caps the product to prevent exponential memory blowup.
+    /// All-exact fields use a bulk optimization that doesn't multiply states, so this
+    /// limit only affects patterns mixing matcher types on the same field.
+    pub max_states_per_pattern: usize,
 }
 
 impl Default for PatternLimits {
@@ -165,6 +175,7 @@ impl Default for PatternLimits {
             max_pattern_depth: 256,
             max_fields_per_pattern: 256,
             arena_byte_budget: 10 * 1024 * 1024, // 10 MB
+            max_states_per_pattern: 1024,
         }
     }
 }
@@ -335,6 +346,16 @@ impl<X: Clone + Eq + Hash + Send + Sync> QuaminaBuilder<X> {
         self
     }
 
+    /// Set the maximum field-matcher states per pattern (default: 1024).
+    ///
+    /// # Panics
+    /// Panics if `max_states` is 0.
+    pub fn with_max_states_per_pattern(mut self, max_states: usize) -> Self {
+        assert!(max_states > 0, "max_states_per_pattern must be at least 1");
+        self.pattern_limits.max_states_per_pattern = max_states;
+        self
+    }
+
     /// Enable or disable automatic pruner rebuilding
     ///
     /// When enabled (default), the matcher will automatically rebuild its internal
@@ -368,8 +389,9 @@ impl<X: Clone + Eq + Hash + Send + Sync> QuaminaBuilder<X> {
     /// ```
     pub fn build(self) -> Result<Quamina<X>, QuaminaError> {
         Ok(Quamina {
-            automaton: ThreadSafeCoreMatcher::with_arena_budget(
+            automaton: ThreadSafeCoreMatcher::with_limits(
                 self.pattern_limits.arena_byte_budget,
+                self.pattern_limits.max_states_per_pattern,
             ),
             pattern_defs: HashMap::new(),
             deleted_patterns: FxHashSet::default(),
@@ -434,8 +456,10 @@ pub struct Quamina<X: Clone + Eq + Hash + Send + Sync = String> {
 impl<X: Clone + Eq + Hash + Send + Sync> Clone for Quamina<X> {
     fn clone(&self) -> Self {
         // Rebuild automaton from pattern_defs using the configured budget.
-        let automaton =
-            ThreadSafeCoreMatcher::with_arena_budget(self.pattern_limits.arena_byte_budget);
+        let automaton = ThreadSafeCoreMatcher::with_limits(
+            self.pattern_limits.arena_byte_budget,
+            self.pattern_limits.max_states_per_pattern,
+        );
 
         for (id, patterns) in &self.pattern_defs {
             if self.deleted_patterns.contains(id) {
@@ -474,7 +498,10 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
     pub fn new() -> Self {
         let limits = PatternLimits::default();
         Quamina {
-            automaton: ThreadSafeCoreMatcher::with_arena_budget(limits.arena_byte_budget),
+            automaton: ThreadSafeCoreMatcher::with_limits(
+                limits.arena_byte_budget,
+                limits.max_states_per_pattern,
+            ),
             pattern_defs: HashMap::new(),
             deleted_patterns: FxHashSet::default(),
             segments_tree: SegmentsTree::new(),
@@ -692,8 +719,10 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
         }
 
         // Create new automaton with only live patterns, using the configured budget.
-        let new_automaton =
-            ThreadSafeCoreMatcher::with_arena_budget(self.pattern_limits.arena_byte_budget);
+        let new_automaton = ThreadSafeCoreMatcher::with_limits(
+            self.pattern_limits.arena_byte_budget,
+            self.pattern_limits.max_states_per_pattern,
+        );
 
         for (id, patterns) in &self.pattern_defs {
             if self.deleted_patterns.contains(id) {
@@ -740,8 +769,10 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
 
     /// Removes all patterns
     pub fn clear(&mut self) {
-        self.automaton =
-            ThreadSafeCoreMatcher::with_arena_budget(self.pattern_limits.arena_byte_budget);
+        self.automaton = ThreadSafeCoreMatcher::with_limits(
+            self.pattern_limits.arena_byte_budget,
+            self.pattern_limits.max_states_per_pattern,
+        );
         self.pattern_defs.clear();
         self.deleted_patterns.clear();
         self.pruner_stats.reset();

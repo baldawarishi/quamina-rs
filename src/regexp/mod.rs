@@ -2553,4 +2553,229 @@ mod tests {
             );
         }
     }
+
+    // ====================================================================
+    // Character class subtraction tests
+    // ====================================================================
+
+    #[test]
+    fn test_subtract_rune_range_basic() {
+        use super::parser::subtract_rune_range;
+
+        // [a-d] - [b-c] = {a, d}
+        let base = vec![RunePair { lo: 'a', hi: 'd' }];
+        let sub = vec![RunePair { lo: 'b', hi: 'c' }];
+        let result = subtract_rune_range(base, sub);
+        assert_eq!(result.len(), 2);
+        assert_eq!(result[0], RunePair { lo: 'a', hi: 'a' });
+        assert_eq!(result[1], RunePair { lo: 'd', hi: 'd' });
+    }
+
+    #[test]
+    fn test_subtract_rune_range_no_overlap() {
+        use super::parser::subtract_rune_range;
+
+        // [a-c] - [x-z] = [a-c] (no overlap)
+        let base = vec![RunePair { lo: 'a', hi: 'c' }];
+        let sub = vec![RunePair { lo: 'x', hi: 'z' }];
+        let result = subtract_rune_range(base, sub);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0], RunePair { lo: 'a', hi: 'c' });
+    }
+
+    #[test]
+    fn test_subtract_rune_range_complete_overlap() {
+        use super::parser::subtract_rune_range;
+
+        // [b-c] - [a-d] = empty
+        let base = vec![RunePair { lo: 'b', hi: 'c' }];
+        let sub = vec![RunePair { lo: 'a', hi: 'd' }];
+        let result = subtract_rune_range(base, sub);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_subtract_rune_range_prefix_removal() {
+        use super::parser::subtract_rune_range;
+
+        // [a-f] - [a-c] = [d-f]
+        let base = vec![RunePair { lo: 'a', hi: 'f' }];
+        let sub = vec![RunePair { lo: 'a', hi: 'c' }];
+        let result = subtract_rune_range(base, sub);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0], RunePair { lo: 'd', hi: 'f' });
+    }
+
+    #[test]
+    fn test_subtract_rune_range_suffix_removal() {
+        use super::parser::subtract_rune_range;
+
+        // [a-f] - [d-f] = [a-c]
+        let base = vec![RunePair { lo: 'a', hi: 'f' }];
+        let sub = vec![RunePair { lo: 'd', hi: 'f' }];
+        let result = subtract_rune_range(base, sub);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0], RunePair { lo: 'a', hi: 'c' });
+    }
+
+    #[test]
+    fn test_subtract_rune_range_empty_subtract() {
+        use super::parser::subtract_rune_range;
+
+        // [a-z] - [] = [a-z]
+        let base = vec![RunePair { lo: 'a', hi: 'z' }];
+        let sub = vec![];
+        let result = subtract_rune_range(base, sub);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0], RunePair { lo: 'a', hi: 'z' });
+    }
+
+    #[test]
+    fn test_subtract_rune_range_multiple_holes() {
+        use super::parser::subtract_rune_range;
+
+        // [a-z] - [c-c, m-m] = [a-b, d-l, n-z]
+        let base = vec![RunePair { lo: 'a', hi: 'z' }];
+        let sub = vec![RunePair { lo: 'c', hi: 'c' }, RunePair { lo: 'm', hi: 'm' }];
+        let result = subtract_rune_range(base, sub);
+        assert_eq!(result.len(), 3);
+        assert_eq!(result[0], RunePair { lo: 'a', hi: 'b' });
+        assert_eq!(result[1], RunePair { lo: 'd', hi: 'l' });
+        assert_eq!(result[2], RunePair { lo: 'n', hi: 'z' });
+    }
+
+    #[test]
+    fn test_parse_char_class_subtraction() {
+        // [a-d-[b-c]] should parse to {a, d}
+        let root = parse_regexp("[a-d-[b-c]]").unwrap();
+        assert_eq!(root.len(), 1);
+        assert_eq!(root[0].len(), 1);
+        let runes = &root[0][0].runes;
+        assert_eq!(runes.len(), 2);
+        assert_eq!(runes[0], RunePair { lo: 'a', hi: 'a' });
+        assert_eq!(runes[1], RunePair { lo: 'd', hi: 'd' });
+    }
+
+    #[test]
+    fn test_parse_char_class_subtraction_negated_inner() {
+        // [a-c-[^a-c]] = [a-c] minus (everything except [a-c]) = [a-c]
+        let root = parse_regexp("[a-c-[^a-c]]").unwrap();
+        assert_eq!(root.len(), 1);
+        assert_eq!(root[0].len(), 1);
+        let runes = &root[0][0].runes;
+        assert_eq!(runes.len(), 1);
+        assert_eq!(runes[0], RunePair { lo: 'a', hi: 'c' });
+    }
+
+    #[test]
+    fn test_parse_char_class_subtraction_single_result() {
+        // [a-z-[^a]] = {a}
+        let root = parse_regexp("[a-z-[^a]]").unwrap();
+        assert_eq!(root.len(), 1);
+        assert_eq!(root[0].len(), 1);
+        let runes = &root[0][0].runes;
+        assert_eq!(runes.len(), 1);
+        assert_eq!(runes[0], RunePair { lo: 'a', hi: 'a' });
+    }
+
+    #[test]
+    fn test_parse_char_class_subtraction_no_overlap() {
+        // [a-b-[0-9]]+ should parse to {a, b}+
+        let root = parse_regexp("[a-b-[0-9]]+").unwrap();
+        assert_eq!(root.len(), 1);
+        assert_eq!(root[0].len(), 1);
+        let runes = &root[0][0].runes;
+        assert_eq!(runes.len(), 1);
+        assert_eq!(runes[0], RunePair { lo: 'a', hi: 'b' });
+        assert!(root[0][0].is_plus());
+    }
+
+    #[test]
+    fn test_parse_char_class_subtraction_with_negated_outer() {
+        // [^a-z-[aeiou]] = negate(consonants) = everything except consonants
+        // Base [a-z] minus [aeiou] = consonants, then negated
+        let root = parse_regexp("[^a-z-[aeiou]]").unwrap();
+        assert_eq!(root.len(), 1);
+        assert_eq!(root[0].len(), 1);
+        let runes = &root[0][0].runes;
+        // Should NOT contain consonants, but SHOULD contain vowels and non-letters
+        // Verify vowel 'a' is in the result (since consonants were inverted)
+        let has_a = runes.iter().any(|rp| rp.lo <= 'a' && 'a' <= rp.hi);
+        assert!(has_a, "negated consonants should include 'a'");
+        // Verify consonant 'b' is NOT in the result
+        let has_b = runes.iter().any(|rp| rp.lo <= 'b' && 'b' <= rp.hi);
+        assert!(!has_b, "negated consonants should not include 'b'");
+    }
+
+    #[test]
+    fn test_parse_char_class_subtraction_nested() {
+        // [0-9-[0-6-[0-3]]] = [0-9] minus ([0-6] minus [0-3])
+        //                    = [0-9] minus [4-6]
+        //                    = {0,1,2,3,7,8,9}
+        let root = parse_regexp("[0-9-[0-6-[0-3]]]").unwrap();
+        assert_eq!(root.len(), 1);
+        assert_eq!(root[0].len(), 1);
+        let runes = &root[0][0].runes;
+        assert_eq!(runes.len(), 2);
+        assert_eq!(runes[0], RunePair { lo: '0', hi: '3' });
+        assert_eq!(runes[1], RunePair { lo: '7', hi: '9' });
+    }
+
+    #[test]
+    fn test_parse_char_class_subtraction_single_chars_before_bracket() {
+        // [abcd-[d]]+ — individual chars before -[ should NOT be parsed as range d-[
+        let root = parse_regexp("[abcd-[d]]+").unwrap();
+        assert_eq!(root.len(), 1);
+        assert_eq!(root[0].len(), 1);
+        let runes = &root[0][0].runes;
+        // {a,b,c,d} - {d} = {a,b,c} = [{a,c}] (merged)
+        assert_eq!(runes.len(), 1);
+        assert_eq!(runes[0], RunePair { lo: 'a', hi: 'c' });
+        assert!(root[0][0].is_plus());
+    }
+
+    #[test]
+    fn test_parse_char_class_subtraction_alternation() {
+        // ([0-9-[02468]]|[0-9-[13579]])+ — odd|even digits = all digits
+        let root = parse_regexp("([0-9-[02468]]|[0-9-[13579]])+").unwrap();
+        assert_eq!(root.len(), 1);
+        assert_eq!(root[0].len(), 1); // one group atom
+        let subtree = root[0][0].subtree.as_ref().unwrap();
+        assert_eq!(subtree.len(), 2); // two branches via |
+    }
+
+    #[test]
+    fn test_parse_char_class_subtraction_negated_subtract() {
+        // [abcdef-[^bce]]+ — {a-f} minus NOT{b,c,e} = {b,c,e}
+        let root = parse_regexp("[abcdef-[^bce]]+").unwrap();
+        let runes = &root[0][0].runes;
+        assert_eq!(runes.len(), 2);
+        assert_eq!(runes[0], RunePair { lo: 'b', hi: 'c' });
+        assert_eq!(runes[1], RunePair { lo: 'e', hi: 'e' });
+    }
+
+    #[test]
+    fn test_parse_char_class_subtraction_depth_limit() {
+        // 9 levels of nesting should exceed MAX_CLASS_SUBTRACTION_DEPTH (8)
+        // [a-z-[a-z-[a-z-[a-z-[a-z-[a-z-[a-z-[a-z-[a-z-[a]]]]]]]]]]
+        let mut pattern = String::from("[a-z");
+        for _ in 0..9 {
+            pattern.push_str("-[a-z");
+        }
+        pattern.push_str("-[a]");
+        for _ in 0..10 {
+            pattern.push(']');
+        }
+        let result = parse_regexp(&pattern);
+        assert!(
+            result.is_err(),
+            "deeply nested subtraction should be rejected"
+        );
+        let err = result.unwrap_err();
+        assert!(
+            err.message.contains("nested too deeply"),
+            "error should mention nesting: {}",
+            err.message
+        );
+    }
 }

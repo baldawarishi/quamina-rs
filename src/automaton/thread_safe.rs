@@ -306,6 +306,8 @@ pub struct ThreadSafeCoreMatcher<X: Clone + Eq + Hash + Send + Sync> {
     needs_freeze: AtomicBool,
     /// Arena byte budget for pattern complexity limiting
     arena_byte_budget: usize,
+    /// Maximum field-matcher states during add_pattern (prevents 2^N blowup)
+    max_states_per_pattern: usize,
 }
 
 // ThreadSafeCoreMatcher is Send + Sync because:
@@ -316,18 +318,20 @@ pub struct ThreadSafeCoreMatcher<X: Clone + Eq + Hash + Send + Sync> {
 //   the ThreadSafeCoreMatcher itself Send + Sync
 
 impl<X: Clone + Eq + Hash + Send + Sync> ThreadSafeCoreMatcher<X> {
-    /// Create a new ThreadSafeCoreMatcher with default arena budget (10 MB).
+    /// Create a new ThreadSafeCoreMatcher with default limits.
     pub fn new() -> Self {
-        Self::with_arena_budget(crate::PatternLimits::default().arena_byte_budget)
+        let defaults = crate::PatternLimits::default();
+        Self::with_limits(defaults.arena_byte_budget, defaults.max_states_per_pattern)
     }
 
-    /// Create a new ThreadSafeCoreMatcher with a custom arena byte budget.
-    pub fn with_arena_budget(arena_byte_budget: usize) -> Self {
+    /// Create a new ThreadSafeCoreMatcher with custom limits.
+    pub fn with_limits(arena_byte_budget: usize, max_states_per_pattern: usize) -> Self {
         Self {
             root: ArcSwap::from_pointee(FrozenFieldMatcher::new()),
             build_lock: Mutex::new(BuildState::new()),
             needs_freeze: AtomicBool::new(false),
             arena_byte_budget,
+            max_states_per_pattern,
         }
     }
 
@@ -395,6 +399,14 @@ impl<X: Clone + Eq + Hash + Send + Sync> ThreadSafeCoreMatcher<X> {
                 }
             }
 
+            if next_states.len() > self.max_states_per_pattern {
+                return Err(crate::QuaminaError::PatternTooComplex(format!(
+                    "field-matcher state count {} exceeds maximum of {} \
+                     (pattern has too many mixed-type matchers across fields)",
+                    next_states.len(),
+                    self.max_states_per_pattern
+                )));
+            }
             states = next_states;
         }
 
