@@ -1,5 +1,15 @@
 use super::*;
 
+/// Shorthand for constructing an `EventField` for tests.
+fn field(path: &str, value: &str) -> EventField {
+    EventField {
+        path: path.to_string(),
+        value: value.to_string(),
+        array_trail: vec![],
+        is_number: false,
+    }
+}
+
 // ========================================================================
 // AutomatonValueMatcher Tests (arena-based)
 // ========================================================================
@@ -157,12 +167,7 @@ fn test_core_matcher_single_field_exact() {
         .unwrap();
 
     // Create event fields (sorted by path)
-    let fields = vec![EventField {
-        path: "status".to_string(),
-        value: "active".to_string(),
-        array_trail: vec![],
-        is_number: false,
-    }];
+    let fields = vec![field("status", "active")];
 
     let matches = matcher.matches_for_fields(&fields);
     assert_eq!(matches.len(), 1);
@@ -185,12 +190,7 @@ fn test_core_matcher_single_field_no_match() {
         )
         .unwrap();
 
-    let fields = vec![EventField {
-        path: "status".to_string(),
-        value: "inactive".to_string(),
-        array_trail: vec![],
-        is_number: false,
-    }];
+    let fields = vec![field("status", "inactive")];
 
     let matches = matcher.matches_for_fields(&fields);
     assert!(matches.is_empty());
@@ -211,12 +211,7 @@ fn test_core_matcher_exists_true() {
         .unwrap();
 
     // Event with name field present
-    let fields = vec![EventField {
-        path: "name".to_string(),
-        value: "anything".to_string(),
-        array_trail: vec![],
-        is_number: false,
-    }];
+    let fields = vec![field("name", "anything")];
 
     let matches = matcher.matches_for_fields(&fields);
     assert_eq!(
@@ -241,12 +236,7 @@ fn test_core_matcher_exists_false() {
         .unwrap();
 
     // Event without name field
-    let fields = vec![EventField {
-        path: "other".to_string(),
-        value: "value".to_string(),
-        array_trail: vec![],
-        is_number: false,
-    }];
+    let fields = vec![field("other", "value")];
 
     let matches = matcher.matches_for_fields(&fields);
     assert_eq!(
@@ -278,20 +268,7 @@ fn test_core_matcher_multi_field_and() {
         .unwrap();
 
     // Event with both fields matching
-    let fields = vec![
-        EventField {
-            path: "status".to_string(),
-            value: "active".to_string(),
-            array_trail: vec![],
-            is_number: false,
-        },
-        EventField {
-            path: "type".to_string(),
-            value: "user".to_string(),
-            array_trail: vec![],
-            is_number: false,
-        },
-    ];
+    let fields = vec![field("status", "active"), field("type", "user")];
 
     let matches = matcher.matches_for_fields(&fields);
     assert_eq!(
@@ -322,20 +299,7 @@ fn test_core_matcher_multi_field_partial_no_match() {
         .unwrap();
 
     // Event with only status matching
-    let fields = vec![
-        EventField {
-            path: "status".to_string(),
-            value: "active".to_string(),
-            array_trail: vec![],
-            is_number: false,
-        },
-        EventField {
-            path: "type".to_string(),
-            value: "admin".to_string(),
-            array_trail: vec![],
-            is_number: false,
-        },
-    ];
+    let fields = vec![field("status", "active"), field("type", "admin")];
 
     let matches = matcher.matches_for_fields(&fields);
     assert!(
@@ -365,32 +329,17 @@ fn test_core_matcher_or_within_field() {
         .unwrap();
 
     // Should match "active"
-    let fields1 = vec![EventField {
-        path: "status".to_string(),
-        value: "active".to_string(),
-        array_trail: vec![],
-        is_number: false,
-    }];
+    let fields1 = vec![field("status", "active")];
     let matches1 = matcher.matches_for_fields(&fields1);
     assert_eq!(matches1.len(), 1, "OR within field should match 'active'");
 
     // Should match "pending"
-    let fields2 = vec![EventField {
-        path: "status".to_string(),
-        value: "pending".to_string(),
-        array_trail: vec![],
-        is_number: false,
-    }];
+    let fields2 = vec![field("status", "pending")];
     let matches2 = matcher.matches_for_fields(&fields2);
     assert_eq!(matches2.len(), 1, "OR within field should match 'pending'");
 
     // Should not match "completed"
-    let fields3 = vec![EventField {
-        path: "status".to_string(),
-        value: "completed".to_string(),
-        array_trail: vec![],
-        is_number: false,
-    }];
+    let fields3 = vec![field("status", "completed")];
     let matches3 = matcher.matches_for_fields(&fields3);
     assert!(
         matches3.is_empty(),
@@ -427,12 +376,7 @@ fn test_core_matcher_multiple_patterns() {
         .unwrap();
 
     // Should match p1 only
-    let fields = vec![EventField {
-        path: "status".to_string(),
-        value: "active".to_string(),
-        array_trail: vec![],
-        is_number: false,
-    }];
+    let fields = vec![field("status", "active")];
 
     let matches = matcher.matches_for_fields(&fields);
     assert_eq!(matches.len(), 1);
@@ -468,12 +412,7 @@ fn test_thread_safe_core_matcher_single_field() {
         .unwrap();
 
     // Create event fields
-    let fields = vec![EventField {
-        path: "status".to_string(),
-        value: "active".to_string(),
-        array_trail: vec![],
-        is_number: false,
-    }];
+    let fields = vec![field("status", "active")];
 
     let matches = matcher.matches_for_fields(&fields);
     assert_eq!(matches.len(), 1);
@@ -496,12 +435,7 @@ fn test_thread_safe_core_matcher_no_match() {
         )
         .unwrap();
 
-    let fields = vec![EventField {
-        path: "status".to_string(),
-        value: "inactive".to_string(),
-        array_trail: vec![],
-        is_number: false,
-    }];
+    let fields = vec![field("status", "inactive")];
 
     let matches = matcher.matches_for_fields(&fields);
     assert!(matches.is_empty());
@@ -522,12 +456,7 @@ fn test_thread_safe_core_matcher_exists_true() {
         .unwrap();
 
     // Event with name field present
-    let fields = vec![EventField {
-        path: "name".to_string(),
-        value: "anything".to_string(),
-        array_trail: vec![],
-        is_number: false,
-    }];
+    let fields = vec![field("name", "anything")];
 
     let matches = matcher.matches_for_fields(&fields);
     assert_eq!(
@@ -552,12 +481,7 @@ fn test_thread_safe_core_matcher_exists_false() {
         .unwrap();
 
     // Event without name field
-    let fields = vec![EventField {
-        path: "other".to_string(),
-        value: "value".to_string(),
-        array_trail: vec![],
-        is_number: false,
-    }];
+    let fields = vec![field("other", "value")];
 
     let matches = matcher.matches_for_fields(&fields);
     assert_eq!(
@@ -596,12 +520,7 @@ fn test_thread_safe_core_matcher_multiple_patterns() {
         .unwrap();
 
     // Should match p1 only
-    let fields = vec![EventField {
-        path: "status".to_string(),
-        value: "active".to_string(),
-        array_trail: vec![],
-        is_number: false,
-    }];
+    let fields = vec![field("status", "active")];
 
     let matches = matcher.matches_for_fields(&fields);
     assert_eq!(matches.len(), 1);

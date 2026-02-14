@@ -1028,7 +1028,7 @@ enum FlattenError {
 
 impl From<QuaminaError> for FlattenError {
     fn from(e: QuaminaError) -> Self {
-        FlattenError::Error(e)
+        Self::Error(e)
     }
 }
 

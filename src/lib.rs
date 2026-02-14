@@ -1,5 +1,8 @@
 //! quamina-rs: Fast pattern-matching library for filtering JSON events
 
+// Internal modules exposed as `pub` only for benchmarks (benches/matching.rs).
+// Not part of the public API — use `Quamina` instead.
+#[doc(hidden)]
 pub mod automaton;
 mod case_folding;
 #[doc(hidden)]
@@ -7,7 +10,9 @@ pub mod flatten_json;
 mod flattener;
 #[doc(hidden)]
 pub mod json;
+#[doc(hidden)]
 pub mod numbits;
+#[doc(hidden)]
 pub mod regexp;
 #[doc(hidden)]
 pub mod segments_tree;
@@ -125,13 +130,13 @@ pub enum QuaminaError {
 impl fmt::Display for QuaminaError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            QuaminaError::InvalidJson(msg) => write!(f, "invalid JSON: {}", msg),
-            QuaminaError::InvalidPattern(msg) => write!(f, "invalid pattern: {}", msg),
-            QuaminaError::InvalidUtf8 => write!(f, "invalid UTF-8"),
-            QuaminaError::UnsupportedMediaType(mt) => {
+            Self::InvalidJson(msg) => write!(f, "invalid JSON: {}", msg),
+            Self::InvalidPattern(msg) => write!(f, "invalid pattern: {}", msg),
+            Self::InvalidUtf8 => write!(f, "invalid UTF-8"),
+            Self::UnsupportedMediaType(mt) => {
                 write!(f, "media type \"{}\" is not supported by Quamina", mt)
             }
-            QuaminaError::PatternTooComplex(msg) => {
+            Self::PatternTooComplex(msg) => {
                 write!(f, "pattern too complex: {}", msg)
             }
         }
@@ -214,7 +219,7 @@ pub struct QuaminaBuilder<X: Clone + Eq + Hash + Send + Sync = String> {
 impl<X: Clone + Eq + Hash + Send + Sync> QuaminaBuilder<X> {
     /// Create a new QuaminaBuilder with default settings
     pub fn new() -> Self {
-        QuaminaBuilder {
+        Self {
             auto_rebuild_enabled: true,
             media_type_validated: false,
             custom_flattener: None,
@@ -461,18 +466,7 @@ impl<X: Clone + Eq + Hash + Send + Sync> Clone for Quamina<X> {
             self.pattern_limits.max_states_per_pattern,
         );
 
-        for (id, patterns) in &self.pattern_defs {
-            if self.deleted_patterns.contains(id) {
-                continue;
-            }
-            for fields in patterns {
-                let pattern_fields: Vec<(String, Vec<Matcher>)> =
-                    fields.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
-                automaton
-                    .add_pattern(id.clone(), &pattern_fields)
-                    .expect("pre-validated pattern should not fail on rebuild");
-            }
-        }
+        self.replay_patterns_into(&automaton);
 
         // Copy custom flattener if present
         let custom_flattener = self.custom_flattener.as_ref().map(|f| {
@@ -480,7 +474,7 @@ impl<X: Clone + Eq + Hash + Send + Sync> Clone for Quamina<X> {
             Mutex::new(flattener.copy())
         });
 
-        Quamina {
+        Self {
             automaton,
             pattern_defs: self.pattern_defs.clone(),
             deleted_patterns: self.deleted_patterns.clone(),
@@ -497,7 +491,7 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
     /// Create a new Quamina instance with default pattern complexity limits.
     pub fn new() -> Self {
         let limits = PatternLimits::default();
-        Quamina {
+        Self {
             automaton: ThreadSafeCoreMatcher::with_limits(
                 limits.arena_byte_budget,
                 limits.max_states_per_pattern,
@@ -559,23 +553,7 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
                     .automaton
                     .matches_for_fields_direct(streaming_fields, &mut bufs);
 
-                // Fast path: skip filtering if no patterns have been deleted
-                let matches = if self.deleted_patterns.is_empty() {
-                    self.pruner_stats.add_emitted(raw_matches.len() as u64);
-                    raw_matches
-                } else {
-                    let raw_count = raw_matches.len();
-                    let filtered: Vec<X> = raw_matches
-                        .into_iter()
-                        .filter(|x| !self.deleted_patterns.contains(x))
-                        .collect();
-                    let filtered_count = raw_count - filtered.len();
-                    self.pruner_stats.add_emitted(filtered.len() as u64);
-                    self.pruner_stats.add_filtered(filtered_count as u64);
-                    filtered
-                };
-
-                Ok(matches)
+                Ok(self.filter_deleted_matches(raw_matches))
             })
         })
     }
@@ -613,24 +591,44 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
             let raw_matches = self
                 .automaton
                 .matches_for_fields_direct(&streaming_fields, &mut bufs);
-            // Fast path: skip filtering if no patterns have been deleted
-            if self.deleted_patterns.is_empty() {
-                self.pruner_stats.add_emitted(raw_matches.len() as u64);
-                raw_matches
-            } else {
-                let raw_count = raw_matches.len();
-                let filtered: Vec<X> = raw_matches
-                    .into_iter()
-                    .filter(|x| !self.deleted_patterns.contains(x))
-                    .collect();
-                let filtered_count = raw_count - filtered.len();
-                self.pruner_stats.add_emitted(filtered.len() as u64);
-                self.pruner_stats.add_filtered(filtered_count as u64);
-                filtered
-            }
+            self.filter_deleted_matches(raw_matches)
         });
 
         Ok(matches)
+    }
+
+    /// Replay all live (non-deleted) pattern definitions into the given automaton.
+    fn replay_patterns_into(&self, automaton: &ThreadSafeCoreMatcher<X>) {
+        for (id, patterns) in &self.pattern_defs {
+            if self.deleted_patterns.contains(id) {
+                continue;
+            }
+            for fields in patterns {
+                let pattern_fields: Vec<(String, Vec<Matcher>)> =
+                    fields.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+                automaton
+                    .add_pattern(id.clone(), &pattern_fields)
+                    .expect("pre-validated pattern should not fail on rebuild");
+            }
+        }
+    }
+
+    /// Remove soft-deleted patterns from raw match results and update pruner stats.
+    fn filter_deleted_matches(&self, raw_matches: Vec<X>) -> Vec<X> {
+        if self.deleted_patterns.is_empty() {
+            self.pruner_stats.add_emitted(raw_matches.len() as u64);
+            raw_matches
+        } else {
+            let raw_count = raw_matches.len();
+            let filtered: Vec<X> = raw_matches
+                .into_iter()
+                .filter(|x| !self.deleted_patterns.contains(x))
+                .collect();
+            let filtered_count = raw_count - filtered.len();
+            self.pruner_stats.add_emitted(filtered.len() as u64);
+            self.pruner_stats.add_filtered(filtered_count as u64);
+            filtered
+        }
     }
 
     /// Access the underlying automaton (for direct matching without Mutex).
@@ -724,18 +722,7 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
             self.pattern_limits.max_states_per_pattern,
         );
 
-        for (id, patterns) in &self.pattern_defs {
-            if self.deleted_patterns.contains(id) {
-                continue;
-            }
-            for fields in patterns {
-                let pattern_fields: Vec<(String, Vec<Matcher>)> =
-                    fields.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
-                new_automaton
-                    .add_pattern(id.clone(), &pattern_fields)
-                    .expect("pre-validated pattern should not fail on rebuild");
-            }
-        }
+        self.replay_patterns_into(&new_automaton);
 
         // Remove deleted patterns from pattern_defs (they're now permanently gone)
         self.pattern_defs
@@ -823,6 +810,9 @@ impl<X: Clone + Eq + Hash + Send + Sync> Default for Quamina<X> {
     }
 }
 
+#[cfg(test)]
+#[macro_use]
+mod test_helpers;
 #[cfg(test)]
 mod tests_core;
 #[cfg(test)]

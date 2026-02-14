@@ -44,9 +44,9 @@ pub struct FieldMatcher {
     /// Using a unique ID that survives FA merging.
     pub match_id: Option<u64>,
     /// exists:true patterns - map from field path to next field matcher
-    pub exists_true: HashMap<String, Arc<FieldMatcher>>,
+    pub exists_true: HashMap<String, Arc<Self>>,
     /// exists:false patterns - map from field path to next field matcher
-    pub exists_false: HashMap<String, Arc<FieldMatcher>>,
+    pub exists_false: HashMap<String, Arc<Self>>,
 }
 
 impl FieldMatcher {

@@ -58,7 +58,7 @@ pub struct NumericComparison {
 }
 
 /// Parsed CIDR notation for IP matching
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum CidrPattern {
     V4 { network: [u8; 4], prefix_len: u8 },
     V6 { network: [u8; 16], prefix_len: u8 },
@@ -82,7 +82,7 @@ impl CidrPattern {
                 !0u32 << (32 - prefix_len)
             };
             let network_bits = u32::from_be_bytes(addr) & mask;
-            return Some(CidrPattern::V4 {
+            return Some(Self::V4 {
                 network: network_bits.to_be_bytes(),
                 prefix_len,
             });
@@ -95,7 +95,7 @@ impl CidrPattern {
             }
             // Apply mask to get network address
             let network = Self::apply_ipv6_mask(&addr, prefix_len);
-            return Some(CidrPattern::V6 {
+            return Some(Self::V6 {
                 network,
                 prefix_len,
             });
@@ -237,8 +237,7 @@ impl LookaroundCondition {
     pub fn is_negative(&self) -> bool {
         matches!(
             self,
-            LookaroundCondition::NegativeLookahead(_)
-                | LookaroundCondition::NegativeLookbehind { .. }
+            Self::NegativeLookahead(_) | Self::NegativeLookbehind { .. }
         )
     }
 
@@ -246,8 +245,7 @@ impl LookaroundCondition {
     pub fn is_lookbehind(&self) -> bool {
         matches!(
             self,
-            LookaroundCondition::PositiveLookbehind { .. }
-                | LookaroundCondition::NegativeLookbehind { .. }
+            Self::PositiveLookbehind { .. } | Self::NegativeLookbehind { .. }
         )
     }
 
@@ -261,10 +259,10 @@ impl LookaroundCondition {
     /// - Negative lookbehind: 40 (position tracking + higher FP rate)
     pub fn cost_estimate(&self) -> u32 {
         match self {
-            LookaroundCondition::PositiveLookahead(_) => 10,
-            LookaroundCondition::NegativeLookahead(_) => 20,
-            LookaroundCondition::PositiveLookbehind { .. } => 30,
-            LookaroundCondition::NegativeLookbehind { .. } => 40,
+            Self::PositiveLookahead(_) => 10,
+            Self::NegativeLookahead(_) => 20,
+            Self::PositiveLookbehind { .. } => 30,
+            Self::NegativeLookbehind { .. } => 40,
         }
     }
 }
@@ -747,11 +745,10 @@ fn value_to_matcher(value: &Value) -> Result<Matcher, QuaminaError> {
         Value::Number(n) => {
             // For numeric values, store as float for proper comparison
             // This ensures 35, 35.0, and 3.5e1 all match each other
-            if let Ok(f) = n.parse::<f64>() {
-                Ok(Matcher::NumericExact(f))
-            } else {
-                Ok(Matcher::Exact(value_to_string(value)))
-            }
+            n.parse::<f64>().map_or_else(
+                |_| Ok(Matcher::Exact(value_to_string(value))),
+                |f| Ok(Matcher::NumericExact(f)),
+            )
         }
         _ => Ok(Matcher::Exact(value_to_string(value))),
     }
@@ -811,7 +808,7 @@ fn value_to_string(value: &Value) -> String {
 /// - Backslash can only be followed by * or \
 /// - No trailing backslash
 fn validate_wildcard(pattern: &str) -> bool {
-    let mut chars = pattern.chars().peekable();
+    let mut chars = pattern.chars();
     let mut prev_was_star = false;
 
     while let Some(c) = chars.next() {
@@ -837,8 +834,8 @@ fn validate_wildcard(pattern: &str) -> bool {
 
 #[derive(Debug, Clone)]
 enum Value {
-    Object(Vec<(String, Value)>),
-    Array(Vec<Value>),
+    Object(Vec<(String, Self)>),
+    Array(Vec<Self>),
     String(String),
     Number(String),
     Bool(bool),

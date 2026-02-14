@@ -37,12 +37,12 @@ pub struct StateId(u32);
 
 impl StateId {
     /// Special sentinel value for "no state" / null reference.
-    pub const NONE: StateId = StateId(u32::MAX);
+    pub const NONE: Self = Self(u32::MAX);
 
     /// Create a `StateId` from an index.
     #[inline]
     pub fn from_index(index: usize) -> Self {
-        StateId(index as u32)
+        Self(index as u32)
     }
 
     #[inline]

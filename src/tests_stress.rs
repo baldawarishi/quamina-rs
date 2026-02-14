@@ -54,21 +54,7 @@ fn test_stress_fuzz_strings() {
     // Make sure all patterns match
     for pname in &pattern_names {
         let event = format!(r#"{{"a": "{}"}}"#, pname);
-        let matches = q
-            .matches_for_event(event.as_bytes())
-            .expect("matches_for_event failed");
-        assert_eq!(
-            matches.len(),
-            1,
-            "Expected 1 match for {}, got {}",
-            pname,
-            matches.len()
-        );
-        assert_eq!(
-            matches[0], *pname,
-            "Expected match {}, got {}",
-            pname, matches[0]
-        );
+        assert_matches!(q, event, vec![pname.clone()]);
     }
 
     // Now run 10,000 more random strings that shouldn't match
@@ -83,15 +69,7 @@ fn test_stress_fuzz_strings() {
         should_not_count += 1;
 
         let event = format!(r#"{{"a": "{}"}}"#, s);
-        let matches = q
-            .matches_for_event(event.as_bytes())
-            .expect("matches_for_event failed");
-        assert!(
-            matches.is_empty(),
-            "Expected no match for {}, got {} matches",
-            s,
-            matches.len()
-        );
+        assert_no_match!(q, event);
     }
 }
 
@@ -128,23 +106,7 @@ fn test_stress_fuzz_numbers() {
     // Make sure all patterns match
     for pname in &pattern_names {
         let event = format!(r#"{{"a": {}}}"#, pname);
-        let matches = q
-            .matches_for_event(event.as_bytes())
-            .expect("matches_for_event failed");
-        assert_eq!(
-            matches.len(),
-            1,
-            "Expected 1 match for {}, got {}",
-            pname,
-            matches.len()
-        );
-        assert_eq!(
-            matches[0],
-            pname.to_string(),
-            "Expected match {}, got {}",
-            pname,
-            matches[0]
-        );
+        assert_matches!(q, event, vec![pname.to_string()]);
     }
 
     // Now run 10,000 more random numbers that shouldn't match
@@ -157,15 +119,7 @@ fn test_stress_fuzz_numbers() {
         should_not_count += 1;
 
         let event = format!(r#"{{"a": {}}}"#, n);
-        let matches = q
-            .matches_for_event(event.as_bytes())
-            .expect("matches_for_event failed");
-        assert!(
-            matches.is_empty(),
-            "Expected no match for {}, got {} matches",
-            n,
-            matches.len()
-        );
+        assert_no_match!(q, event);
     }
 }
 
@@ -187,26 +141,11 @@ fn test_stress_citylots2_operators() {
     let data = fs::read_to_string(citylots_path).expect("Failed to read citylots2.json");
 
     // Test with various operators
-    let patterns = [
-        (
-            r#"{"properties": {"BLKLOT": [{"prefix": "143"}]}}"#,
-            "prefix_143",
-        ),
-        (
-            r#"{"properties": {"BLKLOT": [{"suffix": "218"}]}}"#,
-            "suffix_218",
-        ),
-        (
-            r#"{"properties": {"BLKLOT": [{"wildcard": "*0*"}]}}"#,
-            "wildcard_0",
-        ),
-    ];
-
-    let mut q = Quamina::new();
-    for (pattern, name) in patterns.iter() {
-        q.add_pattern(*name, pattern)
-            .expect("Failed to add pattern");
-    }
+    let q = q!(
+        "prefix_143" => r#"{"properties": {"BLKLOT": [{"prefix": "143"}]}}"#,
+        "suffix_218" => r#"{"properties": {"BLKLOT": [{"suffix": "218"}]}}"#,
+        "wildcard_0" => r#"{"properties": {"BLKLOT": [{"wildcard": "*0*"}]}}"#
+    );
 
     // Parse and match each feature
     // citylots2.json has features array
@@ -347,14 +286,13 @@ fn test_arc_pattern_lifecycle() {
 #[test]
 fn test_utf16_surrogate_pairs() {
     // Test UTF-16 surrogate pair decoding
-    let mut q = Quamina::new();
-    q.add_pattern("p1", r#"{"emoji": ["😀💋😺"]}"#).unwrap();
+    let q = q!("p1" => r#"{"emoji": ["😀💋😺"]}"#);
 
     // Event with surrogate pairs
     let event = r#"{"emoji": "\ud83d\ude00\ud83d\udc8b\ud83d\ude3a"}"#;
-    let matches = q.matches_for_event(event.as_bytes()).unwrap();
-    assert_eq!(
-        matches,
+    assert_matches!(
+        q,
+        event,
         vec!["p1"],
         "Multiple surrogate pairs should decode correctly"
     );
@@ -367,54 +305,64 @@ fn test_json_escape_all_eight() {
 
     // Test: \" (quote)
     q.add_pattern("p1", r#"{"x": ["hello\"world"]}"#).unwrap();
-    let m1 = q
-        .matches_for_event(r#"{"x": "hello\"world"}"#.as_bytes())
-        .unwrap();
-    assert_eq!(m1, vec!["p1"], "Quote escape should match");
+    assert_matches!(
+        q,
+        r#"{"x": "hello\"world"}"#,
+        vec!["p1"],
+        "Quote escape should match"
+    );
 
     // Test: \/ (forward slash)
     q.add_pattern("p2", r#"{"x": ["a/b"]}"#).unwrap();
-    let m2 = q.matches_for_event(r#"{"x": "a\/b"}"#.as_bytes()).unwrap();
-    assert_eq!(m2, vec!["p2"], "Forward slash escape should match");
+    assert_matches!(
+        q,
+        r#"{"x": "a\/b"}"#,
+        vec!["p2"],
+        "Forward slash escape should match"
+    );
 
     // Test: \n (newline)
     q.add_pattern("p3", r#"{"x": ["a\nb"]}"#).unwrap();
-    let m3 = q.matches_for_event(r#"{"x": "a\nb"}"#.as_bytes()).unwrap();
-    assert_eq!(m3, vec!["p3"], "Newline escape should match");
+    assert_matches!(
+        q,
+        r#"{"x": "a\nb"}"#,
+        vec!["p3"],
+        "Newline escape should match"
+    );
 
     // Test: \t (tab)
     q.add_pattern("p4", r#"{"x": ["a\tb"]}"#).unwrap();
-    let m4 = q.matches_for_event(r#"{"x": "a\tb"}"#.as_bytes()).unwrap();
-    assert_eq!(m4, vec!["p4"], "Tab escape should match");
+    assert_matches!(q, r#"{"x": "a\tb"}"#, vec!["p4"], "Tab escape should match");
 
     // Test: \r (carriage return)
     q.add_pattern("p5", r#"{"x": ["a\rb"]}"#).unwrap();
-    let m5 = q.matches_for_event(r#"{"x": "a\rb"}"#.as_bytes()).unwrap();
-    assert_eq!(m5, vec!["p5"], "Carriage return escape should match");
+    assert_matches!(
+        q,
+        r#"{"x": "a\rb"}"#,
+        vec!["p5"],
+        "Carriage return escape should match"
+    );
 }
 
 #[test]
 fn test_unicode_member_names() {
     // Test Unicode in field names
-    let mut q = Quamina::new();
-    q.add_pattern("p1", r#"{"日本語": ["はい"]}"#).unwrap();
+    let q = q!("p1" => r#"{"日本語": ["はい"]}"#);
 
     let event = r#"{"日本語": "はい"}"#;
-    let matches = q.matches_for_event(event.as_bytes()).unwrap();
-    assert_eq!(matches, vec!["p1"], "Unicode field names should work");
+    assert_matches!(q, event, vec!["p1"], "Unicode field names should work");
 }
 
 #[test]
 fn test_unicode_field_names() {
     // Test unicode escape sequences in field names
-    let mut q = Quamina::new();
-    q.add_pattern("p1", r#"{"field": ["value"]}"#).unwrap();
+    let q = q!("p1" => r#"{"field": ["value"]}"#);
 
     // Event with \u in field name
     let event = r#"{"\u0066ield": "value"}"#; // \u0066 = 'f'
-    let matches = q.matches_for_event(event.as_bytes()).unwrap();
-    assert_eq!(
-        matches,
+    assert_matches!(
+        q,
+        event,
         vec!["p1"],
         "Unicode escape in field name should work"
     );
@@ -430,50 +378,27 @@ fn test_unicode_field_names() {
 #[test]
 fn test_numbits_through_numeric_matching() {
     // Test various numeric formats through the public API
-    let mut q = Quamina::new();
-    q.add_pattern("p1", r#"{"x": [{"numeric": ["=", 42]}]}"#)
-        .unwrap();
+    let q = q!("p1" => r#"{"x": [{"numeric": ["=", 42]}]}"#);
 
-    // Integer
-    let m1 = q.matches_for_event(r#"{"x": 42}"#.as_bytes()).unwrap();
-    assert_eq!(m1, vec!["p1"], "Integer 42 should match");
-
-    // Float
-    let m2 = q.matches_for_event(r#"{"x": 42.0}"#.as_bytes()).unwrap();
-    assert_eq!(m2, vec!["p1"], "Float 42.0 should match");
-
-    // Scientific notation
-    let m3 = q.matches_for_event(r#"{"x": 4.2e1}"#.as_bytes()).unwrap();
-    assert_eq!(m3, vec!["p1"], "Scientific 4.2e1 should match");
-
-    // Non-matching
-    let m4 = q.matches_for_event(r#"{"x": 43}"#.as_bytes()).unwrap();
-    assert!(m4.is_empty(), "43 should not match 42");
+    for event in [r#"{"x": 42}"#, r#"{"x": 42.0}"#, r#"{"x": 4.2e1}"#] {
+        assert_matches!(q, event, vec!["p1"]);
+    }
+    assert_no_match!(q, r#"{"x": 43}"#);
 }
 
 #[test]
 fn test_numbits_ordering_through_range() {
     // Test that numeric ordering is preserved
-    let mut q = Quamina::new();
-    q.add_pattern("p1", r#"{"x": [{"numeric": [">=", -100, "<=", 100]}]}"#)
-        .unwrap();
+    let q = q!("p1" => r#"{"x": [{"numeric": [">=", -100, "<=", 100]}]}"#);
 
     // Boundary values
-    let m1 = q.matches_for_event(r#"{"x": -100}"#.as_bytes()).unwrap();
-    assert_eq!(m1, vec!["p1"], "-100 should match");
-
-    let m2 = q.matches_for_event(r#"{"x": 0}"#.as_bytes()).unwrap();
-    assert_eq!(m2, vec!["p1"], "0 should match");
-
-    let m3 = q.matches_for_event(r#"{"x": 100}"#.as_bytes()).unwrap();
-    assert_eq!(m3, vec!["p1"], "100 should match");
+    assert_matches!(q, r#"{"x": -100}"#, vec!["p1"], "-100 should match");
+    assert_matches!(q, r#"{"x": 0}"#, vec!["p1"], "0 should match");
+    assert_matches!(q, r#"{"x": 100}"#, vec!["p1"], "100 should match");
 
     // Out of range
-    let m4 = q.matches_for_event(r#"{"x": -101}"#.as_bytes()).unwrap();
-    assert!(m4.is_empty(), "-101 should not match");
-
-    let m5 = q.matches_for_event(r#"{"x": 101}"#.as_bytes()).unwrap();
-    assert!(m5.is_empty(), "101 should not match");
+    assert_no_match!(q, r#"{"x": -101}"#, "-101 should not match");
+    assert_no_match!(q, r#"{"x": 101}"#, "101 should not match");
 }
 
 // ============================================================================
@@ -505,8 +430,7 @@ fn test_memory_cleanup_miri_friendly() {
     assert_eq!(purged, 3, "Should have purged 3 patterns");
 
     // Verify remaining patterns still work
-    let matches = q.matches_for_event(r#"{"x": 3}"#.as_bytes()).unwrap();
-    assert_eq!(matches, vec!["p3".to_string()]);
+    assert_matches!(q, r#"{"x": 3}"#, vec!["p3".to_string()]);
 }
 
 /// Miri-only: exercises delete + rebuild + verify with 2 string patterns (avoids numeric
@@ -525,11 +449,8 @@ fn test_memory_cleanup_miri_minimal() {
     let purged = q.rebuild();
     assert_eq!(purged, 1, "Should have purged 1 pattern");
 
-    let matches = q.matches_for_event(r#"{"x": "a"}"#.as_bytes()).unwrap();
-    assert_eq!(matches, vec!["keep".to_string()]);
-
-    let no_match = q.matches_for_event(r#"{"x": "b"}"#.as_bytes()).unwrap();
-    assert!(no_match.is_empty(), "Deleted pattern should not match");
+    assert_matches!(q, r#"{"x": "a"}"#, vec!["keep".to_string()]);
+    assert_no_match!(q, r#"{"x": "b"}"#, "Deleted pattern should not match");
 }
 
 // MIRI SKIP RATIONALE: Large allocations and cleanup operations are slow under Miri.
@@ -611,16 +532,10 @@ fn test_concurrent_citylots_stress() {
 // Bulk Add Correctness Test
 // ============================================================================
 
-// MIRI SKIP RATIONALE: Adding 50 patterns across 50 distinct fields takes ~83s under Miri
-// due to cumulative automaton construction overhead. Coverage: test_bulk_add_correctness_miri_friendly
-// exercises the same add + match path with 5 patterns.
-#[test]
-#[cfg_attr(miri, ignore)]
-fn test_bulk_add_correctness() {
-    // Test adding many patterns and verifying all work
+/// Shared helper: add `count` patterns across distinct fields and verify all match.
+fn verify_bulk_add_correctness(count: usize) {
     let mut q = Quamina::new();
 
-    let count = 50;
     for i in 0..count {
         let pattern = format!(r#"{{"field{}": ["value{}"]}}"#, i, i);
         q.add_pattern(format!("p{}", i), &pattern).unwrap();
@@ -628,43 +543,30 @@ fn test_bulk_add_correctness() {
 
     assert_eq!(q.pattern_count(), count);
 
-    // Test a few patterns
-    for i in [0, 10, 25, 49].iter() {
+    for i in 0..count {
         let event = format!(r#"{{"field{}": "value{}"}}"#, i, i);
-        let matches = q.matches_for_event(event.as_bytes()).unwrap();
-        assert_eq!(
-            matches,
+        assert_matches!(
+            q,
+            event,
             vec![format!("p{}", i)],
-            "Pattern {} should match",
-            i
+            format!("Pattern {} should match", i)
         );
     }
 }
 
-/// Miri-only: exercises the same bulk-add + match logic with 5 patterns instead of 50.
+// MIRI SKIP RATIONALE: Adding 50 patterns across 50 distinct fields takes ~83s under Miri
+// due to cumulative automaton construction overhead.
+#[test]
+#[cfg_attr(miri, ignore)]
+fn test_bulk_add_correctness() {
+    verify_bulk_add_correctness(50);
+}
+
+/// Miri-friendly version — 5 patterns instead of 50.
 #[test]
 #[cfg(miri)]
 fn test_bulk_add_correctness_miri_friendly() {
-    let mut q = Quamina::new();
-
-    let count = 5;
-    for i in 0..count {
-        let pattern = format!(r#"{{"field{}": ["value{}"]}}"#, i, i);
-        q.add_pattern(format!("p{}", i), &pattern).unwrap();
-    }
-
-    assert_eq!(q.pattern_count(), count);
-
-    for i in 0..count {
-        let event = format!(r#"{{"field{}": "value{}"}}"#, i, i);
-        let matches = q.matches_for_event(event.as_bytes()).unwrap();
-        assert_eq!(
-            matches,
-            vec![format!("p{}", i)],
-            "Pattern {} should match",
-            i
-        );
-    }
+    verify_bulk_add_correctness(5);
 }
 
 // ============================================================================
@@ -674,24 +576,19 @@ fn test_bulk_add_correctness_miri_friendly() {
 #[test]
 fn test_multiple_patterns_same_id_comprehensive() {
     // Same pattern ID can match via different value types
-    let mut q = Quamina::new();
-    q.add_pattern("x", r#"{"x": ["a"]}"#).unwrap();
-    q.add_pattern("x", r#"{"x": [1]}"#).unwrap();
-    q.add_pattern("x", r#"{"x": [{"prefix": "b"}]}"#).unwrap();
+    let q = q!(
+        "x" => r#"{"x": ["a"]}"#,
+        "x" => r#"{"x": [1]}"#,
+        "x" => r#"{"x": [{"prefix": "b"}]}"#
+    );
 
     // All should match pattern "x"
-    let m1 = q.matches_for_event(r#"{"x": "a"}"#.as_bytes()).unwrap();
-    assert_eq!(m1, vec!["x"], "string 'a' should match");
-
-    let m2 = q.matches_for_event(r#"{"x": 1}"#.as_bytes()).unwrap();
-    assert_eq!(m2, vec!["x"], "number 1 should match");
-
-    let m3 = q.matches_for_event(r#"{"x": "bcd"}"#.as_bytes()).unwrap();
-    assert_eq!(m3, vec!["x"], "prefix 'b' should match");
+    assert_matches!(q, r#"{"x": "a"}"#, vec!["x"], "string 'a' should match");
+    assert_matches!(q, r#"{"x": 1}"#, vec!["x"], "number 1 should match");
+    assert_matches!(q, r#"{"x": "bcd"}"#, vec!["x"], "prefix 'b' should match");
 
     // Should not match
-    let m4 = q.matches_for_event(r#"{"x": "z"}"#.as_bytes()).unwrap();
-    assert!(m4.is_empty(), "unrelated value should not match");
+    assert_no_match!(q, r#"{"x": "z"}"#, "unrelated value should not match");
 }
 
 // ============================================================================
@@ -702,8 +599,7 @@ fn test_multiple_patterns_same_id_comprehensive() {
 fn test_invalid_utf8_dot_rejection() {
     // Based on Go's TestMultiByteInMemberName
     // JSON with invalid UTF-8 sequences should be rejected
-    let mut q = Quamina::new();
-    q.add_pattern("p1", r#"{"a": [1]}"#).unwrap();
+    let q = q!("p1" => r#"{"a": [1]}"#);
 
     // Create invalid UTF-8 in field name
     // 0xF0 starts a 4-byte sequence but followed by invalid bytes
@@ -730,13 +626,12 @@ fn test_invalid_utf8_dot_rejection() {
 fn test_unicode_escape_multiple_emojis() {
     // Test multiple UTF-16 surrogate pairs in sequence
     // From Go's escaping_test.go: 😀💋😺 = \ud83d\ude00\ud83d\udc8b\ud83d\ude3a
-    let mut q = Quamina::new();
-    q.add_pattern("p1", r#"{"emojis": ["😀💋😺"]}"#).unwrap();
+    let q = q!("p1" => r#"{"emojis": ["😀💋😺"]}"#);
 
     let event = r#"{"emojis": "\ud83d\ude00\ud83d\udc8b\ud83d\ude3a"}"#;
-    let matches = q.matches_for_event(event.as_bytes()).unwrap();
-    assert_eq!(
-        matches,
+    assert_matches!(
+        q,
+        event,
         vec!["p1"],
         "Multiple surrogate pairs should decode correctly"
     );
@@ -749,20 +644,16 @@ fn test_unicode_escape_mixed_codepoints() {
     // Ж = \u0416 (single), 💋 = \ud83d\udc8b (surrogate), 中 = \u4e2d (single)
 
     // Test: Ж💋中
-    let mut q = Quamina::new();
-    q.add_pattern("p1", r#"{"mixed": ["Ж💋中"]}"#).unwrap();
+    let q = q!("p1" => r#"{"mixed": ["Ж💋中"]}"#);
 
     let event = r#"{"mixed": "\u0416\ud83d\udc8b\u4e2d"}"#;
-    let matches = q.matches_for_event(event.as_bytes()).unwrap();
-    assert_eq!(matches, vec!["p1"], "Mixed codepoints should decode");
+    assert_matches!(q, event, vec!["p1"], "Mixed codepoints should decode");
 
     // Test: x💋y - ASCII mixed with surrogate
-    let mut q2 = Quamina::new();
-    q2.add_pattern("p2", r#"{"mixed": ["x💋y"]}"#).unwrap();
+    let q2 = q!("p2" => r#"{"mixed": ["x💋y"]}"#);
 
     let event2 = r#"{"mixed": "\u0078\ud83d\udc8b\u0079"}"#;
-    let matches2 = q2.matches_for_event(event2.as_bytes()).unwrap();
-    assert_eq!(matches2, vec!["p2"], "ASCII + surrogate should decode");
+    assert_matches!(q2, event2, vec!["p2"], "ASCII + surrogate should decode");
 }
 
 #[test]
@@ -773,26 +664,32 @@ fn test_unicode_escape_standard_escapes() {
     // Test newline
     q.add_pattern("newline", r#"{"text": ["hello\nworld"]}"#)
         .unwrap();
-    let m1 = q
-        .matches_for_event(r#"{"text": "hello\nworld"}"#.as_bytes())
-        .unwrap();
-    assert_eq!(m1, vec!["newline"], "Newline escape should match");
+    assert_matches!(
+        q,
+        r#"{"text": "hello\nworld"}"#,
+        vec!["newline"],
+        "Newline escape should match"
+    );
 
     // Test tab
     q.add_pattern("tab", r#"{"text": ["hello\tworld"]}"#)
         .unwrap();
-    let m2 = q
-        .matches_for_event(r#"{"text": "hello\tworld"}"#.as_bytes())
-        .unwrap();
-    assert!(m2.contains(&"tab"), "Tab escape should match");
+    assert_has_match!(
+        q,
+        r#"{"text": "hello\tworld"}"#,
+        "tab",
+        "Tab escape should match"
+    );
 
     // Test backslash
     q.add_pattern("backslash", r#"{"text": ["hello\\world"]}"#)
         .unwrap();
-    let m3 = q
-        .matches_for_event(r#"{"text": "hello\\world"}"#.as_bytes())
-        .unwrap();
-    assert!(m3.contains(&"backslash"), "Backslash escape should match");
+    assert_has_match!(
+        q,
+        r#"{"text": "hello\\world"}"#,
+        "backslash",
+        "Backslash escape should match"
+    );
 }
 
 #[test]
@@ -800,19 +697,13 @@ fn test_multiple_shellstyle_citylots_patterns() {
     // Test multiple complex shellstyle patterns on the SAME field (citylots-like)
     // This tests patterns similar to the citylots stress test that had to be
     // run individually due to merge_fas spinout bug.
-    let mut q = Quamina::new();
-
-    // These mirror the citylots shellstyle patterns
-    q.add_pattern("pattern_143", r#"{"x": [{"shellstyle": "143*"}]}"#)
-        .unwrap();
-    q.add_pattern("pattern_2017", r#"{"x": [{"shellstyle": "2*0*1*7"}]}"#)
-        .unwrap();
-    q.add_pattern("pattern_218", r#"{"x": [{"shellstyle": "*218"}]}"#)
-        .unwrap();
-    q.add_pattern("pattern_352", r#"{"x": [{"shellstyle": "3*5*2"}]}"#)
-        .unwrap();
-    q.add_pattern("pattern_vail", r#"{"x": [{"shellstyle": "VA*IL"}]}"#)
-        .unwrap();
+    let q = q!(
+        "pattern_143" => r#"{"x": [{"shellstyle": "143*"}]}"#,
+        "pattern_2017" => r#"{"x": [{"shellstyle": "2*0*1*7"}]}"#,
+        "pattern_218" => r#"{"x": [{"shellstyle": "*218"}]}"#,
+        "pattern_352" => r#"{"x": [{"shellstyle": "3*5*2"}]}"#,
+        "pattern_vail" => r#"{"x": [{"shellstyle": "VA*IL"}]}"#
+    );
 
     // Test individual patterns work correctly
     let test_cases: Vec<(&str, Vec<&str>)> = vec![
@@ -826,24 +717,12 @@ fn test_multiple_shellstyle_citylots_patterns() {
 
     for (value, expected_patterns) in test_cases {
         let event = format!(r#"{{"x": "{}"}}"#, value);
-        let matches = q.matches_for_event(event.as_bytes()).unwrap();
 
         if expected_patterns.is_empty() {
-            assert!(
-                matches.is_empty(),
-                "Expected no match for '{}', got: {:?}",
-                value,
-                matches
-            );
+            assert_no_match!(q, event);
         } else {
             for expected in &expected_patterns {
-                assert!(
-                    matches.contains(expected),
-                    "Expected '{}' to match '{}', but got: {:?}",
-                    value,
-                    expected,
-                    matches
-                );
+                assert_has_match!(q, event, *expected);
             }
         }
     }
@@ -853,26 +732,24 @@ fn test_multiple_shellstyle_citylots_patterns() {
 fn test_unicode_field_names_surrogate_pairs() {
     // Test UTF-16 surrogate pairs in field names
     // From Go's TestReadMemberName: `x\u0078\ud83d\udc8by` = `xx💋y`
-    let mut q = Quamina::new();
-    q.add_pattern("p1", r#"{"xx💋y": ["value"]}"#).unwrap();
+    let q = q!("p1" => r#"{"xx💋y": ["value"]}"#);
 
     // Event with unicode escapes in field name
     let event = r#"{"x\u0078\ud83d\udc8by": "value"}"#;
-    let matches = q.matches_for_event(event.as_bytes()).unwrap();
-    assert_eq!(
-        matches,
+    assert_matches!(
+        q,
+        event,
         vec!["p1"],
         "Surrogate pair in field name should decode"
     );
 
     // Test multiple emojis in field name: 😀💋😺
-    let mut q2 = Quamina::new();
-    q2.add_pattern("p2", r#"{"😀💋😺": [1]}"#).unwrap();
+    let q2 = q!("p2" => r#"{"😀💋😺": [1]}"#);
 
     let event2 = r#"{"\ud83d\ude00\ud83d\udc8b\ud83d\ude3a": 1}"#;
-    let matches2 = q2.matches_for_event(event2.as_bytes()).unwrap();
-    assert_eq!(
-        matches2,
+    assert_matches!(
+        q2,
+        event2,
         vec!["p2"],
         "Multiple surrogate pairs in field name should decode"
     );
@@ -985,41 +862,22 @@ fn test_exercise_matching_comprehensive() {
 
     // Test each should_match pattern individually
     for (pattern, desc) in &should_match {
-        let mut q = Quamina::new();
-        let result = q.add_pattern(*desc, pattern);
-        assert!(
-            result.is_ok(),
-            "Pattern should parse: {} - {}",
-            desc,
-            pattern
-        );
-
-        let matches = q.matches_for_event(event.as_bytes()).unwrap();
-        assert!(
-            !matches.is_empty(),
-            "Pattern '{}' should match: {}",
-            desc,
-            pattern
+        let q = q!(*desc => pattern);
+        assert_has_match!(
+            q,
+            event,
+            *desc,
+            format!("Pattern '{}' should match: {}", desc, pattern)
         );
     }
 
     // Test each should_not_match pattern individually
     for (pattern, desc) in &should_not_match {
-        let mut q = Quamina::new();
-        let result = q.add_pattern(*desc, pattern);
-        assert!(
-            result.is_ok(),
-            "Pattern should parse: {} - {}",
-            desc,
-            pattern
-        );
-
-        let matches = q.matches_for_event(event.as_bytes()).unwrap();
-        assert!(
-            matches.is_empty(),
-            "Pattern '{}' should NOT match: {}",
-            desc,
-            pattern
+        let q = q!(*desc => pattern);
+        assert_no_match!(
+            q,
+            event,
+            format!("Pattern '{}' should NOT match: {}", desc, pattern)
         );
     }
 
@@ -1029,9 +887,9 @@ fn test_exercise_matching_comprehensive() {
         combined.add_pattern(*desc, pattern).unwrap();
     }
 
-    let all_matches = combined.matches_for_event(event.as_bytes()).unwrap();
-    assert_eq!(
-        all_matches.len(),
+    assert_match_count!(
+        combined,
+        event,
         should_match.len(),
         "All should_match patterns should match when combined"
     );
@@ -1071,16 +929,12 @@ fn test_exercise_matching_miri_friendly() {
     ];
 
     for (pattern, desc) in &patterns {
-        let mut q = Quamina::new();
-        q.add_pattern(*desc, pattern)
-            .unwrap_or_else(|e| panic!("Pattern should parse: {} - {}", desc, e));
-
-        let matches = q.matches_for_event(event.as_bytes()).unwrap();
-        assert!(
-            !matches.is_empty(),
-            "Pattern '{}' should match: {}",
-            desc,
-            pattern
+        let q = q!(*desc => pattern);
+        assert_has_match!(
+            q,
+            event,
+            *desc,
+            format!("Pattern '{}' should match: {}", desc, pattern)
         );
     }
 }
