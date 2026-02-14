@@ -22,7 +22,7 @@ use std::sync::Arc;
 #[test]
 #[cfg_attr(miri, ignore)]
 fn test_stress_fuzz_strings() {
-    use rand::{Rng, SeedableRng};
+    use rand::{RngExt, SeedableRng};
     use std::collections::HashSet;
 
     let mut rng = rand::rngs::StdRng::seed_from_u64(12345);
@@ -78,7 +78,7 @@ fn test_stress_fuzz_strings() {
 #[test]
 #[cfg_attr(miri, ignore)]
 fn test_stress_fuzz_numbers() {
-    use rand::{Rng, SeedableRng};
+    use rand::{RngExt, SeedableRng};
     use std::collections::HashSet;
 
     let mut rng = rand::rngs::StdRng::seed_from_u64(98543);
