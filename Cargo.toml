@@ -20,7 +20,7 @@ dhat-heap = []  # Enable heap profiling with dhat
 [dev-dependencies]
 criterion = "0.8"
 flate2 = "1.0"
-rand = "0.9"
+rand = "0.10"
 regex = "1"  # For benchmarking comparisons
 dhat = "0.3"
 
