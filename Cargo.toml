@@ -38,10 +38,6 @@ name = "bulk_10k"
 harness = false
 
 [[bench]]
-name = "comparable"
-harness = false
-
-[[bench]]
 name = "memory"
 harness = false
 

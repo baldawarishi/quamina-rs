@@ -495,8 +495,8 @@ pub fn traverse_arena_nfa(
 
         // Destructure bufs for split borrows: iterate current_states immutably
         // while pushing to next_states mutably. This avoids std::mem::take which
-        // destroyed Vec capacity every iteration, causing ~22-25% overhead from
-        // repeated heap allocations (see docs/PERF_ANALYSIS_2025-02.md Finding 1).
+        // would reset Vec capacity to 0 every iteration, triggering heap
+        // reallocation on every push (~22-25% overhead in NFA-heavy benchmarks).
         let ArenaNfaBuffers {
             ref mut current_states,
             ref mut next_states,
