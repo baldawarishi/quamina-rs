@@ -229,25 +229,29 @@ On an M3 Max:
 | 100 | 144 ns |
 | 10,000 | 147 ns |
 
-### Comparison with Go quamina
+### Cross-language comparison
 
-| Benchmark | Go | Rust | Speedup |
-|-----------|---:|-----:|--------:|
-| citylots (4 patterns, 206k GeoJSON) | 3,239 ns | 1,731 ns | 1.9x |
-| early field match (14KB JSON) | 403 ns | 272 ns | 1.5x |
-| nested field match (14KB JSON) | 7,482 ns | 5,469 ns | 1.4x |
+Identical patterns and events across all three libraries (Apple M3 Max):
 
-### Pattern type benchmarks
+| Benchmark | Rust | Go | Java | vs Go | vs Java |
+|---|---:|---:|---:|---:|---:|
+| exact_single | 84 ns | 132 ns | 571 ns | 1.6x | 6.8x |
+| exact_100 | 147 ns | 188 ns | 434 ns | 1.3x | 3.0x |
+| prefix_100 | 163 ns | 203 ns | 435 ns | 1.2x | 2.7x |
+| wildcard_26 | 235 ns | 285 ns | 540 ns | 1.2x | 2.3x |
+| anything_but | 99 ns | 140 ns | 543 ns | 1.4x | 5.5x |
+| equals_ignore_case | 111 ns | 166 ns | 508 ns | 1.5x | 4.6x |
+| multi_field_3 | 231 ns | 341 ns | 885 ns | 1.5x | 3.8x |
+| exists_true | 71 ns | 122 ns | 471 ns | 1.7x | 6.6x |
+| numeric_exact | 107 ns | 175 ns | 490 ns | 1.6x | 4.6x |
+| citylots | 1,710 ns | 6,472 ns | 5,549 ns | 3.8x | 3.2x |
+| regexp_simple | 172 ns | 250 ns | - | 1.5x | - |
+| shellstyle_26 | 251 ns | 285 ns | - | 1.1x | - |
+| suffix_100 | 140 ns | - | 358 ns | - | 2.6x |
+| numeric_range | 103 ns | - | 377 ns | - | 3.7x |
+| numeric_range_10 | 128 ns | - | 383 ns | - | 3.0x |
 
-| Benchmark | Time | Description |
-|-----------|-----:|-------------|
-| exact_match | 90 ns | Single exact match |
-| nested_match | 134 ns | Nested field exact match |
-| regex_match | 104 ns | Simple regex pattern |
-| anything_but_match | 110 ns | Anything-but with 3 values |
-| numeric_range | 110 ns | Two-sided numeric (`>= 0, < 100`) |
-| 100_prefix_patterns | 158 ns | 100 prefix patterns |
-| shellstyle_26_patterns | 415 ns | 26 shellstyle patterns (A*-Z*) |
+Go = [quamina](https://github.com/timbray/quamina), Java = [event-ruler](https://github.com/aws/event-ruler). A dash means the library doesn't support that feature.
 
 ### What affects performance
 
