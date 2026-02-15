@@ -229,25 +229,26 @@ On an M3 Max:
 | 100 | 144 ns |
 | 10,000 | 147 ns |
 
-### Comparison with Go quamina
+### Event Type Benchmarks
 
-| Benchmark | Go | Rust | Speedup |
+| Benchmark | Time | Description |
 |-----------|---:|-----:|--------:|
-| citylots (4 patterns, 206k GeoJSON) | 3,239 ns | 1,731 ns | 1.9x |
-| early field match (14KB JSON) | 403 ns | 272 ns | 1.5x |
-| nested field match (14KB JSON) | 7,482 ns | 5,469 ns | 1.4x |
+| citylots | 1,731 ns | 4 patterns, 206k of messy GeoJSON data |
+| early field match | 272 ns | 14KB JSON events |
+| nested field match | 5,469 ns | Nested JSON events |
 
 ### Pattern type benchmarks
 
 | Benchmark | Time | Description |
 |-----------|-----:|-------------|
-| exact_match | 90 ns | Single exact match |
+| exact_match | 84 ns | Single exact match |
 | nested_match | 134 ns | Nested field exact match |
 | regex_match | 104 ns | Simple regex pattern |
-| anything_but_match | 110 ns | Anything-but with 3 values |
-| numeric_range | 110 ns | Two-sided numeric (`>= 0, < 100`) |
-| 100_prefix_patterns | 158 ns | 100 prefix patterns |
-| shellstyle_26_patterns | 415 ns | 26 shellstyle patterns (A*-Z*) |
+| anything_but_match | 99 ns | Anything-but with 3 values |
+| numeric_range | 103 ns | Two-sided numeric (`>= 0, < 100`) |
+| 100_prefix_patterns | 163 ns | 100 prefix patterns |
+| 100_suffix_patterns | 140 ns | 100 suffix patterns (.ext0-.ext99) |
+| shellstyle_26_patterns | 251 ns | 26 shellstyle patterns (A*-Z*) |
 
 ### What affects performance
 
@@ -282,7 +283,7 @@ Other limitations:
 
 ## Credits
 
-All credits should go to [Tim](https://www.tbray.org/). He wrote the [Go original](https://github.com/timbray/quamina) and [event-ruler](https://github.com/aws/event-ruler) before that. His [Quamina Diary](https://www.tbray.org/ongoing/What/Technology/Quamina%20Diary/) explains how it works.
+All credits should go to [Tim](https://www.tbray.org/) and other contributors in the [original Go](https://github.com/timbray/quamina) version. Tim's [Quamina Diary](https://www.tbray.org/ongoing/What/Technology/Quamina%20Diary/) ealso xplains how automata-based matching works.
 
 
 ## License
