@@ -493,51 +493,64 @@ pub fn traverse_arena_nfa(
             ARENA_VALUE_TERMINATOR
         };
 
-        // Take ownership of current_states to avoid clone
-        let states_to_process = std::mem::take(&mut bufs.current_states);
+        // Destructure bufs for split borrows: iterate current_states immutably
+        // while pushing to next_states mutably. This avoids std::mem::take which
+        // would reset Vec capacity to 0 every iteration, triggering heap
+        // reallocation on every push (~22-25% overhead in NFA-heavy benchmarks).
+        let ArenaNfaBuffers {
+            ref mut current_states,
+            ref mut next_states,
+            ref mut transitions,
+            ref mut seen_transitions,
+        } = *bufs;
 
-        for state_id in states_to_process {
+        for &state_id in current_states.iter() {
             // Iterate precomputed epsilon closure directly (no copy needed
-            // since arena and bufs are independent borrows).
+            // since arena and bufs fields are independent borrows).
             for &ec_state_id in &arena[state_id].epsilon_closure {
                 let ec_state = &arena[ec_state_id];
 
                 // Collect field transitions from cold storage (deduplicated)
                 for ft in &ec_state.field_transitions {
                     let ptr = Arc::as_ptr(ft) as usize;
-                    if bufs.seen_transitions.insert(ptr) {
-                        bufs.transitions.push(ft.clone());
+                    if seen_transitions.insert(ptr) {
+                        transitions.push(ft.clone());
                     }
                 }
 
                 // Check spinout (wildcard)
                 if !ec_state.table.spinout.is_none() && byte != ARENA_VALUE_TERMINATOR {
                     // For spinout, stay in same state
-                    bufs.next_states.push(ec_state_id);
+                    next_states.push(ec_state_id);
                 }
 
                 // Take step on current byte
                 let next = ec_state.table.dstep(byte);
                 if !next.is_none() {
-                    bufs.next_states.push(next);
+                    next_states.push(next);
                 }
             }
         }
 
-        // Swap buffers
-        std::mem::swap(&mut bufs.current_states, &mut bufs.next_states);
-        bufs.next_states.clear();
+        // Swap buffers — clear+swap preserves capacity on both Vecs
+        current_states.clear();
+        std::mem::swap(current_states, next_states);
         i += 1;
     }
 
-    // Check final states for matches
-    let final_states = std::mem::take(&mut bufs.current_states);
-    for state_id in final_states {
+    // Check final states for matches (split borrows to avoid take)
+    let ArenaNfaBuffers {
+        ref current_states,
+        ref mut transitions,
+        ref mut seen_transitions,
+        ..
+    } = *bufs;
+    for &state_id in current_states.iter() {
         for &ec_state_id in &arena[state_id].epsilon_closure {
             for ft in &arena[ec_state_id].field_transitions {
                 let ptr = Arc::as_ptr(ft) as usize;
-                if bufs.seen_transitions.insert(ptr) {
-                    bufs.transitions.push(ft.clone());
+                if seen_transitions.insert(ptr) {
+                    transitions.push(ft.clone());
                 }
             }
         }
@@ -587,6 +600,42 @@ pub fn traverse_arena_dfa(
 
     // Check final state (cold data)
     transitions.extend(arena[current].field_transitions.iter().cloned());
+}
+
+/// Fast backward DFA traversal for suffix matching.
+///
+/// Walks value bytes right-to-left through a DFA trie built from reversed suffix
+/// patterns. This is O(max_suffix_len) — it only touches the last few bytes of the
+/// value, exiting as soon as the trie has no transition.
+///
+/// The trie is built without the ARENA_VALUE_TERMINATOR convention. Field transitions
+/// on intermediate/leaf states mark suffix matches of various lengths.
+#[inline]
+pub fn traverse_arena_dfa_backward(
+    arena: &StateArena,
+    start: StateId,
+    val: &[u8],
+    transitions: &mut Vec<Arc<FieldMatcher>>,
+) {
+    if start.is_none() || val.is_empty() {
+        return;
+    }
+
+    let mut current = start;
+
+    // Walk backward through value bytes (right to left)
+    for i in (0..val.len()).rev() {
+        let next = arena[current].table.dstep(val[i]);
+        if next.is_none() {
+            return;
+        }
+        current = next;
+
+        // Collect field_transitions (suffix match found at this depth)
+        if !arena[current].field_transitions.is_empty() {
+            transitions.extend(arena[current].field_transitions.iter().cloned());
+        }
+    }
 }
 
 /// Merge two arena-based DFAs into one that matches either pattern.
@@ -1897,6 +1946,83 @@ pub fn insert_string_into_arena(
             }
 
             // Add transition from current state to the new chain
+            arena[current].table.set_transition(byte, target);
+            return;
+        }
+    }
+
+    // Full path already exists — add field transition to the terminal state
+    arena[current].field_transitions.push(field_matcher);
+}
+
+/// Build a DFA trie for a single reversed suffix pattern.
+///
+/// Unlike `make_string_arena_fa`, this does NOT append ARENA_VALUE_TERMINATOR.
+/// The reversed bytes are inserted as-is, with field_transitions on the final state.
+///
+/// # Arguments
+/// * `reversed_bytes` - The reversed suffix bytes (e.g., `['"', '0', '5', 't', 'x', 'e', '.']`)
+/// * `next_field` - The field matcher to transition to on match
+///
+/// # Returns
+/// A new arena containing the suffix DFA and its start state
+pub fn make_suffix_dfa(
+    reversed_bytes: &[u8],
+    next_field: Arc<FieldMatcher>,
+) -> (StateArena, StateId) {
+    let mut arena = StateArena::new();
+
+    // Create the match state with field_transitions
+    let match_state = arena.alloc();
+    arena[match_state].field_transitions.push(next_field);
+
+    // Build chain backwards: last byte → ... → first byte → start
+    let mut target = match_state;
+    for &byte in reversed_bytes.iter().rev() {
+        target = arena.alloc_with_table(ArenaSmallTable::with_mappings(
+            StateId::NONE,
+            &[byte],
+            &[target],
+        ));
+    }
+
+    arena.precompute_epsilon_closures();
+    (arena, target) // target is the start state
+}
+
+/// Insert a reversed suffix pattern into an existing suffix DFA trie.
+///
+/// Like `insert_string_into_arena` but without the ARENA_VALUE_TERMINATOR.
+/// Shares prefix structure with existing patterns in the trie.
+pub fn insert_suffix_into_arena(
+    arena: &mut StateArena,
+    start: StateId,
+    reversed_bytes: &[u8],
+    field_matcher: Arc<FieldMatcher>,
+) {
+    let mut current = start;
+
+    for (i, &byte) in reversed_bytes.iter().enumerate() {
+        let next = arena[current].table.dstep(byte);
+        if !next.is_none() {
+            // Transition exists, follow it
+            current = next;
+        } else {
+            // No transition — create the remaining chain
+            let match_state = arena.alloc();
+            arena[match_state].field_transitions.push(field_matcher);
+
+            // Build chain backwards for remaining bytes after this one
+            let mut target = match_state;
+            for &b in reversed_bytes[i + 1..].iter().rev() {
+                target = arena.alloc_with_table(ArenaSmallTable::with_mappings(
+                    StateId::NONE,
+                    &[b],
+                    &[target],
+                ));
+            }
+
+            // Connect current state to the new chain
             arena[current].table.set_transition(byte, target);
             return;
         }
