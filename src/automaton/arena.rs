@@ -602,6 +602,42 @@ pub fn traverse_arena_dfa(
     transitions.extend(arena[current].field_transitions.iter().cloned());
 }
 
+/// Fast backward DFA traversal for suffix matching.
+///
+/// Walks value bytes right-to-left through a DFA trie built from reversed suffix
+/// patterns. This is O(max_suffix_len) — it only touches the last few bytes of the
+/// value, exiting as soon as the trie has no transition.
+///
+/// The trie is built without the ARENA_VALUE_TERMINATOR convention. Field transitions
+/// on intermediate/leaf states mark suffix matches of various lengths.
+#[inline]
+pub fn traverse_arena_dfa_backward(
+    arena: &StateArena,
+    start: StateId,
+    val: &[u8],
+    transitions: &mut Vec<Arc<FieldMatcher>>,
+) {
+    if start.is_none() || val.is_empty() {
+        return;
+    }
+
+    let mut current = start;
+
+    // Walk backward through value bytes (right to left)
+    for i in (0..val.len()).rev() {
+        let next = arena[current].table.dstep(val[i]);
+        if next.is_none() {
+            return;
+        }
+        current = next;
+
+        // Collect field_transitions (suffix match found at this depth)
+        if !arena[current].field_transitions.is_empty() {
+            transitions.extend(arena[current].field_transitions.iter().cloned());
+        }
+    }
+}
+
 /// Merge two arena-based DFAs into one that matches either pattern.
 ///
 /// This is the arena equivalent of `merge_fas` for chain-based FAs.
@@ -1910,6 +1946,83 @@ pub fn insert_string_into_arena(
             }
 
             // Add transition from current state to the new chain
+            arena[current].table.set_transition(byte, target);
+            return;
+        }
+    }
+
+    // Full path already exists — add field transition to the terminal state
+    arena[current].field_transitions.push(field_matcher);
+}
+
+/// Build a DFA trie for a single reversed suffix pattern.
+///
+/// Unlike `make_string_arena_fa`, this does NOT append ARENA_VALUE_TERMINATOR.
+/// The reversed bytes are inserted as-is, with field_transitions on the final state.
+///
+/// # Arguments
+/// * `reversed_bytes` - The reversed suffix bytes (e.g., `['"', '0', '5', 't', 'x', 'e', '.']`)
+/// * `next_field` - The field matcher to transition to on match
+///
+/// # Returns
+/// A new arena containing the suffix DFA and its start state
+pub fn make_suffix_dfa(
+    reversed_bytes: &[u8],
+    next_field: Arc<FieldMatcher>,
+) -> (StateArena, StateId) {
+    let mut arena = StateArena::new();
+
+    // Create the match state with field_transitions
+    let match_state = arena.alloc();
+    arena[match_state].field_transitions.push(next_field);
+
+    // Build chain backwards: last byte → ... → first byte → start
+    let mut target = match_state;
+    for &byte in reversed_bytes.iter().rev() {
+        target = arena.alloc_with_table(ArenaSmallTable::with_mappings(
+            StateId::NONE,
+            &[byte],
+            &[target],
+        ));
+    }
+
+    arena.precompute_epsilon_closures();
+    (arena, target) // target is the start state
+}
+
+/// Insert a reversed suffix pattern into an existing suffix DFA trie.
+///
+/// Like `insert_string_into_arena` but without the ARENA_VALUE_TERMINATOR.
+/// Shares prefix structure with existing patterns in the trie.
+pub fn insert_suffix_into_arena(
+    arena: &mut StateArena,
+    start: StateId,
+    reversed_bytes: &[u8],
+    field_matcher: Arc<FieldMatcher>,
+) {
+    let mut current = start;
+
+    for (i, &byte) in reversed_bytes.iter().enumerate() {
+        let next = arena[current].table.dstep(byte);
+        if !next.is_none() {
+            // Transition exists, follow it
+            current = next;
+        } else {
+            // No transition — create the remaining chain
+            let match_state = arena.alloc();
+            arena[match_state].field_transitions.push(field_matcher);
+
+            // Build chain backwards for remaining bytes after this one
+            let mut target = match_state;
+            for &b in reversed_bytes[i + 1..].iter().rev() {
+                target = arena.alloc_with_table(ArenaSmallTable::with_mappings(
+                    StateId::NONE,
+                    &[b],
+                    &[target],
+                ));
+            }
+
+            // Connect current state to the new chain
             arena[current].table.set_transition(byte, target);
             return;
         }

@@ -24,7 +24,8 @@ use parking_lot::Mutex;
 
 use super::arena::{
     make_prefix_arena_fa, make_shellstyle_arena_fa, make_string_arena_fa, merge_arena_nfas,
-    traverse_arena_dfa, traverse_arena_nfa, ArenaNfaBuffers, StateArena, StateId,
+    traverse_arena_dfa, traverse_arena_dfa_backward, traverse_arena_nfa, ArenaNfaBuffers,
+    StateArena, StateId,
 };
 use super::mutable_matcher::{
     EventField, EventFieldRef, MultiConditionNfa, MutableFieldMatcher, MutableValueMatcher,
@@ -126,6 +127,8 @@ pub struct FrozenValueMatcher<X: Clone + Eq + Hash> {
     /// Whether main_arena contains NFA states (epsilon transitions or spinout).
     /// When false, the fast traverse_arena_dfa path is used.
     main_arena_is_nfa: bool,
+    /// Separate DFA trie for suffix patterns, traversed backward (right-to-left).
+    suffix_arena: Option<(StateArena, StateId)>,
 }
 
 // SAFETY: FrozenValueMatcher only contains Arc, FxHashMap, Option, and primitives - all Send+Sync.
@@ -143,6 +146,7 @@ impl<X: Clone + Eq + Hash> FrozenValueMatcher<X> {
             multi_condition_nfas: Vec::new(),
             main_arena: None,
             main_arena_is_nfa: false,
+            suffix_arena: None,
         }
     }
 
@@ -197,6 +201,24 @@ impl<X: Clone + Eq + Hash> FrozenValueMatcher<X> {
                     &mut bufs.arena_bufs.transitions,
                 );
             }
+
+            for arc_fm in &bufs.arena_bufs.transitions {
+                let ptr = Arc::as_ptr(arc_fm) as usize;
+                if let Some(frozen_fm) = self.transition_map.get(&ptr) {
+                    result.push(frozen_fm.clone());
+                }
+            }
+        }
+
+        // Traverse suffix_arena backward (right-to-left DFA for suffix patterns)
+        if let Some((ref arena, start)) = self.suffix_arena {
+            bufs.arena_bufs.transitions.clear();
+            traverse_arena_dfa_backward(
+                arena,
+                start,
+                value_to_match,
+                &mut bufs.arena_bufs.transitions,
+            );
 
             for arc_fm in &bufs.arena_bufs.transitions {
                 let ptr = Arc::as_ptr(arc_fm) as usize;
@@ -496,6 +518,9 @@ impl<X: Clone + Eq + Hash + Send + Sync> ThreadSafeCoreMatcher<X> {
         // Copy the main_arena (unified arena for all pattern types)
         let main_arena = mutable.main_arena.borrow().clone();
 
+        // Copy the suffix_arena (reversed DFA trie for suffix patterns)
+        let suffix_arena = mutable.suffix_arena.borrow().clone();
+
         FrozenValueMatcher {
             singleton_match,
             singleton_transition,
@@ -504,6 +529,7 @@ impl<X: Clone + Eq + Hash + Send + Sync> ThreadSafeCoreMatcher<X> {
             multi_condition_nfas,
             main_arena,
             main_arena_is_nfa: *mutable.main_arena_is_nfa.borrow(),
+            suffix_arena,
         }
     }
 

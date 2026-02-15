@@ -11,11 +11,12 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use super::arena::{
-    insert_string_into_arena, make_anything_but_arena_fa, make_cidr_arena_fa,
-    make_monocase_arena_fa, make_numeric_greater_arena_fa, make_numeric_less_arena_fa,
-    make_numeric_range_arena_fa, make_prefix_arena_fa, make_shellstyle_arena_fa,
-    make_string_arena_fa, make_wildcard_arena_fa, merge_arena_nfas, traverse_arena_dfa,
-    traverse_arena_nfa, ArenaNfaBuffers, StateArena, StateId,
+    insert_string_into_arena, insert_suffix_into_arena, make_anything_but_arena_fa,
+    make_cidr_arena_fa, make_monocase_arena_fa, make_numeric_greater_arena_fa,
+    make_numeric_less_arena_fa, make_numeric_range_arena_fa, make_prefix_arena_fa,
+    make_shellstyle_arena_fa, make_string_arena_fa, make_suffix_dfa, make_wildcard_arena_fa,
+    merge_arena_nfas, traverse_arena_dfa, traverse_arena_dfa_backward, traverse_arena_nfa,
+    ArenaNfaBuffers, StateArena, StateId,
 };
 use super::small_table::{FieldMatcher, NfaBuffers};
 use crate::regexp::make_regexp_nfa_arena;
@@ -224,6 +225,9 @@ pub struct MutableValueMatcher<X: Clone + Eq + std::hash::Hash> {
     /// Whether main_arena contains NFA states (epsilon transitions or spinout).
     /// When false, the fast traverse_arena_dfa path can be used instead of traverse_arena_nfa.
     pub(crate) main_arena_is_nfa: RefCell<bool>,
+    /// Separate DFA trie for suffix patterns, traversed backward (right-to-left).
+    /// Contains reversed suffix bytes; uses traverse_arena_dfa_backward at match time.
+    pub(crate) suffix_arena: RefCell<Option<(StateArena, StateId)>>,
     /// Arena byte budget for pattern complexity limiting
     pub(crate) arena_byte_budget: usize,
 }
@@ -245,6 +249,7 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
             arena_bufs: RefCell::new(ArenaNfaBuffers::new()),
             main_arena: RefCell::new(None),
             main_arena_is_nfa: RefCell::new(false),
+            suffix_arena: RefCell::new(None),
             arena_byte_budget: usize::MAX,
         }
     }
@@ -259,6 +264,7 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
             arena_bufs: RefCell::new(ArenaNfaBuffers::new()),
             main_arena: RefCell::new(None),
             main_arena_is_nfa: RefCell::new(false),
+            suffix_arena: RefCell::new(None),
             arena_byte_budget: budget,
         }
     }
@@ -423,13 +429,7 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
             Matcher::EqualsIgnoreCase(s) => self.add_monocase_transition(&quote_wrap(s.as_bytes())),
             Matcher::ParsedRegexp(ref tree) => self.add_regexp_transition(tree),
             Matcher::MultiCondition(ref mc) => self.add_multi_condition_transition(mc),
-            Matcher::Suffix(s) => {
-                // Suffix "abc" is equivalent to shellstyle "*abc" with closing quote
-                // The * matches the opening quote + any content, then "abc" matches
-                // the suffix, then the closing quote must follow.
-                let pattern = format!("*{}\"", s);
-                self.add_shellstyle_transition(pattern.as_bytes())
-            }
+            Matcher::Suffix(s) => self.add_suffix_transition(s),
             Matcher::Numeric(cmp) => {
                 // Numeric ranges use Q-number ordering in the automaton
                 self.has_numbers.set(true);
@@ -493,8 +493,10 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
         let singleton = self.singleton_match.borrow();
         let singleton_trans = self.singleton_transition.borrow();
 
-        // Check if virgin state (no singleton, no main_arena)
-        let is_virgin = singleton.is_none() && self.main_arena.borrow().is_none();
+        // Check if virgin state (no singleton, no main_arena, no suffix_arena)
+        let is_virgin = singleton.is_none()
+            && self.main_arena.borrow().is_none()
+            && self.suffix_arena.borrow().is_none();
 
         if is_virgin {
             // Virgin state - use singleton optimization
@@ -609,6 +611,47 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
         *self.main_arena_is_nfa.borrow_mut() = true;
         let (new_arena, new_start) = make_shellstyle_arena_fa(pattern, next_arc);
         self.merge_with_singleton(new_arena, new_start)?;
+
+        Ok(next_fm)
+    }
+
+    /// Add a suffix pattern using a reversed DFA trie.
+    ///
+    /// Builds reversed bytes: `['"', reversed(suffix)]` (closing quote + reversed suffix).
+    /// Inserts into a separate `suffix_arena` that is traversed backward at match time.
+    /// This is O(max_suffix_len) instead of the O(value_len * NFA_states) shellstyle approach.
+    fn add_suffix_transition(
+        &self,
+        suffix: &str,
+    ) -> Result<Rc<MutableFieldMatcher<X>>, crate::QuaminaError> {
+        // If there's a pending singleton, fold it into main_arena first
+        // so transition_on doesn't short-circuit past suffix_arena
+        if self.singleton_match.borrow().is_some() {
+            if let Some((singleton_arena, singleton_start)) = self.take_singleton_as_arena() {
+                self.merge_into_main_arena(singleton_arena, singleton_start)?;
+            }
+        }
+
+        let next_fm = Rc::new(MutableFieldMatcher::new());
+        let next_arc = Arc::new(FieldMatcher::new());
+        self.transition_map
+            .borrow_mut()
+            .insert(Arc::as_ptr(&next_arc), next_fm.clone());
+
+        // Build reversed suffix bytes: closing quote + reversed suffix
+        let suffix_bytes = suffix.as_bytes();
+        let mut reversed = Vec::with_capacity(suffix_bytes.len() + 1);
+        reversed.push(b'"'); // closing JSON quote (first byte when scanning backward)
+        reversed.extend(suffix_bytes.iter().rev());
+
+        // Insert into suffix arena (separate DFA trie from main_arena)
+        let mut suffix_arena = self.suffix_arena.borrow_mut();
+        if let Some((ref mut arena, start)) = *suffix_arena {
+            insert_suffix_into_arena(arena, start, &reversed, next_arc);
+        } else {
+            let (arena, start) = make_suffix_dfa(&reversed, next_arc);
+            *suffix_arena = Some((arena, start));
+        }
 
         Ok(next_fm)
     }
@@ -903,6 +946,20 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
             }
 
             // Map Arc<FieldMatcher> transitions to Rc<MutableFieldMatcher<X>>
+            for arc_fm in &arena_bufs.transitions {
+                let ptr = Arc::as_ptr(arc_fm);
+                if let Some(mutable_fm) = transition_map.get(&ptr) {
+                    result.push(mutable_fm.clone());
+                }
+            }
+        }
+
+        // Traverse suffix_arena backward (right-to-left DFA for suffix patterns)
+        if let Some((ref arena, start)) = *self.suffix_arena.borrow() {
+            let mut arena_bufs = self.arena_bufs.borrow_mut();
+            arena_bufs.transitions.clear();
+            traverse_arena_dfa_backward(arena, start, value_to_match, &mut arena_bufs.transitions);
+
             for arc_fm in &arena_bufs.transitions {
                 let ptr = Arc::as_ptr(arc_fm);
                 if let Some(mutable_fm) = transition_map.get(&ptr) {
