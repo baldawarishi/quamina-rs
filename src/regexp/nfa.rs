@@ -295,6 +295,10 @@ fn make_arena_atom_fa(qa: &QuantifiedAtom, arena: &mut StateArena, next: StateId
     } else if let Some(ref subtree) = qa.subtree {
         make_arena_nfa_from_branches(subtree, arena, next)
     } else if let Some(ref cache_key) = qa.cache_key {
+        // Use compact non-word char FA for word boundary expansion
+        if cache_key == "wb_W" {
+            return make_nonword_char_fa(arena, next);
+        }
         make_cached_rune_range_fa(cache_key, &qa.runes, arena, next)
     } else {
         make_arena_rune_range_fa(&qa.runes, arena, next)
@@ -390,6 +394,108 @@ fn make_arena_dot_fa(arena: &mut StateArena, dest: StateId) -> StateId {
         unpacked[0xF1..0xF4].fill(s_first_inter);
 
         // F4
+        unpacked[0xF4] = target_f4;
+
+        let mut table = ArenaSmallTable::new();
+        table.pack(&unpacked);
+        table
+    })
+}
+
+/// Build arena FA for a non-word character (`~W`).
+///
+/// Like `make_arena_dot_fa` but excludes word char bytes (a-z, A-Z, 0-9, _)
+/// from single-byte ASCII transitions. Multi-byte UTF-8 sequences all lead to
+/// non-word chars (since all word chars are ASCII single-byte).
+///
+/// This is much more compact than building the full `~W` Unicode range because
+/// it reuses the dot's multi-byte UTF-8 handling structure.
+pub(crate) fn make_nonword_char_fa(arena: &mut StateArena, dest: StateId) -> StateId {
+    // Multi-byte continuation states are identical to dot — all multi-byte
+    // UTF-8 chars are non-word chars
+    let s_last = arena.alloc_with_table({
+        let mut table = ArenaSmallTable::new();
+        let mut unpacked = [StateId::NONE; BYTE_CEILING];
+        unpacked[0x80..0xC0].fill(dest);
+        table.pack(&unpacked);
+        table
+    });
+
+    let s_last_inter = arena.alloc_with_table({
+        let mut table = ArenaSmallTable::new();
+        let mut unpacked = [StateId::NONE; BYTE_CEILING];
+        unpacked[0x80..0xC0].fill(s_last);
+        table.pack(&unpacked);
+        table
+    });
+
+    let s_first_inter = arena.alloc_with_table({
+        let mut table = ArenaSmallTable::new();
+        let mut unpacked = [StateId::NONE; BYTE_CEILING];
+        unpacked[0x80..0xC0].fill(s_last_inter);
+        table.pack(&unpacked);
+        table
+    });
+
+    let target_e0 = arena.alloc_with_table({
+        let mut table = ArenaSmallTable::new();
+        let mut unpacked = [StateId::NONE; BYTE_CEILING];
+        unpacked[0xA0..0xC0].fill(s_last);
+        table.pack(&unpacked);
+        table
+    });
+
+    let target_ed = arena.alloc_with_table({
+        let mut table = ArenaSmallTable::new();
+        let mut unpacked = [StateId::NONE; BYTE_CEILING];
+        unpacked[0x80..0xA0].fill(s_last);
+        table.pack(&unpacked);
+        table
+    });
+
+    let target_f0 = arena.alloc_with_table({
+        let mut table = ArenaSmallTable::new();
+        let mut unpacked = [StateId::NONE; BYTE_CEILING];
+        unpacked[0x90..0xC0].fill(s_last_inter);
+        table.pack(&unpacked);
+        table
+    });
+
+    let target_f4 = arena.alloc_with_table({
+        let mut table = ArenaSmallTable::new();
+        let mut unpacked = [StateId::NONE; BYTE_CEILING];
+        unpacked[0x80..0x90].fill(s_last_inter);
+        table.pack(&unpacked);
+        table
+    });
+
+    // Main state: like dot but with word char bytes excluded from ASCII range
+    arena.alloc_with_table({
+        let mut unpacked = [StateId::NONE; BYTE_CEILING];
+
+        // Start with all ASCII bytes pointing to dest
+        unpacked[..0x80].fill(dest);
+
+        // Exclude word char bytes: a-z, A-Z, 0-9, _
+        for b in b'a'..=b'z' {
+            unpacked[b as usize] = StateId::NONE;
+        }
+        for b in b'A'..=b'Z' {
+            unpacked[b as usize] = StateId::NONE;
+        }
+        for b in b'0'..=b'9' {
+            unpacked[b as usize] = StateId::NONE;
+        }
+        unpacked[b'_' as usize] = StateId::NONE;
+
+        // Multi-byte sequences (same as dot)
+        unpacked[0xC2..0xE0].fill(s_last);
+        unpacked[0xE0] = target_e0;
+        unpacked[0xE1..0xED].fill(s_last_inter);
+        unpacked[0xED] = target_ed;
+        unpacked[0xEE..0xF0].fill(s_last_inter);
+        unpacked[0xF0] = target_f0;
+        unpacked[0xF1..0xF4].fill(s_first_inter);
         unpacked[0xF4] = target_f4;
 
         let mut table = ArenaSmallTable::new();
