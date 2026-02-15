@@ -493,51 +493,64 @@ pub fn traverse_arena_nfa(
             ARENA_VALUE_TERMINATOR
         };
 
-        // Take ownership of current_states to avoid clone
-        let states_to_process = std::mem::take(&mut bufs.current_states);
+        // Destructure bufs for split borrows: iterate current_states immutably
+        // while pushing to next_states mutably. This avoids std::mem::take which
+        // destroyed Vec capacity every iteration, causing ~22-25% overhead from
+        // repeated heap allocations (see docs/PERF_ANALYSIS_2025-02.md Finding 1).
+        let ArenaNfaBuffers {
+            ref mut current_states,
+            ref mut next_states,
+            ref mut transitions,
+            ref mut seen_transitions,
+        } = *bufs;
 
-        for state_id in states_to_process {
+        for &state_id in current_states.iter() {
             // Iterate precomputed epsilon closure directly (no copy needed
-            // since arena and bufs are independent borrows).
+            // since arena and bufs fields are independent borrows).
             for &ec_state_id in &arena[state_id].epsilon_closure {
                 let ec_state = &arena[ec_state_id];
 
                 // Collect field transitions from cold storage (deduplicated)
                 for ft in &ec_state.field_transitions {
                     let ptr = Arc::as_ptr(ft) as usize;
-                    if bufs.seen_transitions.insert(ptr) {
-                        bufs.transitions.push(ft.clone());
+                    if seen_transitions.insert(ptr) {
+                        transitions.push(ft.clone());
                     }
                 }
 
                 // Check spinout (wildcard)
                 if !ec_state.table.spinout.is_none() && byte != ARENA_VALUE_TERMINATOR {
                     // For spinout, stay in same state
-                    bufs.next_states.push(ec_state_id);
+                    next_states.push(ec_state_id);
                 }
 
                 // Take step on current byte
                 let next = ec_state.table.dstep(byte);
                 if !next.is_none() {
-                    bufs.next_states.push(next);
+                    next_states.push(next);
                 }
             }
         }
 
-        // Swap buffers
-        std::mem::swap(&mut bufs.current_states, &mut bufs.next_states);
-        bufs.next_states.clear();
+        // Swap buffers — clear+swap preserves capacity on both Vecs
+        current_states.clear();
+        std::mem::swap(current_states, next_states);
         i += 1;
     }
 
-    // Check final states for matches
-    let final_states = std::mem::take(&mut bufs.current_states);
-    for state_id in final_states {
+    // Check final states for matches (split borrows to avoid take)
+    let ArenaNfaBuffers {
+        ref current_states,
+        ref mut transitions,
+        ref mut seen_transitions,
+        ..
+    } = *bufs;
+    for &state_id in current_states.iter() {
         for &ec_state_id in &arena[state_id].epsilon_closure {
             for ft in &arena[ec_state_id].field_transitions {
                 let ptr = Arc::as_ptr(ft) as usize;
-                if bufs.seen_transitions.insert(ptr) {
-                    bufs.transitions.push(ft.clone());
+                if seen_transitions.insert(ptr) {
+                    transitions.push(ft.clone());
                 }
             }
         }
