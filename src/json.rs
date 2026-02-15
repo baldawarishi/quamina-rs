@@ -697,11 +697,9 @@ fn value_to_matcher(value: &Value) -> Result<Matcher, QuaminaError> {
                                             Ok(t) if t.is_empty() => {
                                                 // No valid alternatives — pattern can never
                                                 // match (e.g., hello~bworld where both sides
-                                                // are word chars). Silently succeed but the
-                                                // pattern will never fire since we don't add
-                                                // any automaton transitions for it.
-                                                return Ok(Matcher::Exact(
-                                                    "\x00\x00IMPOSSIBLE_WB".into(),
+                                                // are word chars). Report as invalid pattern.
+                                                return Err(QuaminaError::InvalidPattern(
+                                                    "word boundary ~b/~B is impossible in this pattern: adjacent characters are in the same word-class".into(),
                                                 ));
                                             }
                                             Ok(t) => t,

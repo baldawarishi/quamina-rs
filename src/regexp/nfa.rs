@@ -437,7 +437,9 @@ pub(crate) fn make_nonword_char_fa(arena: &mut StateArena, dest: StateId) -> Sta
         table
     });
 
-    let target_e0 = arena.alloc_with_table({
+    // Lead byte handler states for UTF-8 sequences with restricted continuation ranges.
+    // E0: 3-byte seqs starting at U+0800, continuation 0xA0..0xBF
+    let after_e0 = arena.alloc_with_table({
         let mut table = ArenaSmallTable::new();
         let mut unpacked = [StateId::NONE; BYTE_CEILING];
         unpacked[0xA0..0xC0].fill(s_last);
@@ -445,7 +447,8 @@ pub(crate) fn make_nonword_char_fa(arena: &mut StateArena, dest: StateId) -> Sta
         table
     });
 
-    let target_ed = arena.alloc_with_table({
+    // ED: 3-byte seqs up to U+D7FF (surrogates excluded), continuation 0x80..0x9F
+    let after_ed = arena.alloc_with_table({
         let mut table = ArenaSmallTable::new();
         let mut unpacked = [StateId::NONE; BYTE_CEILING];
         unpacked[0x80..0xA0].fill(s_last);
@@ -453,7 +456,8 @@ pub(crate) fn make_nonword_char_fa(arena: &mut StateArena, dest: StateId) -> Sta
         table
     });
 
-    let target_f0 = arena.alloc_with_table({
+    // F0: 4-byte seqs starting at U+10000, continuation 0x90..0xBF
+    let after_f0 = arena.alloc_with_table({
         let mut table = ArenaSmallTable::new();
         let mut unpacked = [StateId::NONE; BYTE_CEILING];
         unpacked[0x90..0xC0].fill(s_last_inter);
@@ -461,7 +465,8 @@ pub(crate) fn make_nonword_char_fa(arena: &mut StateArena, dest: StateId) -> Sta
         table
     });
 
-    let target_f4 = arena.alloc_with_table({
+    // F4: 4-byte seqs up to U+10FFFF, continuation 0x80..0x8F
+    let after_f4 = arena.alloc_with_table({
         let mut table = ArenaSmallTable::new();
         let mut unpacked = [StateId::NONE; BYTE_CEILING];
         unpacked[0x80..0x90].fill(s_last_inter);
@@ -488,15 +493,15 @@ pub(crate) fn make_nonword_char_fa(arena: &mut StateArena, dest: StateId) -> Sta
         }
         unpacked[b'_' as usize] = StateId::NONE;
 
-        // Multi-byte sequences (same as dot)
-        unpacked[0xC2..0xE0].fill(s_last);
-        unpacked[0xE0] = target_e0;
-        unpacked[0xE1..0xED].fill(s_last_inter);
-        unpacked[0xED] = target_ed;
-        unpacked[0xEE..0xF0].fill(s_last_inter);
-        unpacked[0xF0] = target_f0;
-        unpacked[0xF1..0xF4].fill(s_first_inter);
-        unpacked[0xF4] = target_f4;
+        // Multi-byte sequences (same structure as dot FA)
+        unpacked[0xC2..0xE0].fill(s_last); // 2-byte sequences
+        unpacked[0xE0] = after_e0; // 3-byte: U+0800..U+0FFF
+        unpacked[0xE1..0xED].fill(s_last_inter); // 3-byte: U+1000..U+CFFF
+        unpacked[0xED] = after_ed; // 3-byte: U+D000..U+D7FF
+        unpacked[0xEE..0xF0].fill(s_last_inter); // 3-byte: U+E000..U+FFFF
+        unpacked[0xF0] = after_f0; // 4-byte: U+10000..U+3FFFF
+        unpacked[0xF1..0xF4].fill(s_first_inter); // 4-byte: U+40000..U+FFFFF
+        unpacked[0xF4] = after_f4; // 4-byte: U+100000..U+10FFFF
 
         let mut table = ArenaSmallTable::new();
         table.pack(&unpacked);

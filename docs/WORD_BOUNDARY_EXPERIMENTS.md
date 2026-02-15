@@ -167,14 +167,10 @@ position-aware assertions.
 5. **Handles quantifiers**: Splits quantified atoms (`.*`, `.+`) to constrain only
    the boundary-adjacent character
 
-**Known limitations to address**:
-- `~W` (non-word class) in expanded patterns produces large NFAs (~11MB) that can
-  exceed the budget. Mitigations:
-  - Add cache key `"W"` to `~W` to cache the FA shell
-  - Increase budget for word-boundary patterns
-  - Or: use dot (`.`) instead of `~W` when the pattern already has `.*` context
-    (since `.*` already matches anything, constraining to `~W` is redundant
-    if we keep the `~w` constraint on the other side)
+**Resolved limitations**:
+- `~W` (non-word class) budget issue: Solved by `make_nonword_char_fa()`, a compact
+  dot-like FA (~10 states) that excludes word char bytes from ASCII transitions.
+  All multi-byte UTF-8 chars are non-word, so multi-byte handling is identical to dot.
+  Cache key `"wb_W"` short-circuits to this compact FA in `make_arena_atom_fa()`.
 - Patterns where both sides of `~b` are fixed word chars (e.g., `hello~bworld`)
-  correctly produce an error (no valid alternatives). Could silently return a
-  never-matching pattern instead.
+  produce an `InvalidPattern` error at rule addition time.

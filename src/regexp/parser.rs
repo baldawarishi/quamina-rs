@@ -647,15 +647,150 @@ fn expand_constrained_suffix(ca: &ConstrainedAtom) -> Vec<Vec<QuantifiedAtom>> {
     }
 }
 
+/// Expand a `~b`/`~B` at value start (no prefix atoms before the boundary).
+///
+/// The `"` delimiter before the value is non-word, so:
+/// - `~b`: first char must be word
+/// - `~B`: first char must be non-word
+fn expand_wb_at_start(suffix: &[QuantifiedAtom], is_boundary: bool, out: &mut Vec<RegexpBranch>) {
+    let wc = word_char_runes();
+    let nwc = non_word_char_runes();
+    let required_class = if is_boundary { &wc } else { &nwc };
+
+    let Some(constrained) = constrain_atom_at_boundary(&suffix[0], required_class, false) else {
+        return;
+    };
+
+    for atoms in expand_constrained_suffix(&constrained) {
+        let mut branch = atoms;
+        branch.extend_from_slice(&suffix[1..]);
+        out.push(branch);
+    }
+
+    // SplitOrAbsent: the first suffix atom matched 0 chars, so the boundary
+    // falls at value start. Constrain the next real atom instead.
+    if matches!(constrained, ConstrainedAtom::SplitOrAbsent(..)) && suffix.len() > 1 {
+        if let Some(c2) = constrain_atom_at_boundary(&suffix[1], required_class, false) {
+            for atoms in expand_constrained_suffix(&c2) {
+                let mut branch = atoms;
+                branch.extend_from_slice(&suffix[2..]);
+                out.push(branch);
+            }
+        }
+    }
+}
+
+/// Expand a `~b`/`~B` at value end (no suffix atoms after the boundary).
+///
+/// The `"` delimiter after the value is non-word, so:
+/// - `~b`: last char must be word
+/// - `~B`: last char must be non-word
+fn expand_wb_at_end(prefix: &[QuantifiedAtom], is_boundary: bool, out: &mut Vec<RegexpBranch>) {
+    let wc = word_char_runes();
+    let nwc = non_word_char_runes();
+    let required_class = if is_boundary { &wc } else { &nwc };
+    let last_idx = prefix.len() - 1;
+
+    let Some(constrained) = constrain_atom_at_boundary(&prefix[last_idx], required_class, true)
+    else {
+        return;
+    };
+
+    for atoms in expand_constrained_prefix(&constrained) {
+        let mut branch = prefix[..last_idx].to_vec();
+        branch.extend(atoms);
+        out.push(branch);
+    }
+
+    // SplitOrAbsent: last prefix atom matched 0 chars, so boundary falls
+    // at the end after the preceding atom. Constrain that one instead.
+    if matches!(constrained, ConstrainedAtom::SplitOrAbsent(..)) && last_idx > 0 {
+        let prev = last_idx - 1;
+        if let Some(c2) = constrain_atom_at_boundary(&prefix[prev], required_class, true) {
+            for atoms in expand_constrained_prefix(&c2) {
+                let mut branch = prefix[..prev].to_vec();
+                branch.extend(atoms);
+                out.push(branch);
+            }
+        }
+    }
+}
+
+/// Expand a `~b`/`~B` in the middle (between prefix and suffix atoms).
+///
+/// Both sides are constrained: the last char of prefix and the first char of suffix
+/// must be in opposite word-classes (`~b`) or the same class (`~B`).
+fn expand_wb_in_middle(
+    prefix: &[QuantifiedAtom],
+    suffix: &[QuantifiedAtom],
+    is_boundary: bool,
+    out: &mut Vec<RegexpBranch>,
+) {
+    let wc = word_char_runes();
+    let nwc = non_word_char_runes();
+    let last_idx = prefix.len() - 1;
+
+    // ~b: (last=word, first=nonword) OR (last=nonword, first=word)
+    // ~B: (last=word, first=word) OR (last=nonword, first=nonword)
+    let class_pairs: [(&RuneRange, &RuneRange); 2] = if is_boundary {
+        [(&wc, &nwc), (&nwc, &wc)]
+    } else {
+        [(&wc, &wc), (&nwc, &nwc)]
+    };
+
+    for (last_class, first_class) in &class_pairs {
+        let cl = constrain_atom_at_boundary(&prefix[last_idx], last_class, true);
+        let cf = constrain_atom_at_boundary(&suffix[0], first_class, false);
+
+        let (Some(ref cl), Some(ref cf)) = (&cl, &cf) else {
+            continue;
+        };
+
+        // Generate all combinations from constrained prefix × suffix
+        for pe in &expand_constrained_prefix(cl) {
+            for se in &expand_constrained_suffix(cf) {
+                let mut branch = prefix[..last_idx].to_vec();
+                branch.extend(pe.clone());
+                branch.extend(se.clone());
+                branch.extend_from_slice(&suffix[1..]);
+                out.push(branch);
+            }
+        }
+
+        // SplitOrAbsent on prefix side: prefix atom absent → boundary at value start.
+        // The `"` is non-word, so constrain suffix to edge class.
+        if matches!(cl, ConstrainedAtom::SplitOrAbsent(..)) {
+            let edge_class = if is_boundary { &wc } else { &nwc };
+            if let Some(c2) = constrain_atom_at_boundary(&suffix[0], edge_class, false) {
+                for se in expand_constrained_suffix(&c2) {
+                    let mut branch = prefix[..last_idx].to_vec();
+                    branch.extend(se);
+                    branch.extend_from_slice(&suffix[1..]);
+                    out.push(branch);
+                }
+            }
+        }
+
+        // SplitOrAbsent on suffix side: suffix atom absent → boundary at value end.
+        if matches!(cf, ConstrainedAtom::SplitOrAbsent(..)) {
+            let edge_class = if is_boundary { &wc } else { &nwc };
+            if let Some(c2) = constrain_atom_at_boundary(&prefix[last_idx], edge_class, true) {
+                for pe in expand_constrained_prefix(&c2) {
+                    let mut branch = prefix[..last_idx].to_vec();
+                    branch.extend(pe);
+                    branch.extend_from_slice(&suffix[1..]);
+                    out.push(branch);
+                }
+            }
+        }
+    }
+}
+
 /// Expand word boundaries (`~b`/`~B`) in a regexp tree using character-class intersection.
 ///
 /// For `A~bB`: The last char of A and first char of B must be in different word-char classes.
 /// This is implemented by intersecting A's last atom with `~w`/`~W` and B's first atom
 /// with the opposite class, producing two alternative branches.
-///
-/// Edge cases:
-/// - `~b` at start: `"` before value is non-word, so first char must be word char
-/// - `~b` at end: `"` after value is non-word, so last char must be word char
 ///
 /// Returns the expanded tree (may have more branches than the input).
 pub fn expand_word_boundaries(tree: &RegexpRoot) -> Result<RegexpRoot, String> {
@@ -674,7 +809,7 @@ pub fn expand_word_boundaries(tree: &RegexpRoot) -> Result<RegexpRoot, String> {
             return Err("too many word boundaries in pattern (max 4)".into());
         }
 
-        // Expand one word boundary at a time
+        // Expand one word boundary at a time (each pass resolves the first remaining ~b/~B)
         let mut alternatives = vec![branch.clone()];
 
         loop {
@@ -682,176 +817,28 @@ pub fn expand_word_boundaries(tree: &RegexpRoot) -> Result<RegexpRoot, String> {
             let mut found_wb = false;
 
             for alt in &alternatives {
-                // Find the first remaining word boundary
                 let wb_pos = alt.iter().position(|a| a.is_word_boundary.is_some());
-                if wb_pos.is_none() {
+                let Some(pos) = wb_pos else {
                     new_alternatives.push(alt.clone());
                     continue;
-                }
+                };
                 found_wb = true;
-                let pos = wb_pos.unwrap();
                 let is_boundary = alt[pos].is_word_boundary.unwrap();
 
                 let prefix = &alt[..pos];
                 let suffix = &alt[pos + 1..];
-                let at_start = prefix.is_empty();
-                let at_end = suffix.is_empty();
 
-                let wc = word_char_runes();
-                let nwc = non_word_char_runes();
-
-                if at_start && at_end {
-                    // ~b alone: value is between two `"` (non-word), so boundary = never,
-                    // non-boundary = always
-                    if is_boundary {
-                        // No valid alternative — skip
-                    } else {
-                        new_alternatives.push(Vec::new());
-                    }
-                } else if at_start {
-                    // `"` before is non-word. ~b: first char must be word. ~B: first char must be non-word.
-                    let required_class = if is_boundary { &wc } else { &nwc };
-                    if let Some(constrained) =
-                        constrain_atom_at_boundary(&suffix[0], required_class, false)
-                    {
-                        // Normal branch: first char constrained
-                        for atoms in expand_constrained_suffix(&constrained) {
-                            let mut new_branch = Vec::new();
-                            new_branch.extend(atoms);
-                            new_branch.extend_from_slice(&suffix[1..]);
-                            new_alternatives.push(new_branch);
-                        }
-                        // SplitOrAbsent: zero-match means atom absent entirely.
-                        // At start, if suffix atom is absent, there's no char to check,
-                        // so the boundary is between `"` and whatever comes after.
-                        // This is handled by the remaining suffix atoms naturally.
-                        if matches!(constrained, ConstrainedAtom::SplitOrAbsent(..)) {
-                            // Absent branch: skip the first suffix atom entirely.
-                            // The boundary is at value start. For ~b, the char after
-                            // must be word. But if suffix[0] was .*, the next char is
-                            // suffix[1..]. We need to constrain that too.
-                            // Actually, if suffix[0] is absent (matched 0 chars),
-                            // the boundary check happens at the start of the value.
-                            // The `"` is non-word, so for ~b, the next real char
-                            // (suffix[1] or whatever follows) must be word.
-                            // But suffix[1..] is not constrained — just proceed.
-                            let absent_branch = suffix[1..].to_vec();
-                            // For ~b at start with absent atom: first real char must be word
-                            // For ~B at start with absent atom: first real char must be non-word
-                            if !absent_branch.is_empty() {
-                                if let Some(c2) = constrain_atom_at_boundary(
-                                    &absent_branch[0],
-                                    required_class,
-                                    false,
-                                ) {
-                                    let ab = Vec::new();
-                                    for atoms in expand_constrained_suffix(&c2) {
-                                        let mut b = ab.clone();
-                                        b.extend(atoms);
-                                        b.extend_from_slice(&absent_branch[1..]);
-                                        new_alternatives.push(b);
-                                    }
-                                }
-                            }
+                match (prefix.is_empty(), suffix.is_empty()) {
+                    (true, true) => {
+                        // ~b alone: between two `"` (non-word). Boundary = never, non-boundary = always.
+                        if !is_boundary {
+                            new_alternatives.push(Vec::new());
                         }
                     }
-                } else if at_end {
-                    // `"` after is non-word. ~b: last char must be word. ~B: last char must be non-word.
-                    let required_class = if is_boundary { &wc } else { &nwc };
-                    let last_idx = prefix.len() - 1;
-                    if let Some(constrained) =
-                        constrain_atom_at_boundary(&prefix[last_idx], required_class, true)
-                    {
-                        for atoms in expand_constrained_prefix(&constrained) {
-                            let mut new_branch = prefix[..last_idx].to_vec();
-                            new_branch.extend(atoms);
-                            new_alternatives.push(new_branch);
-                        }
-                        // SplitOrAbsent: atom absent → boundary at end after prefix[..last_idx]
-                        if matches!(constrained, ConstrainedAtom::SplitOrAbsent(..)) {
-                            let remaining = &prefix[..last_idx];
-                            if !remaining.is_empty() {
-                                let rl = remaining.len() - 1;
-                                if let Some(c2) =
-                                    constrain_atom_at_boundary(&remaining[rl], required_class, true)
-                                {
-                                    for atoms in expand_constrained_prefix(&c2) {
-                                        let mut b = remaining[..rl].to_vec();
-                                        b.extend(atoms);
-                                        new_alternatives.push(b);
-                                    }
-                                }
-                            }
-                        }
-                    }
-                } else {
-                    // Middle position: constrain last of prefix AND first of suffix
-                    let last_idx = prefix.len() - 1;
-
-                    // For ~b: (last=word, first=nonword) OR (last=nonword, first=word)
-                    // For ~B: (last=word, first=word) OR (last=nonword, first=nonword)
-                    let class_pairs: Vec<(&RuneRange, &RuneRange)> = if is_boundary {
-                        vec![(&wc, &nwc), (&nwc, &wc)]
-                    } else {
-                        vec![(&wc, &wc), (&nwc, &nwc)]
-                    };
-
-                    for (last_class, first_class) in &class_pairs {
-                        let cl = constrain_atom_at_boundary(&prefix[last_idx], last_class, true);
-                        let cf = constrain_atom_at_boundary(&suffix[0], first_class, false);
-
-                        if let (Some(ref cl), Some(ref cf)) = (&cl, &cf) {
-                            // Generate all combinations from constrained prefix/suffix
-                            let prefix_expansions = expand_constrained_prefix(cl);
-                            let suffix_expansions = expand_constrained_suffix(cf);
-
-                            for pe in &prefix_expansions {
-                                for se in &suffix_expansions {
-                                    let mut new_branch = prefix[..last_idx].to_vec();
-                                    new_branch.extend(pe.clone());
-                                    new_branch.extend(se.clone());
-                                    new_branch.extend_from_slice(&suffix[1..]);
-                                    new_alternatives.push(new_branch);
-                                }
-                            }
-
-                            // Handle SplitOrAbsent on prefix side:
-                            // If prefix atom is absent (0 match), boundary is at value start.
-                            // For ~b: `"` is non-word, so suffix first char must be word.
-                            if matches!(cl, ConstrainedAtom::SplitOrAbsent(..)) {
-                                // The "required" class for the suffix side when prefix is absent
-                                // depends on the value start being non-word:
-                                // ~b: suffix must start with word char
-                                // ~B: suffix must start with non-word char
-                                let edge_class = if is_boundary { &wc } else { &nwc };
-                                if let Some(c2) =
-                                    constrain_atom_at_boundary(&suffix[0], edge_class, false)
-                                {
-                                    for se in expand_constrained_suffix(&c2) {
-                                        let mut b = prefix[..last_idx].to_vec();
-                                        b.extend(se);
-                                        b.extend_from_slice(&suffix[1..]);
-                                        new_alternatives.push(b);
-                                    }
-                                }
-                            }
-
-                            // Handle SplitOrAbsent on suffix side:
-                            // If suffix atom is absent, boundary is at value end.
-                            if matches!(cf, ConstrainedAtom::SplitOrAbsent(..)) {
-                                let edge_class = if is_boundary { &wc } else { &nwc };
-                                if let Some(c2) =
-                                    constrain_atom_at_boundary(&prefix[last_idx], edge_class, true)
-                                {
-                                    for pe in expand_constrained_prefix(&c2) {
-                                        let mut b = prefix[..last_idx].to_vec();
-                                        b.extend(pe);
-                                        b.extend_from_slice(&suffix[1..]);
-                                        new_alternatives.push(b);
-                                    }
-                                }
-                            }
-                        }
+                    (true, false) => expand_wb_at_start(suffix, is_boundary, &mut new_alternatives),
+                    (false, true) => expand_wb_at_end(prefix, is_boundary, &mut new_alternatives),
+                    (false, false) => {
+                        expand_wb_in_middle(prefix, suffix, is_boundary, &mut new_alternatives)
                     }
                 }
             }
@@ -866,8 +853,8 @@ pub fn expand_word_boundaries(tree: &RegexpRoot) -> Result<RegexpRoot, String> {
     }
 
     // An empty result means no valid alternatives exist (e.g., hello~bworld
-    // where both sides are word chars). This is semantically valid — the pattern
-    // simply never matches. Return empty tree to signal "never matches".
+    // where both sides are word chars). The caller (json.rs) reports this as
+    // an InvalidPattern error.
     Ok(result_branches)
 }
 
@@ -2181,5 +2168,49 @@ mod tests {
 
         let qa = &tree[0][0];
         assert_eq!(qa.ascii_negated_bytes, Some(vec![b'"']));
+    }
+
+    // ========================================================================
+    // Word boundary (~b/~B) expansion
+    // ========================================================================
+
+    #[test]
+    fn test_wb_parse_boundary_marker() {
+        let tree = parse_regexp("~bhello").unwrap();
+        assert!(has_word_boundary(&tree));
+        let expanded = expand_word_boundaries(&tree).unwrap();
+        // ~b at start: first char ('h' = word char) must be word → trivially satisfied
+        assert_eq!(expanded.len(), 1);
+        assert_eq!(expanded[0].len(), 5);
+    }
+
+    #[test]
+    fn test_wb_impossible_boundary_empty_tree() {
+        // ab~bcd: 'b' and 'c' are both word chars → ~b impossible → empty tree
+        let tree = parse_regexp("ab~bcd").unwrap();
+        let expanded = expand_word_boundaries(&tree).unwrap();
+        assert!(
+            expanded.is_empty(),
+            "impossible boundary should produce empty tree"
+        );
+    }
+
+    #[test]
+    fn test_wb_middle_boundary_expansion() {
+        // ab~b cd: 'b' is word, ' ' is non-word → boundary valid
+        let tree = parse_regexp("ab~b cd").unwrap();
+        let expanded = expand_word_boundaries(&tree).unwrap();
+        assert_eq!(expanded.len(), 1); // Only word→nonword branch survives
+    }
+
+    #[test]
+    fn test_wb_dot_star_expansion() {
+        // .*~bcat: dot-star before boundary, 'c' (word) after
+        let tree = parse_regexp(".*~bcat").unwrap();
+        let expanded = expand_word_boundaries(&tree).unwrap();
+        // Two branches:
+        // 1. .*{0,MAX-1} ~W c a t (last of .* is non-word, c is word)
+        // 2. c a t (when .* matches 0 chars, boundary at value start, c must be word)
+        assert_eq!(expanded.len(), 2);
     }
 }
