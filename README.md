@@ -1,11 +1,13 @@
 # quamina-rs
 
 [![CI](https://github.com/baldawarishi/quamina-rs/actions/workflows/test.yml/badge.svg)](https://github.com/baldawarishi/quamina-rs/actions/workflows/test.yml)
+[![Crates.io](https://img.shields.io/crates/v/quamina.svg)](https://crates.io/crates/quamina)
+[![Documentation](https://docs.rs/quamina/badge.svg)](https://docs.rs/quamina)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 
 Rust port of [quamina](https://github.com/timbray/quamina), a pattern-matching library for filtering JSON objects.
 
-In Quamina, uou add Patterns to a quamina instance, then match Events against it. Quamina tells you which Patterns matched. It does this fast—millions of events per second, regardless of how many patterns you have.
+In Quamina, you add Patterns to a quamina instance, then match Events against it. Quamina tells you which Patterns matched. It does this fast—millions of events per second, regardless of how many patterns you have.
 
 Try it online in the **[playground](https://baldawarishi.github.io/quamina-rs/)** to test patterns against JSON events in your browser.
 
