@@ -7,7 +7,7 @@ license = "Apache-2.0"
 repository = "https://github.com/baldawarishi/quamina-rs"
 keywords = ["json", "pattern-matching", "event-filtering", "rules-engine"]
 categories = ["algorithms", "text-processing"]
-exclude = ["testdata/", "docs/", "examples/", "benches/", ".github/", "run_long_script.sh", "validation.log"]
+exclude = ["testdata/", "docs/", "examples/", "benches/", "fuzz/", "playground/", ".github/"]
 
 [dependencies]
 arc-swap = "1.7"
