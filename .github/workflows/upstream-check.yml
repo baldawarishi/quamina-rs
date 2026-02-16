@@ -1,15 +1,10 @@
 name: Upstream sync check
 
-# on:
-#   schedule:
-#     # Every Monday at 09:00 UTC
-#     - cron: "0 9 * * 1"
-#   workflow_dispatch:
-on: # Temporary for testing
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
+on:
+  schedule:
+    # Every Monday at 09:00 UTC
+    - cron: "0 9 * * 1"
+  workflow_dispatch:
 
 permissions:
   issues: write
