@@ -625,24 +625,18 @@ fn constrain_atom_at_boundary(
     }
 }
 
-/// Expand a constrained atom into prefix atom sequences.
-/// For prefix (last char), the order is: [base, constrained_single]
-fn expand_constrained_prefix(ca: &ConstrainedAtom) -> Vec<Vec<QuantifiedAtom>> {
+/// Expand a constrained atom into atom sequences.
+/// `base_first=true` gives [base, single] (prefix/last-char side),
+/// `base_first=false` gives [single, base] (suffix/first-char side).
+fn expand_constrained(ca: &ConstrainedAtom, base_first: bool) -> Vec<Vec<QuantifiedAtom>> {
     match ca {
         ConstrainedAtom::Single(a) => vec![vec![a.clone()]],
         ConstrainedAtom::Split(base, single) | ConstrainedAtom::SplitOrAbsent(base, single) => {
-            vec![vec![base.clone(), single.clone()]]
-        }
-    }
-}
-
-/// Expand a constrained atom into suffix atom sequences.
-/// For suffix (first char), the order is: [constrained_single, base]
-fn expand_constrained_suffix(ca: &ConstrainedAtom) -> Vec<Vec<QuantifiedAtom>> {
-    match ca {
-        ConstrainedAtom::Single(a) => vec![vec![a.clone()]],
-        ConstrainedAtom::Split(base, single) | ConstrainedAtom::SplitOrAbsent(base, single) => {
-            vec![vec![single.clone(), base.clone()]]
+            if base_first {
+                vec![vec![base.clone(), single.clone()]]
+            } else {
+                vec![vec![single.clone(), base.clone()]]
+            }
         }
     }
 }
@@ -661,7 +655,7 @@ fn expand_wb_at_start(suffix: &[QuantifiedAtom], is_boundary: bool, out: &mut Ve
         return;
     };
 
-    for atoms in expand_constrained_suffix(&constrained) {
+    for atoms in expand_constrained(&constrained, false) {
         let mut branch = atoms;
         branch.extend_from_slice(&suffix[1..]);
         out.push(branch);
@@ -671,7 +665,7 @@ fn expand_wb_at_start(suffix: &[QuantifiedAtom], is_boundary: bool, out: &mut Ve
     // falls at value start. Constrain the next real atom instead.
     if matches!(constrained, ConstrainedAtom::SplitOrAbsent(..)) && suffix.len() > 1 {
         if let Some(c2) = constrain_atom_at_boundary(&suffix[1], required_class, false) {
-            for atoms in expand_constrained_suffix(&c2) {
+            for atoms in expand_constrained(&c2, false) {
                 let mut branch = atoms;
                 branch.extend_from_slice(&suffix[2..]);
                 out.push(branch);
@@ -696,7 +690,7 @@ fn expand_wb_at_end(prefix: &[QuantifiedAtom], is_boundary: bool, out: &mut Vec<
         return;
     };
 
-    for atoms in expand_constrained_prefix(&constrained) {
+    for atoms in expand_constrained(&constrained, true) {
         let mut branch = prefix[..last_idx].to_vec();
         branch.extend(atoms);
         out.push(branch);
@@ -707,7 +701,7 @@ fn expand_wb_at_end(prefix: &[QuantifiedAtom], is_boundary: bool, out: &mut Vec<
     if matches!(constrained, ConstrainedAtom::SplitOrAbsent(..)) && last_idx > 0 {
         let prev = last_idx - 1;
         if let Some(c2) = constrain_atom_at_boundary(&prefix[prev], required_class, true) {
-            for atoms in expand_constrained_prefix(&c2) {
+            for atoms in expand_constrained(&c2, true) {
                 let mut branch = prefix[..prev].to_vec();
                 branch.extend(atoms);
                 out.push(branch);
@@ -747,8 +741,8 @@ fn expand_wb_in_middle(
         };
 
         // Generate all combinations from constrained prefix × suffix
-        for pe in &expand_constrained_prefix(cl) {
-            for se in &expand_constrained_suffix(cf) {
+        for pe in &expand_constrained(cl, true) {
+            for se in &expand_constrained(cf, false) {
                 let mut branch = prefix[..last_idx].to_vec();
                 branch.extend(pe.clone());
                 branch.extend(se.clone());
@@ -762,7 +756,7 @@ fn expand_wb_in_middle(
         if matches!(cl, ConstrainedAtom::SplitOrAbsent(..)) {
             let edge_class = if is_boundary { &wc } else { &nwc };
             if let Some(c2) = constrain_atom_at_boundary(&suffix[0], edge_class, false) {
-                for se in expand_constrained_suffix(&c2) {
+                for se in expand_constrained(&c2, false) {
                     let mut branch = prefix[..last_idx].to_vec();
                     branch.extend(se);
                     branch.extend_from_slice(&suffix[1..]);
@@ -775,7 +769,7 @@ fn expand_wb_in_middle(
         if matches!(cf, ConstrainedAtom::SplitOrAbsent(..)) {
             let edge_class = if is_boundary { &wc } else { &nwc };
             if let Some(c2) = constrain_atom_at_boundary(&prefix[last_idx], edge_class, true) {
-                for pe in expand_constrained_prefix(&c2) {
+                for pe in expand_constrained(&c2, true) {
                     let mut branch = prefix[..last_idx].to_vec();
                     branch.extend(pe);
                     branch.extend_from_slice(&suffix[1..]);
@@ -1094,25 +1088,9 @@ fn check_multi_char_escape(c: char) -> Option<(RuneRange, Option<String>)> {
         // ~D = non-digit (everything except 0-9)
         'D' => Some((invert_rune_range(vec![RunePair { lo: '0', hi: '9' }]), None)),
         // ~w = word char [a-zA-Z0-9_]
-        'w' => Some((
-            vec![
-                RunePair { lo: 'a', hi: 'z' },
-                RunePair { lo: 'A', hi: 'Z' },
-                RunePair { lo: '0', hi: '9' },
-                RunePair { lo: '_', hi: '_' },
-            ],
-            None,
-        )),
+        'w' => Some((word_char_runes(), None)),
         // ~W = non-word char
-        'W' => Some((
-            invert_rune_range(vec![
-                RunePair { lo: 'a', hi: 'z' },
-                RunePair { lo: 'A', hi: 'Z' },
-                RunePair { lo: '0', hi: '9' },
-                RunePair { lo: '_', hi: '_' },
-            ]),
-            None,
-        )),
+        'W' => Some((invert_rune_range(word_char_runes()), None)),
         // ~s = whitespace [ \t\n\r]
         's' => Some((
             vec![

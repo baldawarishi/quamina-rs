@@ -305,9 +305,19 @@ fn make_arena_atom_fa(qa: &QuantifiedAtom, arena: &mut StateArena, next: StateId
     }
 }
 
-/// Build arena FA for a dot (any character).
-fn make_arena_dot_fa(arena: &mut StateArena, dest: StateId) -> StateId {
-    // Build continuation byte states (for multi-byte UTF-8)
+/// Build an arena FA matching any single UTF-8 character, with an optional
+/// ASCII filter applied to single-byte (0x00-0x7F) transitions.
+///
+/// If `ascii_filter` is None, all ASCII bytes transition to `dest` (dot behavior).
+/// If provided, the filter is called with the pre-filled ASCII unpacked array to
+/// exclude specific bytes (e.g., word chars for `~W`).
+#[allow(clippy::type_complexity)]
+fn make_utf8_char_fa(
+    arena: &mut StateArena,
+    dest: StateId,
+    ascii_filter: Option<&dyn Fn(&mut [StateId; BYTE_CEILING])>,
+) -> StateId {
+    // Continuation byte states for multi-byte UTF-8 sequences
     let s_last = arena.alloc_with_table({
         let mut table = ArenaSmallTable::new();
         let mut unpacked = [StateId::NONE; BYTE_CEILING];
@@ -332,7 +342,7 @@ fn make_arena_dot_fa(arena: &mut StateArena, dest: StateId) -> StateId {
         table
     });
 
-    // Special states for specific lead bytes
+    // Lead byte handler states for restricted continuation ranges
     let target_e0 = arena.alloc_with_table({
         let mut table = ArenaSmallTable::new();
         let mut unpacked = [StateId::NONE; BYTE_CEILING];
@@ -365,35 +375,26 @@ fn make_arena_dot_fa(arena: &mut StateArena, dest: StateId) -> StateId {
         table
     });
 
-    // Main state with all lead byte transitions
+    // Main state
     arena.alloc_with_table({
         let mut unpacked = [StateId::NONE; BYTE_CEILING];
 
-        // ASCII (0x00-0x7F) -> dest directly
+        // ASCII (0x00-0x7F) -> dest
         unpacked[..0x80].fill(dest);
 
-        // 2-byte sequences (0xC2-0xDF)
+        // Apply optional ASCII filter (e.g., exclude word chars)
+        if let Some(filter) = ascii_filter {
+            filter(&mut unpacked);
+        }
+
+        // Multi-byte lead bytes
         unpacked[0xC2..0xE0].fill(s_last);
-
-        // E0
         unpacked[0xE0] = target_e0;
-
-        // E1-EC
         unpacked[0xE1..0xED].fill(s_last_inter);
-
-        // ED
         unpacked[0xED] = target_ed;
-
-        // EE-EF
         unpacked[0xEE..0xF0].fill(s_last_inter);
-
-        // F0
         unpacked[0xF0] = target_f0;
-
-        // F1-F3
         unpacked[0xF1..0xF4].fill(s_first_inter);
-
-        // F4
         unpacked[0xF4] = target_f4;
 
         let mut table = ArenaSmallTable::new();
@@ -402,111 +403,32 @@ fn make_arena_dot_fa(arena: &mut StateArena, dest: StateId) -> StateId {
     })
 }
 
+/// Build arena FA for a dot (any character).
+fn make_arena_dot_fa(arena: &mut StateArena, dest: StateId) -> StateId {
+    make_utf8_char_fa(arena, dest, None)
+}
+
 /// Build arena FA for a non-word character (`~W`).
 ///
-/// Like `make_arena_dot_fa` but excludes word char bytes (a-z, A-Z, 0-9, _)
-/// from single-byte ASCII transitions. Multi-byte UTF-8 sequences all lead to
-/// non-word chars (since all word chars are ASCII single-byte).
-///
-/// This is much more compact than building the full `~W` Unicode range because
-/// it reuses the dot's multi-byte UTF-8 handling structure.
+/// Like dot but excludes word char bytes (a-z, A-Z, 0-9, _) from ASCII transitions.
+/// Multi-byte UTF-8 sequences are all non-word chars (word chars are ASCII-only).
 pub(crate) fn make_nonword_char_fa(arena: &mut StateArena, dest: StateId) -> StateId {
-    // Multi-byte continuation states are identical to dot — all multi-byte
-    // UTF-8 chars are non-word chars
-    let s_last = arena.alloc_with_table({
-        let mut table = ArenaSmallTable::new();
-        let mut unpacked = [StateId::NONE; BYTE_CEILING];
-        unpacked[0x80..0xC0].fill(dest);
-        table.pack(&unpacked);
-        table
-    });
-
-    let s_last_inter = arena.alloc_with_table({
-        let mut table = ArenaSmallTable::new();
-        let mut unpacked = [StateId::NONE; BYTE_CEILING];
-        unpacked[0x80..0xC0].fill(s_last);
-        table.pack(&unpacked);
-        table
-    });
-
-    let s_first_inter = arena.alloc_with_table({
-        let mut table = ArenaSmallTable::new();
-        let mut unpacked = [StateId::NONE; BYTE_CEILING];
-        unpacked[0x80..0xC0].fill(s_last_inter);
-        table.pack(&unpacked);
-        table
-    });
-
-    // Lead byte handler states for UTF-8 sequences with restricted continuation ranges.
-    // E0: 3-byte seqs starting at U+0800, continuation 0xA0..0xBF
-    let after_e0 = arena.alloc_with_table({
-        let mut table = ArenaSmallTable::new();
-        let mut unpacked = [StateId::NONE; BYTE_CEILING];
-        unpacked[0xA0..0xC0].fill(s_last);
-        table.pack(&unpacked);
-        table
-    });
-
-    // ED: 3-byte seqs up to U+D7FF (surrogates excluded), continuation 0x80..0x9F
-    let after_ed = arena.alloc_with_table({
-        let mut table = ArenaSmallTable::new();
-        let mut unpacked = [StateId::NONE; BYTE_CEILING];
-        unpacked[0x80..0xA0].fill(s_last);
-        table.pack(&unpacked);
-        table
-    });
-
-    // F0: 4-byte seqs starting at U+10000, continuation 0x90..0xBF
-    let after_f0 = arena.alloc_with_table({
-        let mut table = ArenaSmallTable::new();
-        let mut unpacked = [StateId::NONE; BYTE_CEILING];
-        unpacked[0x90..0xC0].fill(s_last_inter);
-        table.pack(&unpacked);
-        table
-    });
-
-    // F4: 4-byte seqs up to U+10FFFF, continuation 0x80..0x8F
-    let after_f4 = arena.alloc_with_table({
-        let mut table = ArenaSmallTable::new();
-        let mut unpacked = [StateId::NONE; BYTE_CEILING];
-        unpacked[0x80..0x90].fill(s_last_inter);
-        table.pack(&unpacked);
-        table
-    });
-
-    // Main state: like dot but with word char bytes excluded from ASCII range
-    arena.alloc_with_table({
-        let mut unpacked = [StateId::NONE; BYTE_CEILING];
-
-        // Start with all ASCII bytes pointing to dest
-        unpacked[..0x80].fill(dest);
-
-        // Exclude word char bytes: a-z, A-Z, 0-9, _
-        for b in b'a'..=b'z' {
-            unpacked[b as usize] = StateId::NONE;
-        }
-        for b in b'A'..=b'Z' {
-            unpacked[b as usize] = StateId::NONE;
-        }
-        for b in b'0'..=b'9' {
-            unpacked[b as usize] = StateId::NONE;
-        }
-        unpacked[b'_' as usize] = StateId::NONE;
-
-        // Multi-byte sequences (same structure as dot FA)
-        unpacked[0xC2..0xE0].fill(s_last); // 2-byte sequences
-        unpacked[0xE0] = after_e0; // 3-byte: U+0800..U+0FFF
-        unpacked[0xE1..0xED].fill(s_last_inter); // 3-byte: U+1000..U+CFFF
-        unpacked[0xED] = after_ed; // 3-byte: U+D000..U+D7FF
-        unpacked[0xEE..0xF0].fill(s_last_inter); // 3-byte: U+E000..U+FFFF
-        unpacked[0xF0] = after_f0; // 4-byte: U+10000..U+3FFFF
-        unpacked[0xF1..0xF4].fill(s_first_inter); // 4-byte: U+40000..U+FFFFF
-        unpacked[0xF4] = after_f4; // 4-byte: U+100000..U+10FFFF
-
-        let mut table = ArenaSmallTable::new();
-        table.pack(&unpacked);
-        table
-    })
+    make_utf8_char_fa(
+        arena,
+        dest,
+        Some(&|unpacked| {
+            for b in b'a'..=b'z' {
+                unpacked[b as usize] = StateId::NONE;
+            }
+            for b in b'A'..=b'Z' {
+                unpacked[b as usize] = StateId::NONE;
+            }
+            for b in b'0'..=b'9' {
+                unpacked[b as usize] = StateId::NONE;
+            }
+            unpacked[b'_' as usize] = StateId::NONE;
+        }),
+    )
 }
 
 // ============================================================================
