@@ -287,6 +287,8 @@ Other limitations:
 
 All credits should go to [Tim](https://www.tbray.org/) and other contributors in the [original Go](https://github.com/timbray/quamina) version. Tim's [Quamina Diary](https://www.tbray.org/ongoing/What/Technology/Quamina%20Diary/) also explains how automata-based matching works.
 
+The last-synced upstream Go commit is tracked in [`.go-upstream-sync`](.go-upstream-sync). Run `just upstream` to check for new changes.
+
 
 ## License
 

@@ -1,0 +1,61 @@
+name: Upstream sync check
+
+# on:
+#   schedule:
+#     # Every Monday at 09:00 UTC
+#     - cron: "0 9 * * 1"
+#   workflow_dispatch:
+on: # Temporary for testing
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  issues: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check upstream
+        id: check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          OUTPUT="$(./scripts/check-upstream.sh 2>&1)" || true
+          echo "$OUTPUT"
+
+          # Parse count from script output ("23 new commit(s) since ...")
+          if echo "$OUTPUT" | grep -q "new commit(s)"; then
+            echo "behind=true" >> "$GITHUB_OUTPUT"
+            {
+              echo "body<<EOF"
+              echo "$OUTPUT"
+              echo "EOF"
+            } >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create or update issue
+        if: steps.check.outputs.behind == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TITLE="Upstream sync: timbray/quamina has new commits"
+
+          # stale upstream-sync issues.
+          EXISTING="$(gh issue list --label upstream-sync --state open --json number --jq '.[].number')"
+
+          gh issue create --title "$TITLE" --body "$(cat <<EOF
+          \`\`\`
+          ${{ steps.check.outputs.body }}
+          \`\`\`
+          EOF
+          )" --label upstream-sync
+
+          # close stale issue(s)
+          for num in $EXISTING; do
+            gh issue close "$num" --comment "Superseded by newer check."
+          done
