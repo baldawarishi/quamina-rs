@@ -761,6 +761,58 @@ fn test_wb_with_dot() {
     assert_no_has_match!(q, r#"{"name": "ab"}"#, "test");
 }
 
+#[test]
+fn test_wb_plus_quantifier() {
+    // a+~b exercises the Split path (quant_min=1), not SplitOrAbsent
+    let q = q!("test" => r#"{"v": [{"regexp": "a+~b "}]}"#);
+    assert_has_match!(q, r#"{"v": "aaa "}"#, "test");
+    assert_has_match!(q, r#"{"v": "a "}"#, "test");
+    assert_no_has_match!(q, r#"{"v": "aab"}"#, "test");
+}
+
+#[test]
+fn test_wb_optional_quantifier() {
+    // a?~b exercises SplitOrAbsent (quant_min=0): when a? matches 'a',
+    // the boundary is between 'a' (word) and ' ' (non-word)
+    let q = q!("test" => r#"{"v": [{"regexp": "xa?~b "}]}"#);
+    assert_has_match!(q, r#"{"v": "xa "}"#, "test");
+    assert_no_has_match!(q, r#"{"v": "xab"}"#, "test");
+}
+
+#[test]
+fn test_wb_range_quantifier() {
+    // a{2,4}~b exercises Split with quant_min=2
+    let q = q!("test" => r#"{"v": [{"regexp": "a{2,4}~b "}]}"#);
+    assert_has_match!(q, r#"{"v": "aa "}"#, "test");
+    assert_has_match!(q, r#"{"v": "aaaa "}"#, "test");
+    assert_no_has_match!(q, r#"{"v": "a "}"#, "test");
+}
+
+#[test]
+fn test_wb_utf8_multibyte() {
+    // Multi-byte UTF-8 chars (é = 0xC3 0xA9) are non-word, so
+    // word→multi-byte = boundary, multi-byte→word = boundary
+    let q = q!("test" => r#"{"v": [{"regexp": "caf~bé"}]}"#);
+    assert_has_match!(q, r#"{"v": "café"}"#, "test");
+}
+
+#[test]
+fn test_wb_utf8_emoji_boundary() {
+    // Emoji (4-byte UTF-8) is non-word; word char→emoji = boundary
+    // Use .~b. to test: word char then boundary then non-word (emoji)
+    let q = q!("test" => r#"{"v": [{"regexp": ".~b."}]}"#);
+    assert_has_match!(q, "{\"v\": \"a😀\"}", "test");
+    assert_no_has_match!(q, r#"{"v": "ab"}"#, "test");
+}
+
+#[test]
+fn test_wb_utf8_nonword_to_word() {
+    // Non-ASCII char (non-word) followed by boundary then ASCII word char
+    let q = q!("test" => r#"{"v": [{"regexp": ".~bcat"}]}"#);
+    assert_has_match!(q, "{\"v\": \"écat\"}", "test");
+    assert_no_has_match!(q, r#"{"v": "acat"}"#, "test");
+}
+
 // ============================================================================
 // JSON Escape Sequences Tests
 // ============================================================================
