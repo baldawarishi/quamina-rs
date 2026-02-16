@@ -45,7 +45,7 @@ const SEEDS: &[(&str, &[u8])] = &[
         br#"{"code": "ABC"}"#,
     ),
     (
-        r#"{"tag": [{"regexp": "~bcat~b"}]}"#,
+        r#"{"tag": [{"regexp": ".*~bcat~b.*"}]}"#,
         br#"{"tag": "the cat sat"}"#,
     ),
 ];

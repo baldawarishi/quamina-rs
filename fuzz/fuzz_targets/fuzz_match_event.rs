@@ -56,7 +56,7 @@ static MATCHER: Lazy<Quamina<&'static str>> = Lazy::new(|| {
     let _ = q.add_pattern("regex", r#"{"code": [{"regex": "^[A-Z]{3}-[0-9]+$"}]}"#);
 
     // Word boundary - tests ~b/~B automaton paths
-    let _ = q.add_pattern("word-boundary", r#"{"tag": [{"regexp": "~bcat~b"}]}"#);
+    let _ = q.add_pattern("word-boundary", r#"{"tag": [{"regexp": ".*~bcat~b.*"}]}"#);
 
     // CIDR - tests IP address matching
     let _ = q.add_pattern("cidr", r#"{"ip": [{"cidr": "10.0.0.0/8"}]}"#);
