@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 Style inspired by [ripgrep's CHANGELOG](https://github.com/BurntSushi/ripgrep/blob/master/CHANGELOG.md).
 
+## [Unreleased]
+
+### Added
+- Upstream sync tracking via `.go-upstream-sync` and `just upstream` / `just upstream-sync`
+
 ## [0.4.0] — 2026-02-12
 
 ### Added

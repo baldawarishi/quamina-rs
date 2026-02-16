@@ -121,6 +121,18 @@ publish:
 smoke:
     cargo run --example smoke
 
+# Check upstream sync (fails if behind)
+[group('dev')]
+[no-exit-message]
+upstream:
+    ./scripts/check-upstream.sh
+
+# Update .go-upstream-sync after porting
+[group('dev')]
+upstream-sync sha:
+    echo "{{sha}}" > .go-upstream-sync
+    ./scripts/check-upstream.sh
+
 # Start LLM Agent in this repo (currently claude-code with dangerously-skip-permissions)
 [group('agent')]
 ai:
