@@ -61,6 +61,8 @@ pub struct QuantifiedAtom {
     /// Used for memchr acceleration - since JSON input is valid UTF-8, we don't
     /// need UTF-8 validation during matching, so these are the only exit bytes.
     pub ascii_negated_bytes: Option<Vec<u8>>,
+    /// Word boundary marker: Some(true) = `~b`, Some(false) = `~B`.
+    pub is_word_boundary: Option<bool>,
 }
 
 impl Default for QuantifiedAtom {
@@ -74,6 +76,7 @@ impl Default for QuantifiedAtom {
             cache_key: None,
             lookaround: None,
             ascii_negated_bytes: None,
+            is_word_boundary: None,
         }
     }
 }
@@ -152,6 +155,8 @@ pub enum RegexpFeature {
     OrBar,
     /// Lookaround assertion (?=, ?!, ?<=, ?<!)
     Lookaround,
+    /// Word boundary assertion (~b, ~B)
+    WordBoundary,
 }
 
 /// Features that are implemented in the NFA builder.
@@ -169,6 +174,7 @@ const IMPLEMENTED_FEATURES: &[RegexpFeature] = &[
     RegexpFeature::Range,
     RegexpFeature::Property,
     RegexpFeature::Lookaround,
+    RegexpFeature::WordBoundary,
 ];
 
 /// Parser state for regexp parsing.
@@ -456,6 +462,396 @@ pub fn has_top_level_lookaround(tree: &RegexpRoot) -> bool {
     false
 }
 
+/// Check if a tree contains any word boundary atom (`~b` or `~B`).
+pub fn has_word_boundary(tree: &RegexpRoot) -> bool {
+    for branch in tree {
+        for atom in branch {
+            if atom.is_word_boundary.is_some() {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Word char ranges: [a-zA-Z0-9_]
+fn word_char_runes() -> RuneRange {
+    vec![
+        RunePair { lo: 'a', hi: 'z' },
+        RunePair { lo: 'A', hi: 'Z' },
+        RunePair { lo: '0', hi: '9' },
+        RunePair { lo: '_', hi: '_' },
+    ]
+}
+
+/// Non-word char ranges (inverted word chars)
+fn non_word_char_runes() -> RuneRange {
+    invert_rune_range(word_char_runes())
+}
+
+/// Compute the intersection of two RuneRanges.
+/// Returns the set of characters that are in BOTH ranges.
+fn intersect_rune_ranges(a: &RuneRange, b: &RuneRange) -> RuneRange {
+    let mut result = Vec::new();
+    for ap in a {
+        for bp in b {
+            let lo = ap.lo.max(bp.lo);
+            let hi = ap.hi.min(bp.hi);
+            if lo <= hi {
+                result.push(RunePair { lo, hi });
+            }
+        }
+    }
+    simplify_rune_range(result)
+}
+
+/// Result of constraining an atom's character class at a word boundary.
+/// For singleton atoms, a single constrained atom is returned.
+/// For quantified atoms (*, +, {n,m}), we may need to split into
+/// "base quantified part" + "constrained last/first char".
+enum ConstrainedAtom {
+    /// Single atom with class intersection applied
+    Single(QuantifiedAtom),
+    /// Quantified atom that needs splitting: (base_quantified, constrained_single)
+    /// Used when we need to constrain only the last/first char of a quantified run.
+    Split(QuantifiedAtom, QuantifiedAtom),
+    /// Quantified atom with quant_min=0 (can match zero chars).
+    /// First element: Split(base, constrained) for when atom matches 1+ chars.
+    /// The caller must also generate a branch where this atom is absent entirely
+    /// (for the zero-match case where the boundary is at the value edge).
+    SplitOrAbsent(QuantifiedAtom, QuantifiedAtom),
+}
+
+/// Constrain an atom's character class at a word boundary position.
+///
+/// For singleton atoms, intersects the class directly.
+/// For quantified atoms (*, +, {n,m} where the boundary-adjacent occurrence
+/// needs constraining), splits into base + constrained single.
+///
+/// `is_last_char`: true if we're constraining the last char (prefix side),
+///                 false if constraining the first char (suffix side).
+fn constrain_atom_at_boundary(
+    atom: &QuantifiedAtom,
+    class: &RuneRange,
+    is_last_char: bool,
+) -> Option<ConstrainedAtom> {
+    if atom.subtree.is_some() {
+        // Group atom — can't easily intersect
+        return None;
+    }
+
+    let base_runes = if atom.is_dot {
+        // Dot matches any char, use full Unicode range for intersection
+        vec![RunePair {
+            lo: '\0',
+            hi: RUNE_MAX,
+        }]
+    } else {
+        atom.runes.clone()
+    };
+
+    let intersected = intersect_rune_ranges(&base_runes, class);
+    if intersected.is_empty() {
+        return None;
+    }
+
+    // Determine cache key: if the result equals ~w or ~W, cache the FA shell
+    let cache_key = if intersected == simplify_rune_range(word_char_runes()) {
+        Some("wb_w".to_string())
+    } else if intersected == simplify_rune_range(non_word_char_runes()) {
+        Some("wb_W".to_string())
+    } else {
+        None
+    };
+
+    if atom.is_singleton() {
+        // Simple case: just intersect
+        return Some(ConstrainedAtom::Single(QuantifiedAtom {
+            runes: intersected,
+            is_dot: false,
+            quant_min: 1,
+            quant_max: 1,
+            cache_key,
+            ..Default::default()
+        }));
+    }
+
+    // Quantified atom: we need the boundary-adjacent char constrained,
+    // but the rest of the quantified run unconstrained.
+    let constrained_single = QuantifiedAtom {
+        runes: intersected,
+        is_dot: false,
+        quant_min: 1,
+        quant_max: 1,
+        cache_key,
+        ..Default::default()
+    };
+
+    // Adjust the base quantifier: reduce count by 1 since we split off one char.
+    // Same logic for both is_last_char and !is_last_char.
+    let _ = is_last_char; // Used for documentation; both sides reduce by 1
+    let (new_min, new_max) = (
+        (atom.quant_min - 1).max(0),
+        if atom.quant_max == REGEXP_QUANTIFIER_MAX {
+            REGEXP_QUANTIFIER_MAX
+        } else {
+            atom.quant_max - 1
+        },
+    );
+
+    if new_max == 0 {
+        // The quantified atom was {1,1} effectively → just the constrained single
+        return Some(ConstrainedAtom::Single(constrained_single));
+    }
+
+    let base = QuantifiedAtom {
+        is_dot: atom.is_dot,
+        runes: atom.runes.clone(),
+        quant_min: new_min,
+        quant_max: new_max,
+        cache_key: atom.cache_key.clone(),
+        ascii_negated_bytes: atom.ascii_negated_bytes.clone(),
+        ..Default::default()
+    };
+
+    // If the original atom can match zero times (quant_min == 0, e.g., * or ?),
+    // then the atom might be absent entirely, meaning the boundary is at the
+    // value edge (where `"` is non-word). Return SplitOrAbsent so the caller
+    // can generate an additional branch without this atom.
+    if atom.quant_min == 0 {
+        Some(ConstrainedAtom::SplitOrAbsent(base, constrained_single))
+    } else {
+        Some(ConstrainedAtom::Split(base, constrained_single))
+    }
+}
+
+/// Expand a constrained atom into atom sequences.
+/// `base_first=true` gives [base, single] (prefix/last-char side),
+/// `base_first=false` gives [single, base] (suffix/first-char side).
+fn expand_constrained(ca: &ConstrainedAtom, base_first: bool) -> Vec<Vec<QuantifiedAtom>> {
+    match ca {
+        ConstrainedAtom::Single(a) => vec![vec![a.clone()]],
+        ConstrainedAtom::Split(base, single) | ConstrainedAtom::SplitOrAbsent(base, single) => {
+            if base_first {
+                vec![vec![base.clone(), single.clone()]]
+            } else {
+                vec![vec![single.clone(), base.clone()]]
+            }
+        }
+    }
+}
+
+/// Expand a `~b`/`~B` at value start (no prefix atoms before the boundary).
+///
+/// The `"` delimiter before the value is non-word, so:
+/// - `~b`: first char must be word
+/// - `~B`: first char must be non-word
+fn expand_wb_at_start(suffix: &[QuantifiedAtom], is_boundary: bool, out: &mut Vec<RegexpBranch>) {
+    let wc = word_char_runes();
+    let nwc = non_word_char_runes();
+    let required_class = if is_boundary { &wc } else { &nwc };
+
+    let Some(constrained) = constrain_atom_at_boundary(&suffix[0], required_class, false) else {
+        return;
+    };
+
+    for atoms in expand_constrained(&constrained, false) {
+        let mut branch = atoms;
+        branch.extend_from_slice(&suffix[1..]);
+        out.push(branch);
+    }
+
+    // SplitOrAbsent: the first suffix atom matched 0 chars, so the boundary
+    // falls at value start. Constrain the next real atom instead.
+    if matches!(constrained, ConstrainedAtom::SplitOrAbsent(..)) && suffix.len() > 1 {
+        if let Some(c2) = constrain_atom_at_boundary(&suffix[1], required_class, false) {
+            for atoms in expand_constrained(&c2, false) {
+                let mut branch = atoms;
+                branch.extend_from_slice(&suffix[2..]);
+                out.push(branch);
+            }
+        }
+    }
+}
+
+/// Expand a `~b`/`~B` at value end (no suffix atoms after the boundary).
+///
+/// The `"` delimiter after the value is non-word, so:
+/// - `~b`: last char must be word
+/// - `~B`: last char must be non-word
+fn expand_wb_at_end(prefix: &[QuantifiedAtom], is_boundary: bool, out: &mut Vec<RegexpBranch>) {
+    let wc = word_char_runes();
+    let nwc = non_word_char_runes();
+    let required_class = if is_boundary { &wc } else { &nwc };
+    let last_idx = prefix.len() - 1;
+
+    let Some(constrained) = constrain_atom_at_boundary(&prefix[last_idx], required_class, true)
+    else {
+        return;
+    };
+
+    for atoms in expand_constrained(&constrained, true) {
+        let mut branch = prefix[..last_idx].to_vec();
+        branch.extend(atoms);
+        out.push(branch);
+    }
+
+    // SplitOrAbsent: last prefix atom matched 0 chars, so boundary falls
+    // at the end after the preceding atom. Constrain that one instead.
+    if matches!(constrained, ConstrainedAtom::SplitOrAbsent(..)) && last_idx > 0 {
+        let prev = last_idx - 1;
+        if let Some(c2) = constrain_atom_at_boundary(&prefix[prev], required_class, true) {
+            for atoms in expand_constrained(&c2, true) {
+                let mut branch = prefix[..prev].to_vec();
+                branch.extend(atoms);
+                out.push(branch);
+            }
+        }
+    }
+}
+
+/// Expand a `~b`/`~B` in the middle (between prefix and suffix atoms).
+///
+/// Both sides are constrained: the last char of prefix and the first char of suffix
+/// must be in opposite word-classes (`~b`) or the same class (`~B`).
+fn expand_wb_in_middle(
+    prefix: &[QuantifiedAtom],
+    suffix: &[QuantifiedAtom],
+    is_boundary: bool,
+    out: &mut Vec<RegexpBranch>,
+) {
+    let wc = word_char_runes();
+    let nwc = non_word_char_runes();
+    let last_idx = prefix.len() - 1;
+
+    // ~b: (last=word, first=nonword) OR (last=nonword, first=word)
+    // ~B: (last=word, first=word) OR (last=nonword, first=nonword)
+    let class_pairs: [(&RuneRange, &RuneRange); 2] = if is_boundary {
+        [(&wc, &nwc), (&nwc, &wc)]
+    } else {
+        [(&wc, &wc), (&nwc, &nwc)]
+    };
+
+    for (last_class, first_class) in &class_pairs {
+        let cl = constrain_atom_at_boundary(&prefix[last_idx], last_class, true);
+        let cf = constrain_atom_at_boundary(&suffix[0], first_class, false);
+
+        let (Some(ref cl), Some(ref cf)) = (&cl, &cf) else {
+            continue;
+        };
+
+        // Generate all combinations from constrained prefix × suffix
+        for pe in &expand_constrained(cl, true) {
+            for se in &expand_constrained(cf, false) {
+                let mut branch = prefix[..last_idx].to_vec();
+                branch.extend(pe.clone());
+                branch.extend(se.clone());
+                branch.extend_from_slice(&suffix[1..]);
+                out.push(branch);
+            }
+        }
+
+        // SplitOrAbsent on prefix side: prefix atom absent → boundary at value start.
+        // The `"` is non-word, so constrain suffix to edge class.
+        if matches!(cl, ConstrainedAtom::SplitOrAbsent(..)) {
+            let edge_class = if is_boundary { &wc } else { &nwc };
+            if let Some(c2) = constrain_atom_at_boundary(&suffix[0], edge_class, false) {
+                for se in expand_constrained(&c2, false) {
+                    let mut branch = prefix[..last_idx].to_vec();
+                    branch.extend(se);
+                    branch.extend_from_slice(&suffix[1..]);
+                    out.push(branch);
+                }
+            }
+        }
+
+        // SplitOrAbsent on suffix side: suffix atom absent → boundary at value end.
+        if matches!(cf, ConstrainedAtom::SplitOrAbsent(..)) {
+            let edge_class = if is_boundary { &wc } else { &nwc };
+            if let Some(c2) = constrain_atom_at_boundary(&prefix[last_idx], edge_class, true) {
+                for pe in expand_constrained(&c2, true) {
+                    let mut branch = prefix[..last_idx].to_vec();
+                    branch.extend(pe);
+                    branch.extend_from_slice(&suffix[1..]);
+                    out.push(branch);
+                }
+            }
+        }
+    }
+}
+
+/// Expand word boundaries (`~b`/`~B`) in a regexp tree using character-class intersection.
+///
+/// For `A~bB`: The last char of A and first char of B must be in different word-char classes.
+/// This is implemented by intersecting A's last atom with `~w`/`~W` and B's first atom
+/// with the opposite class, producing two alternative branches.
+///
+/// Returns the expanded tree (may have more branches than the input).
+pub fn expand_word_boundaries(tree: &RegexpRoot) -> Result<RegexpRoot, String> {
+    let mut result_branches: Vec<RegexpBranch> = Vec::new();
+
+    for branch in tree {
+        let wb_count = branch
+            .iter()
+            .filter(|a| a.is_word_boundary.is_some())
+            .count();
+        if wb_count == 0 {
+            result_branches.push(branch.clone());
+            continue;
+        }
+        if wb_count > 4 {
+            return Err("too many word boundaries in pattern (max 4)".into());
+        }
+
+        // Expand one word boundary at a time (each pass resolves the first remaining ~b/~B)
+        let mut alternatives = vec![branch.clone()];
+
+        loop {
+            let mut new_alternatives = Vec::new();
+            let mut found_wb = false;
+
+            for alt in &alternatives {
+                let wb_pos = alt.iter().position(|a| a.is_word_boundary.is_some());
+                let Some(pos) = wb_pos else {
+                    new_alternatives.push(alt.clone());
+                    continue;
+                };
+                found_wb = true;
+                let is_boundary = alt[pos].is_word_boundary.unwrap();
+
+                let prefix = &alt[..pos];
+                let suffix = &alt[pos + 1..];
+
+                match (prefix.is_empty(), suffix.is_empty()) {
+                    (true, true) => {
+                        // ~b alone: between two `"` (non-word). Boundary = never, non-boundary = always.
+                        if !is_boundary {
+                            new_alternatives.push(Vec::new());
+                        }
+                    }
+                    (true, false) => expand_wb_at_start(suffix, is_boundary, &mut new_alternatives),
+                    (false, true) => expand_wb_at_end(prefix, is_boundary, &mut new_alternatives),
+                    (false, false) => {
+                        expand_wb_in_middle(prefix, suffix, is_boundary, &mut new_alternatives)
+                    }
+                }
+            }
+
+            alternatives = new_alternatives;
+            if !found_wb {
+                break;
+            }
+        }
+
+        result_branches.extend(alternatives);
+    }
+
+    // An empty result means no valid alternatives exist (e.g., hello~bworld
+    // where both sides are word chars). The caller (json.rs) reports this as
+    // an InvalidPattern error.
+    Ok(result_branches)
+}
+
 /// Parse a regexp string into a tree structure.
 pub fn parse_regexp(re: &str) -> Result<RegexpRoot, RegexpError> {
     let mut parse = RegexpParse::new(re);
@@ -692,25 +1088,9 @@ fn check_multi_char_escape(c: char) -> Option<(RuneRange, Option<String>)> {
         // ~D = non-digit (everything except 0-9)
         'D' => Some((invert_rune_range(vec![RunePair { lo: '0', hi: '9' }]), None)),
         // ~w = word char [a-zA-Z0-9_]
-        'w' => Some((
-            vec![
-                RunePair { lo: 'a', hi: 'z' },
-                RunePair { lo: 'A', hi: 'Z' },
-                RunePair { lo: '0', hi: '9' },
-                RunePair { lo: '_', hi: '_' },
-            ],
-            None,
-        )),
+        'w' => Some((word_char_runes(), None)),
         // ~W = non-word char
-        'W' => Some((
-            invert_rune_range(vec![
-                RunePair { lo: 'a', hi: 'z' },
-                RunePair { lo: 'A', hi: 'Z' },
-                RunePair { lo: '0', hi: '9' },
-                RunePair { lo: '_', hi: '_' },
-            ]),
-            None,
-        )),
+        'W' => Some((invert_rune_range(word_char_runes()), None)),
         // ~s = whitespace [ \t\n\r]
         's' => Some((
             vec![
@@ -928,6 +1308,18 @@ fn read_atom(parse: &mut RegexpParse) -> Result<QuantifiedAtom, RegexpError> {
                     quant_min: 1,
                     quant_max: 1,
                     cache_key,
+                    ..Default::default()
+                });
+            }
+
+            // Word boundary: ~b (boundary) and ~B (non-boundary)
+            if next == 'b' || next == 'B' {
+                parse.record_feature(RegexpFeature::WordBoundary);
+                let is_boundary = next == 'b';
+                return Ok(QuantifiedAtom {
+                    is_word_boundary: Some(is_boundary),
+                    quant_min: 1,
+                    quant_max: 1,
                     ..Default::default()
                 });
             }
@@ -1754,5 +2146,49 @@ mod tests {
 
         let qa = &tree[0][0];
         assert_eq!(qa.ascii_negated_bytes, Some(vec![b'"']));
+    }
+
+    // ========================================================================
+    // Word boundary (~b/~B) expansion
+    // ========================================================================
+
+    #[test]
+    fn test_wb_parse_boundary_marker() {
+        let tree = parse_regexp("~bhello").unwrap();
+        assert!(has_word_boundary(&tree));
+        let expanded = expand_word_boundaries(&tree).unwrap();
+        // ~b at start: first char ('h' = word char) must be word → trivially satisfied
+        assert_eq!(expanded.len(), 1);
+        assert_eq!(expanded[0].len(), 5);
+    }
+
+    #[test]
+    fn test_wb_impossible_boundary_empty_tree() {
+        // ab~bcd: 'b' and 'c' are both word chars → ~b impossible → empty tree
+        let tree = parse_regexp("ab~bcd").unwrap();
+        let expanded = expand_word_boundaries(&tree).unwrap();
+        assert!(
+            expanded.is_empty(),
+            "impossible boundary should produce empty tree"
+        );
+    }
+
+    #[test]
+    fn test_wb_middle_boundary_expansion() {
+        // ab~b cd: 'b' is word, ' ' is non-word → boundary valid
+        let tree = parse_regexp("ab~b cd").unwrap();
+        let expanded = expand_word_boundaries(&tree).unwrap();
+        assert_eq!(expanded.len(), 1); // Only word→nonword branch survives
+    }
+
+    #[test]
+    fn test_wb_dot_star_expansion() {
+        // .*~bcat: dot-star before boundary, 'c' (word) after
+        let tree = parse_regexp(".*~bcat").unwrap();
+        let expanded = expand_word_boundaries(&tree).unwrap();
+        // Two branches:
+        // 1. .*{0,MAX-1} ~W c a t (last of .* is non-word, c is word)
+        // 2. c a t (when .* matches 0 chars, boundary at value start, c must be word)
+        assert_eq!(expanded.len(), 2);
     }
 }

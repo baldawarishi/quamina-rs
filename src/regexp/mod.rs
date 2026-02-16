@@ -19,8 +19,9 @@ mod parser;
 // Re-export public API
 pub use nfa::{clear_fa_shell_cache, make_regexp_nfa_arena, regexp_has_plus_star};
 pub use parser::{
-    collect_lookarounds, has_top_level_lookaround, parse_regexp, LookaroundType, QuantifiedAtom,
-    RegexpBranch, RegexpError, RegexpRoot, RunePair, RuneRange, REGEXP_QUANTIFIER_MAX, RUNE_MAX,
+    collect_lookarounds, expand_word_boundaries, has_top_level_lookaround, has_word_boundary,
+    parse_regexp, LookaroundType, QuantifiedAtom, RegexpBranch, RegexpError, RegexpRoot, RunePair,
+    RuneRange, REGEXP_QUANTIFIER_MAX, RUNE_MAX,
 };
 
 // Crate-internal items are accessible via their original modules:

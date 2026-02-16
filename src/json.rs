@@ -1,8 +1,8 @@
 //! Minimal JSON parser for flattening events and patterns
 
 use crate::regexp::{
-    collect_lookarounds, has_top_level_lookaround, parse_regexp, LookaroundType, RegexpBranch,
-    RegexpRoot,
+    collect_lookarounds, expand_word_boundaries, has_top_level_lookaround, has_word_boundary,
+    parse_regexp, LookaroundType, RegexpBranch, RegexpRoot,
 };
 use crate::segments_tree::SEGMENT_SEPARATOR;
 use crate::QuaminaError;
@@ -690,6 +690,30 @@ fn value_to_matcher(value: &Value) -> Result<Matcher, QuaminaError> {
                             // Try our custom parser first (automaton-compatible)
                             match parse_regexp(s) {
                                 Ok(tree) => {
+                                    // Expand word boundaries before other processing
+                                    let tree = if has_word_boundary(&tree) {
+                                        let expanded = expand_word_boundaries(&tree);
+                                        match expanded {
+                                            Ok(t) if t.is_empty() => {
+                                                // No valid alternatives — pattern can never
+                                                // match (e.g., hello~bworld where both sides
+                                                // are word chars). Report as invalid pattern.
+                                                return Err(QuaminaError::InvalidPattern(
+                                                    "word boundary ~b/~B is impossible in this pattern: adjacent characters are in the same word-class".into(),
+                                                ));
+                                            }
+                                            Ok(t) => t,
+                                            Err(e) => {
+                                                return Err(QuaminaError::InvalidPattern(format!(
+                                                    "word boundary expansion failed: {}",
+                                                    e
+                                                )))
+                                            }
+                                        }
+                                    } else {
+                                        tree
+                                    };
+
                                     // Check if pattern has lookarounds - transform to multi-condition
                                     if has_top_level_lookaround(&tree) {
                                         match transform_lookaround_pattern(&tree) {

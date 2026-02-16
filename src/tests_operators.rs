@@ -11,6 +11,7 @@
 //! - Regex/regexp (validity, end-to-end, samples)
 //! - CIDR matching (IPv4, IPv6)
 //! - Lookaround patterns
+//! - Word boundary (~b/~B)
 
 use super::*;
 
@@ -610,6 +611,154 @@ fn test_negative_lookbehind_match() {
         !matches.contains(&"test".to_string()),
         "(?<!foo)bar should NOT match 'foobar'"
     );
+}
+
+// ============================================================================
+// Word Boundary (~b/~B) Tests
+// ============================================================================
+
+#[test]
+fn test_wb_start_word_char() {
+    // "hello" starts with 'h' (word char) → ~b at start matches
+    let q = q!("test" => r#"{"name": [{"regexp": "~bhello"}]}"#);
+    assert_has_match!(q, r#"{"name": "hello"}"#, "test");
+}
+
+#[test]
+fn test_wb_start_non_word_char() {
+    // " hello" starts with ' ' → ~bhello doesn't match
+    let q = q!("test" => r#"{"name": [{"regexp": "~bhello"}]}"#);
+    assert_no_has_match!(q, r#"{"name": " hello"}"#, "test");
+}
+
+#[test]
+fn test_wb_end_word_char() {
+    let q = q!("test" => r#"{"name": [{"regexp": "hello~b"}]}"#);
+    assert_has_match!(q, r#"{"name": "hello"}"#, "test");
+}
+
+#[test]
+fn test_wb_end_non_word_char() {
+    let q = q!("test" => r#"{"name": [{"regexp": "hello~b"}]}"#);
+    assert_no_has_match!(q, r#"{"name": "hello "}"#, "test");
+}
+
+#[test]
+fn test_wb_middle_word_to_nonword() {
+    let q = q!("test" => r#"{"name": [{"regexp": "hello~b world"}]}"#);
+    assert_has_match!(q, r#"{"name": "hello world"}"#, "test");
+}
+
+#[test]
+fn test_wb_middle_nonword_to_word() {
+    let q = q!("test" => r#"{"name": [{"regexp": "hello ~bworld"}]}"#);
+    assert_has_match!(q, r#"{"name": "hello world"}"#, "test");
+}
+
+#[test]
+fn test_wb_middle_word_to_word_err() {
+    // 'o' and 'w' are both word chars → ~b impossible → error at pattern addition
+    let mut q = Quamina::new();
+    assert!(q
+        .add_pattern("test", r#"{"name": [{"regexp": "hello~bworld"}]}"#)
+        .is_err());
+}
+
+#[test]
+fn test_nwb_word_to_word() {
+    let q = q!("test" => r#"{"name": [{"regexp": "hello~Bworld"}]}"#);
+    assert_has_match!(q, r#"{"name": "helloworld"}"#, "test");
+}
+
+#[test]
+fn test_nwb_word_to_nonword_err() {
+    // 'o' is word, ' ' is non-word → ~B impossible → error
+    let mut q = Quamina::new();
+    assert!(q
+        .add_pattern("test", r#"{"name": [{"regexp": "hello~B world"}]}"#)
+        .is_err());
+}
+
+#[test]
+fn test_nwb_start_nonword() {
+    // ~B at start: `"` is non-word, ' ' is non-word → same class → matches
+    let q = q!("test" => r#"{"name": [{"regexp": "~B hello"}]}"#);
+    assert_has_match!(q, r#"{"name": " hello"}"#, "test");
+}
+
+#[test]
+fn test_nwb_start_word_err() {
+    // ~B at start: `"` is non-word, 'h' is word → different → impossible → error
+    let mut q = Quamina::new();
+    assert!(q
+        .add_pattern("test", r#"{"name": [{"regexp": "~Bhello"}]}"#)
+        .is_err());
+}
+
+#[test]
+fn test_wb_whole_word_match() {
+    let q = q!("test" => r#"{"name": [{"regexp": ".*~bcat~b.*"}]}"#);
+    assert_has_match!(q, r#"{"name": "the cat sat"}"#, "test");
+}
+
+#[test]
+fn test_wb_whole_word_no_match() {
+    let q = q!("test" => r#"{"name": [{"regexp": ".*~bcat~b.*"}]}"#);
+    assert_no_has_match!(q, r#"{"name": "concatenate"}"#, "test");
+}
+
+#[test]
+fn test_wb_whole_word_at_start() {
+    let q = q!("test" => r#"{"name": [{"regexp": ".*~bcat~b.*"}]}"#);
+    assert_has_match!(q, r#"{"name": "cat is here"}"#, "test");
+}
+
+#[test]
+fn test_wb_whole_word_at_end() {
+    let q = q!("test" => r#"{"name": [{"regexp": ".*~bcat~b.*"}]}"#);
+    assert_has_match!(q, r#"{"name": "the cat"}"#, "test");
+}
+
+#[test]
+fn test_wb_whole_word_only() {
+    let q = q!("test" => r#"{"name": [{"regexp": ".*~bcat~b.*"}]}"#);
+    assert_has_match!(q, r#"{"name": "cat"}"#, "test");
+}
+
+#[test]
+fn test_wb_underscore_is_word_char() {
+    // '_' is a word char, so no boundary between 'a' and '_' → error
+    let mut q = Quamina::new();
+    assert!(q
+        .add_pattern("test", r#"{"name": [{"regexp": "a~b_"}]}"#)
+        .is_err());
+}
+
+#[test]
+fn test_nwb_underscore_is_word_char() {
+    // '_' and 'a' are both word chars → ~B matches
+    let q = q!("test" => r#"{"name": [{"regexp": "a~B_"}]}"#);
+    assert_has_match!(q, r#"{"name": "a_"}"#, "test");
+}
+
+#[test]
+fn test_wb_digit_to_space() {
+    // '3'→' ' = word→nonword = boundary
+    let q = q!("test" => r#"{"name": [{"regexp": "abc3~b end"}]}"#);
+    assert_has_match!(q, r#"{"name": "abc3 end"}"#, "test");
+}
+
+#[test]
+fn test_wb_with_char_class() {
+    let q = q!("test" => r#"{"name": [{"regexp": "[0-9]~b "}]}"#);
+    assert_has_match!(q, r#"{"name": "5 "}"#, "test");
+}
+
+#[test]
+fn test_wb_with_dot() {
+    let q = q!("test" => r#"{"name": [{"regexp": ".~b."}]}"#);
+    assert_has_match!(q, r#"{"name": "a "}"#, "test");
+    assert_no_has_match!(q, r#"{"name": "ab"}"#, "test");
 }
 
 // ============================================================================

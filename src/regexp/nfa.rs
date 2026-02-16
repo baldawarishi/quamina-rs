@@ -295,15 +295,29 @@ fn make_arena_atom_fa(qa: &QuantifiedAtom, arena: &mut StateArena, next: StateId
     } else if let Some(ref subtree) = qa.subtree {
         make_arena_nfa_from_branches(subtree, arena, next)
     } else if let Some(ref cache_key) = qa.cache_key {
+        // Use compact non-word char FA for word boundary expansion
+        if cache_key == "wb_W" {
+            return make_nonword_char_fa(arena, next);
+        }
         make_cached_rune_range_fa(cache_key, &qa.runes, arena, next)
     } else {
         make_arena_rune_range_fa(&qa.runes, arena, next)
     }
 }
 
-/// Build arena FA for a dot (any character).
-fn make_arena_dot_fa(arena: &mut StateArena, dest: StateId) -> StateId {
-    // Build continuation byte states (for multi-byte UTF-8)
+/// Build an arena FA matching any single UTF-8 character, with an optional
+/// ASCII filter applied to single-byte (0x00-0x7F) transitions.
+///
+/// If `ascii_filter` is None, all ASCII bytes transition to `dest` (dot behavior).
+/// If provided, the filter is called with the pre-filled ASCII unpacked array to
+/// exclude specific bytes (e.g., word chars for `~W`).
+#[allow(clippy::type_complexity)]
+fn make_utf8_char_fa(
+    arena: &mut StateArena,
+    dest: StateId,
+    ascii_filter: Option<&dyn Fn(&mut [StateId; BYTE_CEILING])>,
+) -> StateId {
+    // Continuation byte states for multi-byte UTF-8 sequences
     let s_last = arena.alloc_with_table({
         let mut table = ArenaSmallTable::new();
         let mut unpacked = [StateId::NONE; BYTE_CEILING];
@@ -328,7 +342,7 @@ fn make_arena_dot_fa(arena: &mut StateArena, dest: StateId) -> StateId {
         table
     });
 
-    // Special states for specific lead bytes
+    // Lead byte handler states for restricted continuation ranges
     let target_e0 = arena.alloc_with_table({
         let mut table = ArenaSmallTable::new();
         let mut unpacked = [StateId::NONE; BYTE_CEILING];
@@ -361,41 +375,60 @@ fn make_arena_dot_fa(arena: &mut StateArena, dest: StateId) -> StateId {
         table
     });
 
-    // Main state with all lead byte transitions
+    // Main state
     arena.alloc_with_table({
         let mut unpacked = [StateId::NONE; BYTE_CEILING];
 
-        // ASCII (0x00-0x7F) -> dest directly
+        // ASCII (0x00-0x7F) -> dest
         unpacked[..0x80].fill(dest);
 
-        // 2-byte sequences (0xC2-0xDF)
+        // Apply optional ASCII filter (e.g., exclude word chars)
+        if let Some(filter) = ascii_filter {
+            filter(&mut unpacked);
+        }
+
+        // Multi-byte lead bytes
         unpacked[0xC2..0xE0].fill(s_last);
-
-        // E0
         unpacked[0xE0] = target_e0;
-
-        // E1-EC
         unpacked[0xE1..0xED].fill(s_last_inter);
-
-        // ED
         unpacked[0xED] = target_ed;
-
-        // EE-EF
         unpacked[0xEE..0xF0].fill(s_last_inter);
-
-        // F0
         unpacked[0xF0] = target_f0;
-
-        // F1-F3
         unpacked[0xF1..0xF4].fill(s_first_inter);
-
-        // F4
         unpacked[0xF4] = target_f4;
 
         let mut table = ArenaSmallTable::new();
         table.pack(&unpacked);
         table
     })
+}
+
+/// Build arena FA for a dot (any character).
+fn make_arena_dot_fa(arena: &mut StateArena, dest: StateId) -> StateId {
+    make_utf8_char_fa(arena, dest, None)
+}
+
+/// Build arena FA for a non-word character (`~W`).
+///
+/// Like dot but excludes word char bytes (a-z, A-Z, 0-9, _) from ASCII transitions.
+/// Multi-byte UTF-8 sequences are all non-word chars (word chars are ASCII-only).
+pub(crate) fn make_nonword_char_fa(arena: &mut StateArena, dest: StateId) -> StateId {
+    make_utf8_char_fa(
+        arena,
+        dest,
+        Some(&|unpacked| {
+            for b in b'a'..=b'z' {
+                unpacked[b as usize] = StateId::NONE;
+            }
+            for b in b'A'..=b'Z' {
+                unpacked[b as usize] = StateId::NONE;
+            }
+            for b in b'0'..=b'9' {
+                unpacked[b as usize] = StateId::NONE;
+            }
+            unpacked[b'_' as usize] = StateId::NONE;
+        }),
+    )
 }
 
 // ============================================================================
