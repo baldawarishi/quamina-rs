@@ -146,7 +146,13 @@ We also have Quamina's legacy `shellstyle` based matcher but you should avoid it
 {"code": [{"regexp": "[A-Z]{3}-[0-9]{4}"}]}
 ```
 
-Regexp uses `~` as the escape character to stay in compliant with Quamina. There's also `~d` for digits, `~p{L}` for Unicode letters among other things where you will pay the performance penalty sice they're not automata compatible.
+Regexp uses `~` as the escape character to stay compliant with Quamina. There's also `~d` for digits, `~p{L}` for Unicode letters among other things where you will pay a performance penalty since they're not automata compatible.
+
+Word boundaries `~b` and `~B` work like `\b` and `\B` in standard regex — `~b` matches between a word char (`[a-zA-Z0-9_]`) and a non-word char, `~B` matches where both sides are the same class:
+```json
+{"message": [{"regexp": ".*~bcat~b.*"}]}
+```
+This matches "the cat sat" but not "concatenate".
 
 ## APIs
 
@@ -232,7 +238,7 @@ On an M3 Max:
 ### Event Type Benchmarks
 
 | Benchmark | Time | Description |
-|-----------|---:|-----:|--------:|
+|-----------|-----:|-------------|
 | citylots | 1,731 ns | 4 patterns, 206k of messy GeoJSON data |
 | early field match | 272 ns | 14KB JSON events |
 | nested field match | 5,469 ns | Nested JSON events |
@@ -283,7 +289,7 @@ Other limitations:
 
 ## Credits
 
-All credits should go to [Tim](https://www.tbray.org/) and other contributors in the [original Go](https://github.com/timbray/quamina) version. Tim's [Quamina Diary](https://www.tbray.org/ongoing/What/Technology/Quamina%20Diary/) ealso xplains how automata-based matching works.
+All credits should go to [Tim](https://www.tbray.org/) and other contributors in the [original Go](https://github.com/timbray/quamina) version. Tim's [Quamina Diary](https://www.tbray.org/ongoing/What/Technology/Quamina%20Diary/) also explains how automata-based matching works.
 
 
 ## License
