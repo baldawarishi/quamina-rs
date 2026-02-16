@@ -55,7 +55,7 @@ unsafe_code = "warn"
 perf = { level = "warn", priority = -1 }
 undocumented_unsafe_blocks = "warn"
 transmute_ptr_to_ptr = "warn"
-# Nursery lints (selectively enabled — see docs/RUST_IDIOMS_SPEC.md §8)
+# Nursery lints (selectively enabled)
 use_self = "warn"
 derive_partial_eq_without_eq = "warn"
 redundant_clone = "warn"
