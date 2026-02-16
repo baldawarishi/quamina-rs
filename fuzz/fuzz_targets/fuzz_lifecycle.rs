@@ -44,6 +44,10 @@ const SEEDS: &[(&str, &[u8])] = &[
         r#"{"code": [{"regex": "^[A-Z]{3}$"}]}"#,
         br#"{"code": "ABC"}"#,
     ),
+    (
+        r#"{"tag": [{"regexp": ".*~bcat~b.*"}]}"#,
+        br#"{"tag": "the cat sat"}"#,
+    ),
 ];
 
 /// Seed pattern IDs live in a range that won't collide with sequential IDs.
