@@ -301,6 +301,17 @@ impl StateArena {
         self.states.is_empty()
     }
 
+    /// Check if any state in the arena has epsilon transitions.
+    ///
+    /// Not all regexp FAs are nondeterministic. This can be detected after
+    /// building the FA to allow deterministic regexps to use the faster DFA
+    /// traversal path.
+    pub fn is_nondeterministic(&self) -> bool {
+        self.states
+            .iter()
+            .any(|state| !state.table.epsilons.is_empty())
+    }
+
     /// Precompute epsilon closures for all states in the arena.
     ///
     /// For each state, computes the set of all states reachable via epsilon
