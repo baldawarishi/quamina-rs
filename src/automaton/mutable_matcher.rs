@@ -736,8 +736,10 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
     ) -> Result<Rc<MutableFieldMatcher<X>>, crate::QuaminaError> {
         let next_fm = Rc::new(MutableFieldMatcher::new());
 
-        *self.main_arena_is_nfa.borrow_mut() = true;
         let (arena, start, field_matcher_arc) = make_regexp_nfa_arena(tree.clone());
+        if arena.is_nondeterministic() {
+            *self.main_arena_is_nfa.borrow_mut() = true;
+        }
 
         self.transition_map
             .borrow_mut()
