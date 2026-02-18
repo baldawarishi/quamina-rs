@@ -28,11 +28,11 @@ use quamina::Quamina;
 
 let mut q = Quamina::new();
 
-q.add_pattern("p1", r#"{"status": ["error"]}"#).unwrap();
-q.add_pattern("p2", r#"{"level": [1, 2, 3]}"#).unwrap();
+q.add_pattern("p1", r#"{"status": ["error"]}"#)?;
+q.add_pattern("p2", r#"{"level": [1, 2, 3]}"#)?;
 
 let event = r#"{"status": "error", "level": 2}"#;
-let matches = q.matches_for_event(event.as_bytes()).unwrap();
+let matches = q.matches_for_event(event.as_bytes())?;
 // matches: ["p1", "p2"]
 ```
 
@@ -162,9 +162,9 @@ let q = Quamina::<String>::new();
 
 // With options
 let q = QuaminaBuilder::<String>::new()
-    .with_media_type("application/json").unwrap()
+    .with_media_type("application/json")?
     .with_auto_rebuild(true)
-    .build().unwrap();
+    .build()?;
 
 // With custom ID type
 let q = Quamina::<u64>::new();
@@ -175,30 +175,30 @@ let q = QuaminaBuilder::<String>::new()
     .with_max_fields_per_pattern(64)
     .with_arena_byte_budget(5 * 1024 * 1024)
     .with_max_states_per_pattern(512)
-    .build().unwrap();
+    .build()?;
 ```
 
-### Adding, matching, and removing
+### Adding and removing patterns
 
 ```rust
-use quamina::{Quamina, QuaminaError};
-
-let mut q = Quamina::new();
-
-// Add patterns
-q.add_pattern("my-rule", r#"{"x": [1]}"#).unwrap();
-
-// Match events
-let event = br#"{"x": 1}"#;
-let matches = q.matches_for_event(event).unwrap();  // Vec of matching IDs
-let matched = q.has_matches(event).unwrap();         // bool, exits early
-let count   = q.count_matches(event).unwrap();       // number of matches
-
-// Delete patterns
-q.delete_patterns(&"my-rule").unwrap();
+q.add_pattern("my-rule", r#"{"x": [1]}"#)?;
+q.delete_patterns(&"my-rule")?;
 q.clear();
+```
 
-// Error handling
+### Matching
+
+```rust
+let matches = q.matches_for_event(event)?;  // Vec of matching IDs
+let matched = q.has_matches(event)?;         // bool
+let count   = q.count_matches(event)?;       // number of matches
+```
+
+### Errors
+
+`add_pattern` returns an error if the pattern JSON is malformed, uses invalid syntax, or exceeds complexity limits. `matches_for_event` returns an error if the event isn't valid JSON.
+
+```rust
 match q.add_pattern("bad", r#"{"x": "not-an-array"}"#) {
     Err(QuaminaError::InvalidPattern(msg)) => println!("{}", msg),
     Err(QuaminaError::PatternTooComplex(msg)) => println!("{}", msg),
@@ -206,17 +206,13 @@ match q.add_pattern("bad", r#"{"x": "not-an-array"}"#) {
 }
 ```
 
-### Errors
-
-`add_pattern` returns an error if the pattern JSON is malformed, uses invalid syntax, or exceeds complexity limits. `matches_for_event` returns an error if the event isn't valid JSON.
-
 ## Concurrency
 
 A single `Quamina` instance can be safely shared across threads via `Arc`. Matching uses thread-local buffers, so multiple threads calling `matches_for_event()` on the same `Arc<Quamina>` run in parallel without contention.
 
 Pattern addition (`add_pattern`) requires `&mut self`. For concurrent writes, wrap in a lock:
 
-```rust,ignore
+```rust
 let q = Arc::new(RwLock::new(Quamina::new()));
 ```
 
