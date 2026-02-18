@@ -713,14 +713,37 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
         Ok(())
     }
 
-    /// Check if any pattern matches the event (returns early on first match)
+    /// Checks whether any pattern matches the event.
+    ///
+    /// ```
+    /// # use quamina::Quamina;
+    /// # fn main() -> Result<(), quamina::QuaminaError> {
+    /// let mut q = Quamina::new();
+    /// q.add_pattern("a", r#"{"x": [1]}"#)?;
+    /// q.add_pattern("b", r#"{"x": [1]}"#)?;
+    /// assert!(q.has_matches(br#"{"x":1}"#)?);
+    /// assert!(!q.has_matches(br#"{"x":2}"#)?);
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn has_matches(&self, event: &[u8]) -> Result<bool, QuaminaError> {
         // Use matches_for_event and check if non-empty
         // This could be optimized to return early, but for now this is simpler
         Ok(!self.matches_for_event(event)?.is_empty())
     }
 
-    /// Count how many unique pattern IDs match the event
+    /// Counts how many unique pattern IDs match the event.
+    ///
+    /// ```
+    /// # use quamina::Quamina;
+    /// # fn main() -> Result<(), quamina::QuaminaError> {
+    /// let mut q = Quamina::new();
+    /// q.add_pattern("a", r#"{"x": [1]}"#)?;
+    /// q.add_pattern("b", r#"{"x": [1]}"#)?;
+    /// assert_eq!(q.count_matches(br#"{"x":1}"#)?, 2);
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn count_matches(&self, event: &[u8]) -> Result<usize, QuaminaError> {
         Ok(self.matches_for_event(event)?.len())
     }
@@ -800,7 +823,19 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
         }
     }
 
-    /// Removes all patterns
+    /// Removes all patterns and resets the matcher to its initial state.
+    ///
+    /// ```
+    /// # use quamina::Quamina;
+    /// # fn main() -> Result<(), quamina::QuaminaError> {
+    /// let mut q = Quamina::new();
+    /// q.add_pattern("a", r#"{"x": [1]}"#)?;
+    /// assert!(!q.is_empty());
+    /// q.clear();
+    /// assert!(q.is_empty());
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn clear(&mut self) {
         self.automaton = ThreadSafeCoreMatcher::with_limits(
             self.pattern_limits.arena_byte_budget,
