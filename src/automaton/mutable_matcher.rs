@@ -212,7 +212,7 @@ pub struct MutableValueMatcher<X: Clone + Eq + std::hash::Hash> {
     pub(crate) singleton_transition: RefCell<Option<Rc<MutableFieldMatcher<X>>>>,
     /// Whether this matcher has numeric patterns (for Q-number conversion)
     pub(crate) has_numbers: Cell<bool>,
-    /// Mapping from Arc<FieldMatcher> to Rc<MutableFieldMatcher<X>>
+    /// Mapping from `Arc<FieldMatcher>` to `Rc<MutableFieldMatcher<X>>`
     /// This bridges the automaton's field transitions to our mutable field matchers
     pub(crate) transition_map: RefCell<HashMap<*const FieldMatcher, Rc<MutableFieldMatcher<X>>>>,
     /// Multi-condition NFAs for lookaround patterns
