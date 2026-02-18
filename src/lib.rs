@@ -1,5 +1,7 @@
 //! quamina-rs: Fast pattern-matching library for filtering JSON events
 
+#![deny(missing_docs)]
+
 // Internal modules exposed as `pub` only for benchmarks (benches/matching.rs).
 // Not part of the public API — use `Quamina` instead.
 #[doc(hidden)]
@@ -74,12 +76,12 @@ impl PrunerStats {
         self.filtered.fetch_add(count, Ordering::Relaxed);
     }
 
-    /// Get current emitted count
+    /// Count of live-pattern matches returned since the last rebuild.
     pub fn emitted(&self) -> u64 {
         self.emitted.load(Ordering::Relaxed)
     }
 
-    /// Get current filtered count
+    /// Count of deleted-pattern matches suppressed since the last rebuild.
     pub fn filtered(&self) -> u64 {
         self.filtered.load(Ordering::Relaxed)
     }
@@ -120,10 +122,15 @@ type PatternDef = HashMap<String, Vec<Matcher>>;
 /// Errors that can occur during pattern matching
 #[derive(Debug)]
 pub enum QuaminaError {
+    /// The event JSON was syntactically invalid.
     InvalidJson(String),
+    /// The pattern JSON was malformed or used unsupported syntax.
     InvalidPattern(String),
+    /// The input contained invalid UTF-8.
     InvalidUtf8,
+    /// The requested media type is not supported (only `application/json`).
     UnsupportedMediaType(String),
+    /// The pattern exceeded configured complexity limits (see [`PatternLimits`]).
     PatternTooComplex(String),
 }
 
@@ -325,6 +332,18 @@ impl<X: Clone + Eq + Hash + Send + Sync> QuaminaBuilder<X> {
     ///
     /// # Panics
     /// Panics if `depth` is 0.
+    ///
+    /// ```
+    /// # use quamina::{QuaminaBuilder, QuaminaError};
+    /// # fn main() -> Result<(), QuaminaError> {
+    /// let mut q = QuaminaBuilder::<&str>::new()
+    ///     .with_max_pattern_depth(1)
+    ///     .build()?;
+    /// let err = q.add_pattern("deep", r#"{"a": {"b": ["v"]}}"#).unwrap_err();
+    /// assert!(matches!(err, QuaminaError::PatternTooComplex(_)));
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn with_max_pattern_depth(mut self, depth: usize) -> Self {
         assert!(depth > 0, "max_pattern_depth must be at least 1");
         self.pattern_limits.max_pattern_depth = depth;
@@ -335,6 +354,18 @@ impl<X: Clone + Eq + Hash + Send + Sync> QuaminaBuilder<X> {
     ///
     /// # Panics
     /// Panics if `count` is 0.
+    ///
+    /// ```
+    /// # use quamina::{QuaminaBuilder, QuaminaError};
+    /// # fn main() -> Result<(), QuaminaError> {
+    /// let mut q = QuaminaBuilder::<&str>::new()
+    ///     .with_max_fields_per_pattern(1)
+    ///     .build()?;
+    /// let err = q.add_pattern("wide", r#"{"a": ["1"], "b": ["2"]}"#).unwrap_err();
+    /// assert!(matches!(err, QuaminaError::PatternTooComplex(_)));
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn with_max_fields_per_pattern(mut self, count: usize) -> Self {
         assert!(count > 0, "max_fields_per_pattern must be at least 1");
         self.pattern_limits.max_fields_per_pattern = count;
@@ -345,6 +376,18 @@ impl<X: Clone + Eq + Hash + Send + Sync> QuaminaBuilder<X> {
     ///
     /// # Panics
     /// Panics if `budget` is 0.
+    ///
+    /// ```
+    /// # use quamina::{QuaminaBuilder, QuaminaError};
+    /// # fn main() -> Result<(), QuaminaError> {
+    /// let mut q = QuaminaBuilder::<&str>::new()
+    ///     .with_arena_byte_budget(1)
+    ///     .build()?;
+    /// let err = q.add_pattern("p", r#"{"x": [{"prefix": "a"}]}"#).unwrap_err();
+    /// assert!(matches!(err, QuaminaError::PatternTooComplex(_)));
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn with_arena_byte_budget(mut self, budget: usize) -> Self {
         assert!(budget > 0, "arena_byte_budget must be at least 1");
         self.pattern_limits.arena_byte_budget = budget;
@@ -355,6 +398,18 @@ impl<X: Clone + Eq + Hash + Send + Sync> QuaminaBuilder<X> {
     ///
     /// # Panics
     /// Panics if `max_states` is 0.
+    ///
+    /// ```
+    /// # use quamina::{QuaminaBuilder, QuaminaError};
+    /// # fn main() -> Result<(), QuaminaError> {
+    /// let mut q = QuaminaBuilder::<&str>::new()
+    ///     .with_max_states_per_pattern(1)
+    ///     .build()?;
+    /// let err = q.add_pattern("p", r#"{"a": ["x", {"prefix": "y"}]}"#).unwrap_err();
+    /// assert!(matches!(err, QuaminaError::PatternTooComplex(_)));
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn with_max_states_per_pattern(mut self, max_states: usize) -> Self {
         assert!(max_states > 0, "max_states_per_pattern must be at least 1");
         self.pattern_limits.max_states_per_pattern = max_states;
@@ -506,7 +561,22 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
         }
     }
 
-    /// Add a pattern with the given identifier
+    /// Add a pattern with the given identifier.
+    ///
+    /// `pattern_json` is a JSON object whose values are arrays of match expressions;
+    /// see the [crate-level docs](crate) for the full pattern syntax.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// # use quamina::Quamina;
+    /// # fn main() -> Result<(), quamina::QuaminaError> {
+    /// let mut q = Quamina::new();
+    /// q.add_pattern("alert", r#"{"severity": ["high", "critical"]}"#)?;
+    /// assert!(q.matches_for_event(br#"{"severity":"high"}"#)?.contains(&"alert"));
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn add_pattern(&mut self, x: X, pattern_json: &str) -> Result<(), QuaminaError> {
         let fields = json::parse_pattern(pattern_json, &self.pattern_limits)?;
 
@@ -530,7 +600,23 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
         Ok(())
     }
 
-    /// Find all patterns that match the given event
+    /// Find all patterns that match the given event.
+    ///
+    /// `event` must be valid UTF-8 JSON bytes (objects, not arrays or scalars).
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// # use quamina::Quamina;
+    /// # fn main() -> Result<(), quamina::QuaminaError> {
+    /// let mut q = Quamina::new();
+    /// q.add_pattern("p1", r#"{"status": ["error"]}"#)?;
+    /// q.add_pattern("p2", r#"{"level": [1, 2, 3]}"#)?;
+    /// let hits = q.matches_for_event(br#"{"status":"error","level":2}"#)?;
+    /// assert!(hits.contains(&"p1") && hits.contains(&"p2"));
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn matches_for_event(&self, event: &[u8]) -> Result<Vec<X>, QuaminaError> {
         // Check if we have a custom flattener
         if let Some(ref custom_flattener_mutex) = self.custom_flattener {
@@ -653,7 +739,23 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
         })
     }
 
-    /// Delete all patterns with the given identifier
+    /// Mark all patterns with the given identifier as deleted.
+    ///
+    /// Deleted patterns are excluded from match results immediately, but
+    /// their automaton memory is not reclaimed until [`rebuild()`](Self::rebuild).
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// # use quamina::Quamina;
+    /// # fn main() -> Result<(), quamina::QuaminaError> {
+    /// let mut q = Quamina::new();
+    /// q.add_pattern("temp", r#"{"x": [1]}"#)?;
+    /// q.delete_patterns(&"temp")?;
+    /// assert!(q.matches_for_event(br#"{"x":1}"#)?.is_empty());
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn delete_patterns(&mut self, x: &X) -> Result<(), QuaminaError> {
         // Check if pattern exists
         if !self.pattern_defs.contains_key(x) || self.deleted_patterns.contains(x) {
@@ -667,14 +769,37 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
         Ok(())
     }
 
-    /// Check if any pattern matches the event (returns early on first match)
+    /// Checks whether any pattern matches the event.
+    ///
+    /// ```
+    /// # use quamina::Quamina;
+    /// # fn main() -> Result<(), quamina::QuaminaError> {
+    /// let mut q = Quamina::new();
+    /// q.add_pattern("a", r#"{"x": [1]}"#)?;
+    /// q.add_pattern("b", r#"{"x": [1]}"#)?;
+    /// assert!(q.has_matches(br#"{"x":1}"#)?);
+    /// assert!(!q.has_matches(br#"{"x":2}"#)?);
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn has_matches(&self, event: &[u8]) -> Result<bool, QuaminaError> {
         // Use matches_for_event and check if non-empty
         // This could be optimized to return early, but for now this is simpler
         Ok(!self.matches_for_event(event)?.is_empty())
     }
 
-    /// Count how many unique pattern IDs match the event
+    /// Counts how many unique pattern IDs match the event.
+    ///
+    /// ```
+    /// # use quamina::Quamina;
+    /// # fn main() -> Result<(), quamina::QuaminaError> {
+    /// let mut q = Quamina::new();
+    /// q.add_pattern("a", r#"{"x": [1]}"#)?;
+    /// q.add_pattern("b", r#"{"x": [1]}"#)?;
+    /// assert_eq!(q.count_matches(br#"{"x":1}"#)?, 2);
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn count_matches(&self, event: &[u8]) -> Result<usize, QuaminaError> {
         Ok(self.matches_for_event(event)?.len())
     }
@@ -708,8 +833,23 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
     }
 
     /// Rebuild the automaton from only live patterns, removing deleted patterns permanently.
-    /// This reclaims memory from deleted patterns and improves matching performance.
-    /// Returns the number of patterns that were purged from the automaton.
+    /// Reclaims automaton memory consumed by soft-deleted patterns.
+    ///
+    /// ```
+    /// # use quamina::Quamina;
+    /// # fn main() -> Result<(), quamina::QuaminaError> {
+    /// let mut q = Quamina::new();
+    /// q.add_pattern("a", r#"{"x": [1]}"#)?;
+    /// q.add_pattern("b", r#"{"x": [2]}"#)?;
+    /// assert_eq!(q.pattern_count(), 2);
+    ///
+    /// q.delete_patterns(&"a")?;
+    /// let purged = q.rebuild();
+    /// assert_eq!(purged, 1);
+    /// assert_eq!(q.pattern_count(), 1);
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn rebuild(&mut self) -> usize {
         let purged = self.deleted_patterns.len();
         if purged == 0 {
@@ -739,13 +879,33 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
     }
 
     /// Check if rebuild is recommended based on pruner statistics.
-    /// Returns true when filtered/emitted ratio exceeds 0.2 and activity threshold is met.
+    /// Returns true when filtered/emitted ratio exceeds 0.2 and at least 1 000
+    /// total observations have been recorded.
+    ///
+    /// ```
+    /// # use quamina::Quamina;
+    /// let q = Quamina::<&str>::new();
+    /// // No activity yet — rebuild not recommended.
+    /// assert!(!q.should_rebuild());
+    /// ```
     pub fn should_rebuild(&self) -> bool {
         self.pruner_stats.should_rebuild()
     }
 
-    /// Perform rebuild if the pruner statistics indicate it would be beneficial.
-    /// Returns the number of patterns purged, or 0 if no rebuild was needed.
+    /// Perform rebuild only when auto-rebuild is enabled and [`should_rebuild()`](Self::should_rebuild)
+    /// returns true. Returns the number of patterns purged, or 0 if no rebuild occurred.
+    ///
+    /// ```
+    /// # use quamina::Quamina;
+    /// # fn main() -> Result<(), quamina::QuaminaError> {
+    /// let mut q = Quamina::new();
+    /// q.add_pattern("a", r#"{"x": [1]}"#)?;
+    /// q.delete_patterns(&"a")?;
+    /// // Threshold not yet met, so no rebuild happens.
+    /// assert_eq!(q.maybe_rebuild(), 0);
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn maybe_rebuild(&mut self) -> usize {
         if self.auto_rebuild_enabled && self.pruner_stats.should_rebuild() {
             self.rebuild()
@@ -754,7 +914,19 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
         }
     }
 
-    /// Removes all patterns
+    /// Removes all patterns and resets the matcher to its initial state.
+    ///
+    /// ```
+    /// # use quamina::Quamina;
+    /// # fn main() -> Result<(), quamina::QuaminaError> {
+    /// let mut q = Quamina::new();
+    /// q.add_pattern("a", r#"{"x": [1]}"#)?;
+    /// assert!(!q.is_empty());
+    /// q.clear();
+    /// assert!(q.is_empty());
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn clear(&mut self) {
         self.automaton = ThreadSafeCoreMatcher::with_limits(
             self.pattern_limits.arena_byte_budget,
@@ -819,3 +991,7 @@ mod tests_core;
 mod tests_operators;
 #[cfg(test)]
 mod tests_stress;
+
+#[cfg(doctest)]
+#[doc = include_str!("../README.md")]
+struct _ReadmeDocTests;

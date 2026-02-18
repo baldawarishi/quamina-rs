@@ -1,6 +1,6 @@
 //! Sparse set data structure for O(1) clear operations.
 //!
-//! Based on: https://research.swtch.com/sparse
+//! Based on: <https://research.swtch.com/sparse>
 //! Adapted from regex-automata/src/util/sparse_set.rs
 //!
 //! Properties:

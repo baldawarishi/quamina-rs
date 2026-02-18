@@ -995,7 +995,7 @@ fn check_single_char_escape(c: char) -> Option<char> {
 }
 
 /// XML NameStartChar - characters that can start an XML name (XSD `\i`).
-/// From W3C XML spec: https://www.w3.org/TR/xml/#NT-NameStartChar
+/// From W3C XML spec: <https://www.w3.org/TR/xml/#NT-NameStartChar>
 fn xml_name_start_char() -> RuneRange {
     vec![
         RunePair { lo: ':', hi: ':' }, // 0x3A
@@ -1361,7 +1361,7 @@ fn read_atom(parse: &mut RegexpParse) -> Result<QuantifiedAtom, RegexpError> {
 }
 
 /// Read a character class expression [...]
-/// Returns (RuneRange, Option<Vec<u8>>) where the second element contains
+/// Returns `(RuneRange, Option<Vec<u8>>)` where the second element contains
 /// ASCII negated bytes for patterns like [^x] that can use memchr acceleration.
 fn read_char_class_expr(
     parse: &mut RegexpParse,
