@@ -332,6 +332,18 @@ impl<X: Clone + Eq + Hash + Send + Sync> QuaminaBuilder<X> {
     ///
     /// # Panics
     /// Panics if `depth` is 0.
+    ///
+    /// ```
+    /// # use quamina::{QuaminaBuilder, QuaminaError};
+    /// # fn main() -> Result<(), QuaminaError> {
+    /// let mut q = QuaminaBuilder::<&str>::new()
+    ///     .with_max_pattern_depth(1)
+    ///     .build()?;
+    /// let err = q.add_pattern("deep", r#"{"a": {"b": ["v"]}}"#).unwrap_err();
+    /// assert!(matches!(err, QuaminaError::PatternTooComplex(_)));
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn with_max_pattern_depth(mut self, depth: usize) -> Self {
         assert!(depth > 0, "max_pattern_depth must be at least 1");
         self.pattern_limits.max_pattern_depth = depth;
@@ -342,6 +354,18 @@ impl<X: Clone + Eq + Hash + Send + Sync> QuaminaBuilder<X> {
     ///
     /// # Panics
     /// Panics if `count` is 0.
+    ///
+    /// ```
+    /// # use quamina::{QuaminaBuilder, QuaminaError};
+    /// # fn main() -> Result<(), QuaminaError> {
+    /// let mut q = QuaminaBuilder::<&str>::new()
+    ///     .with_max_fields_per_pattern(1)
+    ///     .build()?;
+    /// let err = q.add_pattern("wide", r#"{"a": ["1"], "b": ["2"]}"#).unwrap_err();
+    /// assert!(matches!(err, QuaminaError::PatternTooComplex(_)));
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn with_max_fields_per_pattern(mut self, count: usize) -> Self {
         assert!(count > 0, "max_fields_per_pattern must be at least 1");
         self.pattern_limits.max_fields_per_pattern = count;
@@ -352,6 +376,18 @@ impl<X: Clone + Eq + Hash + Send + Sync> QuaminaBuilder<X> {
     ///
     /// # Panics
     /// Panics if `budget` is 0.
+    ///
+    /// ```
+    /// # use quamina::{QuaminaBuilder, QuaminaError};
+    /// # fn main() -> Result<(), QuaminaError> {
+    /// let mut q = QuaminaBuilder::<&str>::new()
+    ///     .with_arena_byte_budget(1)
+    ///     .build()?;
+    /// let err = q.add_pattern("p", r#"{"x": [{"prefix": "a"}]}"#).unwrap_err();
+    /// assert!(matches!(err, QuaminaError::PatternTooComplex(_)));
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn with_arena_byte_budget(mut self, budget: usize) -> Self {
         assert!(budget > 0, "arena_byte_budget must be at least 1");
         self.pattern_limits.arena_byte_budget = budget;
@@ -362,6 +398,18 @@ impl<X: Clone + Eq + Hash + Send + Sync> QuaminaBuilder<X> {
     ///
     /// # Panics
     /// Panics if `max_states` is 0.
+    ///
+    /// ```
+    /// # use quamina::{QuaminaBuilder, QuaminaError};
+    /// # fn main() -> Result<(), QuaminaError> {
+    /// let mut q = QuaminaBuilder::<&str>::new()
+    ///     .with_max_states_per_pattern(1)
+    ///     .build()?;
+    /// let err = q.add_pattern("p", r#"{"a": ["x", {"prefix": "y"}]}"#).unwrap_err();
+    /// assert!(matches!(err, QuaminaError::PatternTooComplex(_)));
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn with_max_states_per_pattern(mut self, max_states: usize) -> Self {
         assert!(max_states > 0, "max_states_per_pattern must be at least 1");
         self.pattern_limits.max_states_per_pattern = max_states;
