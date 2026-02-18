@@ -76,12 +76,12 @@ impl PrunerStats {
         self.filtered.fetch_add(count, Ordering::Relaxed);
     }
 
-    /// Get current emitted count
+    /// Count of live-pattern matches returned since the last rebuild.
     pub fn emitted(&self) -> u64 {
         self.emitted.load(Ordering::Relaxed)
     }
 
-    /// Get current filtered count
+    /// Count of deleted-pattern matches suppressed since the last rebuild.
     pub fn filtered(&self) -> u64 {
         self.filtered.load(Ordering::Relaxed)
     }
@@ -563,6 +563,9 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
 
     /// Add a pattern with the given identifier.
     ///
+    /// `pattern_json` is a JSON object whose values are arrays of match expressions;
+    /// see the [crate-level docs](crate) for the full pattern syntax.
+    ///
     /// # Example
     ///
     /// ```
@@ -598,6 +601,8 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
     }
 
     /// Find all patterns that match the given event.
+    ///
+    /// `event` must be valid UTF-8 JSON bytes (objects, not arrays or scalars).
     ///
     /// # Example
     ///
@@ -734,7 +739,10 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
         })
     }
 
-    /// Delete all patterns with the given identifier.
+    /// Mark all patterns with the given identifier as deleted.
+    ///
+    /// Deleted patterns are excluded from match results immediately, but
+    /// their automaton memory is not reclaimed until [`rebuild()`](Self::rebuild).
     ///
     /// # Example
     ///
@@ -825,8 +833,23 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
     }
 
     /// Rebuild the automaton from only live patterns, removing deleted patterns permanently.
-    /// This reclaims memory from deleted patterns and improves matching performance.
-    /// Returns the number of patterns that were purged from the automaton.
+    /// Reclaims automaton memory consumed by soft-deleted patterns.
+    ///
+    /// ```
+    /// # use quamina::Quamina;
+    /// # fn main() -> Result<(), quamina::QuaminaError> {
+    /// let mut q = Quamina::new();
+    /// q.add_pattern("a", r#"{"x": [1]}"#)?;
+    /// q.add_pattern("b", r#"{"x": [2]}"#)?;
+    /// assert_eq!(q.pattern_count(), 2);
+    ///
+    /// q.delete_patterns(&"a")?;
+    /// let purged = q.rebuild();
+    /// assert_eq!(purged, 1);
+    /// assert_eq!(q.pattern_count(), 1);
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn rebuild(&mut self) -> usize {
         let purged = self.deleted_patterns.len();
         if purged == 0 {
@@ -856,13 +879,33 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
     }
 
     /// Check if rebuild is recommended based on pruner statistics.
-    /// Returns true when filtered/emitted ratio exceeds 0.2 and activity threshold is met.
+    /// Returns true when filtered/emitted ratio exceeds 0.2 and at least 1 000
+    /// total observations have been recorded.
+    ///
+    /// ```
+    /// # use quamina::Quamina;
+    /// let q = Quamina::<&str>::new();
+    /// // No activity yet — rebuild not recommended.
+    /// assert!(!q.should_rebuild());
+    /// ```
     pub fn should_rebuild(&self) -> bool {
         self.pruner_stats.should_rebuild()
     }
 
-    /// Perform rebuild if the pruner statistics indicate it would be beneficial.
-    /// Returns the number of patterns purged, or 0 if no rebuild was needed.
+    /// Perform rebuild only when auto-rebuild is enabled and [`should_rebuild()`](Self::should_rebuild)
+    /// returns true. Returns the number of patterns purged, or 0 if no rebuild occurred.
+    ///
+    /// ```
+    /// # use quamina::Quamina;
+    /// # fn main() -> Result<(), quamina::QuaminaError> {
+    /// let mut q = Quamina::new();
+    /// q.add_pattern("a", r#"{"x": [1]}"#)?;
+    /// q.delete_patterns(&"a")?;
+    /// // Threshold not yet met, so no rebuild happens.
+    /// assert_eq!(q.maybe_rebuild(), 0);
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn maybe_rebuild(&mut self) -> usize {
         if self.auto_rebuild_enabled && self.pruner_stats.should_rebuild() {
             self.rebuild()
