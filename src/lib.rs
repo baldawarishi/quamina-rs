@@ -1,5 +1,7 @@
 //! quamina-rs: Fast pattern-matching library for filtering JSON events
 
+#![deny(missing_docs)]
+
 // Internal modules exposed as `pub` only for benchmarks (benches/matching.rs).
 // Not part of the public API — use `Quamina` instead.
 #[doc(hidden)]
@@ -120,10 +122,15 @@ type PatternDef = HashMap<String, Vec<Matcher>>;
 /// Errors that can occur during pattern matching
 #[derive(Debug)]
 pub enum QuaminaError {
+    /// The event JSON was syntactically invalid.
     InvalidJson(String),
+    /// The pattern JSON was malformed or used unsupported syntax.
     InvalidPattern(String),
+    /// The input contained invalid UTF-8.
     InvalidUtf8,
+    /// The requested media type is not supported (only `application/json`).
     UnsupportedMediaType(String),
+    /// The pattern exceeded configured complexity limits (see [`PatternLimits`]).
     PatternTooComplex(String),
 }
 
@@ -506,7 +513,19 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
         }
     }
 
-    /// Add a pattern with the given identifier
+    /// Add a pattern with the given identifier.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// # use quamina::Quamina;
+    /// # fn main() -> Result<(), quamina::QuaminaError> {
+    /// let mut q = Quamina::new();
+    /// q.add_pattern("alert", r#"{"severity": ["high", "critical"]}"#)?;
+    /// assert!(q.matches_for_event(br#"{"severity":"high"}"#)?.contains(&"alert"));
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn add_pattern(&mut self, x: X, pattern_json: &str) -> Result<(), QuaminaError> {
         let fields = json::parse_pattern(pattern_json, &self.pattern_limits)?;
 
@@ -530,7 +549,21 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
         Ok(())
     }
 
-    /// Find all patterns that match the given event
+    /// Find all patterns that match the given event.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// # use quamina::Quamina;
+    /// # fn main() -> Result<(), quamina::QuaminaError> {
+    /// let mut q = Quamina::new();
+    /// q.add_pattern("p1", r#"{"status": ["error"]}"#)?;
+    /// q.add_pattern("p2", r#"{"level": [1, 2, 3]}"#)?;
+    /// let hits = q.matches_for_event(br#"{"status":"error","level":2}"#)?;
+    /// assert!(hits.contains(&"p1") && hits.contains(&"p2"));
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn matches_for_event(&self, event: &[u8]) -> Result<Vec<X>, QuaminaError> {
         // Check if we have a custom flattener
         if let Some(ref custom_flattener_mutex) = self.custom_flattener {
@@ -653,7 +686,20 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
         })
     }
 
-    /// Delete all patterns with the given identifier
+    /// Delete all patterns with the given identifier.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// # use quamina::Quamina;
+    /// # fn main() -> Result<(), quamina::QuaminaError> {
+    /// let mut q = Quamina::new();
+    /// q.add_pattern("temp", r#"{"x": [1]}"#)?;
+    /// q.delete_patterns(&"temp")?;
+    /// assert!(q.matches_for_event(br#"{"x":1}"#)?.is_empty());
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn delete_patterns(&mut self, x: &X) -> Result<(), QuaminaError> {
         // Check if pattern exists
         if !self.pattern_defs.contains_key(x) || self.deleted_patterns.contains(x) {
@@ -819,3 +865,7 @@ mod tests_core;
 mod tests_operators;
 #[cfg(test)]
 mod tests_stress;
+
+#[cfg(doctest)]
+#[doc = include_str!("../README.md")]
+struct _ReadmeDocTests;
