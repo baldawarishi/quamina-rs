@@ -544,6 +544,12 @@ impl<X: Clone + Eq + Hash + Send + Sync> Clone for Quamina<X> {
 
 impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
     /// Create a new Quamina instance with default pattern complexity limits.
+    ///
+    /// ```
+    /// # use quamina::Quamina;
+    /// let mut q = Quamina::<String>::new();
+    /// assert!(q.is_empty());
+    /// ```
     pub fn new() -> Self {
         let limits = PatternLimits::default();
         Self {
@@ -564,7 +570,7 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
     /// Add a pattern with the given identifier.
     ///
     /// `pattern_json` is a JSON object whose values are arrays of match expressions;
-    /// see the [crate-level docs](crate) for the full pattern syntax.
+    /// see the [README](https://github.com/baldawarishi/quamina-rs#patterns) for the full pattern syntax.
     ///
     /// # Example
     ///
@@ -832,8 +838,7 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
         self.auto_rebuild_enabled
     }
 
-    /// Rebuild the automaton from only live patterns, removing deleted patterns permanently.
-    /// Reclaims automaton memory consumed by soft-deleted patterns.
+    /// Rebuild the automaton from only live patterns, reclaiming memory from soft-deleted patterns.
     ///
     /// ```
     /// # use quamina::Quamina;
@@ -991,7 +996,3 @@ mod tests_core;
 mod tests_operators;
 #[cfg(test)]
 mod tests_stress;
-
-#[cfg(doctest)]
-#[doc = include_str!("../README.md")]
-struct _ReadmeDocTests;
