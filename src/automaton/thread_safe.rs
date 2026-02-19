@@ -32,6 +32,59 @@ use super::mutable_matcher::{
 };
 use super::small_table::{FieldMatcher, NfaBuffers};
 
+/// Compact collection for `transition_on` results, optimized for the common cases.
+///
+/// Most calls return 0 or 1 elements. This enum avoids both heap allocation (unlike Vec)
+/// and the SmallVec discriminant/copy overhead on the empty path. Size: 16 bytes
+/// (same as `Option<Arc<T>>` thanks to niche optimization on the `One` variant).
+pub(crate) enum Transitions<T> {
+    Empty,
+    One(T),
+    Many(Vec<T>),
+}
+
+impl<T> Transitions<T> {
+    #[inline(always)]
+    fn iter(&self) -> TransitionsIter<'_, T> {
+        match self {
+            Self::Empty => TransitionsIter::Empty,
+            Self::One(val) => TransitionsIter::One(std::iter::once(val)),
+            Self::Many(vec) => TransitionsIter::Many(vec.iter()),
+        }
+    }
+
+    #[inline(always)]
+    fn push(&mut self, val: T) {
+        *self = match std::mem::replace(self, Self::Empty) {
+            Self::Empty => Self::One(val),
+            Self::One(first) => Self::Many(vec![first, val]),
+            Self::Many(mut vec) => {
+                vec.push(val);
+                Self::Many(vec)
+            }
+        };
+    }
+}
+
+enum TransitionsIter<'a, T> {
+    Empty,
+    One(std::iter::Once<&'a T>),
+    Many(std::slice::Iter<'a, T>),
+}
+
+impl<'a, T> Iterator for TransitionsIter<'a, T> {
+    type Item = &'a T;
+
+    #[inline(always)]
+    fn next(&mut self) -> Option<&'a T> {
+        match self {
+            TransitionsIter::Empty => None,
+            TransitionsIter::One(iter) => iter.next(),
+            TransitionsIter::Many(iter) => iter.next(),
+        }
+    }
+}
+
 /// Check if two array trails have no conflicts (using flatten_json::ArrayPos)
 fn no_array_trail_conflict_ref(
     from: &[crate::flatten_json::ArrayPos],
@@ -91,17 +144,17 @@ impl<X: Clone + Eq + Hash> FrozenFieldMatcher<X> {
     }
 
     /// Transition on a field value during matching
-    pub fn transition_on(
+    pub(crate) fn transition_on(
         &self,
         path: &str,
         value: &[u8],
         is_number: bool,
         bufs: &mut NfaBuffers,
-    ) -> Vec<Arc<Self>> {
+    ) -> Transitions<Arc<Self>> {
         if let Some(vm) = self.transitions.get(path) {
             vm.transition_on(value, is_number, bufs)
         } else {
-            vec![]
+            Transitions::Empty
         }
     }
 }
@@ -152,23 +205,23 @@ impl<X: Clone + Eq + Hash> FrozenValueMatcher<X> {
 
     /// Transition on a value during matching
     #[inline]
-    pub fn transition_on(
+    pub(crate) fn transition_on(
         &self,
         value: &[u8],
         is_number: bool,
         bufs: &mut NfaBuffers,
-    ) -> Vec<Arc<FrozenFieldMatcher<X>>> {
+    ) -> Transitions<Arc<FrozenFieldMatcher<X>>> {
         // Check singleton first
         if let Some(ref singleton_val) = self.singleton_match {
             if singleton_val == value {
                 if let Some(ref trans) = self.singleton_transition {
-                    return vec![trans.clone()];
+                    return Transitions::One(trans.clone());
                 }
             }
-            return vec![];
+            return Transitions::Empty;
         }
 
-        let mut result = Vec::new();
+        let mut result = Transitions::Empty;
 
         // Try with Q-number conversion if this matcher has numbers and value is numeric
         // Use stack-allocated QNumberStack to avoid heap allocation
@@ -587,18 +640,18 @@ impl<X: Clone + Eq + Hash + Send + Sync> ThreadSafeCoreMatcher<X> {
         let next_states =
             state.transition_on(&field.path, field.value.as_bytes(), field.is_number, bufs);
 
-        for next_state in next_states {
+        for next_state in next_states.iter() {
             for m in &next_state.matches {
                 matches.add(m.clone());
             }
 
             for next_idx in (index + 1)..fields.len() {
                 if no_array_trail_conflict(&field.array_trail, &fields[next_idx].array_trail) {
-                    self.try_to_match(fields, next_idx, &next_state, matches, bufs);
+                    self.try_to_match(fields, next_idx, next_state, matches, bufs);
                 }
             }
 
-            self.check_exists_false(&next_state, fields, index, matches, bufs);
+            self.check_exists_false(next_state, fields, index, matches, bufs);
         }
     }
 
@@ -686,18 +739,18 @@ impl<X: Clone + Eq + Hash + Send + Sync> ThreadSafeCoreMatcher<X> {
         // Try value transitions
         let next_states = state.transition_on(field.path, field.value, field.is_number, bufs);
 
-        for next_state in next_states {
+        for next_state in next_states.iter() {
             for m in &next_state.matches {
                 matches.add(m.clone());
             }
 
             for next_idx in (index + 1)..fields.len() {
                 if no_array_trail_conflict_ref(field.array_trail, fields[next_idx].array_trail) {
-                    self.try_to_match_ref(fields, next_idx, &next_state, matches, bufs);
+                    self.try_to_match_ref(fields, next_idx, next_state, matches, bufs);
                 }
             }
 
-            self.check_exists_false_ref(&next_state, fields, index, matches, bufs);
+            self.check_exists_false_ref(next_state, fields, index, matches, bufs);
         }
     }
 
@@ -781,18 +834,18 @@ impl<X: Clone + Eq + Hash + Send + Sync> ThreadSafeCoreMatcher<X> {
         // Try value transitions
         let next_states = state.transition_on(path, value, field.is_number, bufs);
 
-        for next_state in next_states {
+        for next_state in next_states.iter() {
             for m in &next_state.matches {
                 matches.add(m.clone());
             }
 
             for next_idx in (index + 1)..fields.len() {
                 if no_array_trail_conflict_ref(array_trail, fields[next_idx].array_trail_slice()) {
-                    self.try_to_match_direct(fields, next_idx, &next_state, matches, bufs);
+                    self.try_to_match_direct(fields, next_idx, next_state, matches, bufs);
                 }
             }
 
-            self.check_exists_false_direct(&next_state, fields, index, matches, bufs);
+            self.check_exists_false_direct(next_state, fields, index, matches, bufs);
         }
     }
 
@@ -956,6 +1009,20 @@ impl<X: Clone + Eq + std::hash::Hash> AutomatonValueMatcher<X> {
 mod tests {
     use super::*;
     use crate::json::Matcher;
+
+    /// Guard against replacing Transitions with a larger type (e.g. SmallVec<[...; 4]> = 48 bytes).
+    /// A larger return type from transition_on causes a measurable no-match regression because
+    /// try_to_match is recursive and the return value is constructed on every call, even when empty.
+    /// See docs/plans/investigate-no-match-regression.md for the full analysis.
+    #[test]
+    fn transitions_size_must_stay_compact() {
+        let size = std::mem::size_of::<Transitions<Arc<FrozenFieldMatcher<String>>>>();
+        assert!(
+            size <= 24,
+            "Transitions<Arc<...>> is {size} bytes, must be <= 24 (Vec size). \
+             Larger types cause no-match benchmark regressions in recursive try_to_match."
+        );
+    }
 
     #[test]
     fn test_thread_safe_core_matcher_basic() {
