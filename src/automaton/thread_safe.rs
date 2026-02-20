@@ -211,17 +211,33 @@ impl<X: Clone + Eq + Hash> FrozenValueMatcher<X> {
         is_number: bool,
         bufs: &mut NfaBuffers,
     ) -> Transitions<Arc<FrozenFieldMatcher<X>>> {
-        // Check singleton first
-        if let Some(ref singleton_val) = self.singleton_match {
-            if singleton_val == value {
-                if let Some(ref trans) = self.singleton_transition {
-                    return Transitions::One(trans.clone());
+        // Singleton fast path: when no multi-condition NFAs coexist with singleton,
+        // we can short-circuit without touching transition_map.
+        if self.multi_condition_nfas.is_empty() {
+            if let Some(ref singleton_val) = self.singleton_match {
+                if singleton_val == value {
+                    if let Some(ref trans) = self.singleton_transition {
+                        return Transitions::One(trans.clone());
+                    }
                 }
+                return Transitions::Empty;
             }
-            return Transitions::Empty;
         }
 
         let mut result = Transitions::Empty;
+
+        // Check singleton match (when multi-condition NFAs coexist with singleton,
+        // we couldn't use the fast path above)
+        let has_singleton = if let Some(ref singleton_val) = self.singleton_match {
+            if singleton_val == value {
+                if let Some(ref trans) = self.singleton_transition {
+                    result.push(trans.clone());
+                }
+            }
+            true
+        } else {
+            false
+        };
 
         // Try with Q-number conversion if this matcher has numbers and value is numeric
         // Use stack-allocated QNumberStack to avoid heap allocation
@@ -238,45 +254,48 @@ impl<X: Clone + Eq + Hash> FrozenValueMatcher<X> {
             None => value,
         };
 
-        // Traverse main_arena (unified arena for all pattern types)
-        if let Some((ref arena, start)) = self.main_arena {
-            if self.main_arena_is_nfa {
-                // NFA path: handles epsilon transitions and spinout states
-                bufs.arena_bufs.clear();
-                traverse_arena_nfa(arena, start, value_to_match, &mut bufs.arena_bufs);
-            } else {
-                // DFA fast path: tight loop, no buffer management overhead
+        // When singleton is active, main_arena and suffix_arena are empty — skip them.
+        if !has_singleton {
+            // Traverse main_arena (unified arena for all pattern types)
+            if let Some((ref arena, start)) = self.main_arena {
+                if self.main_arena_is_nfa {
+                    // NFA path: handles epsilon transitions and spinout states
+                    bufs.arena_bufs.clear();
+                    traverse_arena_nfa(arena, start, value_to_match, &mut bufs.arena_bufs);
+                } else {
+                    // DFA fast path: tight loop, no buffer management overhead
+                    bufs.arena_bufs.transitions.clear();
+                    traverse_arena_dfa(
+                        arena,
+                        start,
+                        value_to_match,
+                        &mut bufs.arena_bufs.transitions,
+                    );
+                }
+
+                for arc_fm in &bufs.arena_bufs.transitions {
+                    let ptr = Arc::as_ptr(arc_fm) as usize;
+                    if let Some(frozen_fm) = self.transition_map.get(&ptr) {
+                        result.push(frozen_fm.clone());
+                    }
+                }
+            }
+
+            // Traverse suffix_arena backward (right-to-left DFA for suffix patterns)
+            if let Some((ref arena, start)) = self.suffix_arena {
                 bufs.arena_bufs.transitions.clear();
-                traverse_arena_dfa(
+                traverse_arena_dfa_backward(
                     arena,
                     start,
                     value_to_match,
                     &mut bufs.arena_bufs.transitions,
                 );
-            }
 
-            for arc_fm in &bufs.arena_bufs.transitions {
-                let ptr = Arc::as_ptr(arc_fm) as usize;
-                if let Some(frozen_fm) = self.transition_map.get(&ptr) {
-                    result.push(frozen_fm.clone());
-                }
-            }
-        }
-
-        // Traverse suffix_arena backward (right-to-left DFA for suffix patterns)
-        if let Some((ref arena, start)) = self.suffix_arena {
-            bufs.arena_bufs.transitions.clear();
-            traverse_arena_dfa_backward(
-                arena,
-                start,
-                value_to_match,
-                &mut bufs.arena_bufs.transitions,
-            );
-
-            for arc_fm in &bufs.arena_bufs.transitions {
-                let ptr = Arc::as_ptr(arc_fm) as usize;
-                if let Some(frozen_fm) = self.transition_map.get(&ptr) {
-                    result.push(frozen_fm.clone());
+                for arc_fm in &bufs.arena_bufs.transitions {
+                    let ptr = Arc::as_ptr(arc_fm) as usize;
+                    if let Some(frozen_fm) = self.transition_map.get(&ptr) {
+                        result.push(frozen_fm.clone());
+                    }
                 }
             }
         }

@@ -614,6 +614,107 @@ fn test_negative_lookbehind_match() {
 }
 
 // ============================================================================
+// Lookaround + Other Pattern Coexistence Tests
+// ============================================================================
+
+#[test]
+fn test_lookahead_with_exact_on_same_field() {
+    // Regression: lookahead pattern must still match when an exact pattern
+    // is also registered on the same field (singleton must not short-circuit).
+    let mut q = Quamina::<String>::new();
+    q.add_pattern(
+        "look".to_string(),
+        r#"{"v": [{"regexp": "foo(?=bar)bar"}]}"#,
+    )
+    .unwrap();
+    q.add_pattern("exact".to_string(), r#"{"v": ["hello"]}"#)
+        .unwrap();
+
+    // Lookahead pattern should still match "foobar"
+    let m = q
+        .matches_for_event(r#"{"v": "foobar"}"#.as_bytes())
+        .unwrap();
+    assert!(
+        m.contains(&"look".to_string()),
+        "lookahead pattern should match 'foobar' even with exact pattern on same field"
+    );
+    assert!(
+        !m.contains(&"exact".to_string()),
+        "exact pattern 'hello' should NOT match 'foobar'"
+    );
+
+    // Exact pattern should still match "hello"
+    let m = q.matches_for_event(r#"{"v": "hello"}"#.as_bytes()).unwrap();
+    assert!(
+        m.contains(&"exact".to_string()),
+        "exact pattern should match 'hello'"
+    );
+    assert!(
+        !m.contains(&"look".to_string()),
+        "lookahead pattern should NOT match 'hello'"
+    );
+
+    // Neither should match an unrelated value
+    let m = q.matches_for_event(r#"{"v": "other"}"#.as_bytes()).unwrap();
+    assert!(m.is_empty(), "no pattern should match 'other'");
+}
+
+#[test]
+fn test_exact_added_before_lookahead_on_same_field() {
+    // Same bug but with reversed add order: exact first, then lookahead.
+    let mut q = Quamina::<String>::new();
+    q.add_pattern("exact".to_string(), r#"{"v": ["hello"]}"#)
+        .unwrap();
+    q.add_pattern(
+        "look".to_string(),
+        r#"{"v": [{"regexp": "foo(?=bar)bar"}]}"#,
+    )
+    .unwrap();
+
+    let m = q
+        .matches_for_event(r#"{"v": "foobar"}"#.as_bytes())
+        .unwrap();
+    assert!(
+        m.contains(&"look".to_string()),
+        "lookahead pattern should match 'foobar' when exact was added first"
+    );
+
+    let m = q.matches_for_event(r#"{"v": "hello"}"#.as_bytes()).unwrap();
+    assert!(
+        m.contains(&"exact".to_string()),
+        "exact pattern should match 'hello'"
+    );
+}
+
+#[test]
+fn test_singleton_hit_and_multi_condition_hit_same_value() {
+    // When the exact pattern and the lookahead pattern both match the same
+    // input value, both results must be returned. This exercises the
+    // singleton-match + multi-condition path (not just singleton-miss).
+    let mut q = Quamina::<String>::new();
+    q.add_pattern(
+        "look".to_string(),
+        r#"{"v": [{"regexp": "foo(?=bar)bar"}]}"#,
+    )
+    .unwrap();
+    q.add_pattern("exact".to_string(), r#"{"v": ["foobar"]}"#)
+        .unwrap();
+
+    let m = q
+        .matches_for_event(r#"{"v": "foobar"}"#.as_bytes())
+        .unwrap();
+    assert!(
+        m.contains(&"look".to_string()),
+        "lookahead should match 'foobar'"
+    );
+    assert!(
+        m.contains(&"exact".to_string()),
+        "exact should also match 'foobar'"
+    );
+    assert_eq!(m.len(), 2, "both patterns should match");
+}
+
+// ============================================================================
 // Word Boundary (~b/~B) Tests
 // ============================================================================
 
