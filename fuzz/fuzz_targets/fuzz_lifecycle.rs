@@ -41,8 +41,8 @@ const SEEDS: &[(&str, &[u8])] = &[
         br#"{"path": "a/src/b.rs"}"#,
     ),
     (
-        r#"{"code": [{"regex": "^[A-Z]{3}$"}]}"#,
-        br#"{"code": "ABC"}"#,
+        r#"{"code": [{"regex": "[A-Z]{3}-[0-9]{3}"}]}"#,
+        br#"{"code": "ABC-123"}"#,
     ),
     (
         r#"{"tag": [{"regexp": ".*~bcat~b.*"}]}"#,
@@ -68,6 +68,8 @@ fuzz_target!(|data: &[u8]| {
     let mut q = Quamina::<u16>::new();
     let mut pos = 0;
     let mut next_id: u16 = 0;
+    // Track which seed patterns are currently active (added and not deleted/cleared).
+    let mut seed_active = [false; SEEDS.len()];
 
     while pos < data.len() {
         let op = data[pos] % 7;
@@ -96,7 +98,9 @@ fuzz_target!(|data: &[u8]| {
                     Some(b) => b[0] as usize % SEEDS.len(),
                     None => break,
                 };
-                let _ = q.add_pattern(SEED_BASE + idx as u16, SEEDS[idx].0);
+                if q.add_pattern(SEED_BASE + idx as u16, SEEDS[idx].0).is_ok() {
+                    seed_active[idx] = true;
+                }
             }
 
             // Delete: arbitrary u16 ID -- may target a pattern that was never added
@@ -107,6 +111,13 @@ fuzz_target!(|data: &[u8]| {
                 };
                 let id = u16::from_le_bytes([id_bytes[0], id_bytes[1]]);
                 let _ = q.delete_patterns(&id);
+                // Track seed deletions
+                if id >= SEED_BASE {
+                    let idx = (id - SEED_BASE) as usize;
+                    if idx < SEEDS.len() {
+                        seed_active[idx] = false;
+                    }
+                }
             }
 
             // Match: fuzzer-provided event bytes (like fuzz_match_event)
@@ -123,13 +134,21 @@ fuzz_target!(|data: &[u8]| {
                 let _ = q.matches_for_event(event);
             }
 
-            // Match: seed event (exercises the match-found + filter paths)
+            // Match: seed event — assert active seeds produce matches
             4 => {
                 let idx = match take(data, &mut pos, 1) {
                     Some(b) => b[0] as usize % SEEDS.len(),
                     None => break,
                 };
-                let _ = q.matches_for_event(SEEDS[idx].1);
+                if let Ok(matches) = q.matches_for_event(SEEDS[idx].1) {
+                    if seed_active[idx] {
+                        assert!(
+                            matches.contains(&(SEED_BASE + idx as u16)),
+                            "seed {} active but not in matches",
+                            idx
+                        );
+                    }
+                }
             }
 
             // Rebuild: compact automaton after deletions
@@ -140,6 +159,7 @@ fuzz_target!(|data: &[u8]| {
             // Clear: reset all state
             _ => {
                 q.clear();
+                seed_active = [false; SEEDS.len()];
             }
         }
     }
