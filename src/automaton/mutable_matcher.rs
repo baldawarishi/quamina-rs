@@ -902,18 +902,34 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
         is_number: bool,
         _bufs: &mut NfaBuffers,
     ) -> Vec<Rc<MutableFieldMatcher<X>>> {
-        // Check singleton first
-        if let Some(ref singleton_val) = *self.singleton_match.borrow() {
-            if singleton_val == value {
-                if let Some(ref trans) = *self.singleton_transition.borrow() {
-                    return vec![trans.clone()];
+        // Singleton fast path: when no multi-condition NFAs coexist with singleton,
+        // we can short-circuit without touching transition_map.
+        if self.multi_condition_nfas.borrow().is_empty() {
+            if let Some(ref singleton_val) = *self.singleton_match.borrow() {
+                if singleton_val == value {
+                    if let Some(ref trans) = *self.singleton_transition.borrow() {
+                        return vec![trans.clone()];
+                    }
                 }
+                return vec![];
             }
-            return vec![];
         }
 
         let transition_map = self.transition_map.borrow();
         let mut result = Vec::new();
+
+        // Check singleton match (when multi-condition NFAs coexist with singleton,
+        // we couldn't use the fast path above)
+        let has_singleton = if let Some(ref singleton_val) = *self.singleton_match.borrow() {
+            if singleton_val == value {
+                if let Some(ref trans) = *self.singleton_transition.borrow() {
+                    result.push(trans.clone());
+                }
+            }
+            true
+        } else {
+            false
+        };
 
         // Try with Q-number conversion if this matcher has numbers and value is numeric
         // Use stack-allocated QNumberStack to avoid heap allocation
@@ -937,35 +953,43 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
             None => value,
         };
 
-        // Traverse main_arena (unified arena for all pattern types)
-        if let Some((ref arena, start)) = *self.main_arena.borrow() {
-            let mut arena_bufs = self.arena_bufs.borrow_mut();
-            if *self.main_arena_is_nfa.borrow() {
-                traverse_arena_nfa(arena, start, value_to_match, &mut arena_bufs);
-            } else {
-                arena_bufs.transitions.clear();
-                traverse_arena_dfa(arena, start, value_to_match, &mut arena_bufs.transitions);
-            }
+        // When singleton is active, main_arena and suffix_arena are empty — skip them.
+        if !has_singleton {
+            // Traverse main_arena (unified arena for all pattern types)
+            if let Some((ref arena, start)) = *self.main_arena.borrow() {
+                let mut arena_bufs = self.arena_bufs.borrow_mut();
+                if *self.main_arena_is_nfa.borrow() {
+                    traverse_arena_nfa(arena, start, value_to_match, &mut arena_bufs);
+                } else {
+                    arena_bufs.transitions.clear();
+                    traverse_arena_dfa(arena, start, value_to_match, &mut arena_bufs.transitions);
+                }
 
-            // Map Arc<FieldMatcher> transitions to Rc<MutableFieldMatcher<X>>
-            for arc_fm in &arena_bufs.transitions {
-                let ptr = Arc::as_ptr(arc_fm);
-                if let Some(mutable_fm) = transition_map.get(&ptr) {
-                    result.push(mutable_fm.clone());
+                // Map Arc<FieldMatcher> transitions to Rc<MutableFieldMatcher<X>>
+                for arc_fm in &arena_bufs.transitions {
+                    let ptr = Arc::as_ptr(arc_fm);
+                    if let Some(mutable_fm) = transition_map.get(&ptr) {
+                        result.push(mutable_fm.clone());
+                    }
                 }
             }
-        }
 
-        // Traverse suffix_arena backward (right-to-left DFA for suffix patterns)
-        if let Some((ref arena, start)) = *self.suffix_arena.borrow() {
-            let mut arena_bufs = self.arena_bufs.borrow_mut();
-            arena_bufs.transitions.clear();
-            traverse_arena_dfa_backward(arena, start, value_to_match, &mut arena_bufs.transitions);
+            // Traverse suffix_arena backward (right-to-left DFA for suffix patterns)
+            if let Some((ref arena, start)) = *self.suffix_arena.borrow() {
+                let mut arena_bufs = self.arena_bufs.borrow_mut();
+                arena_bufs.transitions.clear();
+                traverse_arena_dfa_backward(
+                    arena,
+                    start,
+                    value_to_match,
+                    &mut arena_bufs.transitions,
+                );
 
-            for arc_fm in &arena_bufs.transitions {
-                let ptr = Arc::as_ptr(arc_fm);
-                if let Some(mutable_fm) = transition_map.get(&ptr) {
-                    result.push(mutable_fm.clone());
+                for arc_fm in &arena_bufs.transitions {
+                    let ptr = Arc::as_ptr(arc_fm);
+                    if let Some(mutable_fm) = transition_map.get(&ptr) {
+                        result.push(mutable_fm.clone());
+                    }
                 }
             }
         }
@@ -978,7 +1002,7 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
         // - Lookbehind conditions are pre-combined with primary during build
         let multi_condition_nfas = self.multi_condition_nfas.borrow();
         if !multi_condition_nfas.is_empty() {
-            let mut condition_bufs = ArenaNfaBuffers::new();
+            let mut condition_bufs = self.arena_bufs.borrow_mut();
 
             for mc_nfa in multi_condition_nfas.iter() {
                 // Verify all conditions against the full value

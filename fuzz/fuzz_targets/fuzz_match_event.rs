@@ -80,4 +80,19 @@ fuzz_target!(|data: &[u8]| {
     // Also test the other matching APIs for coverage
     let _ = MATCHER.has_matches(data);
     let _ = MATCHER.count_matches(data);
+
+    // Seed correctness: verify known matches still work after processing
+    // arbitrary input. Catches stale NFA buffer state or cross-contamination
+    // between the fuzz traversal above and these known-good checks.
+    let m = MATCHER.matches_for_event(br#"{"status": "active"}"#).unwrap();
+    assert!(m.contains(&"exact-status"), "seed: exact-status");
+
+    let m = MATCHER.matches_for_event(br#"{"env": "prod-east"}"#).unwrap();
+    assert!(m.contains(&"prefix"), "seed: prefix");
+
+    let m = MATCHER.matches_for_event(br#"{"price": 42}"#).unwrap();
+    assert!(m.contains(&"numeric-lt"), "seed: numeric-lt");
+
+    let m = MATCHER.matches_for_event(br#"{"tag": "the cat sat"}"#).unwrap();
+    assert!(m.contains(&"word-boundary"), "seed: word-boundary");
 });
