@@ -2678,6 +2678,83 @@ fn test_lookaround_primary_match() {
     );
 }
 
+/// Regression test: lookaround buffer reuse must not carry stale state.
+///
+/// Mixes lookahead and exact patterns on the same field, then matches
+/// repeatedly. If arena_bufs carries stale transitions between calls,
+/// later iterations will produce wrong results.
+#[test]
+fn test_lookaround_buffer_reuse_no_stale_state() {
+    let mut q = Quamina::<String>::new();
+
+    // Lookahead pattern (uses multi_condition_nfas path)
+    q.add_pattern(
+        "look".to_string(),
+        r#"{"v": [{"regexp": "foo(?=bar)bar"}]}"#,
+    )
+    .unwrap();
+
+    // Exact pattern on a DIFFERENT field (avoids arena merge interference)
+    q.add_pattern("exact".to_string(), r#"{"w": ["hello"]}"#)
+        .unwrap();
+
+    for _ in 0..200 {
+        let m = q
+            .matches_for_event(r#"{"v": "foobar"}"#.as_bytes())
+            .unwrap();
+        assert!(
+            m.contains(&"look".to_string()),
+            "foobar should match lookahead"
+        );
+
+        let m = q.matches_for_event(r#"{"w": "hello"}"#.as_bytes()).unwrap();
+        assert!(m.contains(&"exact".to_string()), "hello should match exact");
+
+        let m = q
+            .matches_for_event(r#"{"v": "nomatch"}"#.as_bytes())
+            .unwrap();
+        assert!(m.is_empty(), "nomatch should match nothing");
+    }
+}
+
+/// Regression test: multiple lookaround conditions must not cross-contaminate.
+///
+/// When checking condition A then condition B, the buffer must be fully cleared
+/// between traversals so condition A's transitions don't leak into condition B.
+#[test]
+fn test_lookaround_multiple_conditions_no_cross_contamination() {
+    let mut q = Quamina::<String>::new();
+
+    // Positive lookahead: matches "foobar" but not "foobaz"
+    q.add_pattern("pos".to_string(), r#"{"v": [{"regexp": "foo(?=bar)bar"}]}"#)
+        .unwrap();
+
+    // Negative lookahead: matches "foobaz" but not "foobar"
+    q.add_pattern("neg".to_string(), r#"{"v": [{"regexp": "foo(?!bar)baz"}]}"#)
+        .unwrap();
+
+    // Run many times — cross-contamination would show up as intermittent failures
+    for _ in 0..200 {
+        let m = q
+            .matches_for_event(r#"{"v": "foobar"}"#.as_bytes())
+            .unwrap();
+        assert!(m.contains(&"pos".to_string()), "foobar should match pos");
+        assert!(
+            !m.contains(&"neg".to_string()),
+            "foobar should not match neg"
+        );
+
+        let m = q
+            .matches_for_event(r#"{"v": "foobaz"}"#.as_bytes())
+            .unwrap();
+        assert!(
+            !m.contains(&"pos".to_string()),
+            "foobaz should not match pos"
+        );
+        assert!(m.contains(&"neg".to_string()), "foobaz should match neg");
+    }
+}
+
 #[test]
 fn test_shellstyle_subset_overlap_same_field() {
     // Go's TestWildCardRuler: two shellstyle patterns on the same field where

@@ -978,7 +978,7 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
         // - Lookbehind conditions are pre-combined with primary during build
         let multi_condition_nfas = self.multi_condition_nfas.borrow();
         if !multi_condition_nfas.is_empty() {
-            let mut condition_bufs = ArenaNfaBuffers::new();
+            let mut condition_bufs = self.arena_bufs.borrow_mut();
 
             for mc_nfa in multi_condition_nfas.iter() {
                 // Verify all conditions against the full value
