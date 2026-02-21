@@ -13,3 +13,6 @@ sample_output.txt
 
 # Debug/fuzz logs
 docs/long_fuzz_output.log
+
+# Mutation testing output
+mutants.out/

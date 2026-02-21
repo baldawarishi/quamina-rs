@@ -50,6 +50,10 @@ debug = 1  # Line tables for flamegraph/samply
 [profile.release]
 debug = 1  # Line tables for flamegraph/samply
 
+[profile.mutants]
+inherits = "test"
+debug = "none"
+
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)'] }
 unsafe_code = "warn"

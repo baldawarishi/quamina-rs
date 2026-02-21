@@ -1,0 +1,102 @@
+name: Mutation testing
+
+on:
+  pull_request:
+    branches: [main]
+  schedule:
+    # Every Monday at 09:00 UTC (same cadence as upstream-check)
+    - cron: "0 9 * * 1"
+  workflow_dispatch:
+
+permissions:
+  issues: write
+
+jobs:
+  # ── PR incremental: only mutants touching changed code ──────────────
+  incremental-mutants:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install cargo-mutants
+        run: cargo install cargo-mutants
+      - name: Generate diff
+        run: git diff origin/${{ github.base_ref }}.. > git.diff
+      - name: Run incremental mutation testing
+        run: cargo mutants --no-shuffle -vV --in-diff git.diff --in-place
+      - name: Upload mutants.out
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mutants-incremental
+          path: mutants.out/
+
+  # ── Weekly full run: sharded across multiple jobs ───────────────────
+  full-mutants:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5, 6, 7]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install cargo-mutants
+        run: cargo install cargo-mutants
+      - name: Run mutation testing (shard ${{ matrix.shard }}/8)
+        run: >
+          cargo mutants -vV --in-place
+          --baseline=skip
+          --shard ${{ matrix.shard }}/8
+      - name: Upload mutants.out
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mutants-shard-${{ matrix.shard }}
+          path: mutants.out/
+
+  # ── Report surviving mutants as a GitHub issue ──────────────────────
+  report-surviving:
+    if: >-
+      always()
+      && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+      && needs.full-mutants.result == 'failure'
+    needs: full-mutants
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: mutants-shard-*
+          merge-multiple: true
+          path: mutants-merged
+      - name: Collect surviving mutants
+        id: collect
+        run: |
+          # Merge missed.txt from all shards
+          find mutants-merged -name 'missed.txt' -exec cat {} + | sort -u > all-missed.txt
+          if [ -s all-missed.txt ]; then
+            echo "has_missed=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Create issue for surviving mutants
+        if: steps.collect.outputs.has_missed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          MISSED="$(cat all-missed.txt)"
+          gh issue create \
+            --title "Surviving mutants found ($(date +%Y-%m-%d))" \
+            --body "The weekly mutation testing run found surviving mutants.
+
+          \`\`\`
+          ${MISSED}
+          \`\`\`
+
+          These represent potential test coverage gaps — mutations that should be caught but aren't." \
+            --label "mutation-testing"
