@@ -8,8 +8,20 @@ Style inspired by [ripgrep's CHANGELOG](https://github.com/BurntSushi/ripgrep/bl
 
 ## [Unreleased]
 
+## [0.4.1] — 2026-02-20
+
+### Fixed
+- Singleton short-circuit skipping lookaround matching (#40)
+
+### Changed
+- Replace `Vec` with custom `Transitions` enum in `transition_on()` for fewer allocations (#37)
+- Only mark regexp FAs as NFA when actually nondeterministic (#33)
+
 ### Added
-- Upstream sync tracking via `.go-upstream-sync` and `just upstream` / `just upstream-sync`
+- Doctests and improved API docs for rebuild/pruner methods (#35)
+- `deny(missing_docs)` lint and error variant documentation (#36)
+- CodeQL workflow, synced upstream to dd6b17c (#34)
+- Upstream sync tracking via `.go-upstream-sync` and `just upstream` / `just upstream-sync` (#31)
 
 ## [0.4.0] — 2026-02-12
 
