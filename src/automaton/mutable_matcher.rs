@@ -1128,7 +1128,8 @@ impl<X: Clone + Eq + std::hash::Hash> MatchSet<X> {
     }
 
     fn add(&mut self, x: X) {
-        if self.seen.insert(x.clone()) {
+        if !self.seen.contains(&x) {
+            self.seen.insert(x.clone());
             self.matches.push(x);
         }
     }
@@ -2048,5 +2049,19 @@ mod tests {
         }];
         let matches = cm.matches_for_fields(&fields);
         assert!(matches.contains(&"shell".to_string()));
+    }
+
+    #[test]
+    fn test_match_set_dedup() {
+        let mut ms = MatchSet::<String>::new();
+        ms.add("a".to_string());
+        ms.add("b".to_string());
+        ms.add("a".to_string()); // duplicate
+        ms.add("c".to_string());
+        ms.add("b".to_string()); // duplicate
+
+        let result = ms.into_vec();
+        assert_eq!(result.len(), 3);
+        assert_eq!(result, vec!["a", "b", "c"]);
     }
 }
