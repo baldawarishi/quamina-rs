@@ -235,6 +235,37 @@ fn test_multiple_overlapping_shellstyle_patterns() {
     assert_has_match!(q, r#"{"c": "xyzzz"}"#, "prefix_xy");
 }
 
+/// Go lineage: nfa_test.go TestNestedTransmapSafety
+///
+/// Verifies that multi-field shellstyle patterns match correctly when nested
+/// NFA traversals occur. In Go, this caught a bug where nested traverseNFA
+/// calls corrupted the outer transmap buffer. The Rust architecture avoids
+/// this bug by returning owned Vecs from transition_on(), but this test
+/// validates the matching correctness of multi-field shellstyle patterns.
+#[test]
+fn test_nested_transmap_safety() {
+    let q = q!(
+        "P0" => r#"{"a": [{"shellstyle": "foo*"}], "b": [{"shellstyle": "bar*"}]}"#,
+        "P1" => r#"{"a": [{"shellstyle": "foo*"}], "b": [{"shellstyle": "baz*"}]}"#,
+        "P2" => r#"{"a": [{"shellstyle": "fox*"}], "b": [{"shellstyle": "bar*"}]}"#
+    );
+
+    // Matches P0: a=foo*, b=bar*
+    assert_has_match!(q, r#"{"a": "fooXYZ", "b": "barXYZ"}"#, "P0");
+    // Matches P1: a=foo*, b=baz*
+    assert_has_match!(q, r#"{"a": "fooABC", "b": "bazABC"}"#, "P1");
+    // Matches P2: a=fox*, b=bar*
+    assert_has_match!(q, r#"{"a": "foxDEF", "b": "barDEF"}"#, "P2");
+    // a=foo* matches P0 and P1, b=bar matches only P0
+    assert_has_match!(q, r#"{"a": "fooXYZ", "b": "bar"}"#, "P0");
+    assert_no_has_match!(q, r#"{"a": "fooXYZ", "b": "bar"}"#, "P1");
+    // a=foo* matches P0 and P1, b=baz matches only P1
+    assert_has_match!(q, r#"{"a": "fooXYZ", "b": "baz"}"#, "P1");
+    assert_no_has_match!(q, r#"{"a": "fooXYZ", "b": "baz"}"#, "P0");
+    // No match
+    assert_no_match!(q, r#"{"a": "nomatch", "b": "nomatch"}"#);
+}
+
 // ============================================================================
 // Anything-But Operator Tests
 // ============================================================================
