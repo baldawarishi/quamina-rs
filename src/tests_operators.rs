@@ -2491,7 +2491,7 @@ fn test_regexp_validity() {
                     let matched = bufs
                         .transitions
                         .iter()
-                        .any(|m| Arc::ptr_eq(m, &field_matcher));
+                        .any(|&m| m == Arc::as_ptr(&field_matcher) as usize);
                     if !matched && !should_match.is_empty() {
                         problems += 1;
                     }
@@ -2508,7 +2508,7 @@ fn test_regexp_validity() {
                     let matched = bufs
                         .transitions
                         .iter()
-                        .any(|m| Arc::ptr_eq(m, &field_matcher));
+                        .any(|&m| m == Arc::as_ptr(&field_matcher) as usize);
                     if matched
                         && !(should_not_match.is_empty()
                             && star_samples_matching_empty(sample.regex))
@@ -2556,7 +2556,10 @@ fn test_regexp_validity_miri_minimal() {
         &[b'"', b'a', b'"', ARENA_VALUE_TERMINATOR],
         &mut bufs,
     );
-    assert!(bufs.transitions.iter().any(|m| Arc::ptr_eq(m, &fm)));
+    assert!(bufs
+        .transitions
+        .iter()
+        .any(|&m| m == Arc::as_ptr(&fm) as usize));
     bufs.clear();
     traverse_arena_nfa(
         &arena,
@@ -2564,7 +2567,10 @@ fn test_regexp_validity_miri_minimal() {
         &[b'"', b'x', b'"', ARENA_VALUE_TERMINATOR],
         &mut bufs,
     );
-    assert!(!bufs.transitions.iter().any(|m| Arc::ptr_eq(m, &fm)));
+    assert!(!bufs
+        .transitions
+        .iter()
+        .any(|&m| m == Arc::as_ptr(&fm) as usize));
 
     let root = parse_regexp("a(h|i)z").unwrap();
     let (arena, start, fm) = make_regexp_nfa_arena(root);
@@ -2575,7 +2581,10 @@ fn test_regexp_validity_miri_minimal() {
         &[b'"', b'a', b'h', b'z', b'"', ARENA_VALUE_TERMINATOR],
         &mut bufs,
     );
-    assert!(bufs.transitions.iter().any(|m| Arc::ptr_eq(m, &fm)));
+    assert!(bufs
+        .transitions
+        .iter()
+        .any(|&m| m == Arc::as_ptr(&fm) as usize));
 
     let root = parse_regexp("[a-c]").unwrap();
     let (arena, start, fm) = make_regexp_nfa_arena(root);
@@ -2586,7 +2595,10 @@ fn test_regexp_validity_miri_minimal() {
         &[b'"', b'b', b'"', ARENA_VALUE_TERMINATOR],
         &mut bufs,
     );
-    assert!(bufs.transitions.iter().any(|m| Arc::ptr_eq(m, &fm)));
+    assert!(bufs
+        .transitions
+        .iter()
+        .any(|&m| m == Arc::as_ptr(&fm) as usize));
     bufs.clear();
     traverse_arena_nfa(
         &arena,
@@ -2594,7 +2606,10 @@ fn test_regexp_validity_miri_minimal() {
         &[b'"', b'z', b'"', ARENA_VALUE_TERMINATOR],
         &mut bufs,
     );
-    assert!(!bufs.transitions.iter().any(|m| Arc::ptr_eq(m, &fm)));
+    assert!(!bufs
+        .transitions
+        .iter()
+        .any(|&m| m == Arc::as_ptr(&fm) as usize));
 
     let root = parse_regexp("a.b").unwrap();
     let (arena, start, fm) = make_regexp_nfa_arena(root);
@@ -2605,7 +2620,10 @@ fn test_regexp_validity_miri_minimal() {
         &[b'"', b'a', b'x', b'b', b'"', ARENA_VALUE_TERMINATOR],
         &mut bufs,
     );
-    assert!(bufs.transitions.iter().any(|m| Arc::ptr_eq(m, &fm)));
+    assert!(bufs
+        .transitions
+        .iter()
+        .any(|&m| m == Arc::as_ptr(&fm) as usize));
 }
 
 /// Miri-only: exercises regexp end-to-end through Quamina

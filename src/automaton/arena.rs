@@ -396,8 +396,8 @@ pub struct ArenaNfaBuffers {
     pub current_states: Vec<StateId>,
     /// Next states after transition
     pub next_states: Vec<StateId>,
-    /// Accumulated field matcher transitions
-    pub transitions: Vec<Arc<FieldMatcher>>,
+    /// Accumulated field matcher transitions (stored as pointer addresses to avoid Arc::clone).
+    pub transitions: Vec<usize>,
     /// Seen field matcher transitions (for deduplication, stored as pointer addresses).
     seen_transitions: FxHashSet<usize>,
 }
@@ -525,7 +525,7 @@ pub fn traverse_arena_nfa(
                 for ft in &ec_state.field_transitions {
                     let ptr = Arc::as_ptr(ft) as usize;
                     if seen_transitions.insert(ptr) {
-                        transitions.push(ft.clone());
+                        transitions.push(ptr);
                     }
                 }
 
@@ -561,7 +561,7 @@ pub fn traverse_arena_nfa(
             for ft in &arena[ec_state_id].field_transitions {
                 let ptr = Arc::as_ptr(ft) as usize;
                 if seen_transitions.insert(ptr) {
-                    transitions.push(ft.clone());
+                    transitions.push(ptr);
                 }
             }
         }
@@ -582,7 +582,7 @@ pub fn traverse_arena_dfa(
     arena: &StateArena,
     start: StateId,
     val: &[u8],
-    transitions: &mut Vec<Arc<FieldMatcher>>,
+    transitions: &mut Vec<usize>,
 ) {
     if start.is_none() {
         return;
@@ -594,7 +594,9 @@ pub fn traverse_arena_dfa(
         let state = &arena[current];
 
         // Collect any field transitions at this state (cold data)
-        transitions.extend(arena[current].field_transitions.iter().cloned());
+        for ft in &arena[current].field_transitions {
+            transitions.push(Arc::as_ptr(ft) as usize);
+        }
 
         let byte = if i < val.len() {
             val[i]
@@ -610,7 +612,9 @@ pub fn traverse_arena_dfa(
     }
 
     // Check final state (cold data)
-    transitions.extend(arena[current].field_transitions.iter().cloned());
+    for ft in &arena[current].field_transitions {
+        transitions.push(Arc::as_ptr(ft) as usize);
+    }
 }
 
 /// Fast backward DFA traversal for suffix matching.
@@ -626,7 +630,7 @@ pub fn traverse_arena_dfa_backward(
     arena: &StateArena,
     start: StateId,
     val: &[u8],
-    transitions: &mut Vec<Arc<FieldMatcher>>,
+    transitions: &mut Vec<usize>,
 ) {
     if start.is_none() || val.is_empty() {
         return;
@@ -643,8 +647,8 @@ pub fn traverse_arena_dfa_backward(
         current = next;
 
         // Collect field_transitions (suffix match found at this depth)
-        if !arena[current].field_transitions.is_empty() {
-            transitions.extend(arena[current].field_transitions.iter().cloned());
+        for ft in &arena[current].field_transitions {
+            transitions.push(Arc::as_ptr(ft) as usize);
         }
     }
 }
@@ -3103,7 +3107,7 @@ mod tests {
         let value = b"a";
         traverse_arena_nfa(&arena, start, value, &mut bufs);
         assert_eq!(bufs.transitions.len(), 1);
-        assert!(Arc::ptr_eq(&bufs.transitions[0], &field_matcher));
+        assert_eq!(bufs.transitions[0], Arc::as_ptr(&field_matcher) as usize);
 
         // Should NOT match "b"
         bufs.clear();
@@ -3409,6 +3413,7 @@ mod tests {
 }
 
 #[cfg(test)]
+#[allow(unsafe_code)]
 mod merge_tests {
     use super::*;
 
@@ -3482,13 +3487,13 @@ mod merge_tests {
         // Should match 'a'
         traverse_arena_nfa(&merged, start, b"a", &mut bufs);
         assert_eq!(bufs.transitions.len(), 1, "Merged should match 'a'");
-        assert!(Arc::ptr_eq(&bufs.transitions[0], &fm1));
+        assert_eq!(bufs.transitions[0], Arc::as_ptr(&fm1) as usize);
 
         // Should match 'b'
         bufs.clear();
         traverse_arena_nfa(&merged, start, b"b", &mut bufs);
         assert_eq!(bufs.transitions.len(), 1, "Merged should match 'b'");
-        assert!(Arc::ptr_eq(&bufs.transitions[0], &fm2));
+        assert_eq!(bufs.transitions[0], Arc::as_ptr(&fm2) as usize);
 
         // Should NOT match 'c'
         bufs.clear();
@@ -3533,13 +3538,19 @@ mod merge_tests {
         // Check 'x' has fm1
         traverse_arena_nfa(&merged, start, b"x", &mut bufs);
         assert_eq!(bufs.transitions.len(), 1);
-        assert_eq!(bufs.transitions[0].match_id, Some(100));
+        assert_eq!(
+            unsafe { &*(bufs.transitions[0] as *const FieldMatcher) }.match_id,
+            Some(100)
+        );
 
         // Check 'y' has fm2
         bufs.clear();
         traverse_arena_nfa(&merged, start, b"y", &mut bufs);
         assert_eq!(bufs.transitions.len(), 1);
-        assert_eq!(bufs.transitions[0].match_id, Some(200));
+        assert_eq!(
+            unsafe { &*(bufs.transitions[0] as *const FieldMatcher) }.match_id,
+            Some(200)
+        );
     }
 
     #[test]
@@ -3653,13 +3664,19 @@ mod merge_tests {
         // Should match "ab"
         traverse_arena_nfa(&merged, start, b"ab", &mut bufs);
         assert_eq!(bufs.transitions.len(), 1, "Should match 'ab'");
-        assert_eq!(bufs.transitions[0].match_id, Some(1));
+        assert_eq!(
+            unsafe { &*(bufs.transitions[0] as *const FieldMatcher) }.match_id,
+            Some(1)
+        );
 
         // Should match "ac"
         bufs.clear();
         traverse_arena_nfa(&merged, start, b"ac", &mut bufs);
         assert_eq!(bufs.transitions.len(), 1, "Should match 'ac'");
-        assert_eq!(bufs.transitions[0].match_id, Some(2));
+        assert_eq!(
+            unsafe { &*(bufs.transitions[0] as *const FieldMatcher) }.match_id,
+            Some(2)
+        );
 
         // Should NOT match "a", "ad", "bc"
         for val in [b"a".as_slice(), b"ad", b"bc"] {
@@ -3675,6 +3692,7 @@ mod merge_tests {
 }
 
 #[cfg(test)]
+#[allow(unsafe_code)]
 mod numeric_arena_tests {
     use super::*;
     use crate::numbits::q_num_from_f64;
@@ -3967,7 +3985,10 @@ mod numeric_arena_tests {
         // 25 should match (< 50)
         traverse_arena_nfa(&merged, merged_start, &q25, &mut bufs);
         assert_eq!(bufs.transitions.len(), 1, "25 should match merged FA");
-        assert_eq!(bufs.transitions[0].match_id, Some(1));
+        assert_eq!(
+            unsafe { &*(bufs.transitions[0] as *const FieldMatcher) }.match_id,
+            Some(1)
+        );
 
         // 75 should NOT match (50 <= 75 <= 100)
         bufs.clear();
@@ -3978,7 +3999,10 @@ mod numeric_arena_tests {
         bufs.clear();
         traverse_arena_nfa(&merged, merged_start, &q150, &mut bufs);
         assert_eq!(bufs.transitions.len(), 1, "150 should match merged FA");
-        assert_eq!(bufs.transitions[0].match_id, Some(2));
+        assert_eq!(
+            unsafe { &*(bufs.transitions[0] as *const FieldMatcher) }.match_id,
+            Some(2)
+        );
     }
 
     #[test]
@@ -4044,6 +4068,7 @@ mod numeric_arena_tests {
 }
 
 #[cfg(test)]
+#[allow(unsafe_code)]
 mod nfa_merge_tests {
     use super::*;
 
@@ -4060,7 +4085,7 @@ mod nfa_merge_tests {
         traverse_arena_nfa(arena, start, value, &mut bufs);
         bufs.transitions
             .iter()
-            .filter_map(|fm| fm.match_id)
+            .filter_map(|&ptr| unsafe { &*(ptr as *const FieldMatcher) }.match_id)
             .collect()
     }
 

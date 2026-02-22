@@ -965,10 +965,9 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
                     traverse_arena_dfa(arena, start, value_to_match, &mut arena_bufs.transitions);
                 }
 
-                // Map Arc<FieldMatcher> transitions to Rc<MutableFieldMatcher<X>>
-                for arc_fm in &arena_bufs.transitions {
-                    let ptr = Arc::as_ptr(arc_fm);
-                    if let Some(mutable_fm) = transition_map.get(&ptr) {
+                // Map field matcher pointer transitions to Rc<MutableFieldMatcher<X>>
+                for &ptr in &arena_bufs.transitions {
+                    if let Some(mutable_fm) = transition_map.get(&(ptr as *const FieldMatcher)) {
                         result.push(mutable_fm.clone());
                     }
                 }
@@ -985,9 +984,8 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
                     &mut arena_bufs.transitions,
                 );
 
-                for arc_fm in &arena_bufs.transitions {
-                    let ptr = Arc::as_ptr(arc_fm);
-                    if let Some(mutable_fm) = transition_map.get(&ptr) {
+                for &ptr in &arena_bufs.transitions {
+                    if let Some(mutable_fm) = transition_map.get(&(ptr as *const FieldMatcher)) {
                         result.push(mutable_fm.clone());
                     }
                 }
