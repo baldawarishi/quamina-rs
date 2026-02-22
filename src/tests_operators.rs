@@ -1,6 +1,6 @@
 //! Operator tests for quamina-rs
 //!
-//! Go lineage: anything_but_test.go, shellstyle_test.go, regexp_test.go, monocase_test.go
+//! Go lineage: anything_but_test.go, shellstyle_test.go, regexp_test.go, monocase_test.go, nfa_test.go
 //!
 //! This module covers:
 //! - Prefix/suffix operators
@@ -264,6 +264,76 @@ fn test_nested_transmap_safety() {
     assert_no_has_match!(q, r#"{"a": "fooXYZ", "b": "baz"}"#, "P0");
     // No match
     assert_no_match!(q, r#"{"a": "nomatch", "b": "nomatch"}"#);
+}
+
+/// Go lineage: nfa_test.go TestOverlappingShellStyleNesting
+///
+/// Validates that overlapping shellstyle patterns on multiple fields produce
+/// correct matches when nested NFA traversals occur. The key scenario: field
+/// "a" has both `*` and `foo*` patterns, which BOTH match `"fooX"`, producing
+/// two separate fieldMatcher transitions. Each of those then traverses field
+/// "b" which also has overlapping `*` and `bar*` patterns. In Go, a naive
+/// single-buffer transmap would corrupt the outer buffer when the inner
+/// traversal overwrites it. Rust avoids this structurally via owned Vec
+/// returns, but this test validates the matching correctness.
+#[test]
+fn test_overlapping_shellstyle_nesting() {
+    let q = q!(
+        // Two patterns go through a:* (sharing one fieldMatcher after field "a")
+        // with overlapping b patterns, so the inner traversal returns 2 results.
+        "P1" => r#"{"a": [{"shellstyle": "*"}], "b": [{"shellstyle": "*"}]}"#,
+        "P2" => r#"{"a": [{"shellstyle": "*"}], "b": [{"shellstyle": "bar*"}]}"#,
+        // Two patterns go through a:foo* (sharing a different fieldMatcher after "a")
+        // with overlapping b patterns, so this branch also produces 2 inner results.
+        "P3" => r#"{"a": [{"shellstyle": "foo*"}], "b": [{"shellstyle": "*"}]}"#,
+        "P4" => r#"{"a": [{"shellstyle": "foo*"}], "b": [{"shellstyle": "bar*"}]}"#
+    );
+
+    let event = r#"{"a": "fooX", "b": "barY"}"#;
+    assert_has_match!(q, event, "P1");
+    assert_has_match!(q, event, "P2");
+    assert_has_match!(q, event, "P3");
+    assert_has_match!(q, event, "P4");
+    assert_match_count!(q, event, 4);
+}
+
+/// Go lineage: nfa_test.go TestThreeLevelNesting
+///
+/// Exercises 3 levels of nested NFA traversals. Field "a" has overlapping
+/// patterns producing 2 outer fieldMatchers. One branch goes through fields
+/// "b" then "c" (each with overlapping patterns), creating depth-3 nesting.
+/// A separate branch through a:foo* reaches field "d" only if the outer
+/// buffer survives the nested traversals.
+#[test]
+fn test_three_level_nesting() {
+    let q = q!(
+        // Branch through a:* → b → c (3 levels of NFA nesting)
+        "deep-1" => r#"{"a": [{"shellstyle": "*"}], "b": [{"shellstyle": "*"}], "c": [{"shellstyle": "cat*"}]}"#,
+        "deep-2" => r#"{"a": [{"shellstyle": "*"}], "b": [{"shellstyle": "bar*"}], "c": [{"shellstyle": "cow*"}]}"#,
+        // Branch through a:foo* → d (only reachable if outer buffer is intact)
+        "side"   => r#"{"a": [{"shellstyle": "foo*"}], "d": [{"shellstyle": "dog*"}]}"#
+    );
+
+    let event = r#"{"a": "fooX", "b": "barY", "c": "catZ", "d": "dogW"}"#;
+
+    // Run multiple iterations: Rust uses deterministic HashMap iteration
+    // (unlike Go's randomized map order), but repeated runs still validate
+    // that the matching logic is stable.
+    for i in 0..100 {
+        let matches = q.matches_for_event(event.as_bytes()).unwrap();
+        assert!(
+            matches.contains(&"deep-1"),
+            "iter {i}: missing deep-1, got {matches:?}"
+        );
+        assert!(
+            matches.contains(&"side"),
+            "iter {i}: missing side, got {matches:?}"
+        );
+        assert!(
+            !matches.contains(&"deep-2"),
+            "iter {i}: unexpected deep-2 (c=catZ should not match cow*)"
+        );
+    }
 }
 
 // ============================================================================
