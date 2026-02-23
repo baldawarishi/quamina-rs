@@ -108,8 +108,6 @@ pub struct ArenaSmallTable {
     /// Epsilon transitions (taken regardless of input byte).
     /// SmallVec<[_; 2]> covers the common case of 0-2 epsilon transitions.
     pub epsilons: SmallVec<[StateId; 2]>,
-    /// Special state for handling wildcard patterns
-    pub spinout: StateId,
     /// Acceleration info for self-loop states (exit bytes for memchr skip)
     pub accel: Option<AccelInfo>,
     /// Default transition (computed after pack)
@@ -129,7 +127,6 @@ impl ArenaSmallTable {
             ceilings: smallvec![BYTE_CEILING as u8],
             steps: smallvec![StateId::NONE],
             epsilons: SmallVec::new(),
-            spinout: StateId::NONE,
             accel: None,
             default: StateId::NONE,
         }
@@ -529,13 +526,7 @@ pub fn traverse_arena_nfa(
                     }
                 }
 
-                // Check spinout (wildcard)
-                if !ec_state.table.spinout.is_none() && byte != ARENA_VALUE_TERMINATOR {
-                    // For spinout, stay in same state
-                    next_states.push(ec_state_id);
-                }
-
-                // Take step on current byte
+                // Single table lookup handles both normal transitions and spinner loopback
                 let next = ec_state.table.dstep(byte);
                 if !next.is_none() {
                     next_states.push(next);
@@ -571,12 +562,12 @@ pub fn traverse_arena_nfa(
 /// Fast DFA traversal for arena-based automata.
 ///
 /// This is the arena equivalent of the old chain-based `traverse_dfa`.
-/// For pure DFA patterns (no epsilon transitions, no spinout states), this is
-/// significantly faster than `traverse_arena_nfa` because it follows a single
-/// state pointer per byte with no buffer management overhead.
+/// For pure DFA patterns (no epsilon transitions), this is significantly faster
+/// than `traverse_arena_nfa` because it follows a single state pointer per byte
+/// with no buffer management overhead.
 ///
-/// The caller must ensure the arena is a pure DFA (no epsilon transitions or
-/// spinout states). For NFA patterns, use `traverse_arena_nfa`.
+/// The caller must ensure the arena is a pure DFA (no epsilon transitions).
+/// For NFA patterns, use `traverse_arena_nfa`.
 #[inline]
 pub fn traverse_arena_dfa(
     arena: &StateArena,
@@ -656,7 +647,7 @@ pub fn traverse_arena_dfa_backward(
 /// Merge two arena-based DFAs into one that matches either pattern.
 ///
 /// This is the arena equivalent of `merge_fas` for chain-based FAs.
-/// For DFA-only patterns (no epsilons/spinouts), this is a simplified merge
+/// For DFA-only patterns (no epsilons), this is a simplified merge
 /// that recursively merges overlapping byte transitions.
 ///
 /// # Arguments
@@ -752,7 +743,6 @@ fn clone_state_recursive(
         ceilings: old_table.ceilings.clone(),
         steps: SmallVec::with_capacity(old_table.steps.len()),
         epsilons: SmallVec::with_capacity(old_table.epsilons.len()),
-        spinout: StateId::NONE,
         accel: old_table.accel.clone(),
         default: StateId::NONE,
     };
@@ -767,11 +757,6 @@ fn clone_state_recursive(
     for &eps_id in &old_table.epsilons {
         let new_eps = clone_state_recursive(arena, eps_id, new_arena, id_map);
         new_table.epsilons.push(new_eps);
-    }
-
-    // Remap spinout
-    if !old_table.spinout.is_none() {
-        new_table.spinout = clone_state_recursive(arena, old_table.spinout, new_arena, id_map);
     }
 
     // Remap default
@@ -865,7 +850,6 @@ fn remap_table_recursive(
         ceilings: table.ceilings.clone(),
         steps: SmallVec::with_capacity(table.steps.len()),
         epsilons: SmallVec::with_capacity(table.epsilons.len()),
-        spinout: StateId::NONE,
         accel: table.accel.clone(),
         default: StateId::NONE,
     };
@@ -948,29 +932,6 @@ fn remap_table_recursive(
         }
     }
 
-    if !table.spinout.is_none() {
-        let merged = if is_arena1 {
-            merge_arena_states_recursive(
-                source_arena,
-                table.spinout,
-                _other_arena,
-                StateId::NONE,
-                new_arena,
-                memo,
-            )
-        } else {
-            merge_arena_states_recursive(
-                _other_arena,
-                StateId::NONE,
-                source_arena,
-                table.spinout,
-                new_arena,
-                memo,
-            )
-        };
-        new_table.spinout = merged;
-    }
-
     new_table
 }
 
@@ -1019,18 +980,6 @@ fn merge_arena_tables(
         }
     }
 
-    // Merge spinouts (for DFA, these should be NONE)
-    if !table1.spinout.is_none() || !table2.spinout.is_none() {
-        result.spinout = merge_arena_states_recursive(
-            arena1,
-            table1.spinout,
-            arena2,
-            table2.spinout,
-            new_arena,
-            memo,
-        );
-    }
-
     result
 }
 
@@ -1047,19 +996,19 @@ fn unpack_arena_table(table: &ArenaSmallTable, unpacked: &mut [StateId; BYTE_CEI
 }
 
 // =============================================================================
-// Arena NFA Merge (with epsilon/spinout support)
+// Arena NFA Merge (with epsilon/spinner support)
 // =============================================================================
 
 /// Merge two arena-based NFAs into one that matches either pattern.
 ///
 /// This is the full NFA merge that handles:
 /// - Epsilon transitions (for alternation patterns)
-/// - Spinout states (for wildcard patterns like `*`)
+/// - Spinner states (for wildcard patterns like `*`, self-loop encoded in table)
 /// - Cycles (for `+` quantifiers)
 ///
 /// The merge strategy follows Go quamina's approach:
-/// - If both states have spinouts, merge them recursively
-/// - If either has epsilons (but not both spinouts), create a splice state
+/// - If both states have spinners, merge them recursively
+/// - If either has epsilons (but not both spinners), create a splice state
 ///   that branches to try both patterns independently
 /// - If neither has epsilons, do byte-wise merge
 ///
@@ -1110,9 +1059,9 @@ pub fn merge_arena_nfas(
 /// Check if a state is an "epsilon-only" splice state created during merges.
 ///
 /// These synthetic states only serve to branch into multiple epsilon targets,
-/// with no byte transitions, spinout behavior, or field transitions.
-/// Mirrors Go's `smallTable.isEpsilonOnly()`, with additional guards for
-/// Rust's spinout and field_transition fields.
+/// with no byte transitions or field transitions.
+/// Mirrors Go's `smallTable.isEpsilonOnly()`, with additional guard for
+/// Rust's field_transition field.
 fn is_epsilon_only_state(arena: &StateArena, state_id: StateId) -> bool {
     if state_id.is_none() {
         return false;
@@ -1120,7 +1069,7 @@ fn is_epsilon_only_state(arena: &StateArena, state_id: StateId) -> bool {
     let state = &arena[state_id];
     !state.table.epsilons.is_empty()
         && state.table.ceilings.len() == 1
-        && state.table.spinout.is_none()
+        && state.table.default.is_none()
         && state.field_transitions.is_empty()
 }
 
@@ -1151,22 +1100,22 @@ fn flatten_epsilon_targets(arena: &StateArena, states: &[StateId]) -> SmallVec<[
     targets
 }
 
-/// Check if a state is a "spinout state" (has spinout marker and exactly 1 epsilon).
+/// Check if a state is a "spinout state" (self-loop encoded in table and exactly 1 epsilon).
 ///
 /// Spinout states are used for wildcard patterns. The convention is:
-/// - State has a non-NONE spinout field (marks it as a spinout)
+/// - State's table default points to itself (self-loop via make_byte_dot_table)
 /// - State has exactly 1 epsilon (the continuation after the wildcard)
 fn is_spinout_state(arena: &StateArena, state_id: StateId) -> bool {
     if state_id.is_none() {
         return false;
     }
     let state = &arena[state_id];
-    !state.table.spinout.is_none() && state.table.epsilons.len() == 1
+    state.table.default == state_id && state.table.epsilons.len() == 1
 }
 
 /// Recursively merge two NFA states from different arenas.
 ///
-/// This handles the full NFA merge including epsilons and spinouts.
+/// This handles the full NFA merge including epsilons and spinner states.
 fn merge_arena_nfa_states_recursive(
     arena1: &StateArena,
     state1: StateId,
@@ -1231,6 +1180,9 @@ fn merge_arena_nfa_states_recursive(
     let s2_has_epsilons = !s2.table.epsilons.is_empty();
 
     // Case 1: Both have spinouts - merge them recursively
+    // The byte-dot self-loop entries are merged by merge_nfa_tables_bytewise
+    // (they recurse back to this merge, hit the memo, and return new_id).
+    // We set default = new_id to mark the merged state as a spinout.
     if s1_has_spinout && s2_has_spinout {
         let spinout1_eps = s1.table.epsilons[0];
         let spinout2_eps = s2.table.epsilons[0];
@@ -1246,7 +1198,7 @@ fn merge_arena_nfa_states_recursive(
         let mut combined_table =
             merge_nfa_tables_bytewise(arena1, &s1.table, arena2, &s2.table, new_arena, memo);
 
-        combined_table.spinout = new_id;
+        combined_table.default = new_id;
         combined_table.epsilons = smallvec![merged_eps];
 
         let mut field_transitions = s1.field_transitions.clone();
@@ -1276,7 +1228,6 @@ fn merge_arena_nfa_states_recursive(
             ceilings: smallvec![BYTE_CEILING as u8],
             steps: smallvec![StateId::NONE],
             epsilons,
-            spinout: StateId::NONE,
             accel: None,
             default: StateId::NONE,
         };
@@ -1330,7 +1281,6 @@ fn clone_state_into_arena(
         ceilings: old_table.ceilings.clone(),
         steps: SmallVec::with_capacity(old_table.steps.len()),
         epsilons: SmallVec::with_capacity(old_table.epsilons.len()),
-        spinout: StateId::NONE,
         accel: old_table.accel.clone(),
         default: StateId::NONE,
     };
@@ -1345,12 +1295,6 @@ fn clone_state_into_arena(
     for &eps_id in &old_table.epsilons {
         let new_eps = clone_state_into_arena(source_arena, eps_id, target_arena, id_map);
         new_table.epsilons.push(new_eps);
-    }
-
-    // Remap spinout
-    if !old_table.spinout.is_none() {
-        new_table.spinout =
-            clone_state_into_arena(source_arena, old_table.spinout, target_arena, id_map);
     }
 
     // Remap default
@@ -1377,7 +1321,6 @@ fn remap_nfa_table_recursive(
         ceilings: table.ceilings.clone(),
         steps: SmallVec::with_capacity(table.steps.len()),
         epsilons: SmallVec::with_capacity(table.epsilons.len()),
-        spinout: StateId::NONE,
         accel: table.accel.clone(),
         default: StateId::NONE,
     };
@@ -1460,29 +1403,6 @@ fn remap_nfa_table_recursive(
         }
     }
 
-    if !table.spinout.is_none() {
-        let merged = if is_arena1 {
-            merge_arena_nfa_states_recursive(
-                source_arena,
-                table.spinout,
-                _other_arena,
-                StateId::NONE,
-                new_arena,
-                memo,
-            )
-        } else {
-            merge_arena_nfa_states_recursive(
-                _other_arena,
-                StateId::NONE,
-                source_arena,
-                table.spinout,
-                new_arena,
-                memo,
-            )
-        };
-        new_table.spinout = merged;
-    }
-
     new_table
 }
 
@@ -1529,18 +1449,6 @@ fn merge_nfa_tables_bytewise(
         if !merged.is_none() {
             result.epsilons.push(merged);
         }
-    }
-
-    // Merge spinouts
-    if !table1.spinout.is_none() || !table2.spinout.is_none() {
-        result.spinout = merge_arena_nfa_states_recursive(
-            arena1,
-            table1.spinout,
-            arena2,
-            table2.spinout,
-            new_arena,
-            memo,
-        );
     }
 
     result
@@ -2218,20 +2126,34 @@ fn build_literal_arena_chain(
     current
 }
 
+/// Create a spinner loopback table that maps most valid UTF-8 bytes to `dest`.
+///
+/// This matches Go's `makeByteDotFA(dest)`. The table maps:
+/// - `[0x00, 0xC0)` → dest (valid single-byte UTF-8 range)
+/// - `[0xC0, 0xC2)` → NONE (illegal UTF-8 lead bytes)
+/// - `[0xC2, 0xF5)` → dest (valid multi-byte UTF-8 lead bytes)
+/// - `[0xF5, 0xF6)` → NONE (value terminator 0xF5, excluded from BYTE_CEILING)
+///
+/// This encodes the wildcard self-loop directly in the transition table,
+/// eliminating the need for a separate spinout check in the traversal loop.
+fn make_byte_dot_table(dest: StateId) -> ArenaSmallTable {
+    let mut table = ArenaSmallTable::new();
+    table.ceilings = smallvec![0xC0, 0xC2, ARENA_VALUE_TERMINATOR, BYTE_CEILING as u8];
+    table.steps = smallvec![dest, StateId::NONE, dest, StateId::NONE];
+    table.default = dest;
+    table
+}
+
 /// Build a wildcard spinout structure
 ///
 /// The spinout state structure:
-/// - Has spinout marker (self-reference for wildcard looping)
+/// - Has self-loop encoded in transition table (via make_byte_dot_table)
 /// - Has epsilon to continuation (to try matching after any consumed bytes)
-/// - On any non-terminator byte, stays in spinout state
+/// - On any non-terminator byte, stays in spinout state (via table lookup)
 fn build_wildcard_arena_spinout(continuation: StateId, arena: &mut StateArena) -> StateId {
-    // Create spinout state
+    // Create spinout state with self-loop encoded in transition table
     let spinout = arena.alloc();
-
-    // Set up spinout behavior:
-    // - spinout marker points to self (enables wildcard "consume any" behavior)
-    // - epsilon to continuation (try matching pattern after wildcard)
-    arena[spinout].table.spinout = spinout;
+    arena[spinout].table = make_byte_dot_table(spinout);
     arena[spinout].table.epsilons.push(continuation);
 
     // Create start state that has epsilon to spinout
@@ -4175,17 +4097,16 @@ mod nfa_merge_tests {
             after_spinout = state;
         }
 
-        // Build spinout state
-        // Spinout structure:
-        //   spinout_state --any byte--> spinout_state (via spinout marker)
-        //                --eps--> after_spinout (to try matching suffix)
+        // Build spinout state with self-loop encoded in transition table
         let spinout_state = arena.alloc();
-        arena[spinout_state].table.spinout = spinout_state; // Self-loop on any byte
+        arena[spinout_state].table = make_byte_dot_table(spinout_state);
         arena[spinout_state].table.epsilons.push(after_spinout);
 
         // If suffix starts with a specific byte, also add direct transition
+        // by unpacking the byte-dot table, overriding the suffix byte, and repacking
         if !suffix.is_empty() {
             let mut unpacked = [StateId::NONE; BYTE_CEILING];
+            unpack_arena_table(&arena[spinout_state].table, &mut unpacked);
             unpacked[suffix[0] as usize] = after_spinout;
             arena[spinout_state].table.pack(&unpacked);
         }
@@ -4466,7 +4387,7 @@ mod nfa_merge_tests {
 
             // Second spinout (after X)
             let spinout2 = arena.alloc();
-            arena[spinout2].table.spinout = spinout2;
+            arena[spinout2].table = make_byte_dot_table(spinout2);
             arena[spinout2].table.epsilons.push(term_state);
 
             // State that matches 'X' -> spinout2
@@ -4478,10 +4399,11 @@ mod nfa_merge_tests {
 
             // First spinout (before X)
             let spinout1 = arena.alloc();
-            arena[spinout1].table.spinout = spinout1;
+            arena[spinout1].table = make_byte_dot_table(spinout1);
             arena[spinout1].table.epsilons.push(x_state);
-            // Also add direct transition on 'X'
+            // Override 'X' byte to go directly to spinout2
             let mut unpacked = [StateId::NONE; BYTE_CEILING];
+            unpack_arena_table(&arena[spinout1].table, &mut unpacked);
             unpacked[b'X' as usize] = spinout2;
             arena[spinout1].table.pack(&unpacked);
 
@@ -4507,7 +4429,7 @@ mod nfa_merge_tests {
             ));
 
             let spinout2 = arena.alloc();
-            arena[spinout2].table.spinout = spinout2;
+            arena[spinout2].table = make_byte_dot_table(spinout2);
             arena[spinout2].table.epsilons.push(term_state);
 
             let y_state = arena.alloc_with_table(ArenaSmallTable::with_mappings(
@@ -4517,9 +4439,10 @@ mod nfa_merge_tests {
             ));
 
             let spinout1 = arena.alloc();
-            arena[spinout1].table.spinout = spinout1;
+            arena[spinout1].table = make_byte_dot_table(spinout1);
             arena[spinout1].table.epsilons.push(y_state);
             let mut unpacked = [StateId::NONE; BYTE_CEILING];
+            unpack_arena_table(&arena[spinout1].table, &mut unpacked);
             unpacked[b'Y' as usize] = spinout2;
             arena[spinout1].table.pack(&unpacked);
 

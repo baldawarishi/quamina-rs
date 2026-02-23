@@ -2,7 +2,7 @@
 //!
 //! This module contains shared types used throughout the automaton:
 //! - `FieldMatcher`: Matches field names and dispatches to value matchers
-//! - `AccelInfo`: Acceleration info for spinout (wildcard) states
+//! - `AccelInfo`: Acceleration info for spinner (wildcard) states
 //! - `NfaBuffers`: Reusable buffers for NFA traversal
 //!
 //! State machines and transition tables are in the `arena` module.
@@ -18,7 +18,7 @@ pub const BYTE_CEILING: usize = 0xF6;
 /// vs prefix matches - we always add this terminator to both the pattern and the value.
 pub const VALUE_TERMINATOR: u8 = 0xF5;
 
-/// Acceleration info for spinout (wildcard) states.
+/// Acceleration info for spinner (wildcard) states.
 ///
 /// Stores 1-3 exit bytes that would cause a transition out of the spin state.
 /// This enables using memchr SIMD to skip directly to relevant bytes instead
