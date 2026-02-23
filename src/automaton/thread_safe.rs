@@ -177,7 +177,7 @@ pub struct FrozenValueMatcher<X: Clone + Eq + Hash> {
     multi_condition_nfas: Vec<MultiConditionNfa>,
     /// Unified arena-based FA for all pattern types
     main_arena: Option<(StateArena, StateId)>,
-    /// Whether main_arena contains NFA states (epsilon transitions or spinner states).
+    /// Whether main_arena contains NFA states (epsilon transitions or spinout states).
     /// When false, the fast traverse_arena_dfa path is used.
     main_arena_is_nfa: bool,
     /// Separate DFA trie for suffix patterns, traversed backward (right-to-left).
@@ -259,7 +259,7 @@ impl<X: Clone + Eq + Hash> FrozenValueMatcher<X> {
             // Traverse main_arena (unified arena for all pattern types)
             if let Some((ref arena, start)) = self.main_arena {
                 if self.main_arena_is_nfa {
-                    // NFA path: handles epsilon transitions and spinner states
+                    // NFA path: handles epsilon transitions and spinout states
                     bufs.arena_bufs.clear();
                     traverse_arena_nfa(arena, start, value_to_match, &mut bufs.arena_bufs);
                 } else {

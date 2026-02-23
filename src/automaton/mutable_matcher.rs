@@ -222,7 +222,7 @@ pub struct MutableValueMatcher<X: Clone + Eq + std::hash::Hash> {
     pub(crate) arena_bufs: RefCell<ArenaNfaBuffers>,
     /// Unified arena-based FA for all pattern types
     pub(crate) main_arena: RefCell<Option<(StateArena, StateId)>>,
-    /// Whether main_arena contains NFA states (epsilon transitions or spinner states).
+    /// Whether main_arena contains NFA states (epsilon transitions or spinout states).
     /// When false, the fast traverse_arena_dfa path can be used instead of traverse_arena_nfa.
     pub(crate) main_arena_is_nfa: RefCell<bool>,
     /// Separate DFA trie for suffix patterns, traversed backward (right-to-left).

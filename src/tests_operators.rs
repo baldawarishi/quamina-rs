@@ -243,6 +243,7 @@ fn test_multiple_overlapping_shellstyle_patterns() {
 /// this bug by returning owned Vecs from transition_on(), but this test
 /// validates the matching correctness of multi-field shellstyle patterns.
 #[test]
+#[cfg_attr(miri, ignore)]
 fn test_nested_transmap_safety() {
     let q = q!(
         "P0" => r#"{"a": [{"shellstyle": "foo*"}], "b": [{"shellstyle": "bar*"}]}"#,
@@ -277,6 +278,7 @@ fn test_nested_transmap_safety() {
 /// traversal overwrites it. Rust avoids this structurally via owned Vec
 /// returns, but this test validates the matching correctness.
 #[test]
+#[cfg_attr(miri, ignore)]
 fn test_overlapping_shellstyle_nesting() {
     let q = q!(
         // Two patterns go through a:* (sharing one fieldMatcher after field "a")
@@ -305,6 +307,7 @@ fn test_overlapping_shellstyle_nesting() {
 /// A separate branch through a:foo* reaches field "d" only if the outer
 /// buffer survives the nested traversals.
 #[test]
+#[cfg_attr(miri, ignore)]
 fn test_three_level_nesting() {
     let q = q!(
         // Branch through a:* → b → c (3 levels of NFA nesting)
@@ -334,6 +337,59 @@ fn test_three_level_nesting() {
             "iter {i}: unexpected deep-2 (c=catZ should not match cow*)"
         );
     }
+}
+
+/// Miri-friendly variant of test_nested_transmap_safety.
+///
+/// Exercises multi-field shellstyle matching with a single match/no-match
+/// assertion per pattern to keep Miri runtime manageable.
+#[test]
+fn test_nested_transmap_safety_miri_friendly() {
+    let q = q!(
+        "P0" => r#"{"a": [{"shellstyle": "foo*"}], "b": [{"shellstyle": "bar*"}]}"#,
+        "P1" => r#"{"a": [{"shellstyle": "foo*"}], "b": [{"shellstyle": "baz*"}]}"#
+    );
+
+    assert_has_match!(q, r#"{"a": "fooX", "b": "barX"}"#, "P0");
+    assert_has_match!(q, r#"{"a": "fooX", "b": "bazX"}"#, "P1");
+    assert_no_match!(q, r#"{"a": "nomatch", "b": "nomatch"}"#);
+}
+
+/// Miri-friendly variant of test_overlapping_shellstyle_nesting.
+///
+/// Uses 2 overlapping patterns (one `*`, one `foo*`) on a single field pair
+/// to exercise the overlapping NFA traversal with minimal Miri cost.
+#[test]
+fn test_overlapping_shellstyle_nesting_miri_friendly() {
+    let q = q!(
+        "P1" => r#"{"a": [{"shellstyle": "*"}], "b": [{"shellstyle": "bar*"}]}"#,
+        "P2" => r#"{"a": [{"shellstyle": "foo*"}], "b": [{"shellstyle": "bar*"}]}"#
+    );
+
+    let event = r#"{"a": "fooX", "b": "barY"}"#;
+    assert_has_match!(q, event, "P1");
+    assert_has_match!(q, event, "P2");
+    assert_match_count!(q, event, 2);
+}
+
+/// Miri-friendly variant of test_three_level_nesting.
+///
+/// Single iteration (Rust HashMap iteration is deterministic, so repeating
+/// adds no coverage). Validates the 3-level nesting and side branch survive.
+#[test]
+fn test_three_level_nesting_miri_friendly() {
+    let q = q!(
+        "deep-1" => r#"{"a": [{"shellstyle": "*"}], "b": [{"shellstyle": "*"}], "c": [{"shellstyle": "cat*"}]}"#,
+        "side"   => r#"{"a": [{"shellstyle": "foo*"}], "d": [{"shellstyle": "dog*"}]}"#
+    );
+
+    let event = r#"{"a": "fooX", "b": "barY", "c": "catZ", "d": "dogW"}"#;
+    let matches = q.matches_for_event(event.as_bytes()).unwrap();
+    assert!(
+        matches.contains(&"deep-1"),
+        "missing deep-1, got {matches:?}"
+    );
+    assert!(matches.contains(&"side"), "missing side, got {matches:?}");
 }
 
 // ============================================================================

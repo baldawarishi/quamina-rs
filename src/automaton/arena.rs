@@ -172,8 +172,8 @@ impl ArenaSmallTable {
         self.ceilings.push(BYTE_CEILING as u8);
         self.steps.push(current);
 
-        // Compute default as the most common transition
-        // For anything-but, we explicitly set it in with_mappings
+        // Note: `default` is not recomputed here. Callers that need it
+        // (e.g. `with_mappings`, `make_byte_dot_table`) set it explicitly.
     }
 
     /// Set a single byte transition, unpacking and repacking the table.
@@ -526,7 +526,7 @@ pub fn traverse_arena_nfa(
                     }
                 }
 
-                // Single table lookup handles both normal transitions and spinner loopback
+                // Single table lookup handles both normal transitions and spinout loopback
                 let next = ec_state.table.dstep(byte);
                 if !next.is_none() {
                     next_states.push(next);
@@ -996,19 +996,19 @@ fn unpack_arena_table(table: &ArenaSmallTable, unpacked: &mut [StateId; BYTE_CEI
 }
 
 // =============================================================================
-// Arena NFA Merge (with epsilon/spinner support)
+// Arena NFA Merge (with epsilon/spinout support)
 // =============================================================================
 
 /// Merge two arena-based NFAs into one that matches either pattern.
 ///
 /// This is the full NFA merge that handles:
 /// - Epsilon transitions (for alternation patterns)
-/// - Spinner states (for wildcard patterns like `*`, self-loop encoded in table)
+/// - Spinout states (for wildcard patterns like `*`, self-loop encoded in table)
 /// - Cycles (for `+` quantifiers)
 ///
 /// The merge strategy follows Go quamina's approach:
-/// - If both states have spinners, merge them recursively
-/// - If either has epsilons (but not both spinners), create a splice state
+/// - If both states have spinouts, merge them recursively
+/// - If either has epsilons (but not both spinouts), create a splice state
 ///   that branches to try both patterns independently
 /// - If neither has epsilons, do byte-wise merge
 ///
@@ -1115,7 +1115,7 @@ fn is_spinout_state(arena: &StateArena, state_id: StateId) -> bool {
 
 /// Recursively merge two NFA states from different arenas.
 ///
-/// This handles the full NFA merge including epsilons and spinner states.
+/// This handles the full NFA merge including epsilons and spinout states.
 fn merge_arena_nfa_states_recursive(
     arena1: &StateArena,
     state1: StateId,
@@ -2126,7 +2126,7 @@ fn build_literal_arena_chain(
     current
 }
 
-/// Create a spinner loopback table that maps most valid UTF-8 bytes to `dest`.
+/// Create a spinout loopback table that maps most valid UTF-8 bytes to `dest`.
 ///
 /// This matches Go's `makeByteDotFA(dest)`. The table maps:
 /// - `[0x00, 0xC0)` → dest (valid single-byte UTF-8 range)
