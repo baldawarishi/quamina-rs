@@ -2960,6 +2960,7 @@ fn test_lookaround_primary_match() {
 /// repeatedly. If arena_bufs carries stale transitions between calls,
 /// later iterations will produce wrong results.
 #[test]
+#[cfg_attr(miri, ignore)]
 fn test_lookaround_buffer_reuse_no_stale_state() {
     let mut q = Quamina::<String>::new();
 
@@ -2998,6 +2999,7 @@ fn test_lookaround_buffer_reuse_no_stale_state() {
 /// When checking condition A then condition B, the buffer must be fully cleared
 /// between traversals so condition A's transitions don't leak into condition B.
 #[test]
+#[cfg_attr(miri, ignore)]
 fn test_lookaround_multiple_conditions_no_cross_contamination() {
     let mut q = Quamina::<String>::new();
 
@@ -3029,6 +3031,71 @@ fn test_lookaround_multiple_conditions_no_cross_contamination() {
         );
         assert!(m.contains(&"neg".to_string()), "foobaz should match neg");
     }
+}
+
+/// Miri-friendly variant of test_lookaround_buffer_reuse_no_stale_state.
+///
+/// Single iteration to verify buffer clearing between lookahead and exact
+/// pattern matches without the 200-iteration loop.
+#[test]
+fn test_lookaround_buffer_reuse_no_stale_state_miri_friendly() {
+    let mut q = Quamina::<String>::new();
+
+    q.add_pattern(
+        "look".to_string(),
+        r#"{"v": [{"regexp": "foo(?=bar)bar"}]}"#,
+    )
+    .unwrap();
+    q.add_pattern("exact".to_string(), r#"{"w": ["hello"]}"#)
+        .unwrap();
+
+    let m = q
+        .matches_for_event(r#"{"v": "foobar"}"#.as_bytes())
+        .unwrap();
+    assert!(
+        m.contains(&"look".to_string()),
+        "foobar should match lookahead"
+    );
+
+    let m = q.matches_for_event(r#"{"w": "hello"}"#.as_bytes()).unwrap();
+    assert!(m.contains(&"exact".to_string()), "hello should match exact");
+
+    let m = q
+        .matches_for_event(r#"{"v": "nomatch"}"#.as_bytes())
+        .unwrap();
+    assert!(m.is_empty(), "nomatch should match nothing");
+}
+
+/// Miri-friendly variant of test_lookaround_multiple_conditions_no_cross_contamination.
+///
+/// Single iteration verifying positive and negative lookahead patterns
+/// don't cross-contaminate each other's match results.
+#[test]
+fn test_lookaround_multiple_conditions_no_cross_contamination_miri_friendly() {
+    let mut q = Quamina::<String>::new();
+
+    q.add_pattern("pos".to_string(), r#"{"v": [{"regexp": "foo(?=bar)bar"}]}"#)
+        .unwrap();
+    q.add_pattern("neg".to_string(), r#"{"v": [{"regexp": "foo(?!bar)baz"}]}"#)
+        .unwrap();
+
+    let m = q
+        .matches_for_event(r#"{"v": "foobar"}"#.as_bytes())
+        .unwrap();
+    assert!(m.contains(&"pos".to_string()), "foobar should match pos");
+    assert!(
+        !m.contains(&"neg".to_string()),
+        "foobar should not match neg"
+    );
+
+    let m = q
+        .matches_for_event(r#"{"v": "foobaz"}"#.as_bytes())
+        .unwrap();
+    assert!(
+        !m.contains(&"pos".to_string()),
+        "foobaz should not match pos"
+    );
+    assert!(m.contains(&"neg".to_string()), "foobaz should match neg");
 }
 
 #[test]
