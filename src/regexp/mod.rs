@@ -336,7 +336,7 @@ mod tests {
             "Empty regexp should match empty string"
         );
         assert!(
-            std::sync::Arc::ptr_eq(&bufs.transitions[0], &field_matcher),
+            bufs.transitions[0] == Arc::as_ptr(&field_matcher) as usize,
             "Should transition to field_matcher"
         );
 
@@ -367,7 +367,7 @@ mod tests {
         assert!(
             bufs.transitions
                 .iter()
-                .any(|m| Arc::ptr_eq(m, &field_matcher)),
+                .any(|&m| m == Arc::as_ptr(&field_matcher) as usize),
             "Pattern [abc] should match 'a'"
         );
     }
@@ -394,7 +394,7 @@ mod tests {
         assert!(
             bufs.transitions
                 .iter()
-                .any(|m| Arc::ptr_eq(m, &field_matcher)),
+                .any(|&m| m == Arc::as_ptr(&field_matcher) as usize),
             "Pattern [abc]+ should match 'a'"
         );
 
@@ -405,7 +405,7 @@ mod tests {
         assert!(
             bufs.transitions
                 .iter()
-                .any(|m| Arc::ptr_eq(m, &field_matcher)),
+                .any(|&m| m == Arc::as_ptr(&field_matcher) as usize),
             "Pattern [abc]+ should match 'abc'"
         );
 
@@ -417,7 +417,7 @@ mod tests {
             !bufs
                 .transitions
                 .iter()
-                .any(|m| Arc::ptr_eq(m, &field_matcher)),
+                .any(|&m| m == Arc::as_ptr(&field_matcher) as usize),
             "Pattern [abc]+ should NOT match empty string"
         );
 
@@ -429,7 +429,7 @@ mod tests {
             !bufs
                 .transitions
                 .iter()
-                .any(|m| Arc::ptr_eq(m, &field_matcher)),
+                .any(|&m| m == Arc::as_ptr(&field_matcher) as usize),
             "Pattern [abc]+ should NOT match 'x'"
         );
     }
@@ -456,7 +456,7 @@ mod tests {
         assert!(
             bufs.transitions
                 .iter()
-                .any(|m| Arc::ptr_eq(m, &field_matcher)),
+                .any(|&m| m == Arc::as_ptr(&field_matcher) as usize),
             "Pattern [abc]* should match empty string"
         );
 
@@ -467,7 +467,7 @@ mod tests {
         assert!(
             bufs.transitions
                 .iter()
-                .any(|m| Arc::ptr_eq(m, &field_matcher)),
+                .any(|&m| m == Arc::as_ptr(&field_matcher) as usize),
             "Pattern [abc]* should match 'a'"
         );
 
@@ -478,7 +478,7 @@ mod tests {
         assert!(
             bufs.transitions
                 .iter()
-                .any(|m| Arc::ptr_eq(m, &field_matcher)),
+                .any(|&m| m == Arc::as_ptr(&field_matcher) as usize),
             "Pattern [abc]* should match 'abc'"
         );
     }
@@ -531,7 +531,7 @@ mod tests {
             !bufs
                 .transitions
                 .iter()
-                .any(|m| Arc::ptr_eq(m, &field_matcher)),
+                .any(|&m| m == Arc::as_ptr(&field_matcher) as usize),
             "Pattern a{{3}} should NOT match 'aa'"
         );
 
@@ -542,7 +542,7 @@ mod tests {
         assert!(
             bufs.transitions
                 .iter()
-                .any(|m| Arc::ptr_eq(m, &field_matcher)),
+                .any(|&m| m == Arc::as_ptr(&field_matcher) as usize),
             "Pattern a{{3}} should match 'aaa'"
         );
 
@@ -554,7 +554,7 @@ mod tests {
             !bufs
                 .transitions
                 .iter()
-                .any(|m| Arc::ptr_eq(m, &field_matcher)),
+                .any(|&m| m == Arc::as_ptr(&field_matcher) as usize),
             "Pattern a{{3}} should NOT match 'aaaa'"
         );
     }
@@ -578,7 +578,7 @@ mod tests {
             !bufs
                 .transitions
                 .iter()
-                .any(|m| Arc::ptr_eq(m, &field_matcher)),
+                .any(|&m| m == Arc::as_ptr(&field_matcher) as usize),
             "Pattern a{{2,4}} should NOT match 'a'"
         );
 
@@ -589,7 +589,7 @@ mod tests {
         assert!(
             bufs.transitions
                 .iter()
-                .any(|m| Arc::ptr_eq(m, &field_matcher)),
+                .any(|&m| m == Arc::as_ptr(&field_matcher) as usize),
             "Pattern a{{2,4}} should match 'aa'"
         );
 
@@ -600,7 +600,7 @@ mod tests {
         assert!(
             bufs.transitions
                 .iter()
-                .any(|m| Arc::ptr_eq(m, &field_matcher)),
+                .any(|&m| m == Arc::as_ptr(&field_matcher) as usize),
             "Pattern a{{2,4}} should match 'aaa'"
         );
 
@@ -611,7 +611,7 @@ mod tests {
         assert!(
             bufs.transitions
                 .iter()
-                .any(|m| Arc::ptr_eq(m, &field_matcher)),
+                .any(|&m| m == Arc::as_ptr(&field_matcher) as usize),
             "Pattern a{{2,4}} should match 'aaaa'"
         );
 
@@ -632,7 +632,7 @@ mod tests {
             !bufs
                 .transitions
                 .iter()
-                .any(|m| Arc::ptr_eq(m, &field_matcher)),
+                .any(|&m| m == Arc::as_ptr(&field_matcher) as usize),
             "Pattern a{{2,4}} should NOT match 'aaaaa'"
         );
     }
@@ -656,7 +656,7 @@ mod tests {
             !bufs
                 .transitions
                 .iter()
-                .any(|m| Arc::ptr_eq(m, &field_matcher)),
+                .any(|&m| m == Arc::as_ptr(&field_matcher) as usize),
             "Pattern [abc]{{2,3}} should NOT match 'a'"
         );
 
@@ -667,7 +667,7 @@ mod tests {
         assert!(
             bufs.transitions
                 .iter()
-                .any(|m| Arc::ptr_eq(m, &field_matcher)),
+                .any(|&m| m == Arc::as_ptr(&field_matcher) as usize),
             "Pattern [abc]{{2,3}} should match 'ab'"
         );
 
@@ -678,7 +678,7 @@ mod tests {
         assert!(
             bufs.transitions
                 .iter()
-                .any(|m| Arc::ptr_eq(m, &field_matcher)),
+                .any(|&m| m == Arc::as_ptr(&field_matcher) as usize),
             "Pattern [abc]{{2,3}} should match 'abc'"
         );
 
@@ -690,7 +690,7 @@ mod tests {
             !bufs
                 .transitions
                 .iter()
-                .any(|m| Arc::ptr_eq(m, &field_matcher)),
+                .any(|&m| m == Arc::as_ptr(&field_matcher) as usize),
             "Pattern [abc]{{2,3}} should NOT match 'abcd'"
         );
     }
@@ -713,7 +713,7 @@ mod tests {
         assert!(
             bufs.transitions
                 .iter()
-                .any(|m| Arc::ptr_eq(m, &field_matcher)),
+                .any(|&m| m == Arc::as_ptr(&field_matcher) as usize),
             "Pattern a{{0,2}} should match empty string"
         );
 
@@ -724,7 +724,7 @@ mod tests {
         assert!(
             bufs.transitions
                 .iter()
-                .any(|m| Arc::ptr_eq(m, &field_matcher)),
+                .any(|&m| m == Arc::as_ptr(&field_matcher) as usize),
             "Pattern a{{0,2}} should match 'a'"
         );
 
@@ -735,7 +735,7 @@ mod tests {
         assert!(
             bufs.transitions
                 .iter()
-                .any(|m| Arc::ptr_eq(m, &field_matcher)),
+                .any(|&m| m == Arc::as_ptr(&field_matcher) as usize),
             "Pattern a{{0,2}} should match 'aa'"
         );
 
@@ -747,7 +747,7 @@ mod tests {
             !bufs
                 .transitions
                 .iter()
-                .any(|m| Arc::ptr_eq(m, &field_matcher)),
+                .any(|&m| m == Arc::as_ptr(&field_matcher) as usize),
             "Pattern a{{0,2}} should NOT match 'aaa'"
         );
     }
@@ -887,7 +887,7 @@ mod tests {
         assert!(
             bufs.transitions
                 .iter()
-                .any(|m| Arc::ptr_eq(m, &field_matcher)),
+                .any(|&m| m == Arc::as_ptr(&field_matcher) as usize),
             "Toxic stack pattern should match test string via arena NFA"
         );
     }
@@ -913,7 +913,7 @@ mod tests {
             assert!(
                 bufs.transitions
                     .iter()
-                    .any(|m| Arc::ptr_eq(m, &field_matcher)),
+                    .any(|&m| m == Arc::as_ptr(&field_matcher) as usize),
                 "Pattern [a-z] should match '{}'",
                 *ch as char
             );
@@ -928,7 +928,7 @@ mod tests {
                 !bufs
                     .transitions
                     .iter()
-                    .any(|m| Arc::ptr_eq(m, &field_matcher)),
+                    .any(|&m| m == Arc::as_ptr(&field_matcher) as usize),
                 "Pattern [a-z] should NOT match '{}'",
                 *ch as char
             );
@@ -945,7 +945,7 @@ mod tests {
             assert!(
                 bufs.transitions
                     .iter()
-                    .any(|m| Arc::ptr_eq(m, &field_matcher)),
+                    .any(|&m| m == Arc::as_ptr(&field_matcher) as usize),
                 "Pattern [a-zA-Z0-9] should match '{}'",
                 *ch as char
             );
@@ -975,7 +975,7 @@ mod tests {
                 !bufs
                     .transitions
                     .iter()
-                    .any(|m| Arc::ptr_eq(m, &field_matcher)),
+                    .any(|&m| m == Arc::as_ptr(&field_matcher) as usize),
                 "Pattern [^abc] should NOT match '{}'",
                 *ch as char
             );
@@ -989,7 +989,7 @@ mod tests {
             assert!(
                 bufs.transitions
                     .iter()
-                    .any(|m| Arc::ptr_eq(m, &field_matcher)),
+                    .any(|&m| m == Arc::as_ptr(&field_matcher) as usize),
                 "Pattern [^abc] should match '{}'",
                 *ch as char
             );
@@ -1019,7 +1019,7 @@ mod tests {
             assert!(
                 bufs.transitions
                     .iter()
-                    .any(|m| Arc::ptr_eq(m, &field_matcher)),
+                    .any(|&m| m == Arc::as_ptr(&field_matcher) as usize),
                 "Pattern {} should match empty string",
                 pattern
             );
@@ -1046,7 +1046,7 @@ mod tests {
         assert!(
             bufs.transitions
                 .iter()
-                .any(|m| Arc::ptr_eq(m, &field_matcher)),
+                .any(|&m| m == Arc::as_ptr(&field_matcher) as usize),
             "Pattern [a-z]* should match empty string"
         );
     }
@@ -1083,7 +1083,7 @@ mod tests {
         assert!(
             bufs.transitions
                 .iter()
-                .any(|m| Arc::ptr_eq(m, &field_matcher)),
+                .any(|&m| m == Arc::as_ptr(&field_matcher) as usize),
             "Pattern {} should match 'alice@example.com'",
             pattern
         );
@@ -1113,7 +1113,7 @@ mod tests {
         assert!(
             bufs.transitions
                 .iter()
-                .any(|m| Arc::ptr_eq(m, &field_matcher)),
+                .any(|&m| m == Arc::as_ptr(&field_matcher) as usize),
             "Pattern {} should match 'abc'",
             pattern
         );
@@ -1143,7 +1143,7 @@ mod tests {
 
             bufs.transitions
                 .iter()
-                .any(|m| Arc::ptr_eq(m, &field_matcher))
+                .any(|&m| m == Arc::as_ptr(&field_matcher) as usize)
         }
 
         // Test positive class with star - exercises arena NFA cyclic paths
@@ -1209,7 +1209,7 @@ mod tests {
 
             bufs.transitions
                 .iter()
-                .any(|m| Arc::ptr_eq(m, &field_matcher))
+                .any(|&m| m == Arc::as_ptr(&field_matcher) as usize)
         }
 
         // Sample 211: ~P{C}* should match '₠' (U+20A0, category Sc - not in C)
@@ -1272,7 +1272,7 @@ mod tests {
 
             bufs.transitions
                 .iter()
-                .any(|m| Arc::ptr_eq(m, &field_matcher))
+                .any(|&m| m == Arc::as_ptr(&field_matcher) as usize)
         }
 
         // These should also pass with VALUE_TERMINATOR appended
@@ -1321,7 +1321,7 @@ mod tests {
         assert!(
             bufs.transitions
                 .iter()
-                .any(|m| Arc::ptr_eq(m, &field_matcher)),
+                .any(|&m| m == Arc::as_ptr(&field_matcher) as usize),
             "[^x]+ should match 'abc'"
         );
 
@@ -1350,7 +1350,7 @@ mod tests {
         assert!(
             bufs.transitions
                 .iter()
-                .any(|m| Arc::ptr_eq(m, &field_matcher)),
+                .any(|&m| m == Arc::as_ptr(&field_matcher) as usize),
             "[^x]+ should match Unicode 'αβγ'"
         );
     }
@@ -1429,11 +1429,17 @@ mod tests {
         for (value, should_match, desc) in test_cases {
             bufs.clear();
             traverse_arena_nfa(&arena_range, start_range, &value, &mut bufs);
-            let range_matched = bufs.transitions.iter().any(|m| Arc::ptr_eq(m, &fm_range));
+            let range_matched = bufs
+                .transitions
+                .iter()
+                .any(|&m| m == Arc::as_ptr(&fm_range) as usize);
 
             bufs.clear();
             traverse_arena_nfa(&arena_qm, start_qm, &value, &mut bufs);
-            let qm_matched = bufs.transitions.iter().any(|m| Arc::ptr_eq(m, &fm_qm));
+            let qm_matched = bufs
+                .transitions
+                .iter()
+                .any(|&m| m == Arc::as_ptr(&fm_qm) as usize);
 
             assert_eq!(
                 range_matched, qm_matched,
@@ -1486,11 +1492,17 @@ mod tests {
         for (value, should_match, desc) in test_cases {
             bufs.clear();
             traverse_arena_nfa(&arena_range, start_range, &value, &mut bufs);
-            let range_matched = bufs.transitions.iter().any(|m| Arc::ptr_eq(m, &fm_range));
+            let range_matched = bufs
+                .transitions
+                .iter()
+                .any(|&m| m == Arc::as_ptr(&fm_range) as usize);
 
             bufs.clear();
             traverse_arena_nfa(&arena_plus, start_plus, &value, &mut bufs);
-            let plus_matched = bufs.transitions.iter().any(|m| Arc::ptr_eq(m, &fm_plus));
+            let plus_matched = bufs
+                .transitions
+                .iter()
+                .any(|&m| m == Arc::as_ptr(&fm_plus) as usize);
 
             assert_eq!(
                 range_matched, plus_matched,
@@ -1538,11 +1550,17 @@ mod tests {
         for (value, should_match, desc) in test_cases {
             bufs.clear();
             traverse_arena_nfa(&arena_range, start_range, &value, &mut bufs);
-            let range_matched = bufs.transitions.iter().any(|m| Arc::ptr_eq(m, &fm_range));
+            let range_matched = bufs
+                .transitions
+                .iter()
+                .any(|&m| m == Arc::as_ptr(&fm_range) as usize);
 
             bufs.clear();
             traverse_arena_nfa(&arena_star, start_star, &value, &mut bufs);
-            let star_matched = bufs.transitions.iter().any(|m| Arc::ptr_eq(m, &fm_star));
+            let star_matched = bufs
+                .transitions
+                .iter()
+                .any(|&m| m == Arc::as_ptr(&fm_star) as usize);
 
             assert_eq!(
                 range_matched, star_matched,
@@ -1583,11 +1601,17 @@ mod tests {
         ] {
             bufs.clear();
             traverse_arena_nfa(&arena_range, start_range, &value, &mut bufs);
-            let range_matched = bufs.transitions.iter().any(|m| Arc::ptr_eq(m, &fm_range));
+            let range_matched = bufs
+                .transitions
+                .iter()
+                .any(|&m| m == Arc::as_ptr(&fm_range) as usize);
 
             bufs.clear();
             traverse_arena_nfa(&arena_star, start_star, &value, &mut bufs);
-            let star_matched = bufs.transitions.iter().any(|m| Arc::ptr_eq(m, &fm_star));
+            let star_matched = bufs
+                .transitions
+                .iter()
+                .any(|&m| m == Arc::as_ptr(&fm_star) as usize);
 
             assert_eq!(
                 range_matched, star_matched,
@@ -1608,11 +1632,17 @@ mod tests {
         ] {
             bufs.clear();
             traverse_arena_nfa(&arena_range, start_range, &value, &mut bufs);
-            let range_matched = bufs.transitions.iter().any(|m| Arc::ptr_eq(m, &fm_range));
+            let range_matched = bufs
+                .transitions
+                .iter()
+                .any(|&m| m == Arc::as_ptr(&fm_range) as usize);
 
             bufs.clear();
             traverse_arena_nfa(&arena_plus, start_plus, &value, &mut bufs);
-            let plus_matched = bufs.transitions.iter().any(|m| Arc::ptr_eq(m, &fm_plus));
+            let plus_matched = bufs
+                .transitions
+                .iter()
+                .any(|&m| m == Arc::as_ptr(&fm_plus) as usize);
 
             assert_eq!(
                 range_matched, plus_matched,
@@ -1649,7 +1679,7 @@ mod tests {
             let matched = bufs
                 .transitions
                 .iter()
-                .any(|m| Arc::ptr_eq(m, &field_matcher));
+                .any(|&m| m == Arc::as_ptr(&field_matcher) as usize);
             assert_eq!(
                 matched,
                 should_match,
@@ -1687,7 +1717,7 @@ mod tests {
             let matched = bufs
                 .transitions
                 .iter()
-                .any(|m| Arc::ptr_eq(m, &field_matcher));
+                .any(|&m| m == Arc::as_ptr(&field_matcher) as usize);
             assert_eq!(
                 matched,
                 should_match,
@@ -1749,7 +1779,7 @@ mod tests {
             let matched = bufs
                 .transitions
                 .iter()
-                .any(|m| Arc::ptr_eq(m, &field_matcher));
+                .any(|&m| m == Arc::as_ptr(&field_matcher) as usize);
             assert_eq!(
                 matched,
                 should_match,
@@ -1823,7 +1853,7 @@ mod tests {
             let matched = bufs
                 .transitions
                 .iter()
-                .any(|m| Arc::ptr_eq(m, &field_matcher));
+                .any(|&m| m == Arc::as_ptr(&field_matcher) as usize);
             assert_eq!(
                 matched,
                 should_match,
@@ -1866,7 +1896,7 @@ mod tests {
             let matched = bufs
                 .transitions
                 .iter()
-                .any(|m| Arc::ptr_eq(m, &field_matcher));
+                .any(|&m| m == Arc::as_ptr(&field_matcher) as usize);
             assert_eq!(
                 matched,
                 should_match,
@@ -1953,7 +1983,7 @@ mod tests {
         assert!(
             bufs.transitions
                 .iter()
-                .any(|m| Arc::ptr_eq(m, &field_matcher)),
+                .any(|&m| m == Arc::as_ptr(&field_matcher) as usize),
             "~i should match 'a'"
         );
 
@@ -1964,7 +1994,7 @@ mod tests {
         assert!(
             bufs.transitions
                 .iter()
-                .any(|m| Arc::ptr_eq(m, &field_matcher)),
+                .any(|&m| m == Arc::as_ptr(&field_matcher) as usize),
             "~i should match ':'"
         );
 
@@ -1975,7 +2005,7 @@ mod tests {
         assert!(
             bufs.transitions
                 .iter()
-                .any(|m| Arc::ptr_eq(m, &field_matcher)),
+                .any(|&m| m == Arc::as_ptr(&field_matcher) as usize),
             "~i should match '_'"
         );
 
@@ -1987,7 +2017,7 @@ mod tests {
             !bufs
                 .transitions
                 .iter()
-                .any(|m| Arc::ptr_eq(m, &field_matcher)),
+                .any(|&m| m == Arc::as_ptr(&field_matcher) as usize),
             "~i should NOT match '1'"
         );
 
@@ -1999,7 +2029,7 @@ mod tests {
             !bufs
                 .transitions
                 .iter()
-                .any(|m| Arc::ptr_eq(m, &field_matcher)),
+                .any(|&m| m == Arc::as_ptr(&field_matcher) as usize),
             "~i should NOT match '-'"
         );
 
@@ -2014,7 +2044,7 @@ mod tests {
         assert!(
             bufs.transitions
                 .iter()
-                .any(|m| Arc::ptr_eq(m, &field_matcher)),
+                .any(|&m| m == Arc::as_ptr(&field_matcher) as usize),
             "~c should match '1'"
         );
 
@@ -2025,7 +2055,7 @@ mod tests {
         assert!(
             bufs.transitions
                 .iter()
-                .any(|m| Arc::ptr_eq(m, &field_matcher)),
+                .any(|&m| m == Arc::as_ptr(&field_matcher) as usize),
             "~c should match '-'"
         );
 
@@ -2036,7 +2066,7 @@ mod tests {
         assert!(
             bufs.transitions
                 .iter()
-                .any(|m| Arc::ptr_eq(m, &field_matcher)),
+                .any(|&m| m == Arc::as_ptr(&field_matcher) as usize),
             "~c should match '.'"
         );
 
@@ -2048,7 +2078,7 @@ mod tests {
             !bufs
                 .transitions
                 .iter()
-                .any(|m| Arc::ptr_eq(m, &field_matcher)),
+                .any(|&m| m == Arc::as_ptr(&field_matcher) as usize),
             "~c should NOT match ' '"
         );
     }
@@ -2070,7 +2100,7 @@ mod tests {
         assert!(
             bufs.transitions
                 .iter()
-                .any(|m| Arc::ptr_eq(m, &field_matcher)),
+                .any(|&m| m == Arc::as_ptr(&field_matcher) as usize),
             "~d should match '5'"
         );
 
@@ -2082,7 +2112,7 @@ mod tests {
             !bufs
                 .transitions
                 .iter()
-                .any(|m| Arc::ptr_eq(m, &field_matcher)),
+                .any(|&m| m == Arc::as_ptr(&field_matcher) as usize),
             "~d should NOT match 'a'"
         );
 
@@ -2097,7 +2127,7 @@ mod tests {
         assert!(
             bufs.transitions
                 .iter()
-                .any(|m| Arc::ptr_eq(m, &field_matcher)),
+                .any(|&m| m == Arc::as_ptr(&field_matcher) as usize),
             "~w should match 'a'"
         );
 
@@ -2108,7 +2138,7 @@ mod tests {
         assert!(
             bufs.transitions
                 .iter()
-                .any(|m| Arc::ptr_eq(m, &field_matcher)),
+                .any(|&m| m == Arc::as_ptr(&field_matcher) as usize),
             "~w should match '_'"
         );
 
@@ -2120,7 +2150,7 @@ mod tests {
             !bufs
                 .transitions
                 .iter()
-                .any(|m| Arc::ptr_eq(m, &field_matcher)),
+                .any(|&m| m == Arc::as_ptr(&field_matcher) as usize),
             "~w should NOT match '-'"
         );
 
@@ -2135,7 +2165,7 @@ mod tests {
         assert!(
             bufs.transitions
                 .iter()
-                .any(|m| Arc::ptr_eq(m, &field_matcher)),
+                .any(|&m| m == Arc::as_ptr(&field_matcher) as usize),
             "~s should match ' '"
         );
 
@@ -2146,7 +2176,7 @@ mod tests {
         assert!(
             bufs.transitions
                 .iter()
-                .any(|m| Arc::ptr_eq(m, &field_matcher)),
+                .any(|&m| m == Arc::as_ptr(&field_matcher) as usize),
             "~s should match '\\t'"
         );
 
@@ -2158,7 +2188,7 @@ mod tests {
             !bufs
                 .transitions
                 .iter()
-                .any(|m| Arc::ptr_eq(m, &field_matcher)),
+                .any(|&m| m == Arc::as_ptr(&field_matcher) as usize),
             "~s should NOT match 'x'"
         );
     }
@@ -2202,7 +2232,7 @@ mod tests {
         assert!(
             bufs.transitions
                 .iter()
-                .any(|m| Arc::ptr_eq(m, &field_matcher)),
+                .any(|&m| m == Arc::as_ptr(&field_matcher) as usize),
             "~d+ should match '123'"
         );
 
@@ -2217,7 +2247,7 @@ mod tests {
         assert!(
             bufs.transitions
                 .iter()
-                .any(|m| Arc::ptr_eq(m, &field_matcher)),
+                .any(|&m| m == Arc::as_ptr(&field_matcher) as usize),
             "a~s{{0,3}}b should match 'ab'"
         );
 
@@ -2228,7 +2258,7 @@ mod tests {
         assert!(
             bufs.transitions
                 .iter()
-                .any(|m| Arc::ptr_eq(m, &field_matcher)),
+                .any(|&m| m == Arc::as_ptr(&field_matcher) as usize),
             "a~s{{0,3}}b should match 'a  b'"
         );
     }
@@ -2256,7 +2286,9 @@ mod tests {
             &mut bufs,
         );
         assert!(
-            bufs.transitions.iter().any(|m| Arc::ptr_eq(m, &fm)),
+            bufs.transitions
+                .iter()
+                .any(|&m| m == Arc::as_ptr(&fm) as usize),
             "~d{{1}} should match '5'"
         );
 
@@ -2268,7 +2300,10 @@ mod tests {
             &mut bufs,
         );
         assert!(
-            !bufs.transitions.iter().any(|m| Arc::ptr_eq(m, &fm)),
+            !bufs
+                .transitions
+                .iter()
+                .any(|&m| m == Arc::as_ptr(&fm) as usize),
             "~d{{1}} should NOT match 'x'"
         );
     }
@@ -2347,14 +2382,18 @@ mod tests {
         let value = vec![b'"', b'A', b'"', ARENA_VALUE_TERMINATOR];
         traverse_arena_nfa(&arena1, start1, &value, &mut bufs);
         assert!(
-            bufs.transitions.iter().any(|m| Arc::ptr_eq(m, &fm1)),
+            bufs.transitions
+                .iter()
+                .any(|&m| m == Arc::as_ptr(&fm1) as usize),
             "First ~p{{L}} should match 'A'"
         );
 
         bufs.clear();
         traverse_arena_nfa(&arena2, start2, &value, &mut bufs);
         assert!(
-            bufs.transitions.iter().any(|m| Arc::ptr_eq(m, &fm2)),
+            bufs.transitions
+                .iter()
+                .any(|&m| m == Arc::as_ptr(&fm2) as usize),
             "Second ~p{{L}} should match 'A' (from cache)"
         );
 
@@ -2363,14 +2402,20 @@ mod tests {
         let value = vec![b'"', b'5', b'"', ARENA_VALUE_TERMINATOR];
         traverse_arena_nfa(&arena1, start1, &value, &mut bufs);
         assert!(
-            !bufs.transitions.iter().any(|m| Arc::ptr_eq(m, &fm1)),
+            !bufs
+                .transitions
+                .iter()
+                .any(|&m| m == Arc::as_ptr(&fm1) as usize),
             "First ~p{{L}} should NOT match '5'"
         );
 
         bufs.clear();
         traverse_arena_nfa(&arena2, start2, &value, &mut bufs);
         assert!(
-            !bufs.transitions.iter().any(|m| Arc::ptr_eq(m, &fm2)),
+            !bufs
+                .transitions
+                .iter()
+                .any(|&m| m == Arc::as_ptr(&fm2) as usize),
             "Second ~p{{L}} should NOT match '5'"
         );
     }
@@ -2398,14 +2443,19 @@ mod tests {
         let value_a = vec![b'"', b'A', b'"', ARENA_VALUE_TERMINATOR];
         traverse_arena_nfa(&arena_l, start_l, &value_a, &mut bufs);
         assert!(
-            bufs.transitions.iter().any(|m| Arc::ptr_eq(m, &fm_l)),
+            bufs.transitions
+                .iter()
+                .any(|&m| m == Arc::as_ptr(&fm_l) as usize),
             "~p{{L}} should match 'A'"
         );
 
         bufs.clear();
         traverse_arena_nfa(&arena_nd, start_nd, &value_a, &mut bufs);
         assert!(
-            !bufs.transitions.iter().any(|m| Arc::ptr_eq(m, &fm_nd)),
+            !bufs
+                .transitions
+                .iter()
+                .any(|&m| m == Arc::as_ptr(&fm_nd) as usize),
             "~p{{Nd}} should NOT match 'A'"
         );
 
@@ -2414,14 +2464,19 @@ mod tests {
         let value_5 = vec![b'"', b'5', b'"', ARENA_VALUE_TERMINATOR];
         traverse_arena_nfa(&arena_l, start_l, &value_5, &mut bufs);
         assert!(
-            !bufs.transitions.iter().any(|m| Arc::ptr_eq(m, &fm_l)),
+            !bufs
+                .transitions
+                .iter()
+                .any(|&m| m == Arc::as_ptr(&fm_l) as usize),
             "~p{{L}} should NOT match '5'"
         );
 
         bufs.clear();
         traverse_arena_nfa(&arena_nd, start_nd, &value_5, &mut bufs);
         assert!(
-            bufs.transitions.iter().any(|m| Arc::ptr_eq(m, &fm_nd)),
+            bufs.transitions
+                .iter()
+                .any(|&m| m == Arc::as_ptr(&fm_nd) as usize),
             "~p{{Nd}} should match '5'"
         );
     }
@@ -2449,14 +2504,19 @@ mod tests {
         let value_a = vec![b'"', b'A', b'"', ARENA_VALUE_TERMINATOR];
         traverse_arena_nfa(&arena_pos, start_pos, &value_a, &mut bufs);
         assert!(
-            bufs.transitions.iter().any(|m| Arc::ptr_eq(m, &fm_pos)),
+            bufs.transitions
+                .iter()
+                .any(|&m| m == Arc::as_ptr(&fm_pos) as usize),
             "~p{{L}} should match 'A'"
         );
 
         bufs.clear();
         traverse_arena_nfa(&arena_neg, start_neg, &value_a, &mut bufs);
         assert!(
-            !bufs.transitions.iter().any(|m| Arc::ptr_eq(m, &fm_neg)),
+            !bufs
+                .transitions
+                .iter()
+                .any(|&m| m == Arc::as_ptr(&fm_neg) as usize),
             "~P{{L}} should NOT match 'A'"
         );
 
@@ -2465,14 +2525,19 @@ mod tests {
         let value_5 = vec![b'"', b'5', b'"', ARENA_VALUE_TERMINATOR];
         traverse_arena_nfa(&arena_pos, start_pos, &value_5, &mut bufs);
         assert!(
-            !bufs.transitions.iter().any(|m| Arc::ptr_eq(m, &fm_pos)),
+            !bufs
+                .transitions
+                .iter()
+                .any(|&m| m == Arc::as_ptr(&fm_pos) as usize),
             "~p{{L}} should NOT match '5'"
         );
 
         bufs.clear();
         traverse_arena_nfa(&arena_neg, start_neg, &value_5, &mut bufs);
         assert!(
-            bufs.transitions.iter().any(|m| Arc::ptr_eq(m, &fm_neg)),
+            bufs.transitions
+                .iter()
+                .any(|&m| m == Arc::as_ptr(&fm_neg) as usize),
             "~P{{L}} should match '5'"
         );
     }

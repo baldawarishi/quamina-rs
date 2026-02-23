@@ -177,7 +177,7 @@ pub struct FrozenValueMatcher<X: Clone + Eq + Hash> {
     multi_condition_nfas: Vec<MultiConditionNfa>,
     /// Unified arena-based FA for all pattern types
     main_arena: Option<(StateArena, StateId)>,
-    /// Whether main_arena contains NFA states (epsilon transitions or spinout).
+    /// Whether main_arena contains NFA states (epsilon transitions or spinout states).
     /// When false, the fast traverse_arena_dfa path is used.
     main_arena_is_nfa: bool,
     /// Separate DFA trie for suffix patterns, traversed backward (right-to-left).
@@ -273,8 +273,7 @@ impl<X: Clone + Eq + Hash> FrozenValueMatcher<X> {
                     );
                 }
 
-                for arc_fm in &bufs.arena_bufs.transitions {
-                    let ptr = Arc::as_ptr(arc_fm) as usize;
+                for &ptr in &bufs.arena_bufs.transitions {
                     if let Some(frozen_fm) = self.transition_map.get(&ptr) {
                         result.push(frozen_fm.clone());
                     }
@@ -291,8 +290,7 @@ impl<X: Clone + Eq + Hash> FrozenValueMatcher<X> {
                     &mut bufs.arena_bufs.transitions,
                 );
 
-                for arc_fm in &bufs.arena_bufs.transitions {
-                    let ptr = Arc::as_ptr(arc_fm) as usize;
+                for &ptr in &bufs.arena_bufs.transitions {
                     if let Some(frozen_fm) = self.transition_map.get(&ptr) {
                         result.push(frozen_fm.clone());
                     }
@@ -1007,10 +1005,15 @@ impl<X: Clone + Eq + std::hash::Hash> AutomatonValueMatcher<X> {
         let mut bufs = ArenaNfaBuffers::new();
         traverse_arena_nfa(arena, start, value, &mut bufs);
 
-        // Map transitions back to pattern identifiers using match_id
+        // Map transitions back to pattern identifiers using match_id.
         let mut matches = Vec::new();
         let mut seen_ids = FxHashSet::default();
-        for fm in &bufs.transitions {
+        for &ptr in &bufs.transitions {
+            // SAFETY: Each pointer in bufs.transitions was obtained from Arc::as_ptr()
+            // on an Arc<FieldMatcher> stored in the arena's field_transitions. The arena
+            // is borrowed immutably for this entire scope (via &self.arena), so the
+            // pointed-to FieldMatcher is guaranteed to be alive and immutable.
+            let fm = unsafe { &*(ptr as *const FieldMatcher) };
             if let Some(match_id) = fm.match_id {
                 if seen_ids.insert(match_id) {
                     if let Some(x) = self.pattern_map.get(&match_id) {

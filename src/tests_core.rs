@@ -1646,6 +1646,7 @@ fn test_pattern_depth_shallow_ok() {
 // --- Field Count Limit Tests ---
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn test_pattern_fields_at_limit() {
     // Pattern with exactly 256 fields should succeed
     let mut q = Quamina::new();
@@ -1660,7 +1661,26 @@ fn test_pattern_fields_at_limit() {
     );
 }
 
+/// Miri-friendly variant of test_pattern_fields_at_limit.
+///
+/// Uses 8 fields instead of 256 to keep Miri runtime manageable while
+/// still exercising the multi-field pattern parsing and automaton construction.
 #[test]
+fn test_pattern_fields_at_limit_miri_friendly() {
+    let mut q = Quamina::new();
+    let mut fields: Vec<String> = Vec::new();
+    for i in 0..8 {
+        fields.push(format!("\"f{}\": [\"v\"]", i));
+    }
+    let pattern = format!("{{{}}}", fields.join(", "));
+    assert!(
+        q.add_pattern("wide", &pattern).is_ok(),
+        "Pattern with 8 fields should succeed"
+    );
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
 fn test_pattern_fields_exceeds_limit() {
     // Pattern with 257 fields should fail
     let mut q = Quamina::new();
@@ -1835,6 +1855,7 @@ fn test_arena_error_includes_bytes() {
 // --- Integration Tests ---
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn test_default_limits_allow_normal_patterns() {
     // All operator types should work under default limits
     let mut q = Quamina::new();
@@ -1867,6 +1888,42 @@ fn test_default_limits_allow_normal_patterns() {
         .is_ok());
     assert!(q
         .add_pattern("cidr", r#"{"x": [{"cidr": "10.0.0.0/8"}]}"#)
+        .is_ok());
+    assert!(q
+        .add_pattern("exists", r#"{"x": [{"exists": true}]}"#)
+        .is_ok());
+}
+
+/// Miri-friendly variant of test_default_limits_allow_normal_patterns.
+///
+/// Drops CIDR and regex (the two most expensive arena builders under Miri)
+/// while still exercising the other 10 operator types.
+#[test]
+fn test_default_limits_allow_normal_patterns_miri_friendly() {
+    let mut q = Quamina::new();
+
+    assert!(q.add_pattern("exact", r#"{"x": ["hello"]}"#).is_ok());
+    assert!(q.add_pattern("num", r#"{"x": [42]}"#).is_ok());
+    assert!(q
+        .add_pattern("prefix", r#"{"x": [{"prefix": "he"}]}"#)
+        .is_ok());
+    assert!(q
+        .add_pattern("suffix", r#"{"x": [{"suffix": "lo"}]}"#)
+        .is_ok());
+    assert!(q
+        .add_pattern("shell", r#"{"x": [{"shellstyle": "h*o"}]}"#)
+        .is_ok());
+    assert!(q
+        .add_pattern("wild", r#"{"x": [{"wildcard": "h*o"}]}"#)
+        .is_ok());
+    assert!(q
+        .add_pattern("ab", r#"{"x": [{"anything-but": ["no"]}]}"#)
+        .is_ok());
+    assert!(q
+        .add_pattern("eic", r#"{"x": [{"equals-ignore-case": "HELLO"}]}"#)
+        .is_ok());
+    assert!(q
+        .add_pattern("numr", r#"{"x": [{"numeric": [">=", 1, "<", 100]}]}"#)
         .is_ok());
     assert!(q
         .add_pattern("exists", r#"{"x": [{"exists": true}]}"#)

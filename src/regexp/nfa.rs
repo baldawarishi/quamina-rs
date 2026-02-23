@@ -511,11 +511,6 @@ fn instantiate_shell(shell: &CachedShell, arena: &mut StateArena, next: StateId)
             }
         }
 
-        // Remap spinout
-        if !table.spinout.is_none() {
-            table.spinout = id_map[table.spinout.index()];
-        }
-
         // Remap default
         if !table.default.is_none() {
             table.default = id_map[table.default.index()];

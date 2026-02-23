@@ -1,6 +1,6 @@
 //! Operator tests for quamina-rs
 //!
-//! Go lineage: anything_but_test.go, shellstyle_test.go, regexp_test.go, monocase_test.go
+//! Go lineage: anything_but_test.go, shellstyle_test.go, regexp_test.go, monocase_test.go, nfa_test.go
 //!
 //! This module covers:
 //! - Prefix/suffix operators
@@ -233,6 +233,163 @@ fn test_multiple_overlapping_shellstyle_patterns() {
     assert_has_match!(q, r#"{"a": "abc"}"#, "suffix_bc");
     assert_has_match!(q, r#"{"b": "dexef"}"#, "infix_ef");
     assert_has_match!(q, r#"{"c": "xyzzz"}"#, "prefix_xy");
+}
+
+/// Go lineage: nfa_test.go TestNestedTransmapSafety
+///
+/// Verifies that multi-field shellstyle patterns match correctly when nested
+/// NFA traversals occur. In Go, this caught a bug where nested traverseNFA
+/// calls corrupted the outer transmap buffer. The Rust architecture avoids
+/// this bug by returning owned Vecs from transition_on(), but this test
+/// validates the matching correctness of multi-field shellstyle patterns.
+#[test]
+#[cfg_attr(miri, ignore)]
+fn test_nested_transmap_safety() {
+    let q = q!(
+        "P0" => r#"{"a": [{"shellstyle": "foo*"}], "b": [{"shellstyle": "bar*"}]}"#,
+        "P1" => r#"{"a": [{"shellstyle": "foo*"}], "b": [{"shellstyle": "baz*"}]}"#,
+        "P2" => r#"{"a": [{"shellstyle": "fox*"}], "b": [{"shellstyle": "bar*"}]}"#
+    );
+
+    // Matches P0: a=foo*, b=bar*
+    assert_has_match!(q, r#"{"a": "fooXYZ", "b": "barXYZ"}"#, "P0");
+    // Matches P1: a=foo*, b=baz*
+    assert_has_match!(q, r#"{"a": "fooABC", "b": "bazABC"}"#, "P1");
+    // Matches P2: a=fox*, b=bar*
+    assert_has_match!(q, r#"{"a": "foxDEF", "b": "barDEF"}"#, "P2");
+    // a=foo* matches P0 and P1, b=bar matches only P0
+    assert_has_match!(q, r#"{"a": "fooXYZ", "b": "bar"}"#, "P0");
+    assert_no_has_match!(q, r#"{"a": "fooXYZ", "b": "bar"}"#, "P1");
+    // a=foo* matches P0 and P1, b=baz matches only P1
+    assert_has_match!(q, r#"{"a": "fooXYZ", "b": "baz"}"#, "P1");
+    assert_no_has_match!(q, r#"{"a": "fooXYZ", "b": "baz"}"#, "P0");
+    // No match
+    assert_no_match!(q, r#"{"a": "nomatch", "b": "nomatch"}"#);
+}
+
+/// Go lineage: nfa_test.go TestOverlappingShellStyleNesting
+///
+/// Validates that overlapping shellstyle patterns on multiple fields produce
+/// correct matches when nested NFA traversals occur. The key scenario: field
+/// "a" has both `*` and `foo*` patterns, which BOTH match `"fooX"`, producing
+/// two separate fieldMatcher transitions. Each of those then traverses field
+/// "b" which also has overlapping `*` and `bar*` patterns. In Go, a naive
+/// single-buffer transmap would corrupt the outer buffer when the inner
+/// traversal overwrites it. Rust avoids this structurally via owned Vec
+/// returns, but this test validates the matching correctness.
+#[test]
+#[cfg_attr(miri, ignore)]
+fn test_overlapping_shellstyle_nesting() {
+    let q = q!(
+        // Two patterns go through a:* (sharing one fieldMatcher after field "a")
+        // with overlapping b patterns, so the inner traversal returns 2 results.
+        "P1" => r#"{"a": [{"shellstyle": "*"}], "b": [{"shellstyle": "*"}]}"#,
+        "P2" => r#"{"a": [{"shellstyle": "*"}], "b": [{"shellstyle": "bar*"}]}"#,
+        // Two patterns go through a:foo* (sharing a different fieldMatcher after "a")
+        // with overlapping b patterns, so this branch also produces 2 inner results.
+        "P3" => r#"{"a": [{"shellstyle": "foo*"}], "b": [{"shellstyle": "*"}]}"#,
+        "P4" => r#"{"a": [{"shellstyle": "foo*"}], "b": [{"shellstyle": "bar*"}]}"#
+    );
+
+    let event = r#"{"a": "fooX", "b": "barY"}"#;
+    assert_has_match!(q, event, "P1");
+    assert_has_match!(q, event, "P2");
+    assert_has_match!(q, event, "P3");
+    assert_has_match!(q, event, "P4");
+    assert_match_count!(q, event, 4);
+}
+
+/// Go lineage: nfa_test.go TestThreeLevelNesting
+///
+/// Exercises 3 levels of nested NFA traversals. Field "a" has overlapping
+/// patterns producing 2 outer fieldMatchers. One branch goes through fields
+/// "b" then "c" (each with overlapping patterns), creating depth-3 nesting.
+/// A separate branch through a:foo* reaches field "d" only if the outer
+/// buffer survives the nested traversals.
+#[test]
+#[cfg_attr(miri, ignore)]
+fn test_three_level_nesting() {
+    let q = q!(
+        // Branch through a:* → b → c (3 levels of NFA nesting)
+        "deep-1" => r#"{"a": [{"shellstyle": "*"}], "b": [{"shellstyle": "*"}], "c": [{"shellstyle": "cat*"}]}"#,
+        "deep-2" => r#"{"a": [{"shellstyle": "*"}], "b": [{"shellstyle": "bar*"}], "c": [{"shellstyle": "cow*"}]}"#,
+        // Branch through a:foo* → d (only reachable if outer buffer is intact)
+        "side"   => r#"{"a": [{"shellstyle": "foo*"}], "d": [{"shellstyle": "dog*"}]}"#
+    );
+
+    let event = r#"{"a": "fooX", "b": "barY", "c": "catZ", "d": "dogW"}"#;
+
+    // Run multiple iterations: Rust uses deterministic HashMap iteration
+    // (unlike Go's randomized map order), but repeated runs still validate
+    // that the matching logic is stable.
+    for i in 0..100 {
+        let matches = q.matches_for_event(event.as_bytes()).unwrap();
+        assert!(
+            matches.contains(&"deep-1"),
+            "iter {i}: missing deep-1, got {matches:?}"
+        );
+        assert!(
+            matches.contains(&"side"),
+            "iter {i}: missing side, got {matches:?}"
+        );
+        assert!(
+            !matches.contains(&"deep-2"),
+            "iter {i}: unexpected deep-2 (c=catZ should not match cow*)"
+        );
+    }
+}
+
+/// Miri-friendly variant of test_nested_transmap_safety.
+///
+/// Exercises multi-field shellstyle matching with a single match/no-match
+/// assertion per pattern to keep Miri runtime manageable.
+#[test]
+fn test_nested_transmap_safety_miri_friendly() {
+    let q = q!(
+        "P0" => r#"{"a": [{"shellstyle": "foo*"}], "b": [{"shellstyle": "bar*"}]}"#,
+        "P1" => r#"{"a": [{"shellstyle": "foo*"}], "b": [{"shellstyle": "baz*"}]}"#
+    );
+
+    assert_has_match!(q, r#"{"a": "fooX", "b": "barX"}"#, "P0");
+    assert_has_match!(q, r#"{"a": "fooX", "b": "bazX"}"#, "P1");
+    assert_no_match!(q, r#"{"a": "nomatch", "b": "nomatch"}"#);
+}
+
+/// Miri-friendly variant of test_overlapping_shellstyle_nesting.
+///
+/// Uses 2 overlapping patterns (one `*`, one `foo*`) on a single field pair
+/// to exercise the overlapping NFA traversal with minimal Miri cost.
+#[test]
+fn test_overlapping_shellstyle_nesting_miri_friendly() {
+    let q = q!(
+        "P1" => r#"{"a": [{"shellstyle": "*"}], "b": [{"shellstyle": "bar*"}]}"#,
+        "P2" => r#"{"a": [{"shellstyle": "foo*"}], "b": [{"shellstyle": "bar*"}]}"#
+    );
+
+    let event = r#"{"a": "fooX", "b": "barY"}"#;
+    assert_has_match!(q, event, "P1");
+    assert_has_match!(q, event, "P2");
+    assert_match_count!(q, event, 2);
+}
+
+/// Miri-friendly variant of test_three_level_nesting.
+///
+/// Single iteration (Rust HashMap iteration is deterministic, so repeating
+/// adds no coverage). Validates the 3-level nesting and side branch survive.
+#[test]
+fn test_three_level_nesting_miri_friendly() {
+    let q = q!(
+        "deep-1" => r#"{"a": [{"shellstyle": "*"}], "b": [{"shellstyle": "*"}], "c": [{"shellstyle": "cat*"}]}"#,
+        "side"   => r#"{"a": [{"shellstyle": "foo*"}], "d": [{"shellstyle": "dog*"}]}"#
+    );
+
+    let event = r#"{"a": "fooX", "b": "barY", "c": "catZ", "d": "dogW"}"#;
+    let matches = q.matches_for_event(event.as_bytes()).unwrap();
+    assert!(
+        matches.contains(&"deep-1"),
+        "missing deep-1, got {matches:?}"
+    );
+    assert!(matches.contains(&"side"), "missing side, got {matches:?}");
 }
 
 // ============================================================================
@@ -2390,7 +2547,7 @@ fn test_regexp_validity() {
                     let matched = bufs
                         .transitions
                         .iter()
-                        .any(|m| Arc::ptr_eq(m, &field_matcher));
+                        .any(|&m| m == Arc::as_ptr(&field_matcher) as usize);
                     if !matched && !should_match.is_empty() {
                         problems += 1;
                     }
@@ -2407,7 +2564,7 @@ fn test_regexp_validity() {
                     let matched = bufs
                         .transitions
                         .iter()
-                        .any(|m| Arc::ptr_eq(m, &field_matcher));
+                        .any(|&m| m == Arc::as_ptr(&field_matcher) as usize);
                     if matched
                         && !(should_not_match.is_empty()
                             && star_samples_matching_empty(sample.regex))
@@ -2455,7 +2612,10 @@ fn test_regexp_validity_miri_minimal() {
         &[b'"', b'a', b'"', ARENA_VALUE_TERMINATOR],
         &mut bufs,
     );
-    assert!(bufs.transitions.iter().any(|m| Arc::ptr_eq(m, &fm)));
+    assert!(bufs
+        .transitions
+        .iter()
+        .any(|&m| m == Arc::as_ptr(&fm) as usize));
     bufs.clear();
     traverse_arena_nfa(
         &arena,
@@ -2463,7 +2623,10 @@ fn test_regexp_validity_miri_minimal() {
         &[b'"', b'x', b'"', ARENA_VALUE_TERMINATOR],
         &mut bufs,
     );
-    assert!(!bufs.transitions.iter().any(|m| Arc::ptr_eq(m, &fm)));
+    assert!(!bufs
+        .transitions
+        .iter()
+        .any(|&m| m == Arc::as_ptr(&fm) as usize));
 
     let root = parse_regexp("a(h|i)z").unwrap();
     let (arena, start, fm) = make_regexp_nfa_arena(root);
@@ -2474,7 +2637,10 @@ fn test_regexp_validity_miri_minimal() {
         &[b'"', b'a', b'h', b'z', b'"', ARENA_VALUE_TERMINATOR],
         &mut bufs,
     );
-    assert!(bufs.transitions.iter().any(|m| Arc::ptr_eq(m, &fm)));
+    assert!(bufs
+        .transitions
+        .iter()
+        .any(|&m| m == Arc::as_ptr(&fm) as usize));
 
     let root = parse_regexp("[a-c]").unwrap();
     let (arena, start, fm) = make_regexp_nfa_arena(root);
@@ -2485,7 +2651,10 @@ fn test_regexp_validity_miri_minimal() {
         &[b'"', b'b', b'"', ARENA_VALUE_TERMINATOR],
         &mut bufs,
     );
-    assert!(bufs.transitions.iter().any(|m| Arc::ptr_eq(m, &fm)));
+    assert!(bufs
+        .transitions
+        .iter()
+        .any(|&m| m == Arc::as_ptr(&fm) as usize));
     bufs.clear();
     traverse_arena_nfa(
         &arena,
@@ -2493,7 +2662,10 @@ fn test_regexp_validity_miri_minimal() {
         &[b'"', b'z', b'"', ARENA_VALUE_TERMINATOR],
         &mut bufs,
     );
-    assert!(!bufs.transitions.iter().any(|m| Arc::ptr_eq(m, &fm)));
+    assert!(!bufs
+        .transitions
+        .iter()
+        .any(|&m| m == Arc::as_ptr(&fm) as usize));
 
     let root = parse_regexp("a.b").unwrap();
     let (arena, start, fm) = make_regexp_nfa_arena(root);
@@ -2504,7 +2676,10 @@ fn test_regexp_validity_miri_minimal() {
         &[b'"', b'a', b'x', b'b', b'"', ARENA_VALUE_TERMINATOR],
         &mut bufs,
     );
-    assert!(bufs.transitions.iter().any(|m| Arc::ptr_eq(m, &fm)));
+    assert!(bufs
+        .transitions
+        .iter()
+        .any(|&m| m == Arc::as_ptr(&fm) as usize));
 }
 
 /// Miri-only: exercises regexp end-to-end through Quamina
@@ -2785,6 +2960,7 @@ fn test_lookaround_primary_match() {
 /// repeatedly. If arena_bufs carries stale transitions between calls,
 /// later iterations will produce wrong results.
 #[test]
+#[cfg_attr(miri, ignore)]
 fn test_lookaround_buffer_reuse_no_stale_state() {
     let mut q = Quamina::<String>::new();
 
@@ -2823,6 +2999,7 @@ fn test_lookaround_buffer_reuse_no_stale_state() {
 /// When checking condition A then condition B, the buffer must be fully cleared
 /// between traversals so condition A's transitions don't leak into condition B.
 #[test]
+#[cfg_attr(miri, ignore)]
 fn test_lookaround_multiple_conditions_no_cross_contamination() {
     let mut q = Quamina::<String>::new();
 
@@ -2854,6 +3031,71 @@ fn test_lookaround_multiple_conditions_no_cross_contamination() {
         );
         assert!(m.contains(&"neg".to_string()), "foobaz should match neg");
     }
+}
+
+/// Miri-friendly variant of test_lookaround_buffer_reuse_no_stale_state.
+///
+/// Single iteration to verify buffer clearing between lookahead and exact
+/// pattern matches without the 200-iteration loop.
+#[test]
+fn test_lookaround_buffer_reuse_no_stale_state_miri_friendly() {
+    let mut q = Quamina::<String>::new();
+
+    q.add_pattern(
+        "look".to_string(),
+        r#"{"v": [{"regexp": "foo(?=bar)bar"}]}"#,
+    )
+    .unwrap();
+    q.add_pattern("exact".to_string(), r#"{"w": ["hello"]}"#)
+        .unwrap();
+
+    let m = q
+        .matches_for_event(r#"{"v": "foobar"}"#.as_bytes())
+        .unwrap();
+    assert!(
+        m.contains(&"look".to_string()),
+        "foobar should match lookahead"
+    );
+
+    let m = q.matches_for_event(r#"{"w": "hello"}"#.as_bytes()).unwrap();
+    assert!(m.contains(&"exact".to_string()), "hello should match exact");
+
+    let m = q
+        .matches_for_event(r#"{"v": "nomatch"}"#.as_bytes())
+        .unwrap();
+    assert!(m.is_empty(), "nomatch should match nothing");
+}
+
+/// Miri-friendly variant of test_lookaround_multiple_conditions_no_cross_contamination.
+///
+/// Single iteration verifying positive and negative lookahead patterns
+/// don't cross-contaminate each other's match results.
+#[test]
+fn test_lookaround_multiple_conditions_no_cross_contamination_miri_friendly() {
+    let mut q = Quamina::<String>::new();
+
+    q.add_pattern("pos".to_string(), r#"{"v": [{"regexp": "foo(?=bar)bar"}]}"#)
+        .unwrap();
+    q.add_pattern("neg".to_string(), r#"{"v": [{"regexp": "foo(?!bar)baz"}]}"#)
+        .unwrap();
+
+    let m = q
+        .matches_for_event(r#"{"v": "foobar"}"#.as_bytes())
+        .unwrap();
+    assert!(m.contains(&"pos".to_string()), "foobar should match pos");
+    assert!(
+        !m.contains(&"neg".to_string()),
+        "foobar should not match neg"
+    );
+
+    let m = q
+        .matches_for_event(r#"{"v": "foobaz"}"#.as_bytes())
+        .unwrap();
+    assert!(
+        !m.contains(&"pos".to_string()),
+        "foobaz should not match pos"
+    );
+    assert!(m.contains(&"neg".to_string()), "foobaz should match neg");
 }
 
 #[test]
