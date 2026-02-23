@@ -398,30 +398,16 @@ impl std::ops::IndexMut<StateId> for StateArena {
 }
 
 /// Buffers for arena NFA traversal (avoid allocation during matching).
+#[derive(Default)]
 pub struct ArenaNfaBuffers {
     /// Current active states
     pub current_states: Vec<StateId>,
     /// Next states after transition
     pub next_states: Vec<StateId>,
-    /// SparseSet for O(1) dedup of next_states — prevents duplicate states from
-    /// accumulating, which would cause redundant dstep calls in subsequent iterations.
-    next_seen: SparseSet,
     /// Accumulated field matcher transitions (stored as pointer addresses to avoid Arc::clone).
     pub transitions: Vec<usize>,
     /// Seen field matcher transitions (for deduplication, stored as pointer addresses).
     seen_transitions: FxHashSet<usize>,
-}
-
-impl Default for ArenaNfaBuffers {
-    fn default() -> Self {
-        Self {
-            current_states: Vec::new(),
-            next_states: Vec::new(),
-            next_seen: SparseSet::new(0),
-            transitions: Vec::new(),
-            seen_transitions: FxHashSet::default(),
-        }
-    }
 }
 
 impl ArenaNfaBuffers {
@@ -433,24 +419,14 @@ impl ArenaNfaBuffers {
         Self {
             current_states: Vec::with_capacity(16),
             next_states: Vec::with_capacity(16),
-            next_seen: SparseSet::new(0),
             transitions: Vec::new(),
             seen_transitions: FxHashSet::default(),
-        }
-    }
-
-    /// Ensure the dedup SparseSet can accommodate state IDs from an arena of the given size.
-    #[inline]
-    fn ensure_capacity(&mut self, arena_len: usize) {
-        if self.next_seen.capacity() < arena_len {
-            self.next_seen.resize(arena_len);
         }
     }
 
     pub fn clear(&mut self) {
         self.current_states.clear();
         self.next_states.clear();
-        self.next_seen.clear();
         self.transitions.clear();
         self.seen_transitions.clear();
     }
@@ -503,7 +479,6 @@ pub fn traverse_arena_nfa(
         return;
     }
 
-    bufs.ensure_capacity(arena.len());
     bufs.current_states.push(start);
 
     let len = val.len();
@@ -554,9 +529,9 @@ pub fn traverse_arena_nfa(
         let ArenaNfaBuffers {
             ref mut current_states,
             ref mut next_states,
-            ref mut next_seen,
             ref mut transitions,
             ref mut seen_transitions,
+            ..
         } = *bufs;
 
         for &state_id in current_states.iter() {
@@ -577,7 +552,7 @@ pub fn traverse_arena_nfa(
                 {
                     _dstep_count += 1;
                 }
-                if !next.is_none() && next_seen.insert(next.index()) {
+                if !next.is_none() {
                     next_states.push(next);
                 }
             } else {
@@ -595,7 +570,7 @@ pub fn traverse_arena_nfa(
                     {
                         _dstep_count += 1;
                     }
-                    if !next.is_none() && next_seen.insert(next.index()) {
+                    if !next.is_none() {
                         next_states.push(next);
                     }
                 }
@@ -605,7 +580,6 @@ pub fn traverse_arena_nfa(
         // Swap buffers — clear+swap preserves capacity on both Vecs
         current_states.clear();
         std::mem::swap(current_states, next_states);
-        next_seen.clear();
         i += 1;
     }
 

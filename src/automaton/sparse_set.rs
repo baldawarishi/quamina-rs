@@ -87,16 +87,7 @@ impl SparseSet {
     }
 }
 
-impl SparseSet {
-    /// Resize the set to the given capacity, clearing all elements.
-    pub fn resize(&mut self, new_capacity: usize) {
-        self.clear();
-        self.dense.resize(new_capacity, 0);
-        self.sparse.resize(new_capacity, 0);
-    }
-}
-
-// Test-only helpers: len, is_empty, iter are not used in production.
+// Test-only helpers: len, is_empty, iter, resize are not used in production.
 #[cfg(test)]
 impl SparseSet {
     fn len(&self) -> usize {
@@ -109,6 +100,12 @@ impl SparseSet {
 
     fn iter(&self) -> impl Iterator<Item = usize> + '_ {
         self.dense[..self.len].iter().copied()
+    }
+
+    fn resize(&mut self, new_capacity: usize) {
+        self.clear();
+        self.dense.resize(new_capacity, 0);
+        self.sparse.resize(new_capacity, 0);
     }
 }
 
