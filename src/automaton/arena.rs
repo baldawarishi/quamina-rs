@@ -185,11 +185,16 @@ impl ArenaSmallTable {
     }
 
     /// Get the state for a given byte (deterministic step).
-    #[inline]
+    #[inline(always)]
+    #[allow(unsafe_code)]
     pub fn dstep(&self, byte: u8) -> StateId {
-        for (i, &ceiling) in self.ceilings.iter().enumerate() {
+        let ceilings = self.ceilings.as_slice();
+        let steps = self.steps.as_slice();
+        for (i, &ceiling) in ceilings.iter().enumerate() {
             if byte < ceiling {
-                return self.steps[i];
+                // SAFETY: ceilings and steps always have the same length (enforced by
+                // pack/with_mappings). Since i < ceilings.len(), i < steps.len().
+                return unsafe { *steps.get_unchecked(i) };
             }
         }
         StateId::NONE
@@ -257,14 +262,20 @@ impl StateArena {
     /// Allocate a new default state, returning its ID.
     pub fn alloc(&mut self) -> StateId {
         let id = StateId(self.states.len() as u32);
-        self.states.push(ArenaFaState::default());
+        let mut state = ArenaFaState::default();
+        // Set trivial epsilon closure so states added after
+        // precompute_epsilon_closures() are visible during NFA traversal.
+        state.epsilon_closure.push(id);
+        self.states.push(state);
         id
     }
 
     /// Allocate a new state with the given table, returning its ID.
     pub fn alloc_with_table(&mut self, table: ArenaSmallTable) -> StateId {
         let id = StateId(self.states.len() as u32);
-        self.states.push(ArenaFaState::with_table(table));
+        let mut state = ArenaFaState::with_table(table);
+        state.epsilon_closure.push(id);
+        self.states.push(state);
         id
     }
 
@@ -471,6 +482,15 @@ pub fn traverse_arena_nfa(
     bufs.current_states.push(start);
 
     let len = val.len();
+
+    #[cfg(feature = "nfa-stats")]
+    let mut _dstep_count: u64 = 0;
+    #[cfg(feature = "nfa-stats")]
+    let mut _max_states: usize = 0;
+    #[cfg(feature = "nfa-stats")]
+    let mut _total_states: u64 = 0;
+    #[cfg(feature = "nfa-stats")]
+    let mut _byte_iters: u64 = 0;
     let mut i = 0;
 
     while i <= len {
@@ -501,6 +521,13 @@ pub fn traverse_arena_nfa(
             ARENA_VALUE_TERMINATOR
         };
 
+        #[cfg(feature = "nfa-stats")]
+        {
+            _byte_iters += 1;
+            _max_states = _max_states.max(bufs.current_states.len());
+            _total_states += bufs.current_states.len() as u64;
+        }
+
         // Destructure bufs for split borrows: iterate current_states immutably
         // while pushing to next_states mutably. This avoids std::mem::take which
         // would reset Vec capacity to 0 every iteration, triggering heap
@@ -528,6 +555,10 @@ pub fn traverse_arena_nfa(
 
                 // Single table lookup handles both normal transitions and spinout loopback
                 let next = ec_state.table.dstep(byte);
+                #[cfg(feature = "nfa-stats")]
+                {
+                    _dstep_count += 1;
+                }
                 if !next.is_none() {
                     next_states.push(next);
                 }
@@ -538,6 +569,30 @@ pub fn traverse_arena_nfa(
         current_states.clear();
         std::mem::swap(current_states, next_states);
         i += 1;
+    }
+
+    #[cfg(feature = "nfa-stats")]
+    {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static TOTAL_DSTEP: AtomicU64 = AtomicU64::new(0);
+        static TOTAL_CALLS: AtomicU64 = AtomicU64::new(0);
+        static TOTAL_BYTE_ITERS: AtomicU64 = AtomicU64::new(0);
+        static TOTAL_MAX_STATES: AtomicU64 = AtomicU64::new(0);
+        static TOTAL_SUM_STATES: AtomicU64 = AtomicU64::new(0);
+        let calls = TOTAL_CALLS.fetch_add(1, Ordering::Relaxed);
+        TOTAL_DSTEP.fetch_add(_dstep_count, Ordering::Relaxed);
+        TOTAL_BYTE_ITERS.fetch_add(_byte_iters, Ordering::Relaxed);
+        TOTAL_MAX_STATES.fetch_max(_max_states as u64, Ordering::Relaxed);
+        TOTAL_SUM_STATES.fetch_add(_total_states, Ordering::Relaxed);
+        if calls > 0 && calls % 100_000 == 0 {
+            let total_dstep = TOTAL_DSTEP.load(Ordering::Relaxed);
+            let total_byte_iters = TOTAL_BYTE_ITERS.load(Ordering::Relaxed);
+            let total_sum = TOTAL_SUM_STATES.load(Ordering::Relaxed);
+            let max = TOTAL_MAX_STATES.load(Ordering::Relaxed);
+            eprintln!("[nfa-stats] calls={}, total_dstep={}, avg_dstep={:.1}, total_byte_iters={}, avg_states_per_byte={:.1}, max_states={}",
+                calls, total_dstep, total_dstep as f64 / calls as f64,
+                total_byte_iters, total_sum as f64 / total_byte_iters as f64, max);
+        }
     }
 
     // Check final states for matches (split borrows to avoid take)
@@ -1100,17 +1155,18 @@ fn flatten_epsilon_targets(arena: &StateArena, states: &[StateId]) -> SmallVec<[
     targets
 }
 
-/// Check if a state is a "spinout state" (self-loop encoded in table and exactly 1 epsilon).
+/// Check if a state is a spinner/spinout state (self-loop in transition table).
 ///
-/// Spinout states are used for wildcard patterns. The convention is:
-/// - State's table default points to itself (self-loop via make_byte_dot_table)
-/// - State has exactly 1 epsilon (the continuation after the wildcard)
+/// Spinner states are used for wildcard patterns. The convention is:
+/// - State's table default points to itself (self-loop via `make_byte_dot_table`)
+/// - Old construction: 1 epsilon (to continuation after the wildcard)
+/// - New construction: 0 epsilons (escape states have epsilon back to spinner)
 fn is_spinout_state(arena: &StateArena, state_id: StateId) -> bool {
     if state_id.is_none() {
         return false;
     }
     let state = &arena[state_id];
-    state.table.default == state_id && state.table.epsilons.len() == 1
+    state.table.default == state_id && state.table.epsilons.len() <= 1
 }
 
 /// Recursively merge two NFA states from different arenas.
@@ -1184,22 +1240,40 @@ fn merge_arena_nfa_states_recursive(
     // (they recurse back to this merge, hit the memo, and return new_id).
     // We set default = new_id to mark the merged state as a spinout.
     if s1_has_spinout && s2_has_spinout {
-        let spinout1_eps = s1.table.epsilons[0];
-        let spinout2_eps = s2.table.epsilons[0];
-        let merged_eps = merge_arena_nfa_states_recursive(
-            arena1,
-            spinout1_eps,
-            arena2,
-            spinout2_eps,
-            new_arena,
-            memo,
-        );
-
         let mut combined_table =
             merge_nfa_tables_bytewise(arena1, &s1.table, arena2, &s2.table, new_arena, memo);
 
         combined_table.default = new_id;
-        combined_table.epsilons = smallvec![merged_eps];
+
+        // Merge epsilons from both spinners (0 or 1 each)
+        let mut merged_epsilons: SmallVec<[StateId; 2]> = SmallVec::new();
+        for &eps1 in &s1.table.epsilons {
+            let merged = merge_arena_nfa_states_recursive(
+                arena1,
+                eps1,
+                arena2,
+                StateId::NONE,
+                new_arena,
+                memo,
+            );
+            if !merged.is_none() {
+                merged_epsilons.push(merged);
+            }
+        }
+        for &eps2 in &s2.table.epsilons {
+            let merged = merge_arena_nfa_states_recursive(
+                arena1,
+                StateId::NONE,
+                arena2,
+                eps2,
+                new_arena,
+                memo,
+            );
+            if !merged.is_none() {
+                merged_epsilons.push(merged);
+            }
+        }
+        combined_table.epsilons = merged_epsilons;
 
         let mut field_transitions = s1.field_transitions.clone();
         field_transitions.extend(s2.field_transitions.iter().cloned());
@@ -1209,7 +1283,168 @@ fn merge_arena_nfa_states_recursive(
         return new_id;
     }
 
-    // Case 2: Either has epsilons (but not both spinouts) - create splice
+    // Case 2: Asymmetric spinner merge - one spinout, other has no epsilons
+    // Mirrors Go's asymmetricSpinnerMerge: when a spinout is merged with a
+    // non-epsilon state, we can avoid creating splice states by inlining the
+    // epsilon-to-spinner relationship into the merged table.
+    if (s1_has_spinout && !s2_has_epsilons) || (s2_has_spinout && !s1_has_epsilons) {
+        let (spinner_arena, spinner_id, spinner_table, other_arena, _other_id, other_table) =
+            if s1_has_spinout {
+                (arena1, state1, &s1.table, arena2, state2, &s2.table)
+            } else {
+                (arena2, state2, &s2.table, arena1, state1, &s1.table)
+            };
+
+        // Unpack both tables to 256-element arrays
+        let mut spinner_unpacked = [StateId::NONE; BYTE_CEILING];
+        let mut other_unpacked = [StateId::NONE; BYTE_CEILING];
+        unpack_arena_table(spinner_table, &mut spinner_unpacked);
+        unpack_arena_table(other_table, &mut other_unpacked);
+
+        // For each byte, decide how to merge
+        let mut merged_unpacked = [StateId::NONE; BYTE_CEILING];
+        for i in 0..BYTE_CEILING {
+            let spinner_next = spinner_unpacked[i];
+            let other_next = other_unpacked[i];
+
+            if spinner_next.is_none() {
+                // Illegal UTF-8 byte
+                merged_unpacked[i] = StateId::NONE;
+            } else if other_next.is_none() {
+                // Only spinner has a transition - remap it
+                if spinner_next == spinner_id {
+                    merged_unpacked[i] = new_id; // self-loop maps to combined
+                } else {
+                    // Spinner has a real branch (not self-loop)
+                    merged_unpacked[i] = if s1_has_spinout {
+                        merge_arena_nfa_states_recursive(
+                            spinner_arena,
+                            spinner_next,
+                            other_arena,
+                            StateId::NONE,
+                            new_arena,
+                            memo,
+                        )
+                    } else {
+                        merge_arena_nfa_states_recursive(
+                            other_arena,
+                            StateId::NONE,
+                            spinner_arena,
+                            spinner_next,
+                            new_arena,
+                            memo,
+                        )
+                    };
+                }
+            } else if spinner_next == spinner_id {
+                // Spinner self-loops here AND other has a branch.
+                // Create a state with other's transitions + epsilon back to combined.
+                // This is the key optimization: avoid full merge, just add epsilon.
+                let remapped_other = if s1_has_spinout {
+                    merge_arena_nfa_states_recursive(
+                        spinner_arena,
+                        StateId::NONE,
+                        other_arena,
+                        other_next,
+                        new_arena,
+                        memo,
+                    )
+                } else {
+                    merge_arena_nfa_states_recursive(
+                        other_arena,
+                        other_next,
+                        spinner_arena,
+                        StateId::NONE,
+                        new_arena,
+                        memo,
+                    )
+                };
+                // Add epsilon from the remapped other state back to the combined spinner
+                if !remapped_other.is_none() {
+                    new_arena[remapped_other].table.epsilons.push(new_id);
+                    // Also copy spinner's field transitions to the escape state
+                    let spinner_fts = if s1_has_spinout {
+                        &arena1[state1].field_transitions
+                    } else {
+                        &arena2[state2].field_transitions
+                    };
+                    for ft in spinner_fts {
+                        new_arena[remapped_other].field_transitions.push(ft.clone());
+                    }
+                }
+                merged_unpacked[i] = remapped_other;
+            } else {
+                // Spinner has a real branch (not self-loop) AND other has a branch.
+                // Merge them, then add epsilon back to combined spinner.
+                let merged_branch = if s1_has_spinout {
+                    merge_arena_nfa_states_recursive(
+                        spinner_arena,
+                        spinner_next,
+                        other_arena,
+                        other_next,
+                        new_arena,
+                        memo,
+                    )
+                } else {
+                    merge_arena_nfa_states_recursive(
+                        other_arena,
+                        other_next,
+                        spinner_arena,
+                        spinner_next,
+                        new_arena,
+                        memo,
+                    )
+                };
+                if !merged_branch.is_none() {
+                    new_arena[merged_branch].table.epsilons.push(new_id);
+                }
+                merged_unpacked[i] = merged_branch;
+            }
+        }
+
+        // Pack the merged table
+        let mut combined_table = ArenaSmallTable::new();
+        combined_table.pack(&merged_unpacked);
+        combined_table.default = new_id; // self-loop for the combined spinner
+
+        // Remap spinner's epsilons (0 or 1)
+        let mut merged_epsilons: SmallVec<[StateId; 2]> = SmallVec::new();
+        for &spinner_eps in &spinner_table.epsilons {
+            let merged = if s1_has_spinout {
+                merge_arena_nfa_states_recursive(
+                    spinner_arena,
+                    spinner_eps,
+                    other_arena,
+                    StateId::NONE,
+                    new_arena,
+                    memo,
+                )
+            } else {
+                merge_arena_nfa_states_recursive(
+                    other_arena,
+                    StateId::NONE,
+                    spinner_arena,
+                    spinner_eps,
+                    new_arena,
+                    memo,
+                )
+            };
+            if !merged.is_none() {
+                merged_epsilons.push(merged);
+            }
+        }
+        combined_table.epsilons = merged_epsilons;
+
+        // Combine field transitions
+        let mut field_transitions = s1.field_transitions.clone();
+        field_transitions.extend(s2.field_transitions.iter().cloned());
+
+        new_arena[new_id].table = combined_table;
+        new_arena[new_id].field_transitions = field_transitions;
+        return new_id;
+    }
+
+    // Case 3: Either has epsilons (but not both spinouts) - create splice
     // Flatten epsilon targets to prevent deep nesting from repeated merges.
     // (Mirrors Go PR #486: flattenEpsilonTargets)
     if s1_has_epsilons || s2_has_epsilons {
@@ -2029,11 +2264,65 @@ pub fn make_shellstyle_arena_fa(
     let match_state = arena.alloc();
     arena[match_state].field_transitions.push(next_field);
 
-    // Parse the pattern into segments
-    let segments = parse_shellstyle_segments(pattern);
+    // Build the FA byte-by-byte, mirroring Go's makeShellStyleFA.
+    //
+    // Go's approach processes one byte at a time. When encountering '*':
+    //   1. Current state becomes an epsilon-only junction (branch point)
+    //   2. Create a spinner with self-loop on all bytes
+    //   3. Create an escape state with epsilon back to the spinner
+    //   4. Override the spinner's transition for the NEXT byte to go to escape
+    //   5. Advance past the next byte (it's consumed as the escape trigger)
+    //
+    // The junction gives insert_string_into_arena a clean branch point (dstep
+    // returns NONE on the junction for any byte), while spinner states have
+    // closure size 1 during self-loop, reducing dstep calls by ~2x.
+    let start = arena.alloc();
+    let mut state = start;
+    let mut i = 0;
 
-    // Build the FA from segments
-    let start = build_shellstyle_arena_segments(&segments, 0, match_state, &mut arena);
+    while i < pattern.len() {
+        let ch = pattern[i];
+        if ch == b'*' {
+            // Current state becomes an epsilon-only junction before the spinner.
+            // This gives insert_string_into_arena a clean branch point: dstep on
+            // the junction returns NONE for any byte, so exact string paths get
+            // their own separate states instead of following the spinner's self-loop.
+            let spinner = arena.alloc();
+            arena[spinner].table = make_byte_dot_table(spinner);
+            arena[state].table.epsilons.push(spinner);
+
+            i += 1;
+            if i < pattern.len() {
+                // Create escape state with epsilon back to spinner
+                let spin_escape = arena.alloc();
+                arena[spin_escape].table.epsilons.push(spinner);
+                // Override spinner's transition for the next byte to go to escape
+                arena[spinner].table.set_transition(pattern[i], spin_escape);
+                state = spin_escape;
+            } else {
+                // '*' is the last byte: state becomes the spinner so the
+                // VT transition added after the loop goes on the spinner.
+                state = spinner;
+            }
+        } else {
+            // Literal byte: transition to a new state
+            let next_step = arena.alloc();
+            arena[state].table.set_transition(ch, next_step);
+            state = next_step;
+        }
+        i += 1;
+    }
+
+    // Add VALUE_TERMINATOR → last_step on the final state.
+    // This works for all cases:
+    //   - Literal ending: state is a fresh alloc, set_transition adds VT
+    //   - Wildcard ending: state is a spinner, set_transition overrides VT in dot table
+    //   - Escape ending: state has epsilons, set_transition preserves them
+    let last_step = arena.alloc();
+    arena[last_step].field_transitions = arena[match_state].field_transitions.clone();
+    arena[state]
+        .table
+        .set_transition(ARENA_VALUE_TERMINATOR, last_step);
 
     arena.precompute_epsilon_closures();
     (arena, start)
@@ -2046,84 +2335,80 @@ enum ShellstyleSegment {
     Wildcard,
 }
 
-/// Parse a shellstyle pattern into segments
-fn parse_shellstyle_segments(pattern: &[u8]) -> Vec<ShellstyleSegment> {
-    let mut segments = Vec::new();
-    let mut i = 0;
-
-    while i < pattern.len() {
-        if pattern[i] == b'*' {
-            segments.push(ShellstyleSegment::Wildcard);
-            i += 1;
-        } else {
-            // Collect consecutive literal bytes
-            let start = i;
-            while i < pattern.len() && pattern[i] != b'*' {
-                i += 1;
-            }
-            segments.push(ShellstyleSegment::Literal(pattern[start..i].to_vec()));
-        }
-    }
-
-    segments
-}
-
-/// Build the FA from shellstyle segments
-fn build_shellstyle_arena_segments(
+/// Build an FA from parsed segments using left-to-right construction.
+///
+/// This mirrors Go's construction approach where spinner (spinout) states have
+/// direct byte exits for the next literal's first byte, rather than using epsilon
+/// transitions. This eliminates unnecessary epsilon closures and reduces the
+/// number of dstep calls during NFA traversal.
+///
+/// Used by `make_wildcard_arena_fa` (which needs segment parsing for escape sequences).
+fn build_fa_from_segments(
     segments: &[ShellstyleSegment],
-    index: usize,
     match_state: StateId,
     arena: &mut StateArena,
 ) -> StateId {
-    if index >= segments.len() {
-        // End of pattern - transition on VALUE_TERMINATOR to match
-        return arena.alloc_with_table(ArenaSmallTable::with_mappings(
-            StateId::NONE,
-            &[ARENA_VALUE_TERMINATOR],
-            &[match_state],
-        ));
-    }
+    let start = arena.alloc();
+    let mut state = start;
+    let mut skip_first_literal_byte = false;
 
-    match &segments[index] {
-        ShellstyleSegment::Literal(bytes) => {
-            // Build continuation first
-            let continuation =
-                build_shellstyle_arena_segments(segments, index + 1, match_state, arena);
+    for (seg_idx, seg) in segments.iter().enumerate() {
+        match seg {
+            ShellstyleSegment::Literal(bytes) => {
+                // When preceded by a wildcard, the first byte was already consumed
+                // as the spinner's escape trigger — skip it here.
+                let byte_start = if skip_first_literal_byte { 1 } else { 0 };
+                skip_first_literal_byte = false;
 
-            // Build literal chain
-            build_literal_arena_chain(bytes, continuation, arena)
+                for &ch in &bytes[byte_start..] {
+                    let next_step = arena.alloc();
+                    // set_transition preserves existing epsilons on the state
+                    arena[state].table.set_transition(ch, next_step);
+                    state = next_step;
+                }
+            }
+            ShellstyleSegment::Wildcard => {
+                // Current state becomes an epsilon-only junction before the spinner.
+                // This gives insert_string_into_arena a clean branch point.
+                let spinner = arena.alloc();
+                arena[spinner].table = make_byte_dot_table(spinner);
+                arena[state].table.epsilons.push(spinner);
+
+                // Look ahead: if next segment is a literal, create escape with
+                // direct byte exit on the literal's first byte
+                if let Some(ShellstyleSegment::Literal(next_bytes)) = segments.get(seg_idx + 1) {
+                    if !next_bytes.is_empty() {
+                        let spin_escape = arena.alloc();
+                        arena[spin_escape].table.epsilons.push(spinner);
+                        arena[spinner]
+                            .table
+                            .set_transition(next_bytes[0], spin_escape);
+                        state = spin_escape;
+                        skip_first_literal_byte = true;
+                    }
+                }
+
+                // If wildcard is last or followed by another wildcard,
+                // state becomes the spinner for VT transition at the end.
+                if !skip_first_literal_byte {
+                    state = spinner;
+                }
+            }
         }
-        ShellstyleSegment::Wildcard => {
-            // Build continuation first
-            let continuation =
-                build_shellstyle_arena_segments(segments, index + 1, match_state, arena);
-
-            // Build wildcard (spinout) structure
-            build_wildcard_arena_spinout(continuation, arena)
-        }
-    }
-}
-
-/// Build a chain of states for a literal byte sequence
-fn build_literal_arena_chain(
-    bytes: &[u8],
-    continuation: StateId,
-    arena: &mut StateArena,
-) -> StateId {
-    if bytes.is_empty() {
-        return continuation;
     }
 
-    // Build from end to start
-    let mut current = continuation;
-    for &byte in bytes.iter().rev() {
-        current = arena.alloc_with_table(ArenaSmallTable::with_mappings(
-            StateId::NONE,
-            &[byte],
-            &[current],
-        ));
-    }
-    current
+    // Unconditionally add VALUE_TERMINATOR → last_step on the final state.
+    // This works correctly for all endings:
+    //   - Literal ending: state is a fresh alloc, set_transition adds VT
+    //   - Wildcard ending: state is a spinner, set_transition overrides VT in dot table
+    //   - Escape ending: state has epsilons, set_transition preserves them
+    let last_step = arena.alloc();
+    arena[last_step].field_transitions = arena[match_state].field_transitions.clone();
+    arena[state]
+        .table
+        .set_transition(ARENA_VALUE_TERMINATOR, last_step);
+
+    start
 }
 
 /// Create a spinout loopback table that maps most valid UTF-8 bytes to `dest`.
@@ -2142,26 +2427,6 @@ fn make_byte_dot_table(dest: StateId) -> ArenaSmallTable {
     table.steps = smallvec![dest, StateId::NONE, dest, StateId::NONE];
     table.default = dest;
     table
-}
-
-/// Build a wildcard spinout structure
-///
-/// The spinout state structure:
-/// - Has self-loop encoded in transition table (via make_byte_dot_table)
-/// - Has epsilon to continuation (to try matching after any consumed bytes)
-/// - On any non-terminator byte, stays in spinout state (via table lookup)
-fn build_wildcard_arena_spinout(continuation: StateId, arena: &mut StateArena) -> StateId {
-    // Create spinout state with self-loop encoded in transition table
-    let spinout = arena.alloc();
-    arena[spinout].table = make_byte_dot_table(spinout);
-    arena[spinout].table.epsilons.push(continuation);
-
-    // Create start state that has epsilon to spinout
-    // This allows zero-length wildcard matches
-    let start = arena.alloc();
-    arena[start].table.epsilons.push(spinout);
-
-    start
 }
 
 /// Build an arena-based FA that matches wildcard patterns with escape sequences.
@@ -2191,8 +2456,8 @@ pub fn make_wildcard_arena_fa(
     // Parse the pattern into segments (handles escape sequences)
     let segments = parse_wildcard_segments(pattern);
 
-    // Build the FA from segments (reuse shellstyle segment builder)
-    let start = build_shellstyle_arena_segments(&segments, 0, match_state, &mut arena);
+    // Build the FA from segments
+    let start = build_fa_from_segments(&segments, match_state, &mut arena);
 
     arena.precompute_epsilon_closures();
     (arena, start)

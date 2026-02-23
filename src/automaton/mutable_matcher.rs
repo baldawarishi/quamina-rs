@@ -465,19 +465,12 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
             .borrow_mut()
             .insert(Arc::as_ptr(&next_arc), next_fm.clone());
 
-        // Ensure main_arena exists (bootstrap with first value if needed)
         self.ensure_main_arena_with_singleton()?;
-
         {
             let mut main = self.main_arena.borrow_mut();
             let (arena, start) = main.as_mut().unwrap();
-
-            // Insert all values directly into the arena trie
             for val in values {
                 insert_string_into_arena(arena, *start, val, next_arc.clone());
-            }
-            if *self.main_arena_is_nfa.borrow() {
-                arena.precompute_epsilon_closures();
             }
         }
         self.check_main_arena_budget()?;
@@ -526,17 +519,11 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
             .borrow_mut()
             .insert(Arc::as_ptr(&next_arc), next_fm.clone());
 
-        // Ensure main_arena exists (bootstrap with singleton if needed)
         self.ensure_main_arena_with_singleton()?;
-
-        // Insert directly into the arena trie — O(L) instead of O(arena_size)
         {
             let mut main = self.main_arena.borrow_mut();
             let (arena, start) = main.as_mut().unwrap();
             insert_string_into_arena(arena, *start, val, next_arc);
-            if *self.main_arena_is_nfa.borrow() {
-                arena.precompute_epsilon_closures();
-            }
         }
         self.check_main_arena_budget()?;
 
@@ -564,18 +551,12 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
             .borrow_mut()
             .insert(Arc::as_ptr(&next_arc), next_fm.clone());
 
-        // Ensure main_arena exists (bootstrap with singleton if needed)
         self.ensure_main_arena_with_singleton()?;
-
-        // Insert both representations directly into the arena trie — O(L) each
         {
             let mut main = self.main_arena.borrow_mut();
             let (arena, start) = main.as_mut().unwrap();
             insert_string_into_arena(arena, *start, val, next_arc.clone());
             insert_string_into_arena(arena, *start, &q_num, next_arc);
-            if *self.main_arena_is_nfa.borrow() {
-                arena.precompute_epsilon_closures();
-            }
         }
         self.check_main_arena_budget()?;
 
