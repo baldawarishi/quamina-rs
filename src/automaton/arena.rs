@@ -398,16 +398,30 @@ impl std::ops::IndexMut<StateId> for StateArena {
 }
 
 /// Buffers for arena NFA traversal (avoid allocation during matching).
-#[derive(Default)]
 pub struct ArenaNfaBuffers {
     /// Current active states
     pub current_states: Vec<StateId>,
     /// Next states after transition
     pub next_states: Vec<StateId>,
+    /// SparseSet for O(1) dedup of next_states — prevents duplicate states from
+    /// accumulating, which would cause redundant dstep calls in subsequent iterations.
+    next_seen: SparseSet,
     /// Accumulated field matcher transitions (stored as pointer addresses to avoid Arc::clone).
     pub transitions: Vec<usize>,
     /// Seen field matcher transitions (for deduplication, stored as pointer addresses).
     seen_transitions: FxHashSet<usize>,
+}
+
+impl Default for ArenaNfaBuffers {
+    fn default() -> Self {
+        Self {
+            current_states: Vec::new(),
+            next_states: Vec::new(),
+            next_seen: SparseSet::new(0),
+            transitions: Vec::new(),
+            seen_transitions: FxHashSet::default(),
+        }
+    }
 }
 
 impl ArenaNfaBuffers {
@@ -419,14 +433,24 @@ impl ArenaNfaBuffers {
         Self {
             current_states: Vec::with_capacity(16),
             next_states: Vec::with_capacity(16),
+            next_seen: SparseSet::new(0),
             transitions: Vec::new(),
             seen_transitions: FxHashSet::default(),
+        }
+    }
+
+    /// Ensure the dedup SparseSet can accommodate state IDs from an arena of the given size.
+    #[inline]
+    fn ensure_capacity(&mut self, arena_len: usize) {
+        if self.next_seen.capacity() < arena_len {
+            self.next_seen.resize(arena_len);
         }
     }
 
     pub fn clear(&mut self) {
         self.current_states.clear();
         self.next_states.clear();
+        self.next_seen.clear();
         self.transitions.clear();
         self.seen_transitions.clear();
     }
@@ -479,6 +503,7 @@ pub fn traverse_arena_nfa(
         return;
     }
 
+    bufs.ensure_capacity(arena.len());
     bufs.current_states.push(start);
 
     let len = val.len();
@@ -500,10 +525,6 @@ pub fn traverse_arena_nfa(
 
         // State acceleration: For ASCII-only negated patterns like [^x]+, use memchr
         // to skip directly to exit bytes. This is enabled when patterns have 1-3 exit bytes.
-        //
-        // Note: Generic Unicode patterns still have too many exit bytes due to UTF-8 validation,
-        // but ASCII-only negated patterns (detected at parse time) work well because JSON input
-        // is valid UTF-8 and doesn't need re-validation during matching.
         if i < len && bufs.current_states.len() == 1 {
             let state_id = bufs.current_states[0];
             let state = &arena[state_id];
@@ -529,38 +550,54 @@ pub fn traverse_arena_nfa(
         }
 
         // Destructure bufs for split borrows: iterate current_states immutably
-        // while pushing to next_states mutably. This avoids std::mem::take which
-        // would reset Vec capacity to 0 every iteration, triggering heap
-        // reallocation on every push (~22-25% overhead in NFA-heavy benchmarks).
+        // while pushing to next_states mutably.
         let ArenaNfaBuffers {
             ref mut current_states,
             ref mut next_states,
+            ref mut next_seen,
             ref mut transitions,
             ref mut seen_transitions,
         } = *bufs;
 
         for &state_id in current_states.iter() {
-            // Iterate precomputed epsilon closure directly (no copy needed
-            // since arena and bufs fields are independent borrows).
-            for &ec_state_id in &arena[state_id].epsilon_closure {
-                let ec_state = &arena[ec_state_id];
+            let state = &arena[state_id];
+            let closure = &state.epsilon_closure;
 
-                // Collect field transitions from cold storage (deduplicated)
-                for ft in &ec_state.field_transitions {
+            if closure.len() == 1 {
+                // Fast path: most states have closure = [self].
+                // Skip the inner closure loop and avoid redundant arena lookup.
+                for ft in &state.field_transitions {
                     let ptr = Arc::as_ptr(ft) as usize;
                     if seen_transitions.insert(ptr) {
                         transitions.push(ptr);
                     }
                 }
-
-                // Single table lookup handles both normal transitions and spinout loopback
-                let next = ec_state.table.dstep(byte);
+                let next = state.table.dstep(byte);
                 #[cfg(feature = "nfa-stats")]
                 {
                     _dstep_count += 1;
                 }
-                if !next.is_none() {
+                if !next.is_none() && next_seen.insert(next.index()) {
                     next_states.push(next);
+                }
+            } else {
+                // Slow path: expand epsilon closure for NFA states.
+                for &ec_state_id in closure {
+                    let ec_state = &arena[ec_state_id];
+                    for ft in &ec_state.field_transitions {
+                        let ptr = Arc::as_ptr(ft) as usize;
+                        if seen_transitions.insert(ptr) {
+                            transitions.push(ptr);
+                        }
+                    }
+                    let next = ec_state.table.dstep(byte);
+                    #[cfg(feature = "nfa-stats")]
+                    {
+                        _dstep_count += 1;
+                    }
+                    if !next.is_none() && next_seen.insert(next.index()) {
+                        next_states.push(next);
+                    }
                 }
             }
         }
@@ -568,6 +605,7 @@ pub fn traverse_arena_nfa(
         // Swap buffers — clear+swap preserves capacity on both Vecs
         current_states.clear();
         std::mem::swap(current_states, next_states);
+        next_seen.clear();
         i += 1;
     }
 
@@ -603,11 +641,22 @@ pub fn traverse_arena_nfa(
         ..
     } = *bufs;
     for &state_id in current_states.iter() {
-        for &ec_state_id in &arena[state_id].epsilon_closure {
-            for ft in &arena[ec_state_id].field_transitions {
+        let state = &arena[state_id];
+        let closure = &state.epsilon_closure;
+        if closure.len() == 1 {
+            for ft in &state.field_transitions {
                 let ptr = Arc::as_ptr(ft) as usize;
                 if seen_transitions.insert(ptr) {
                     transitions.push(ptr);
+                }
+            }
+        } else {
+            for &ec_state_id in closure {
+                for ft in &arena[ec_state_id].field_transitions {
+                    let ptr = Arc::as_ptr(ft) as usize;
+                    if seen_transitions.insert(ptr) {
+                        transitions.push(ptr);
+                    }
                 }
             }
         }
