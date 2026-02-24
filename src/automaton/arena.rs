@@ -483,14 +483,6 @@ pub fn traverse_arena_nfa(
 
     let len = val.len();
 
-    #[cfg(feature = "nfa-stats")]
-    let mut _dstep_count: u64 = 0;
-    #[cfg(feature = "nfa-stats")]
-    let mut _max_states: usize = 0;
-    #[cfg(feature = "nfa-stats")]
-    let mut _total_states: u64 = 0;
-    #[cfg(feature = "nfa-stats")]
-    let mut _byte_iters: u64 = 0;
     let mut i = 0;
 
     while i <= len {
@@ -517,13 +509,6 @@ pub fn traverse_arena_nfa(
             ARENA_VALUE_TERMINATOR
         };
 
-        #[cfg(feature = "nfa-stats")]
-        {
-            _byte_iters += 1;
-            _max_states = _max_states.max(bufs.current_states.len());
-            _total_states += bufs.current_states.len() as u64;
-        }
-
         // Destructure bufs for split borrows: iterate current_states immutably
         // while pushing to next_states mutably.
         let ArenaNfaBuffers {
@@ -548,10 +533,6 @@ pub fn traverse_arena_nfa(
                     }
                 }
                 let next = state.table.dstep(byte);
-                #[cfg(feature = "nfa-stats")]
-                {
-                    _dstep_count += 1;
-                }
                 if !next.is_none() {
                     next_states.push(next);
                 }
@@ -566,10 +547,6 @@ pub fn traverse_arena_nfa(
                         }
                     }
                     let next = ec_state.table.dstep(byte);
-                    #[cfg(feature = "nfa-stats")]
-                    {
-                        _dstep_count += 1;
-                    }
                     if !next.is_none() {
                         next_states.push(next);
                     }
@@ -581,30 +558,6 @@ pub fn traverse_arena_nfa(
         current_states.clear();
         std::mem::swap(current_states, next_states);
         i += 1;
-    }
-
-    #[cfg(feature = "nfa-stats")]
-    {
-        use std::sync::atomic::{AtomicU64, Ordering};
-        static TOTAL_DSTEP: AtomicU64 = AtomicU64::new(0);
-        static TOTAL_CALLS: AtomicU64 = AtomicU64::new(0);
-        static TOTAL_BYTE_ITERS: AtomicU64 = AtomicU64::new(0);
-        static TOTAL_MAX_STATES: AtomicU64 = AtomicU64::new(0);
-        static TOTAL_SUM_STATES: AtomicU64 = AtomicU64::new(0);
-        let calls = TOTAL_CALLS.fetch_add(1, Ordering::Relaxed);
-        TOTAL_DSTEP.fetch_add(_dstep_count, Ordering::Relaxed);
-        TOTAL_BYTE_ITERS.fetch_add(_byte_iters, Ordering::Relaxed);
-        TOTAL_MAX_STATES.fetch_max(_max_states as u64, Ordering::Relaxed);
-        TOTAL_SUM_STATES.fetch_add(_total_states, Ordering::Relaxed);
-        if calls > 0 && calls % 100_000 == 0 {
-            let total_dstep = TOTAL_DSTEP.load(Ordering::Relaxed);
-            let total_byte_iters = TOTAL_BYTE_ITERS.load(Ordering::Relaxed);
-            let total_sum = TOTAL_SUM_STATES.load(Ordering::Relaxed);
-            let max = TOTAL_MAX_STATES.load(Ordering::Relaxed);
-            eprintln!("[nfa-stats] calls={}, total_dstep={}, avg_dstep={:.1}, total_byte_iters={}, avg_states_per_byte={:.1}, max_states={}",
-                calls, total_dstep, total_dstep as f64 / calls as f64,
-                total_byte_iters, total_sum as f64 / total_byte_iters as f64, max);
-        }
     }
 
     // Check final states for matches (split borrows to avoid take)

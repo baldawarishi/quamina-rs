@@ -19,7 +19,6 @@ fast-float2 = "0.2"
 
 [features]
 dhat-heap = []  # Enable heap profiling with dhat
-nfa-stats = []  # Enable NFA traversal statistics (debug only)
 
 [dev-dependencies]
 criterion = "0.8"

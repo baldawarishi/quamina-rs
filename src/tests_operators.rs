@@ -1733,6 +1733,20 @@ fn test_wildcard_comprehensive() {
         &["l", "xl", "lx", "xlx", "xxl", "lxx", "xxlxx", "xlxlxlxlxl"],
         &["", "x", "xx", "xtx"],
     );
+
+    // Test *.* (single-char literal between two wildcards)
+    exercise_wildcard(
+        "*.*",
+        &["a.b", "file.txt", "a.b.c", ".x", "x."],
+        &["", "noperiod", "abc"],
+    );
+
+    // Test *a*b* (three wildcards with single-char literals)
+    exercise_wildcard(
+        "*a*b*",
+        &["ab", "xab", "abx", "xabx", "xaxbx", "aXXbYY"],
+        &["", "a", "b", "ba", "x"],
+    );
 }
 
 #[test]
@@ -2206,6 +2220,25 @@ fn test_wildcard_multi_patterns_double_exact2() {
                 ],
             ),
             (r#"{"x":["hellohello"]}"#, &["hellohello"]),
+        ],
+    );
+}
+
+#[test]
+fn test_wildcard_multi_patterns_zero_expansion() {
+    // Wildcard expanding to zero characters, combined with overlapping prefix pattern.
+    // Exercises build_fa_from_segments when spinner exit byte matches immediately.
+    exercise_multi_patterns(
+        &["ab", "abXYZ"],
+        &[
+            (
+                r#"{"x":[{"wildcard": "abc*def"}]}"#,
+                &["abcdef", "abcXdef", "abcXXXdef"],
+            ),
+            (
+                r#"{"x":[{"wildcard": "abc*"}]}"#,
+                &["abc", "abcdef", "abcXdef", "abcXXXdef", "abcxyz"],
+            ),
         ],
     );
 }
