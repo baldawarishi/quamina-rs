@@ -8,6 +8,18 @@ Style inspired by [ripgrep's CHANGELOG](https://github.com/BurntSushi/ripgrep/bl
 
 ## [Unreleased]
 
+### Changed
+- Rewrite shellstyle/wildcard FA construction to reduce NFA state transitions by ~48% (#44)
+- Eliminate `Arc::clone` from NFA/DFA traversal hot path
+- Fast-path single-element epsilon closures in NFA traversal (#44)
+- Encode spinout loopback in transition table, removing a per-byte branch from NFA traversal (#44)
+- Avoid redundant `String` clone in `MatchSet::add` for duplicate entries (#43)
+
+### Added
+- Overlapping shellstyle nesting tests ported from Go upstream (5b74bd7, 7cb59fa)
+- Miri-friendly variants for long-running NFA tests
+- `justfile` for common development tasks (#30)
+
 ## [0.4.1] — 2026-02-20
 
 ### Fixed
