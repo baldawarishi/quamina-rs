@@ -1392,6 +1392,85 @@ fn bench_number_matching_10k(c: &mut Criterion) {
     });
 }
 
+/// Shell-style build time benchmark (comparable to Go's BenchmarkShellStyleBuildTime)
+///
+/// Loads 1000 words from wwords.txt, inserts a '*' at a deterministic random
+/// position in each word to create shell-style wildcard patterns, merges all
+/// 1000 onto a single field, then benchmarks matching both original and
+/// "expanded" words (with ÉÉÉÉ inserted at the star position).
+///
+/// This is a stress test for NFA traversal at scale — the Go version produces
+/// an automaton with 7409 tables and up to 900 epsilons.
+fn bench_shellstyle_build_time(c: &mut Criterion) {
+    use rand::{RngExt, SeedableRng};
+
+    let contents =
+        std::fs::read_to_string("testdata/wwords.txt").expect("Failed to read testdata/wwords.txt");
+    let words: Vec<&str> = contents
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .take(1000)
+        .collect();
+    assert_eq!(words.len(), 1000);
+
+    let mut rng = rand::rngs::StdRng::seed_from_u64(293591);
+
+    let mut star_words = Vec::with_capacity(words.len());
+    let mut expanded_words = Vec::with_capacity(words.len());
+    let mut patterns = Vec::with_capacity(words.len());
+
+    for word in &words {
+        let star_at = (rng.random_range(0u64..u64::MAX) % 6) as usize;
+        let star_at = star_at.min(word.len());
+
+        let star_word = format!("{}*{}", &word[..star_at], &word[star_at..]);
+        let expanded_word = format!("{}ÉÉÉÉ{}", &word[..star_at], &word[star_at..]);
+        let pattern = format!(r#"{{"x": [{{"shellstyle": "{}"}}]}}"#, star_word);
+
+        star_words.push(star_word);
+        expanded_words.push(expanded_word);
+        patterns.push(pattern);
+    }
+
+    // Build the matcher (outside the benchmark loop — Go also builds once)
+    let mut q = Quamina::new();
+    for (i, pattern) in patterns.iter().enumerate() {
+        q.add_pattern(star_words[i].clone(), pattern).unwrap();
+    }
+
+    // Build events: original words and expanded words (like Go benchmark)
+    let events: Vec<(Vec<u8>, String)> = words
+        .iter()
+        .enumerate()
+        .flat_map(|(i, word)| {
+            vec![
+                (
+                    format!(r#"{{"x": "{}"}}"#, word).into_bytes(),
+                    word.to_string(),
+                ),
+                (
+                    format!(r#"{{"x": "{}"}}"#, expanded_words[i]).into_bytes(),
+                    expanded_words[i].clone(),
+                ),
+            ]
+        })
+        .collect();
+
+    // Verify all events match before benchmarking
+    for (event, word) in &events {
+        let matches = q.matches_for_event(event).unwrap();
+        assert!(!matches.is_empty(), "no matches for {}", word);
+    }
+
+    c.bench_function("shellstyle_build_time_1000", |b| {
+        b.iter(|| {
+            for (event, _) in &events {
+                let _ = q.matches_for_event(black_box(event)).unwrap();
+            }
+        })
+    });
+}
+
 // Configure longer benchmarks with minimum sample count and short warm-up.
 // bulk_10000x1 takes ~28s per iteration, so 10 samples ≈ 280s total.
 fn configure_bulk_benchmarks() -> Criterion {
@@ -1418,7 +1497,7 @@ fn configure_10k_benchmarks() -> Criterion {
 criterion_group! {
     name = stress_benches;
     config = configure_10k_benchmarks();
-    targets = bench_10k_patterns_match, bench_10k_diverse_patterns, bench_10k_mixed_patterns
+    targets = bench_10k_patterns_match, bench_10k_diverse_patterns, bench_10k_mixed_patterns, bench_shellstyle_build_time
 }
 
 criterion_group!(
