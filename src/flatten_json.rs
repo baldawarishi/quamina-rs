@@ -13,7 +13,7 @@
 //! - `transmute`: Lifetime extension for borrowed fields (verified by Miri)
 #![allow(unsafe_code)]
 
-use crate::segments_tree::SegmentsTree;
+use crate::segments_tree::{SegmentEntry, SegmentsTree};
 use crate::QuaminaError;
 use smallvec::SmallVec;
 use std::sync::Arc;
@@ -267,8 +267,15 @@ impl<'a> FlattenContext<'a, '_> {
             ArrayTrailVec::new()
         };
 
+        // These are written in ObjectState::InObject (when we read a `"key"`) and
+        // consumed later in ObjectState::MemberValue (when we parse the value).
+        // Rust can't prove the state-machine ordering, so we must initialize them
+        // here — but the initial values are never actually read.
+        #[allow(unused_assignments)]
         let mut member_name: MemberName<'a> = MemberName::Borrowed(&[]);
+        #[allow(unused_assignments)]
         let mut member_is_used = false;
+        let mut member_entry: Option<&SegmentEntry> = None;
         let mut state = ObjectState::InObject;
 
         loop {
@@ -289,8 +296,13 @@ impl<'a> FlattenContext<'a, '_> {
                         // skip
                     } else if ch == b'"' {
                         member_name = self.read_member_name()?;
-                        member_is_used =
-                            self.skipping == 0 && tree.is_segment_used(member_name.as_bytes());
+                        // Single fused lookup replaces separate is_segment_used + get + path_arc_for_segment
+                        member_entry = if self.skipping == 0 {
+                            tree.lookup(member_name.as_bytes())
+                        } else {
+                            None
+                        };
+                        member_is_used = member_entry.is_some();
                         state = ObjectState::SeekingColon;
                     } else if ch == b'}' {
                         return Ok(());
@@ -366,32 +378,31 @@ impl<'a> FlattenContext<'a, '_> {
                             is_leaf = true;
                         }
                         b'[' => {
-                            let segment_used = tree.is_segment_used(member_name.as_bytes());
-                            if !segment_used {
+                            if !member_is_used {
                                 self.skipping += 1;
                             }
 
-                            if self.skipping > 0 || !member_is_used {
+                            if self.skipping > 0 {
                                 self.skip_block(b'[', b']')?;
                             } else {
-                                let array_tree = tree.get(member_name.as_bytes()).unwrap_or(tree);
-                                let path = tree.path_arc_for_segment(member_name.as_bytes());
+                                let array_tree =
+                                    member_entry.and_then(|e| e.node()).unwrap_or(tree);
+                                let path = member_entry.and_then(|e| e.field()).cloned();
                                 self.read_array(path, array_tree)?;
                             }
 
-                            if !segment_used {
+                            if !member_is_used {
                                 self.skipping -= 1;
                             }
                         }
                         b'{' => {
-                            let segment_used = tree.is_segment_used(member_name.as_bytes());
-                            if !segment_used {
+                            if !member_is_used {
                                 self.skipping += 1;
                             }
 
-                            if self.skipping > 0 || !member_is_used {
+                            if self.skipping > 0 {
                                 self.skip_block(b'{', b'}')?;
-                            } else if let Some(child_tree) = tree.get(member_name.as_bytes()) {
+                            } else if let Some(child_tree) = member_entry.and_then(|e| e.node()) {
                                 nodes_count = nodes_count.saturating_sub(1);
                                 self.read_object(child_tree)?;
                             } else {
@@ -399,7 +410,7 @@ impl<'a> FlattenContext<'a, '_> {
                                 self.skip_block(b'{', b'}')?;
                             }
 
-                            if !segment_used {
+                            if !member_is_used {
                                 self.skipping -= 1;
                             }
                         }
@@ -414,9 +425,7 @@ impl<'a> FlattenContext<'a, '_> {
                     if is_leaf {
                         if let Some(v) = val {
                             if member_is_used {
-                                if let Some(path) =
-                                    tree.path_arc_for_segment(member_name.as_bytes())
-                                {
+                                if let Some(path) = member_entry.and_then(|e| e.field()).cloned() {
                                     self.push_field(Field {
                                         path,
                                         val: v,

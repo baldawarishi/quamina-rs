@@ -9,6 +9,7 @@ Style inspired by [ripgrep's CHANGELOG](https://github.com/BurntSushi/ripgrep/bl
 ## [Unreleased]
 
 ### Changed
+- Fuse SegmentsTree `fields`/`nodes` into single map, eliminating redundant hash lookups in flattener hot path (~19% faster flattening, 3–9% end-to-end)
 - Rewrite shellstyle/wildcard FA construction to reduce NFA state transitions by ~48% (#44)
 - Eliminate `Arc::clone` from NFA/DFA traversal hot path
 - Fast-path single-element epsilon closures in NFA traversal (#44)
