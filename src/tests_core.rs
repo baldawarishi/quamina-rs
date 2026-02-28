@@ -2179,3 +2179,35 @@ fn test_state_limit_default_allows_normal_patterns() {
         .unwrap();
     assert!(matches.contains(&&"p1"));
 }
+
+// ============================================================================
+// Flatten-Only Tests
+// ============================================================================
+
+#[test]
+fn test_flatten_only_returns_field_count() {
+    // Register two tracked fields via patterns
+    let q = q!("p1" => r#"{"x": [1], "y": [2]}"#);
+
+    // Event with both tracked fields → should return 2
+    let count = q.flatten_only(br#"{"x": 1, "y": 2}"#).unwrap();
+    assert_eq!(count, 2, "two tracked fields should produce count 2");
+}
+
+#[test]
+fn test_flatten_only_single_field() {
+    let q = q!("p1" => r#"{"status": ["ok"]}"#);
+
+    let count = q.flatten_only(br#"{"status": "ok"}"#).unwrap();
+    assert_eq!(count, 1, "single tracked field should produce count 1");
+}
+
+#[test]
+fn test_flatten_only_untracked_fields_ignored() {
+    // Only "x" is tracked via the pattern
+    let q = q!("p1" => r#"{"x": [1]}"#);
+
+    // Event has x (tracked) and y (untracked)
+    let count = q.flatten_only(br#"{"x": 1, "y": 2}"#).unwrap();
+    assert_eq!(count, 1, "untracked field y should not be counted");
+}
