@@ -133,6 +133,19 @@ upstream-sync sha:
     echo "{{sha}}" > .go-upstream-sync
     ./scripts/check-upstream.sh
 
+# Run mutation testing on the full codebase
+[group('validate')]
+mutants *args:
+    cargo mutants -vV --in-place {{args}}
+
+# Run mutation testing only on code changed vs main
+[group('validate')]
+mutants-diff *args:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    git diff origin/main.. > /tmp/quamina-mutants.diff
+    cargo mutants -vV --in-diff /tmp/quamina-mutants.diff --in-place {{args}}
+
 # Start LLM Agent in this repo (currently claude-code with dangerously-skip-permissions)
 [group('agent')]
 ai:
