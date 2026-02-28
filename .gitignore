@@ -9,6 +9,7 @@ flamegraph.svg
 
 # Profiling artifacts
 profile_status.json
+profile.json.gz
 sample_output.txt
 
 # Debug/fuzz logs
