@@ -484,6 +484,29 @@ fn test_should_rebuild_boundary() {
     stats.add_filtered(100);
     // total = 1000, ratio = 100/900 = 0.11 < 0.2
     assert!(!stats.should_rebuild());
+
+    // Exactly at ratio boundary: ratio == 0.2 → should NOT rebuild (strict >)
+    // Kills mutant: replace > with >= in PrunerStats::should_rebuild
+    stats.reset();
+    stats.add_emitted(1000);
+    stats.add_filtered(200);
+    // total = 1200 > 1000 threshold, ratio = 200/1000 = 0.2 exactly
+    assert!(!stats.should_rebuild());
+}
+
+/// Verify that cloning PrunerStats preserves non-default field values.
+/// Kills mutant: replace Clone::clone -> Self with Default::default()
+#[test]
+fn test_pruner_stats_clone() {
+    use super::PrunerStats;
+
+    let stats = PrunerStats::new();
+    stats.add_emitted(42);
+    stats.add_filtered(17);
+
+    let cloned = stats.clone();
+    assert_eq!(cloned.emitted(), 42);
+    assert_eq!(cloned.filtered(), 17);
 }
 
 // MIRI SKIP RATIONALE: 2000 iterations of matches_for_event is slow under Miri (~100s).
