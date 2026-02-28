@@ -452,6 +452,40 @@ fn test_should_rebuild_threshold_miri_friendly() {
     assert!(!q.should_rebuild());
 }
 
+/// Unit test for the exact boundary of the 1000-activity threshold in PrunerStats::should_rebuild.
+/// Exercises emitted + filtered == 999 (below), == 1000 (at), and == 1001 (above).
+#[test]
+fn test_should_rebuild_boundary() {
+    use super::PrunerStats;
+
+    // Below threshold: 999 total, high ratio → should NOT rebuild
+    let stats = PrunerStats::new();
+    stats.add_emitted(599);
+    stats.add_filtered(400);
+    // total = 999, ratio = 400/599 = 0.67 > 0.2, but under minimum
+    assert!(!stats.should_rebuild());
+
+    // Exactly at threshold: 1000 total, high ratio → SHOULD rebuild
+    stats.add_emitted(1); // now emitted=600, filtered=400, total=1000
+    assert!(stats.should_rebuild());
+
+    // Reset and test just above threshold
+    stats.reset();
+    stats.add_emitted(601);
+    stats.add_filtered(400);
+    // total = 1001, ratio = 400/601 = 0.67 > 0.2
+    assert!(stats.should_rebuild());
+
+    // Above threshold but ratio below 0.2 → should NOT rebuild
+    // This kills the "replace / with *" mutant: with *, ratio would be
+    // 100 * 900 = 90000 > 0.2 (wrongly triggering rebuild).
+    stats.reset();
+    stats.add_emitted(900);
+    stats.add_filtered(100);
+    // total = 1000, ratio = 100/900 = 0.11 < 0.2
+    assert!(!stats.should_rebuild());
+}
+
 // MIRI SKIP RATIONALE: 2000 iterations of matches_for_event is slow under Miri (~100s).
 // Coverage: test_auto_rebuild_disabled_miri_friendly exercises same logic with 5 iterations.
 #[test]

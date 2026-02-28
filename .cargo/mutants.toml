@@ -1,0 +1,29 @@
+# Mutation testing configuration for cargo-mutants
+# Run locally: `just mutants` (full) or `just mutants-diff` (changed code only)
+# Docs: https://mutants.rs/config-file.html
+
+# Use a fast profile with no debug symbols
+profile = "mutants"
+
+# Only mutate real source code, not generated tables or test fixtures
+exclude_globs = [
+  "src/case_folding.rs",       # auto-generated Unicode tables
+  "src/unicode_categories.rs", # auto-generated Unicode tables
+  "src/regexp_samples.rs",     # test fixture data
+  "src/test_helpers.rs",       # test utilities
+  "src/kani_proofs.rs",        # formal verification, not runtime code
+]
+
+# Skip doctests (they test documentation, not correctness)
+additional_cargo_test_args = ["--all-targets"]
+
+# Don't mutate logging/debug/panic macros — not worth testing
+skip_calls = [
+  "eprintln!",
+  "panic!",
+  "unreachable!",
+  "todo!",
+  "unimplemented!",
+  "debug_assert!",
+  "debug_assert_eq!",
+]
