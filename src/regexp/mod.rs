@@ -2844,4 +2844,129 @@ mod tests {
             err.message
         );
     }
+
+    #[test]
+    fn test_regexp_has_plus_star_returns_false() {
+        // Pattern without +/* quantifiers should return false
+        let root = parse_regexp("[a-z]").unwrap();
+        assert!(!regexp_has_plus_star(&root));
+
+        let root = parse_regexp("abc").unwrap();
+        assert!(!regexp_has_plus_star(&root));
+
+        let root = parse_regexp("a{2,3}").unwrap();
+        assert!(!regexp_has_plus_star(&root));
+    }
+
+    #[test]
+    fn test_zero_quantifier() {
+        use crate::automaton::arena::{
+            traverse_arena_nfa, ArenaNfaBuffers, ARENA_VALUE_TERMINATOR,
+        };
+
+        // {0,0} means match zero times — the atom is skipped entirely.
+        // Pattern "a{0}b" should match "b" (the 'a' is matched zero times).
+        let root = parse_regexp("a{0}b").unwrap();
+        let (arena, start, _fm) = make_regexp_nfa_arena(root);
+
+        let mut bufs = ArenaNfaBuffers::with_capacity();
+
+        // "b" should match (a is skipped)
+        let mut value = Vec::from(b"\"b\"".as_slice());
+        value.push(ARENA_VALUE_TERMINATOR);
+        traverse_arena_nfa(&arena, start, &value, &mut bufs);
+        assert!(
+            !bufs.transitions.is_empty(),
+            "{{0}} quantifier should allow skipping 'a'"
+        );
+
+        // "ab" should NOT match (a{0} means zero a's, not optional)
+        bufs.clear();
+        let mut value = Vec::from(b"\"ab\"".as_slice());
+        value.push(ARENA_VALUE_TERMINATOR);
+        traverse_arena_nfa(&arena, start, &value, &mut bufs);
+        assert!(bufs.transitions.is_empty(), "a{{0}}b should not match 'ab'");
+    }
+
+    #[test]
+    fn test_clear_fa_shell_cache_works() {
+        use crate::automaton::arena::{
+            traverse_arena_nfa, ArenaNfaBuffers, ARENA_VALUE_TERMINATOR,
+        };
+
+        // Build an NFA with a character range to populate the shell cache
+        let root = parse_regexp("[a-z]+").unwrap();
+        let (arena, start, _fm) = make_regexp_nfa_arena(root);
+
+        let mut bufs = ArenaNfaBuffers::with_capacity();
+        let mut value = Vec::from(b"\"hello\"".as_slice());
+        value.push(ARENA_VALUE_TERMINATOR);
+        traverse_arena_nfa(&arena, start, &value, &mut bufs);
+        assert!(!bufs.transitions.is_empty());
+
+        // Clear the cache
+        clear_fa_shell_cache();
+
+        // Build a new NFA — should work correctly even after cache clear
+        let root2 = parse_regexp("[a-z]+").unwrap();
+        let (arena2, start2, _fm2) = make_regexp_nfa_arena(root2);
+
+        bufs.clear();
+        let mut value2 = Vec::from(b"\"world\"".as_slice());
+        value2.push(ARENA_VALUE_TERMINATOR);
+        traverse_arena_nfa(&arena2, start2, &value2, &mut bufs);
+        assert!(
+            !bufs.transitions.is_empty(),
+            "NFA should work after cache clear"
+        );
+    }
+
+    #[test]
+    fn test_shell_instantiation_with_epsilons() {
+        use crate::automaton::arena::{
+            traverse_arena_nfa, ArenaNfaBuffers, ARENA_VALUE_TERMINATOR,
+        };
+
+        // Clear cache to ensure fresh shell building
+        clear_fa_shell_cache();
+
+        // Use ~d (digit shorthand) which has a cache key and exercises shell instantiation.
+        // Build two NFAs with the same shorthand to exercise cache hit path.
+        let root1 = parse_regexp("~d+").unwrap();
+        let (arena1, start1, _fm1) = make_regexp_nfa_arena(root1);
+
+        let root2 = parse_regexp("~d+").unwrap();
+        let (arena2, start2, _fm2) = make_regexp_nfa_arena(root2);
+
+        let mut bufs = ArenaNfaBuffers::with_capacity();
+
+        // Both should match digits
+        let mut value = Vec::from(b"\"42\"".as_slice());
+        value.push(ARENA_VALUE_TERMINATOR);
+
+        traverse_arena_nfa(&arena1, start1, &value, &mut bufs);
+        assert!(
+            !bufs.transitions.is_empty(),
+            "first NFA should match digits"
+        );
+
+        bufs.clear();
+        traverse_arena_nfa(&arena2, start2, &value, &mut bufs);
+        assert!(
+            !bufs.transitions.is_empty(),
+            "cached NFA should match digits"
+        );
+
+        // Neither should match letters
+        bufs.clear();
+        let mut value2 = Vec::from(b"\"abc\"".as_slice());
+        value2.push(ARENA_VALUE_TERMINATOR);
+        traverse_arena_nfa(&arena2, start2, &value2, &mut bufs);
+        assert!(
+            bufs.transitions.is_empty(),
+            "digit pattern should not match letters"
+        );
+
+        clear_fa_shell_cache();
+    }
 }
