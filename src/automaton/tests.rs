@@ -526,3 +526,22 @@ fn test_thread_safe_core_matcher_multiple_patterns() {
     assert_eq!(matches.len(), 1);
     assert!(matches.contains(&"p1".to_string()));
 }
+
+#[test]
+fn test_nfa_buffers_clear() {
+    let mut bufs = small_table::NfaBuffers::new();
+    // Populate the inner arena buffers
+    bufs.arena_bufs
+        .current_states
+        .push(arena::StateId::from_index(1));
+    bufs.arena_bufs
+        .next_states
+        .push(arena::StateId::from_index(2));
+    bufs.arena_bufs.transitions.push(42);
+
+    bufs.clear();
+
+    assert!(bufs.arena_bufs.current_states.is_empty());
+    assert!(bufs.arena_bufs.next_states.is_empty());
+    assert!(bufs.arena_bufs.transitions.is_empty());
+}
