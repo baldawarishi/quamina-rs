@@ -2888,7 +2888,10 @@ mod tests {
         assert!(bufs.transitions.is_empty(), "a{{0}}b should not match 'ab'");
     }
 
+    // MIRI SKIP: builds [a-z]+ NFA twice with traversal; character-class + quantifier
+    // NFA construction is slow under Miri interpretation.
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_clear_fa_shell_cache_works() {
         use crate::automaton::arena::{
             traverse_arena_nfa, ArenaNfaBuffers, ARENA_VALUE_TERMINATOR,
@@ -2921,7 +2924,10 @@ mod tests {
         );
     }
 
+    // MIRI SKIP: builds ~d+ NFA twice (~28s under Miri per instance); same pattern
+    // already skipped in test_multi_char_escape_with_quantifier above.
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_shell_instantiation_with_epsilons() {
         use crate::automaton::arena::{
             traverse_arena_nfa, ArenaNfaBuffers, ARENA_VALUE_TERMINATOR,
