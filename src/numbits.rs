@@ -470,4 +470,52 @@ mod tests {
         assert!(q_large.len() <= MAX_BYTES_IN_ENCODING);
         assert!(!q0.is_empty());
     }
+
+    #[test]
+    fn test_q_number_stack_len_matches_slice() {
+        let values = [
+            0.0,
+            1.0,
+            -1.0,
+            42.0,
+            1e15,
+            -1e-10,
+            f64::MAX,
+            f64::MIN_POSITIVE,
+        ];
+        for &val in &values {
+            let q = q_num_stack(val);
+            assert_eq!(
+                q.len(),
+                q.as_slice().len(),
+                "len() disagrees with as_slice().len() for {}",
+                val
+            );
+        }
+    }
+
+    #[test]
+    fn test_q_number_stack_is_empty_synthetic() {
+        // A zero-length QNumberStack should report is_empty() == true.
+        // This can't happen via q_num_stack (all valid floats produce non-empty),
+        // but verifies is_empty correctness at the boundary.
+        let empty = QNumberStack {
+            bytes: [0; MAX_BYTES_IN_ENCODING],
+            len: 0,
+        };
+        assert!(empty.is_empty());
+        assert_eq!(empty.len(), 0);
+    }
+
+    #[test]
+    fn test_encoding_with_zero_numbits() {
+        // nb=0 corresponds to NaN (can't appear in JSON), but exercising
+        // the encoding boundary verifies the trailing-zero-skip loop guard.
+        let vec_result = to_q_number(0);
+        assert!(vec_result.is_empty());
+
+        let stack_result = to_q_number_stack(0);
+        assert!(stack_result.is_empty());
+        assert_eq!(stack_result.len(), 0);
+    }
 }
