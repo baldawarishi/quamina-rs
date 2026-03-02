@@ -366,4 +366,17 @@ mod tests {
         assert_eq!(tree.fields_count(), 1);
         assert_eq!(tree.nodes_count(), 0);
     }
+
+    #[test]
+    fn test_path_arc_for_segment() {
+        let mut tree = SegmentsTree::new();
+        tree.add("x\ny");
+
+        let x_node = tree.get(b"x").unwrap();
+        let arc = x_node.path_arc_for_segment(b"y");
+        assert_eq!(arc.as_deref(), Some(b"x\ny".as_slice()));
+
+        // Missing segment returns None
+        assert!(x_node.path_arc_for_segment(b"z").is_none());
+    }
 }

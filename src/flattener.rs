@@ -280,6 +280,14 @@ mod tests {
             user.path_for_segment(b"id"),
             Some(b"context\nuser\nid".as_slice())
         );
+
+        // Test nodes_count and fields_count via the trait object
+        assert_eq!(tracker.nodes_count(), 1); // "context" is a node
+        assert_eq!(tracker.fields_count(), 1); // "status" is a field
+        assert_eq!(context.nodes_count(), 1); // "user" is a node
+        assert_eq!(context.fields_count(), 0);
+        assert_eq!(user.nodes_count(), 0);
+        assert_eq!(user.fields_count(), 1); // "id" is a field
     }
 
     #[test]
