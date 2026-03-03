@@ -1,3 +1,4 @@
+use super::sparse_set::SparseSet;
 use super::*;
 
 /// Shorthand for constructing an `EventField` for tests.
@@ -525,4 +526,193 @@ fn test_thread_safe_core_matcher_multiple_patterns() {
     let matches = matcher.matches_for_fields(&fields);
     assert_eq!(matches.len(), 1);
     assert!(matches.contains(&"p1".to_string()));
+}
+
+#[test]
+fn test_nfa_buffers_clear() {
+    let mut bufs = small_table::NfaBuffers::new();
+    // Populate the inner arena buffers
+    bufs.arena_bufs
+        .current_states
+        .push(arena::StateId::from_index(1));
+    bufs.arena_bufs
+        .next_states
+        .push(arena::StateId::from_index(2));
+    bufs.arena_bufs.transitions.push(42);
+
+    bufs.clear();
+
+    assert!(bufs.arena_bufs.current_states.is_empty());
+    assert!(bufs.arena_bufs.next_states.is_empty());
+    assert!(bufs.arena_bufs.transitions.is_empty());
+}
+
+// ========================================================================
+// SparseSet tests
+// ========================================================================
+
+/// capacity() must reflect the value passed to new().
+#[test]
+fn test_sparse_set_capacity_returns_correct_value() {
+    let set = SparseSet::new(5);
+    assert_eq!(set.capacity(), 5);
+
+    let set2 = SparseSet::new(2);
+    assert_eq!(set2.capacity(), 2);
+}
+
+/// insert() returns true for new elements, false for duplicates.
+#[test]
+fn test_sparse_set_insert_return_value() {
+    let mut set = SparseSet::new(10);
+    assert_eq!(set.insert(3), true);
+    assert_eq!(set.insert(3), false);
+}
+
+/// Successive inserts must all remain visible — verifies that the internal
+/// length counter advances correctly so earlier elements aren't lost.
+#[test]
+fn test_sparse_set_insert_increments_len() {
+    let mut set = SparseSet::new(10);
+    set.insert(5);
+    assert!(set.contains(5));
+    set.insert(6);
+    assert!(set.contains(5));
+    assert!(set.contains(6));
+    set.insert(7);
+    assert!(set.contains(5));
+    assert!(set.contains(6));
+    assert!(set.contains(7));
+}
+
+/// contains() must return false for absent IDs and true for present ones.
+#[test]
+fn test_sparse_set_contains_correctness() {
+    let mut set = SparseSet::new(10);
+    assert_eq!(set.contains(0), false);
+    assert_eq!(set.contains(5), false);
+    set.insert(5);
+    assert_eq!(set.contains(5), true);
+    assert_eq!(set.contains(0), false);
+}
+
+/// An ID that wasn't inserted must not be reported as present, even when
+/// its sparse slot happens to hold a valid-looking index from a different
+/// insert (exercises both halves of the contains() conjunction).
+#[test]
+fn test_sparse_set_contains_rejects_uninserted_id() {
+    let mut set = SparseSet::new(10);
+    set.insert(3);
+    assert!(!set.contains(0));
+}
+
+/// First-inserted element is still found after a second insert (catches
+/// off-by-one in the `sparse[id] < len` bound check).
+#[test]
+fn test_sparse_set_contains_after_multiple_inserts() {
+    let mut set = SparseSet::new(10);
+    set.insert(3);
+    set.insert(7);
+    assert!(set.contains(3));
+    assert!(set.contains(7));
+}
+
+/// A single inserted element is immediately findable.
+#[test]
+fn test_sparse_set_contains_single_element() {
+    let mut set = SparseSet::new(10);
+    set.insert(3);
+    assert!(set.contains(3));
+}
+
+/// After clear + re-insert, stale sparse/dense entries from before the
+/// clear must not cause false positives. This is the key invariant of
+/// the O(1)-clear sparse set design.
+#[test]
+fn test_sparse_set_no_stale_entries_after_clear() {
+    let mut set = SparseSet::new(10);
+    set.insert(3);
+    set.insert(5);
+    set.clear();
+    set.insert(8);
+    assert!(!set.contains(5));
+}
+
+/// The dense[idx] == id cross-check rejects IDs whose sparse slot
+/// points to a valid dense position that holds a *different* ID.
+#[test]
+fn test_sparse_set_contains_cross_check() {
+    let mut set = SparseSet::new(10);
+    set.insert(4);
+    assert!(set.contains(4));
+    assert!(!set.contains(0));
+}
+
+/// clear() must actually invalidate all elements.
+#[test]
+fn test_sparse_set_clear_is_effective() {
+    let mut set = SparseSet::new(10);
+    set.insert(2);
+    set.insert(4);
+    set.insert(6);
+
+    set.clear();
+    assert!(!set.contains(2));
+    assert!(!set.contains(4));
+    assert!(!set.contains(6));
+    assert!(set.insert(2));
+}
+
+/// Elements can be re-inserted after clear, and cleared elements stay absent.
+#[test]
+fn test_sparse_set_insert_after_clear_correctness() {
+    let mut set = SparseSet::new(10);
+    set.insert(1);
+    set.insert(2);
+    set.insert(3);
+    set.clear();
+
+    assert!(set.insert(4));
+    assert!(set.contains(4));
+    assert!(!set.contains(1));
+
+    assert!(set.insert(1));
+    assert!(set.contains(1));
+    assert!(set.contains(4));
+}
+
+/// Uses non-zero IDs to avoid zero-initialization coincidences.
+#[test]
+fn test_sparse_set_non_zero_ids_only() {
+    let mut set = SparseSet::new(20);
+    set.insert(15);
+    set.insert(10);
+    set.insert(18);
+
+    assert!(set.contains(15));
+    assert!(set.contains(10));
+    assert!(set.contains(18));
+
+    assert!(!set.contains(0));
+    assert!(!set.contains(1));
+    assert!(!set.contains(5));
+    assert!(!set.contains(19));
+}
+
+/// Fill to capacity; every element must be findable and duplicates must return false.
+#[test]
+fn test_sparse_set_fill_to_capacity() {
+    let cap = 8;
+    let mut set = SparseSet::new(cap);
+
+    for i in 0..cap {
+        assert!(set.insert(i), "insert({i}) should return true");
+    }
+
+    for i in 0..cap {
+        assert!(set.contains(i));
+        assert!(!set.insert(i), "duplicate insert({i}) should return false");
+    }
+
+    assert_eq!(set.capacity(), cap);
 }
