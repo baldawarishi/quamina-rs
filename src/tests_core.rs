@@ -477,8 +477,6 @@ fn test_should_rebuild_boundary() {
     assert!(stats.should_rebuild());
 
     // Above threshold but ratio below 0.2 → should NOT rebuild
-    // This kills the "replace / with *" mutant: with *, ratio would be
-    // 100 * 900 = 90000 > 0.2 (wrongly triggering rebuild).
     stats.reset();
     stats.add_emitted(900);
     stats.add_filtered(100);
@@ -486,7 +484,6 @@ fn test_should_rebuild_boundary() {
     assert!(!stats.should_rebuild());
 
     // Exactly at ratio boundary: ratio == 0.2 → should NOT rebuild (strict >)
-    // Kills mutant: replace > with >= in PrunerStats::should_rebuild
     stats.reset();
     stats.add_emitted(1000);
     stats.add_filtered(200);
@@ -495,7 +492,6 @@ fn test_should_rebuild_boundary() {
 }
 
 /// Verify that cloning PrunerStats preserves non-default field values.
-/// Kills mutant: replace Clone::clone -> Self with Default::default()
 #[test]
 fn test_pruner_stats_clone() {
     use super::PrunerStats;
@@ -2210,4 +2206,305 @@ fn test_flatten_only_untracked_fields_ignored() {
     // Event has x (tracked) and y (untracked)
     let count = q.flatten_only(br#"{"x": 1, "y": 2}"#).unwrap();
     assert_eq!(count, 1, "untracked field y should not be counted");
+}
+
+// ============================================================================
+// PrunerStats tests
+// ============================================================================
+
+/// Verify that add_emitted, add_filtered, emitted, filtered, and reset all
+/// behave correctly — initial values are zero, counters accumulate, and
+/// reset zeroes both.
+#[test]
+fn test_pruner_stats_unit_add_and_read() {
+    use super::PrunerStats;
+
+    let stats = PrunerStats::new();
+
+    // Initial state: both zero
+    assert_eq!(stats.emitted(), 0, "initial emitted must be 0");
+    assert_eq!(stats.filtered(), 0, "initial filtered must be 0");
+
+    // add_emitted must actually increment
+    stats.add_emitted(5);
+    assert_eq!(stats.emitted(), 5, "emitted must be 5 after add_emitted(5)");
+    assert_eq!(stats.filtered(), 0, "filtered must still be 0");
+
+    // add_filtered must actually increment
+    stats.add_filtered(3);
+    assert_eq!(
+        stats.filtered(),
+        3,
+        "filtered must be 3 after add_filtered(3)"
+    );
+    assert_eq!(stats.emitted(), 5, "emitted must still be 5");
+
+    // Accumulation works
+    stats.add_emitted(2);
+    assert_eq!(stats.emitted(), 7, "emitted must accumulate to 7");
+
+    stats.add_filtered(4);
+    assert_eq!(stats.filtered(), 7, "filtered must accumulate to 7");
+
+    // reset must zero both counters
+    stats.reset();
+    assert_eq!(stats.emitted(), 0, "emitted must be 0 after reset");
+    assert_eq!(stats.filtered(), 0, "filtered must be 0 after reset");
+}
+
+/// Exhaustive boundary tests for should_rebuild: covers the 1000-activity
+/// threshold (below, at, above), the 0.2 ratio boundary (below, at, above),
+/// the division-by-zero guard (emitted == 0), and edge cases where arithmetic
+/// operator changes (+→-, +→*) would produce different results.
+#[test]
+fn test_should_rebuild_boundary_cases() {
+    use super::PrunerStats;
+
+    // No activity → should NOT rebuild
+    let s = PrunerStats::new();
+    assert!(!s.should_rebuild(), "no activity: must not rebuild");
+
+    // Below 1000 threshold with high ratio → should NOT rebuild
+    // total = 999 < 1000
+    let s = PrunerStats::new();
+    s.add_emitted(500);
+    s.add_filtered(499);
+    assert!(
+        !s.should_rebuild(),
+        "total=999 below threshold: must not rebuild"
+    );
+
+    // Exactly at 1000 threshold with high ratio → SHOULD rebuild
+    // total = 1000, ratio = 400/600 = 0.67 > 0.2
+    let s = PrunerStats::new();
+    s.add_emitted(600);
+    s.add_filtered(400);
+    assert!(s.should_rebuild(), "total=1000, ratio=0.67: must rebuild");
+
+    // Above threshold but low ratio → should NOT rebuild
+    // total = 1000, ratio = 100/900 = 0.111 < 0.2
+    let s = PrunerStats::new();
+    s.add_emitted(900);
+    s.add_filtered(100);
+    assert!(
+        !s.should_rebuild(),
+        "ratio=0.111 below 0.2: must not rebuild"
+    );
+
+    // Ratio exactly 0.2 → should NOT rebuild (strict >)
+    // total = 1200, ratio = 200/1000 = 0.2 exactly
+    let s = PrunerStats::new();
+    s.add_emitted(1000);
+    s.add_filtered(200);
+    assert!(
+        !s.should_rebuild(),
+        "ratio=0.2 exactly: strict > means no rebuild"
+    );
+
+    // Ratio just above 0.2 → SHOULD rebuild
+    // total = 1201, ratio = 201/1000 = 0.201 > 0.2
+    let s = PrunerStats::new();
+    s.add_emitted(1000);
+    s.add_filtered(201);
+    assert!(s.should_rebuild(), "ratio=0.201 above 0.2: must rebuild");
+
+    // emitted == 0 → should NOT rebuild (division by zero guard)
+    // total = 1500 but emitted == 0
+    let s = PrunerStats::new();
+    s.add_filtered(1500);
+    assert!(
+        !s.should_rebuild(),
+        "emitted=0: must not rebuild (div-by-zero guard)"
+    );
+
+    // Both operands contribute to threshold: 600+500=1100 >= 1000
+    // ratio = 500/600 = 0.83 > 0.2
+    let s = PrunerStats::new();
+    s.add_emitted(600);
+    s.add_filtered(500);
+    assert!(s.should_rebuild(), "total=1100, ratio=0.83: must rebuild");
+
+    // Asymmetric operands: 1+999=1000 >= 1000
+    // ratio = 999/1 = 999.0 > 0.2
+    let s = PrunerStats::new();
+    s.add_emitted(1);
+    s.add_filtered(999);
+    assert!(s.should_rebuild(), "total=1000, emitted=1: must rebuild");
+}
+
+/// Clone must preserve non-default emitted AND filtered values.
+/// Clone must preserve non-default emitted AND filtered values.
+#[test]
+fn test_pruner_stats_clone_preserves_values() {
+    use super::PrunerStats;
+
+    let stats = PrunerStats::new();
+    stats.add_emitted(100);
+    stats.add_filtered(50);
+
+    let cloned = stats.clone();
+    assert_eq!(cloned.emitted(), 100, "clone must preserve emitted");
+    assert_eq!(cloned.filtered(), 50, "clone must preserve filtered");
+}
+
+// ============================================================================
+// QuaminaBuilder tests
+// ============================================================================
+
+/// After with_media_type, with_flattener must fail due to conflict.
+/// This verifies with_media_type actually sets media_type_validated.
+#[test]
+fn test_builder_with_media_type_sets_validated_flag() {
+    let flattener = MockFlattener::new(vec![]);
+
+    // After with_media_type, with_flattener should fail due to conflict
+    let result = QuaminaBuilder::<String>::new()
+        .with_media_type("application/json")
+        .unwrap()
+        .with_flattener(Box::new(flattener));
+
+    assert!(
+        result.is_err(),
+        "with_flattener must fail after with_media_type"
+    );
+}
+
+/// Verify that a custom flattener set via with_flattener is actually used
+/// at match time. If it were lost (e.g., build ignores it), the default
+/// JSON flattener would reject "not json" as invalid.
+#[test]
+fn test_builder_with_flattener_is_used() {
+    let flattener = MockFlattener::new(vec![OwnedField {
+        path: b"k".to_vec(),
+        val: b"\"v\"".to_vec(),
+        array_trail: vec![],
+        is_number: false,
+    }]);
+
+    let mut q = QuaminaBuilder::<String>::new()
+        .with_flattener(Box::new(flattener))
+        .unwrap()
+        .build()
+        .unwrap();
+
+    q.add_pattern("p".to_string(), r#"{"k": ["v"]}"#).unwrap();
+
+    // Custom flattener makes this work even though "not json" is invalid JSON
+    let matches = q.matches_for_event(b"not json").unwrap();
+    assert_eq!(
+        matches,
+        vec!["p".to_string()],
+        "custom flattener must be used"
+    );
+}
+
+/// A second with_flattener call must be rejected — the first call should
+/// mark that a custom flattener is already set.
+#[test]
+fn test_builder_with_flattener_blocks_second_call() {
+    let f1 = MockFlattener::new(vec![]);
+    let f2 = MockFlattener::new(vec![]);
+
+    let result = QuaminaBuilder::<String>::new()
+        .with_flattener(Box::new(f1))
+        .unwrap()
+        .with_flattener(Box::new(f2));
+
+    assert!(result.is_err(), "second with_flattener must fail");
+}
+
+/// Verify with_max_pattern_depth is applied: default is 256, setting to 2
+/// should reject depth-3 patterns but accept depth-2.
+#[test]
+fn test_builder_with_max_pattern_depth_is_applied() {
+    let mut q = QuaminaBuilder::<&str>::new()
+        .with_max_pattern_depth(2)
+        .build()
+        .unwrap();
+
+    // Depth 3: {"a": {"b": {"c": ["v"]}}} — should fail with limit=2
+    let result = q.add_pattern("p", r#"{"a": {"b": {"c": ["v"]}}}"#);
+    assert!(
+        result.is_err(),
+        "depth-3 pattern must be rejected with max_depth=2"
+    );
+
+    // Depth 2: {"a": {"b": ["v"]}} — should succeed with limit=2
+    let result = q.add_pattern("p", r#"{"a": {"b": ["v"]}}"#);
+    assert!(
+        result.is_ok(),
+        "depth-2 pattern must succeed with max_depth=2"
+    );
+}
+
+/// Verify with_max_fields_per_pattern is applied: default is 256, setting
+/// to 2 should reject 3-field patterns but accept 2-field.
+#[test]
+fn test_builder_with_max_fields_per_pattern_is_applied() {
+    let mut q = QuaminaBuilder::<&str>::new()
+        .with_max_fields_per_pattern(2)
+        .build()
+        .unwrap();
+
+    // 3 fields: should fail with limit=2
+    let result = q.add_pattern("p", r#"{"a": ["1"], "b": ["2"], "c": ["3"]}"#);
+    assert!(
+        result.is_err(),
+        "3-field pattern must be rejected with max_fields=2"
+    );
+
+    // 2 fields: should succeed
+    let result = q.add_pattern("p", r#"{"a": ["1"], "b": ["2"]}"#);
+    assert!(
+        result.is_ok(),
+        "2-field pattern must succeed with max_fields=2"
+    );
+}
+
+/// Verify with_arena_byte_budget is applied: default is 10MB, setting to 1
+/// byte means patterns should exceed the budget.
+#[test]
+fn test_builder_with_arena_byte_budget_is_applied() {
+    let mut q = QuaminaBuilder::<&str>::new()
+        .with_arena_byte_budget(1)
+        .build()
+        .unwrap();
+
+    // With a 1-byte budget, the first pattern may or may not fit depending on
+    // implementation details, but by the second pattern the budget is exceeded.
+    let r1 = q.add_pattern("p1", r#"{"x": ["a"]}"#);
+    let r2 = q.add_pattern("p2", r#"{"x": [{"prefix": "b"}]}"#);
+    assert!(
+        r1.is_err() || r2.is_err(),
+        "at least one pattern must be rejected with 1-byte arena budget"
+    );
+}
+
+/// Verify with_max_states_per_pattern is applied: default is 1024, setting
+/// to 1 means mixed-type fields should exceed the limit.
+#[test]
+fn test_builder_with_max_states_per_pattern_is_applied() {
+    let mut q = QuaminaBuilder::<&str>::new()
+        .with_max_states_per_pattern(1)
+        .build()
+        .unwrap();
+
+    // Mixed exact + prefix on one field → 2 states → exceeds limit of 1
+    let result = q.add_pattern("p", r#"{"a": ["x", {"prefix": "y"}]}"#);
+    assert!(
+        result.is_err(),
+        "mixed-type pattern must be rejected with max_states=1"
+    );
+}
+
+/// Verify with_auto_rebuild is applied: default is true, setting to false
+/// must be observable via auto_rebuild_enabled().
+#[test]
+fn test_builder_with_auto_rebuild_is_applied() {
+    let q = QuaminaBuilder::<String>::new()
+        .with_auto_rebuild(false)
+        .build()
+        .unwrap();
+
+    assert!(!q.auto_rebuild_enabled(), "auto_rebuild must be false");
 }

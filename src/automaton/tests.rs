@@ -547,6 +547,89 @@ fn test_nfa_buffers_clear() {
     assert!(bufs.arena_bufs.transitions.is_empty());
 }
 
+/// Verify that `ArenaNfaBuffers::clear` (called by `traverse_arena_nfa`) prevents
+/// stale state from leaking across successive match calls.
+///
+/// `CoreMatcher::matches_for_fields` creates fresh `NfaBuffers` each call, but
+/// `MutableValueMatcher::transition_on` ignores that parameter (`_bufs`) and uses
+/// its own `arena_bufs: RefCell<ArenaNfaBuffers>` which persists across calls.
+/// `traverse_arena_nfa` calls `ArenaNfaBuffers::clear()` at the start of each
+/// traversal — without it, stale transitions from one traversal would leak into
+/// the next and produce false matches.
+///
+/// We use a `Shellstyle` pattern (not `Exact`) because `Exact` takes the singleton
+/// fast path in `MutableValueMatcher::transition_on` and never touches `arena_bufs`.
+/// `Shellstyle` patterns set `main_arena_is_nfa = true`, routing through
+/// `traverse_arena_nfa` with the persistent `arena_bufs`.
+#[test]
+fn test_arena_nfa_bufs_clear_observable_through_matching() {
+    use crate::json::Matcher;
+
+    let matcher: CoreMatcher<String> = CoreMatcher::new();
+
+    // Shellstyle "r*" matches any value starting with 'r'.
+    // This avoids the singleton fast path and routes through the arena NFA.
+    matcher
+        .add_pattern(
+            "p1".to_string(),
+            &[(
+                "color".to_string(),
+                vec![Matcher::Shellstyle("r*".to_string())],
+            )],
+        )
+        .unwrap();
+
+    // Values must be quoted to match the arena FA format — Shellstyle patterns
+    // are quote_wrap'd during add_transition, and the flattener retains JSON
+    // quotes on string values.
+    //
+    // First match — "red" starts with 'r', should find p1
+    let fields1 = vec![field("color", "\"red\"")];
+    let matches1 = matcher.matches_for_fields(&fields1);
+    assert_eq!(matches1.len(), 1);
+    assert!(matches1.contains(&"p1".to_string()));
+
+    // Second match with a non-matching value — must be empty.
+    // MutableValueMatcher's persistent arena_bufs still holds transitions from
+    // the "red" traversal. If ArenaNfaBuffers::clear() (called at the start of
+    // traverse_arena_nfa) were a no-op, those stale transitions would cause a
+    // false match here.
+    let fields2 = vec![field("color", "\"blue\"")];
+    let matches2 = matcher.matches_for_fields(&fields2);
+    assert!(
+        matches2.is_empty(),
+        "stale arena NFA buffers should not cause false matches"
+    );
+}
+
+// ========================================================================
+// FieldMatcher unit tests
+// ========================================================================
+
+/// Verify that `FieldMatcher::with_match_id` stores the given ID as `Some(id)`.
+/// If with_match_id were replaced with `Default::default()`, match_id would
+/// be `None` and this test would fail.
+#[test]
+fn test_field_matcher_with_match_id_stores_id() {
+    let fm = small_table::FieldMatcher::with_match_id(42);
+    assert_eq!(
+        fm.match_id,
+        Some(42),
+        "with_match_id(42) must set match_id to Some(42)"
+    );
+}
+
+/// Verify that `with_match_id` works for different IDs and doesn't
+/// confuse them with Default.
+#[test]
+fn test_field_matcher_with_match_id_vs_default() {
+    let fm_with_id = small_table::FieldMatcher::with_match_id(99);
+    let fm_default = small_table::FieldMatcher::new();
+
+    assert_eq!(fm_with_id.match_id, Some(99));
+    assert_eq!(fm_default.match_id, None);
+}
+
 // ========================================================================
 // SparseSet tests
 // ========================================================================
