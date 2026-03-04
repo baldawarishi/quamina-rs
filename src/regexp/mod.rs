@@ -2975,4 +2975,180 @@ mod tests {
 
         clear_fa_shell_cache();
     }
+
+    // Test that `instantiate_shell` correctly remaps epsilon transitions
+    // when instantiating cached shells.
+    //
+    // The instantiate_shell function remaps StateId references in cached shells:
+    // steps, epsilons, and default transitions. The `if !x.is_none()` guard
+    // prevents remapping NONE sentinel values.
+    //
+    // This test exercises the shell cache (via ~p{L}? which has cache_key "L")
+    // with the optional quantifier, which adds an epsilon to the instantiated
+    // root state. Building the pattern twice forces a cache-hit call to
+    // instantiate_shell. We verify that multi-byte UTF-8 transitions (which
+    // require correct internal state remapping) and the epsilon skip (from `?`)
+    // both work correctly after cache instantiation.
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_shell_cache_instantiate_epsilon_remap() {
+        use crate::automaton::arena::{
+            traverse_arena_nfa, ArenaNfaBuffers, ARENA_VALUE_TERMINATOR,
+        };
+
+        clear_fa_shell_cache();
+
+        // ~p{L}? matches an optional Unicode letter. The `?` quantifier adds
+        // an epsilon from the atom root to the next state (skip path).
+        // ~p{L} has cache_key "L", so the second build uses instantiate_shell.
+        // Suffix "x" ensures we can distinguish match vs skip.
+        let root1 = parse_regexp("~p{L}?x").unwrap();
+        let (arena1, start1, fm1) = make_regexp_nfa_arena(root1);
+
+        let root2 = parse_regexp("~p{L}?x").unwrap();
+        let (arena2, start2, fm2) = make_regexp_nfa_arena(root2);
+
+        let mut bufs = ArenaNfaBuffers::with_capacity();
+        let fm1_ptr = std::sync::Arc::as_ptr(&fm1) as usize;
+        let fm2_ptr = std::sync::Arc::as_ptr(&fm2) as usize;
+
+        // Helper to check if a specific field matcher is in the transitions
+        let has_match = |bufs: &ArenaNfaBuffers, ptr: usize| -> bool {
+            bufs.transitions.iter().any(|&m| m == ptr)
+        };
+
+        // 1) "x" should match (epsilon skip over ~p{L}? then literal 'x')
+        let mut val = Vec::from(b"\"x\"".as_slice());
+        val.push(ARENA_VALUE_TERMINATOR);
+
+        traverse_arena_nfa(&arena1, start1, &val, &mut bufs);
+        assert!(
+            has_match(&bufs, fm1_ptr),
+            "first NFA: 'x' should match via epsilon skip"
+        );
+
+        bufs.clear();
+        traverse_arena_nfa(&arena2, start2, &val, &mut bufs);
+        assert!(
+            has_match(&bufs, fm2_ptr),
+            "cached NFA: 'x' should match via epsilon skip"
+        );
+
+        // 2) "Ax" should match (ASCII letter 'A' matches ~p{L}, then 'x')
+        bufs.clear();
+        let mut val = Vec::from(b"\"Ax\"".as_slice());
+        val.push(ARENA_VALUE_TERMINATOR);
+
+        traverse_arena_nfa(&arena1, start1, &val, &mut bufs);
+        assert!(has_match(&bufs, fm1_ptr), "first NFA: 'Ax' should match");
+
+        bufs.clear();
+        traverse_arena_nfa(&arena2, start2, &val, &mut bufs);
+        assert!(has_match(&bufs, fm2_ptr), "cached NFA: 'Ax' should match");
+
+        // 3) Multi-byte UTF-8: "é" (U+00E9, 2 bytes: 0xC3 0xA9) followed by 'x'
+        //    This exercises internal state remapping in instantiate_shell.
+        bufs.clear();
+        let mut val = b"\"".to_vec();
+        val.extend_from_slice("é".as_bytes()); // 0xC3 0xA9
+        val.push(b'x');
+        val.push(b'"');
+        val.push(ARENA_VALUE_TERMINATOR);
+
+        traverse_arena_nfa(&arena1, start1, &val, &mut bufs);
+        assert!(
+            has_match(&bufs, fm1_ptr),
+            "first NFA: 'éx' should match (2-byte UTF-8)"
+        );
+
+        bufs.clear();
+        traverse_arena_nfa(&arena2, start2, &val, &mut bufs);
+        assert!(
+            has_match(&bufs, fm2_ptr),
+            "cached NFA: 'éx' should match (2-byte UTF-8)"
+        );
+
+        // 4) 3-byte UTF-8: "中" (U+4E2D, 3 bytes) followed by 'x'
+        bufs.clear();
+        let mut val = b"\"".to_vec();
+        val.extend_from_slice("中".as_bytes());
+        val.push(b'x');
+        val.push(b'"');
+        val.push(ARENA_VALUE_TERMINATOR);
+
+        traverse_arena_nfa(&arena1, start1, &val, &mut bufs);
+        assert!(
+            has_match(&bufs, fm1_ptr),
+            "first NFA: '中x' should match (3-byte UTF-8)"
+        );
+
+        bufs.clear();
+        traverse_arena_nfa(&arena2, start2, &val, &mut bufs);
+        assert!(
+            has_match(&bufs, fm2_ptr),
+            "cached NFA: '中x' should match (3-byte UTF-8)"
+        );
+
+        // 5) 4-byte UTF-8: U+20000 (CJK Extension B, 4 bytes) followed by 'x'
+        bufs.clear();
+        let mut val = b"\"".to_vec();
+        val.extend_from_slice("\u{20000}".as_bytes());
+        val.push(b'x');
+        val.push(b'"');
+        val.push(ARENA_VALUE_TERMINATOR);
+
+        traverse_arena_nfa(&arena1, start1, &val, &mut bufs);
+        assert!(
+            has_match(&bufs, fm1_ptr),
+            "first NFA: U+20000 x should match (4-byte UTF-8)"
+        );
+
+        bufs.clear();
+        traverse_arena_nfa(&arena2, start2, &val, &mut bufs);
+        assert!(
+            has_match(&bufs, fm2_ptr),
+            "cached NFA: U+20000 x should match (4-byte UTF-8)"
+        );
+
+        // 6) Non-letter followed by 'x' should NOT match (digit '5' is not ~p{L})
+        bufs.clear();
+        let mut val = Vec::from(b"\"5x\"".as_slice());
+        val.push(ARENA_VALUE_TERMINATOR);
+
+        traverse_arena_nfa(&arena2, start2, &val, &mut bufs);
+        assert!(
+            !has_match(&bufs, fm2_ptr),
+            "cached NFA: '5x' should NOT match"
+        );
+
+        // 7) Verify the instantiated NFA has epsilon transitions on the root
+        //    (from the `?` quantifier). This confirms epsilons are present in
+        //    the arena states produced by the cache-hit path.
+        let root_state = &arena2[start2];
+        // start2 is the leading-quote state; walk past it to find the ~p{L}? root
+        let inner = root_state.table.dstep(b'"');
+        assert!(
+            !inner.is_none(),
+            "should have transition past opening quote"
+        );
+        let inner_state = &arena2[inner];
+        assert!(
+            !inner_state.table.epsilons.is_empty(),
+            "the ~p{{L}}? atom root should have epsilon transitions (from ? quantifier) \
+             even when instantiated from shell cache"
+        );
+
+        // 8) Verify epsilon target is valid (points to a real state, not stale local ID)
+        for &eps in &inner_state.table.epsilons {
+            assert!(!eps.is_none(), "epsilon target should not be NONE");
+            assert!(
+                eps.index() < arena2.len(),
+                "epsilon target {} should be a valid state index (arena has {} states)",
+                eps.index(),
+                arena2.len()
+            );
+        }
+
+        clear_fa_shell_cache();
+    }
 }
