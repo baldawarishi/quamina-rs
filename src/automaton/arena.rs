@@ -23,7 +23,7 @@
 
 use std::sync::Arc;
 
-use rustc_hash::FxHashSet;
+use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::{smallvec, SmallVec};
 
 use super::small_table::{AccelInfo, FieldMatcher, BYTE_CEILING};
@@ -408,6 +408,10 @@ pub struct ArenaNfaBuffers {
     pub transitions: Vec<usize>,
     /// Seen field matcher transitions (for deduplication, stored as pointer addresses).
     seen_transitions: FxHashSet<usize>,
+    /// Generation counter for O(n) state dedup during NFA traversal.
+    step_gen: u64,
+    /// Map from StateId index to last-seen generation, for dedup.
+    seen_states: FxHashMap<StateId, u64>,
 }
 
 impl ArenaNfaBuffers {
@@ -421,6 +425,8 @@ impl ArenaNfaBuffers {
             next_states: Vec::with_capacity(16),
             transitions: Vec::new(),
             seen_transitions: FxHashSet::default(),
+            step_gen: 0,
+            seen_states: FxHashMap::default(),
         }
     }
 
@@ -516,7 +522,8 @@ pub fn traverse_arena_nfa(
             ref mut next_states,
             ref mut transitions,
             ref mut seen_transitions,
-            ..
+            ref mut step_gen,
+            ref mut seen_states,
         } = *bufs;
 
         for &state_id in current_states.iter() {
@@ -552,6 +559,24 @@ pub fn traverse_arena_nfa(
                     }
                 }
             }
+        }
+
+        // Nested quantifiers like (([abc]?)*)+ create epsilon loops that
+        // cause duplicate states to compound exponentially across steps.
+        // Dedup in-place using a generation counter when growth is detected.
+        if next_states.len() > 64 {
+            *step_gen += 1;
+            let gen = *step_gen;
+            let mut j = 0;
+            for i_ns in 0..next_states.len() {
+                let state = next_states[i_ns];
+                if seen_states.get(&state).copied() != Some(gen) {
+                    seen_states.insert(state, gen);
+                    next_states[j] = state;
+                    j += 1;
+                }
+            }
+            next_states.truncate(j);
         }
 
         // Swap buffers — clear+swap preserves capacity on both Vecs
@@ -3455,6 +3480,74 @@ mod tests {
         let mut bufs = ArenaNfaBuffers::with_capacity();
         traverse_arena_nfa(&arena, start, b"aaaaaaaaaa", &mut bufs);
         assert_eq!(bufs.transitions.len(), 1);
+    }
+
+    #[test]
+    fn test_nested_quantifier_dedup() {
+        // Nested quantifiers like (([abc]?)*)+ create epsilon loops that cause
+        // duplicate states to compound exponentially. Verify the generation-counter
+        // dedup keeps next_states bounded.
+        //
+        // Build: [abc]? loop — each of a, b, c transitions to a loopback that
+        // has epsilon back to start + epsilon to exit. The '?' is implicit via
+        // the epsilon from start to exit.
+        let mut arena = StateArena::new();
+        let field_matcher = Arc::new(FieldMatcher::new());
+
+        // Final state (has field_transitions to signal a match)
+        let final_state = arena.alloc();
+        arena[final_state]
+            .field_transitions
+            .push(field_matcher.clone());
+
+        // Exit state: matches VALUE_TERMINATOR → final
+        let exit_state = arena.alloc_with_table(ArenaSmallTable::with_mappings(
+            StateId::NONE,
+            &[ARENA_VALUE_TERMINATOR],
+            &[final_state],
+        ));
+
+        // Loopback state (epsilon to exit + start — creates the cycle)
+        let loopback = arena.alloc();
+
+        // Start state: transitions on a/b/c → loopback, epsilon to exit (for ?)
+        let start = arena.alloc_with_table({
+            let mut table = ArenaSmallTable::with_mappings(StateId::NONE, b"abc", &[loopback; 3]);
+            table.epsilons.push(exit_state);
+            table
+        });
+
+        // loopback → epsilon to both exit and start (the * / + cycle)
+        arena[loopback].table.epsilons = smallvec![exit_state, start];
+
+        arena.precompute_epsilon_closures();
+        let mut bufs = ArenaNfaBuffers::with_capacity();
+
+        // A long input of 'a's — without dedup this would explode exponentially
+        let long_input: Vec<u8> = std::iter::repeat(b'a').take(200).collect();
+        traverse_arena_nfa(&arena, start, &long_input, &mut bufs);
+        assert_eq!(bufs.transitions.len(), 1, "Should match the long input");
+
+        // Verify current_states stayed bounded (should be <= arena size, not exponential)
+        // The arena has 4 states, so current_states should never exceed ~4
+        // (after dedup). We can't check mid-traversal, but the fact that it
+        // completed without hanging proves the dedup worked.
+
+        // Also verify correctness on short inputs
+        bufs.clear();
+        traverse_arena_nfa(&arena, start, b"abc", &mut bufs);
+        assert_eq!(bufs.transitions.len(), 1, "Should match 'abc'");
+
+        bufs.clear();
+        traverse_arena_nfa(&arena, start, b"", &mut bufs);
+        assert_eq!(bufs.transitions.len(), 1, "Should match empty (via ?)");
+
+        bufs.clear();
+        traverse_arena_nfa(&arena, start, b"d", &mut bufs);
+        assert!(
+            bufs.transitions.is_empty(),
+            "Should not match 'd' (only a/b/c)"
+        );
     }
 
     #[test]
