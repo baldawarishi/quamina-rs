@@ -585,11 +585,30 @@ impl<X: Clone + Eq + Hash + Send + Sync> ThreadSafeCoreMatcher<X> {
         // Copy the multi-condition NFAs (for lookaround patterns)
         let multi_condition_nfas = mutable.multi_condition_nfas.borrow().clone();
 
-        // Copy the main_arena (unified arena for all pattern types)
-        let main_arena = mutable.main_arena.borrow().clone();
+        // Copy the main_arena (unified arena for all pattern types).
+        // Re-freeze table buffers to pick up any in-place modifications
+        // (e.g. insert_string_into_arena) since the last precompute.
+        let main_arena = mutable
+            .main_arena
+            .borrow()
+            .clone()
+            .map(|(mut arena, start)| {
+                arena.precompute_epsilon_closures();
+                arena.flatten_tables();
+                (arena, start)
+            });
 
-        // Copy the suffix_arena (reversed DFA trie for suffix patterns)
-        let suffix_arena = mutable.suffix_arena.borrow().clone();
+        // Copy the suffix_arena (reversed DFA trie for suffix patterns).
+        // Freeze tables for the suffix arena too (it skips precompute during build).
+        let suffix_arena = mutable
+            .suffix_arena
+            .borrow()
+            .clone()
+            .map(|(mut arena, start)| {
+                arena.precompute_epsilon_closures();
+                arena.flatten_tables();
+                (arena, start)
+            });
 
         FrozenValueMatcher {
             singleton_match,
