@@ -1179,3 +1179,102 @@ fn test_pattern_insertion_scales_linearly() {
         );
     }
 }
+
+/// Port of Go TestPathologicalCorrectness (336e69c).
+/// Verifies match results for a merged shell-style + regexp pattern mix
+/// that exercises large epsilon closures with shared table pointers.
+// Pathological regexps create huge NFA epsilon closures; Miri can't finish in CI.
+#[test]
+#[cfg_attr(miri, ignore)]
+fn test_pathological_correctness() {
+    let mut q = Quamina::new();
+
+    // Shell-style wildcard patterns
+    let shell_patterns: &[(&str, &str)] = &[
+        ("shell0", "*a*b*c*"),
+        ("shell1", "*x*y*z*"),
+        ("shell2", "*e*f*g*"),
+        ("shell3", "*m*n*o*"),
+        ("shell4", "*p*q*r*"),
+        ("shell5", "*s*t*u*"),
+        ("shell6", "*a*e*i*"),
+        ("shell7", "*b*d*f*"),
+        ("shell8", "*c*g*k*"),
+        ("shell9", "*d*h*l*"),
+        ("shell10", "*i*o*u*"),
+        ("shell11", "*r*s*t*"),
+    ];
+    for (name, glob) in shell_patterns {
+        let pattern = format!(r#"{{"val": [{{"shellstyle": "{glob}"}}]}}"#);
+        q.add_pattern(name.to_string(), &pattern).unwrap();
+    }
+
+    // Pathological regexp patterns
+    let re_patterns: &[(&str, &str)] = &[
+        ("re0", "(([abc]?)*)+"),
+        ("re1", "([abc]+)*d"),
+        ("re2", "(a*)*b"),
+        ("re3", "([xyz]?)*end"),
+        ("re4", "(([mno]?)*)+"),
+        ("re5", "([pqr]+)*s"),
+    ];
+    for (name, re) in re_patterns {
+        let pattern = format!(r#"{{"val": [{{"regexp": "{re}"}}]}}"#);
+        q.add_pattern(name.to_string(), &pattern).unwrap();
+    }
+
+    let cases: &[(&str, &[&str])] = &[
+        (r#"{"val": "abc"}"#, &["re0", "shell0"]),
+        (r#"{"val": "abcd"}"#, &["re1", "shell0"]),
+        (r#"{"val": "aaab"}"#, &["re0", "re2"]),
+        (r#"{"val": "mno"}"#, &["re4", "shell3"]),
+        (r#"{"val": "pqrs"}"#, &["re5", "shell4"]),
+        (r#"{"val": "xyzend"}"#, &["re3", "shell1"]),
+        (r#"{"val": "abcxyz"}"#, &["shell0", "shell1"]),
+        (r#"{"val": "mnopqr"}"#, &["shell3", "shell4"]),
+        (r#"{"val": "aeiou"}"#, &["shell10", "shell6"]),
+        (r#"{"val": "rstuvwxyz"}"#, &["shell1", "shell11", "shell5"]),
+        (
+            r#"{"val": "abcdefghijklmno"}"#,
+            &[
+                "shell0", "shell2", "shell3", "shell6", "shell7", "shell8", "shell9",
+            ],
+        ),
+        (r#"{"val": "abcabcabcd"}"#, &["re1", "shell0"]),
+        (r#"{"val": "aaaaaab"}"#, &["re0", "re2"]),
+    ];
+
+    for (event, want) in cases {
+        let mut got = q.matches_for_event(event.as_bytes()).unwrap();
+        got.sort();
+        let want: Vec<String> = want.iter().map(|s| s.to_string()).collect();
+        assert_eq!(got, want, "Event: {event}");
+    }
+}
+
+/// Miri-friendly variant: tests mixed shellstyle + regexp matching with simple
+/// (non-pathological) regexps that won't blow up epsilon closure construction.
+#[test]
+fn test_pathological_correctness_miri_friendly() {
+    let q = q!(
+        "sh0" => r#"{"val": [{"shellstyle": "*a*b*"}]}"#,
+        "sh1" => r#"{"val": [{"shellstyle": "*x*y*"}]}"#,
+        "re0" => r#"{"val": [{"regexp": "[abc]+d"}]}"#,
+        "re1" => r#"{"val": [{"regexp": "x.*z"}]}"#
+    );
+
+    let cases: &[(&str, &[&str])] = &[
+        (r#"{"val": "ab"}"#, &["sh0"]),
+        (r#"{"val": "abcd"}"#, &["re0", "sh0"]),
+        (r#"{"val": "xyz"}"#, &["re1", "sh1"]),
+        (r#"{"val": "abxy"}"#, &["sh0", "sh1"]),
+        (r#"{"val": "nope"}"#, &[]),
+    ];
+
+    for (event, want) in cases {
+        let mut got = q.matches_for_event(event.as_bytes()).unwrap();
+        got.sort();
+        let want: Vec<String> = want.iter().map(|s| s.to_string()).collect();
+        assert_eq!(got, want, "Event: {event}");
+    }
+}
