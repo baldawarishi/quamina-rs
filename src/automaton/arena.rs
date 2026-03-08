@@ -64,11 +64,15 @@ pub struct ArenaFaState {
     /// Field matchers to transition to when this state is reached at end of value.
     /// SmallVec<[_; 1]> avoids heap allocation for the common case (0 or 1 transitions).
     pub field_transitions: SmallVec<[Arc<FieldMatcher>; 1]>,
-    /// Precomputed epsilon closure (all states reachable via epsilon transitions,
-    /// including self). Computed once at build time by `precompute_epsilon_closures()`.
-    /// For DFA states (no epsilons), this is `[self]`.
-    /// For NFA states, this is `[self, eps1, eps2, ...]`.
-    pub epsilon_closure: SmallVec<[StateId; 4]>,
+    /// Start index into `StateArena::closure_data` for this state's epsilon closure.
+    pub closure_start: u32,
+    /// Number of states in this state's epsilon closure (max 65535).
+    pub closure_len: u16,
+    /// Start index into `StateArena::ft_ptrs` for this state's field transition pointers.
+    /// Populated by `flatten_tables()`.
+    pub ft_start: u32,
+    /// Number of field transition pointers for this state.
+    pub ft_len: u8,
 }
 
 impl std::fmt::Debug for ArenaFaState {
@@ -89,7 +93,10 @@ impl ArenaFaState {
         Self {
             table,
             field_transitions: SmallVec::new(),
-            epsilon_closure: SmallVec::new(),
+            closure_start: 0,
+            closure_len: 0,
+            ft_start: 0,
+            ft_len: 0,
         }
     }
 }
@@ -189,12 +196,11 @@ impl ArenaSmallTable {
     #[allow(unsafe_code)]
     pub fn dstep(&self, byte: u8) -> StateId {
         let ceilings = self.ceilings.as_slice();
-        let steps = self.steps.as_slice();
         for (i, &ceiling) in ceilings.iter().enumerate() {
             if byte < ceiling {
                 // SAFETY: ceilings and steps always have the same length (enforced by
                 // pack/with_mappings). Since i < ceilings.len(), i < steps.len().
-                return unsafe { *steps.get_unchecked(i) };
+                return unsafe { *self.steps.as_slice().get_unchecked(i) };
             }
         }
         StateId::NONE
@@ -233,6 +239,16 @@ impl ArenaSmallTable {
 #[derive(Clone, Default)]
 pub struct StateArena {
     states: Vec<ArenaFaState>,
+    /// All epsilon closures concatenated. Each state indexes into this via
+    /// `closure_start`/`closure_len`. Populated by `precompute_epsilon_closures()`.
+    closure_data: Vec<StateId>,
+    /// All field transition raw pointers (as `usize`) concatenated. Each state
+    /// indexes into this via `ft_start`/`ft_len`. Populated by `flatten_tables()`.
+    ft_ptrs: Vec<usize>,
+    /// 256-entry lookup table per state for O(1) byte transitions.
+    /// Layout: `dfa_lookup[state_index * 256 + byte] = next_state_id`.
+    /// Populated by `flatten_tables()`. Empty if not yet frozen.
+    dfa_lookup: Vec<StateId>,
 }
 
 impl std::fmt::Debug for StateArena {
@@ -245,27 +261,108 @@ impl std::fmt::Debug for StateArena {
 
 impl StateArena {
     pub fn new() -> Self {
-        Self { states: Vec::new() }
+        Self {
+            states: Vec::new(),
+            closure_data: Vec::new(),
+            ft_ptrs: Vec::new(),
+            dfa_lookup: Vec::new(),
+        }
     }
 
     pub fn with_capacity(capacity: usize) -> Self {
         Self {
             states: Vec::with_capacity(capacity),
+            closure_data: Vec::with_capacity(capacity),
+            ft_ptrs: Vec::new(),
+            dfa_lookup: Vec::new(),
         }
     }
 
     /// Estimate the byte size of this arena (state vector capacity * per-state size).
     pub fn estimated_byte_size(&self) -> usize {
         self.states.capacity() * std::mem::size_of::<ArenaFaState>()
+            + self.closure_data.capacity() * std::mem::size_of::<StateId>()
+            + self.ft_ptrs.capacity() * std::mem::size_of::<usize>()
+            + self.dfa_lookup.capacity() * std::mem::size_of::<StateId>()
+    }
+
+    /// Get a state reference without bounds checking.
+    ///
+    /// # Safety
+    /// `id` must be a valid state ID returned by `alloc()` on this arena.
+    #[inline(always)]
+    #[allow(unsafe_code)]
+    unsafe fn state_unchecked(&self, id: StateId) -> &ArenaFaState {
+        self.states.get_unchecked(id.index())
+    }
+
+    /// Get the epsilon closure for a state as a slice.
+    #[inline(always)]
+    #[allow(unsafe_code)]
+    pub fn closure_of(&self, id: StateId) -> &[StateId] {
+        // SAFETY: `id` was returned by `alloc()` on this arena, so `state_unchecked` is valid.
+        // `closure_start` and `closure_len` are set by `precompute_epsilon_closures()` to
+        // valid indices within `closure_data`.
+        unsafe {
+            let state = self.state_unchecked(id);
+            let start = state.closure_start as usize;
+            let len = state.closure_len as usize;
+            self.closure_data.get_unchecked(start..start + len)
+        }
+    }
+
+    /// Get field transition pointers for a state as a slice.
+    ///
+    /// Returns raw pointer values (`Arc::as_ptr` cast to `usize`) for dedup.
+    /// Only valid after `flatten_tables()` has been called.
+    #[inline(always)]
+    #[allow(unsafe_code)]
+    pub fn ft_ptrs_of(&self, id: StateId) -> &[usize] {
+        // SAFETY: `id` was returned by `alloc()` on this arena, so `state_unchecked` is valid.
+        // `ft_start` and `ft_len` are set by `flatten_tables()` to valid indices within `ft_ptrs`.
+        unsafe {
+            let state = self.state_unchecked(id);
+            let len = state.ft_len as usize;
+            if len == 0 {
+                return &[];
+            }
+            let start = state.ft_start as usize;
+            self.ft_ptrs.get_unchecked(start..start + len)
+        }
+    }
+
+    /// Fast deterministic step using 256-entry lookup table.
+    ///
+    /// When `dfa_lookup` is populated (after `flatten_tables()`), this is a single
+    /// array lookup: O(1). Otherwise falls back to SmallVec linear scan.
+    #[inline(always)]
+    #[allow(unsafe_code)]
+    pub fn dstep(&self, id: StateId, byte: u8) -> StateId {
+        if !self.dfa_lookup.is_empty() {
+            // SAFETY: id.index() < states.len(), byte is 0..255,
+            // so id.index() * 256 + byte < states.len() * 256 = dfa_lookup.len()
+            unsafe {
+                *self
+                    .dfa_lookup
+                    .get_unchecked(id.index() * 256 + byte as usize)
+            }
+        } else {
+            // Fallback: flat buffers not populated (mutable path)
+            self.states[id.index()].table.dstep(byte)
+        }
     }
 
     /// Allocate a new default state, returning its ID.
     pub fn alloc(&mut self) -> StateId {
         let id = StateId(self.states.len() as u32);
-        let mut state = ArenaFaState::default();
         // Set trivial epsilon closure so states added after
         // precompute_epsilon_closures() are visible during NFA traversal.
-        state.epsilon_closure.push(id);
+        let state = ArenaFaState {
+            closure_start: self.closure_data.len() as u32,
+            closure_len: 1,
+            ..Default::default()
+        };
+        self.closure_data.push(id);
         self.states.push(state);
         id
     }
@@ -274,7 +371,9 @@ impl StateArena {
     pub fn alloc_with_table(&mut self, table: ArenaSmallTable) -> StateId {
         let id = StateId(self.states.len() as u32);
         let mut state = ArenaFaState::with_table(table);
-        state.epsilon_closure.push(id);
+        state.closure_start = self.closure_data.len() as u32;
+        state.closure_len = 1;
+        self.closure_data.push(id);
         self.states.push(state);
         id
     }
@@ -336,22 +435,27 @@ impl StateArena {
         let mut seen = SparseSet::new(arena_len);
         let mut stack: Vec<StateId> = Vec::new();
 
-        // Compute closures into a separate buffer to avoid borrow conflicts
-        let mut closures: Vec<SmallVec<[StateId; 4]>> = Vec::with_capacity(arena_len);
+        // Build all closures into a single flat buffer
+        let mut closure_data: Vec<StateId> = Vec::with_capacity(arena_len);
+        // Temporary per-state closure for NFA states
+        let mut closure_buf: Vec<StateId> = Vec::new();
 
         for state_idx in 0..arena_len {
             let state_id = StateId::from_index(state_idx);
+            let start = closure_data.len() as u32;
 
             if self.states[state_idx].table.epsilons.is_empty() {
                 // DFA state: closure is just [self]
-                closures.push(smallvec![state_id]);
+                closure_data.push(state_id);
+                self.states[state_idx].closure_start = start;
+                self.states[state_idx].closure_len = 1;
             } else {
                 // NFA state: compute full epsilon closure via DFS
                 seen.clear();
                 stack.clear();
+                closure_buf.clear();
 
-                let mut closure: SmallVec<[StateId; 4]> = SmallVec::new();
-                closure.push(state_id);
+                closure_buf.push(state_id);
                 stack.push(state_id);
                 seen.insert(state_idx);
 
@@ -363,21 +467,72 @@ impl StateArena {
                         if !eps_id.is_none() {
                             let idx = eps_id.index();
                             if idx < seen.capacity() && seen.insert(idx) {
-                                closure.push(eps_id);
+                                closure_buf.push(eps_id);
                                 stack.push(eps_id);
                             }
                         }
                     }
                 }
 
-                closures.push(closure);
+                debug_assert!(
+                    closure_buf.len() <= u16::MAX as usize,
+                    "epsilon closure exceeds u16::MAX states"
+                );
+                let len = closure_buf.len() as u16;
+                closure_data.extend_from_slice(&closure_buf);
+                self.states[state_idx].closure_start = start;
+                self.states[state_idx].closure_len = len;
             }
         }
 
-        // Write closures back into arena states
-        for (state_idx, closure) in closures.into_iter().enumerate() {
-            self.states[state_idx].epsilon_closure = closure;
+        self.closure_data = closure_data;
+    }
+
+    /// Build frozen lookup structures for fast traversal.
+    ///
+    /// Populates:
+    /// - `dfa_lookup`: 256-entry-per-state table for O(1) byte transitions
+    /// - `ft_ptrs`: contiguous buffer of field-transition raw pointers
+    ///
+    /// Must be called after all table modifications are complete (i.e., at freeze time).
+    pub fn flatten_tables(&mut self) {
+        let arena_len = self.states.len();
+        if arena_len == 0 {
+            return;
         }
+        let mut ft_ptrs = Vec::new();
+
+        // Build 256-entry lookup table per state for O(1) byte transitions.
+        let mut dfa_lookup = vec![StateId::NONE; arena_len * 256];
+
+        for state_idx in 0..arena_len {
+            let state = &self.states[state_idx];
+            let ceilings = state.table.ceilings.as_slice();
+            let steps = state.table.steps.as_slice();
+
+            // Flatten field transition pointers
+            let ft_start = ft_ptrs.len();
+            let ft_len = state.field_transitions.len();
+            for ft in &state.field_transitions {
+                ft_ptrs.push(Arc::as_ptr(ft) as usize);
+            }
+
+            // Build 256-entry lookup for this state
+            let base = state_idx * 256;
+            let mut prev_ceiling: u8 = 0;
+            for (ci, &ceiling) in ceilings.iter().enumerate() {
+                let step = steps[ci];
+                for byte in prev_ceiling..ceiling {
+                    dfa_lookup[base + byte as usize] = step;
+                }
+                prev_ceiling = ceiling;
+            }
+
+            self.states[state_idx].ft_start = ft_start as u32;
+            self.states[state_idx].ft_len = ft_len as u8;
+        }
+        self.ft_ptrs = ft_ptrs;
+        self.dfa_lookup = dfa_lookup;
     }
 }
 
@@ -526,36 +681,63 @@ pub fn traverse_arena_nfa(
             ref mut seen_states,
         } = *bufs;
 
-        for &state_id in current_states.iter() {
-            let state = &arena[state_id];
-            let closure = &state.epsilon_closure;
+        if !arena.ft_ptrs.is_empty() {
+            // Frozen path: use precomputed flat buffers
+            for &state_id in current_states.iter() {
+                let closure = arena.closure_of(state_id);
 
-            if closure.len() == 1 {
-                // Fast path: most states have closure = [self].
-                // Skip the inner closure loop and avoid redundant arena lookup.
-                for ft in &state.field_transitions {
-                    let ptr = Arc::as_ptr(ft) as usize;
-                    if seen_transitions.insert(ptr) {
-                        transitions.push(ptr);
+                if closure.len() == 1 {
+                    for &ptr in arena.ft_ptrs_of(state_id) {
+                        if seen_transitions.insert(ptr) {
+                            transitions.push(ptr);
+                        }
+                    }
+                    let next = arena.dstep(state_id, byte);
+                    if !next.is_none() {
+                        next_states.push(next);
+                    }
+                } else {
+                    for &ec_state_id in closure {
+                        for &ptr in arena.ft_ptrs_of(ec_state_id) {
+                            if seen_transitions.insert(ptr) {
+                                transitions.push(ptr);
+                            }
+                        }
+                        let next = arena.dstep(ec_state_id, byte);
+                        if !next.is_none() {
+                            next_states.push(next);
+                        }
                     }
                 }
-                let next = state.table.dstep(byte);
-                if !next.is_none() {
-                    next_states.push(next);
-                }
-            } else {
-                // Slow path: expand epsilon closure for NFA states.
-                for &ec_state_id in closure {
-                    let ec_state = &arena[ec_state_id];
-                    for ft in &ec_state.field_transitions {
+            }
+        } else {
+            // Mutable/test path: read field_transitions directly
+            for &state_id in current_states.iter() {
+                let closure = arena.closure_of(state_id);
+
+                if closure.len() == 1 {
+                    for ft in &arena[state_id].field_transitions {
                         let ptr = Arc::as_ptr(ft) as usize;
                         if seen_transitions.insert(ptr) {
                             transitions.push(ptr);
                         }
                     }
-                    let next = ec_state.table.dstep(byte);
+                    let next = arena.dstep(state_id, byte);
                     if !next.is_none() {
                         next_states.push(next);
+                    }
+                } else {
+                    for &ec_state_id in closure {
+                        for ft in &arena[ec_state_id].field_transitions {
+                            let ptr = Arc::as_ptr(ft) as usize;
+                            if seen_transitions.insert(ptr) {
+                                transitions.push(ptr);
+                            }
+                        }
+                        let next = arena.dstep(ec_state_id, byte);
+                        if !next.is_none() {
+                            next_states.push(next);
+                        }
                     }
                 }
             }
@@ -592,22 +774,42 @@ pub fn traverse_arena_nfa(
         ref mut seen_transitions,
         ..
     } = *bufs;
-    for &state_id in current_states.iter() {
-        let state = &arena[state_id];
-        let closure = &state.epsilon_closure;
-        if closure.len() == 1 {
-            for ft in &state.field_transitions {
-                let ptr = Arc::as_ptr(ft) as usize;
-                if seen_transitions.insert(ptr) {
-                    transitions.push(ptr);
+    if !arena.ft_ptrs.is_empty() {
+        for &state_id in current_states.iter() {
+            let closure = arena.closure_of(state_id);
+            if closure.len() == 1 {
+                for &ptr in arena.ft_ptrs_of(state_id) {
+                    if seen_transitions.insert(ptr) {
+                        transitions.push(ptr);
+                    }
+                }
+            } else {
+                for &ec_state_id in closure {
+                    for &ptr in arena.ft_ptrs_of(ec_state_id) {
+                        if seen_transitions.insert(ptr) {
+                            transitions.push(ptr);
+                        }
+                    }
                 }
             }
-        } else {
-            for &ec_state_id in closure {
-                for ft in &arena[ec_state_id].field_transitions {
+        }
+    } else {
+        for &state_id in current_states.iter() {
+            let closure = arena.closure_of(state_id);
+            if closure.len() == 1 {
+                for ft in &arena[state_id].field_transitions {
                     let ptr = Arc::as_ptr(ft) as usize;
                     if seen_transitions.insert(ptr) {
                         transitions.push(ptr);
+                    }
+                }
+            } else {
+                for &ec_state_id in closure {
+                    for ft in &arena[ec_state_id].field_transitions {
+                        let ptr = Arc::as_ptr(ft) as usize;
+                        if seen_transitions.insert(ptr) {
+                            transitions.push(ptr);
+                        }
                     }
                 }
             }
@@ -635,14 +837,18 @@ pub fn traverse_arena_dfa(
         return;
     }
 
+    let has_flat = !arena.ft_ptrs.is_empty();
     let mut current = start;
 
     for i in 0..=val.len() {
-        let state = &arena[current];
-
-        // Collect any field transitions at this state (cold data)
-        for ft in &arena[current].field_transitions {
-            transitions.push(Arc::as_ptr(ft) as usize);
+        if has_flat {
+            for &ptr in arena.ft_ptrs_of(current) {
+                transitions.push(ptr);
+            }
+        } else {
+            for ft in &arena[current].field_transitions {
+                transitions.push(Arc::as_ptr(ft) as usize);
+            }
         }
 
         let byte = if i < val.len() {
@@ -651,16 +857,21 @@ pub fn traverse_arena_dfa(
             ARENA_VALUE_TERMINATOR
         };
 
-        let next = state.table.dstep(byte);
+        let next = arena.dstep(current, byte);
         if next.is_none() {
             return;
         }
         current = next;
     }
 
-    // Check final state (cold data)
-    for ft in &arena[current].field_transitions {
-        transitions.push(Arc::as_ptr(ft) as usize);
+    if has_flat {
+        for &ptr in arena.ft_ptrs_of(current) {
+            transitions.push(ptr);
+        }
+    } else {
+        for ft in &arena[current].field_transitions {
+            transitions.push(Arc::as_ptr(ft) as usize);
+        }
     }
 }
 
@@ -687,15 +898,21 @@ pub fn traverse_arena_dfa_backward(
 
     // Walk backward through value bytes (right to left)
     for i in (0..val.len()).rev() {
-        let next = arena[current].table.dstep(val[i]);
+        let next = arena.dstep(current, val[i]);
         if next.is_none() {
             return;
         }
         current = next;
 
         // Collect field_transitions (suffix match found at this depth)
-        for ft in &arena[current].field_transitions {
-            transitions.push(Arc::as_ptr(ft) as usize);
+        if !arena.ft_ptrs.is_empty() {
+            for &ptr in arena.ft_ptrs_of(current) {
+                transitions.push(ptr);
+            }
+        } else {
+            for ft in &arena[current].field_transitions {
+                transitions.push(Arc::as_ptr(ft) as usize);
+            }
         }
     }
 }

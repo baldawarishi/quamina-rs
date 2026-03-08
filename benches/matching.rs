@@ -913,6 +913,73 @@ fn bench_arena_nfa_short(c: &mut Criterion) {
     });
 }
 
+/// Pathological epsilon closure benchmark (comparable to Go's BenchmarkPathologicalEpsilon).
+///
+/// Merges 12 multi-wildcard shellstyle + 6 pathological regexp patterns on
+/// the same field, creating large epsilon closures during NFA traversal.
+/// Exercises:
+/// - Epsilon closure expansion (precomputed SmallVec spilling to heap)
+/// - Transition dedup via FxHashSet in traverse_arena_nfa
+/// - State dedup via generation counter (triggered at >64 next_states)
+fn bench_pathological_epsilon(c: &mut Criterion) {
+    let mut q = Quamina::new();
+
+    // Multi-wildcard shell-style patterns — each merge creates splice states
+    // with epsilon transitions, and overlapping wildcards cause large closures
+    let shell_patterns = [
+        "*a*b*c*", "*x*y*z*", "*e*f*g*", "*m*n*o*", "*p*q*r*", "*s*t*u*", "*a*e*i*", "*b*d*f*",
+        "*c*g*k*", "*d*h*l*", "*i*o*u*", "*r*s*t*",
+    ];
+    for (i, ss) in shell_patterns.iter().enumerate() {
+        q.add_pattern(
+            format!("shell{i}"),
+            &format!(r#"{{"val": [{{"shellstyle": "{ss}"}}]}}"#),
+        )
+        .unwrap();
+    }
+
+    // Pathological regexps that create epsilon loops
+    let regex_patterns = [
+        "(([abc]?)*)+",
+        "([abc]+)*d",
+        "(a*)*b",
+        "([xyz]?)*end",
+        "(([mno]?)*)+",
+        "([pqr]+)*s",
+    ];
+    for (i, re) in regex_patterns.iter().enumerate() {
+        q.add_pattern(
+            format!("re{i}"),
+            &format!(r#"{{"val": [{{"regexp": "{re}"}}]}}"#),
+        )
+        .unwrap();
+    }
+
+    let events: Vec<Vec<u8>> = vec![
+        r#"{"val": "abcxyz"}"#.into(),
+        r#"{"val": "mnopqr"}"#.into(),
+        r#"{"val": "aeiou"}"#.into(),
+        r#"{"val": "rstuvwxyz"}"#.into(),
+        r#"{"val": "abcdefghijklmno"}"#.into(),
+        r#"{"val": "xyzend"}"#.into(),
+        r#"{"val": "abcabcabcd"}"#.into(),
+        r#"{"val": "aaaaaab"}"#.into(),
+    ];
+
+    // Verify all events produce results (most should match at least one pattern)
+    for event in &events {
+        let _ = q.matches_for_event(event).unwrap();
+    }
+
+    c.bench_function("pathological_epsilon", |b| {
+        b.iter(|| {
+            for event in &events {
+                let _ = q.matches_for_event(black_box(event)).unwrap();
+            }
+        })
+    });
+}
+
 // === Bulk Pattern Add benchmarks (for optimization work) ===
 
 /// Benchmark for bulk pattern adding (100 patterns × 10 values each)
@@ -1553,6 +1620,8 @@ criterion_group!(
     // Arena NFA benchmarks
     bench_arena_nfa_traversal,
     bench_arena_nfa_short,
+    // Pathological epsilon closure benchmark
+    bench_pathological_epsilon,
     // CityLots benchmarks (comparable to Go)
     bench_citylots,
     bench_citylots_core,
