@@ -15,7 +15,6 @@
 
 use crate::segments_tree::{SegmentEntry, SegmentsTree};
 use crate::QuaminaError;
-use memchr::{memchr2, memchr3};
 use smallvec::SmallVec;
 use std::sync::Arc;
 
@@ -604,48 +603,51 @@ impl<'a> FlattenContext<'a, '_> {
     fn skip_block(&mut self, open: u8, close: u8) -> Result<(), FlattenError> {
         let mut level = 0;
 
-        loop {
-            match memchr3(open, close, b'"', &self.event[self.index..]) {
-                Some(offset) => {
-                    self.index += offset;
-                    let ch = self.event[self.index];
+        while self.index < self.event.len() {
+            let ch = self.event[self.index];
 
-                    if ch == b'"' {
-                        self.skip_string_value()?;
-                    } else if ch == open {
-                        level += 1;
-                    } else {
-                        // close
-                        level -= 1;
-                        if level == 0 {
-                            return Ok(());
-                        }
+            match ch {
+                b'"' => self.skip_string_value()?,
+                c if c == open => level += 1,
+                c if c == close => {
+                    level -= 1;
+                    if level == 0 {
+                        return Ok(());
                     }
-
-                    self.index += 1;
                 }
-                None => return Err(FlattenError::Error(self.error("truncated block"))),
+                _ => {}
             }
+
+            self.index += 1;
         }
+
+        Err(FlattenError::Error(self.error("truncated block")))
     }
 
     /// Skip a string value quickly.
     fn skip_string_value(&mut self) -> Result<(), FlattenError> {
         self.step()?; // skip opening "
 
-        loop {
-            match memchr2(b'"', b'\\', &self.event[self.index..]) {
-                Some(offset) => {
-                    self.index += offset;
-                    if self.event[self.index] == b'"' {
-                        return Ok(());
-                    }
-                    // backslash: skip it and the escaped char
+        while self.index < self.event.len() {
+            let ch = self.event[self.index];
+
+            // Handle escape sequences
+            if ch == b'\\' && self.index + 1 < self.event.len() {
+                let next = self.event[self.index + 1];
+                if next == b'\\' || next == b'"' {
                     self.index += 2;
+                    continue;
                 }
-                None => return Err(FlattenError::Error(self.error("truncated string"))),
             }
+
+            if ch == b'"' {
+                return Ok(());
+            }
+
+            self.index += 1;
         }
+
+        Err(FlattenError::Error(self.error("truncated string")))
     }
 
     /// Read a member name (the part between quotes).
@@ -655,17 +657,23 @@ impl<'a> FlattenContext<'a, '_> {
         self.step()?;
         let start = self.index;
 
-        match memchr2(b'"', b'\\', &self.event[self.index..]) {
-            Some(offset) => {
-                self.index += offset;
-                if self.event[self.index] == b'"' {
-                    return Ok(MemberName::Borrowed(&self.event[start..self.index]));
-                }
-                // backslash — fall through to escape handler
-                self.read_member_name_with_escapes(start)
+        while self.index < self.event.len() {
+            let ch = self.event[self.index];
+            if ch == b'"' {
+                return Ok(MemberName::Borrowed(&self.event[start..self.index]));
+            } else if ch == b'\\' {
+                // Has escapes - need to decode
+                return self.read_member_name_with_escapes(start);
+            } else if ch <= 0x1f {
+                return Err(FlattenError::Error(
+                    self.error(&format!("illegal byte {:02x} in field name", ch)),
+                ));
+            } else {
+                self.index += 1;
             }
-            None => Err(FlattenError::Error(self.error("premature end of event"))),
         }
+
+        Err(FlattenError::Error(self.error("premature end of event")))
     }
 
     /// Read a member name that contains escape sequences.
@@ -752,17 +760,22 @@ impl<'a> FlattenContext<'a, '_> {
         let val_start = self.index;
         self.step()?; // skip opening "
 
-        match memchr2(b'"', b'\\', &self.event[self.index..]) {
-            Some(offset) => {
-                self.index += offset;
-                if self.event[self.index] == b'"' {
-                    return Ok(FieldValue::Borrowed(&self.event[val_start..=self.index]));
-                }
-                // backslash — fall through to escape handler
-                self.read_string_with_escapes(val_start)
+        while self.index < self.event.len() {
+            let ch = self.event[self.index];
+            if ch == b'"' {
+                return Ok(FieldValue::Borrowed(&self.event[val_start..=self.index]));
+            } else if ch == b'\\' {
+                // Has escapes - need to unescape
+                return self.read_string_with_escapes(val_start);
+            } else if ch <= 0x1f {
+                return Err(FlattenError::Error(
+                    self.error(&format!("illegal byte {:02x} in string value", ch)),
+                ));
             }
-            None => Err(FlattenError::Error(self.error("event truncated in string"))),
+            self.index += 1;
         }
+
+        Err(FlattenError::Error(self.error("event truncated in string")))
     }
 
     /// Read a string value that contains escape sequences.
