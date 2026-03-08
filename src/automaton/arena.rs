@@ -491,18 +491,51 @@ impl StateArena {
     /// Build frozen lookup structures for fast traversal.
     ///
     /// Populates:
-    /// - `dfa_lookup`: 256-entry-per-state table for O(1) byte transitions
     /// - `ft_ptrs`: contiguous buffer of field-transition raw pointers
+    /// - `dfa_lookup`: 256-entry-per-state table for O(1) byte transitions (skipped under Miri)
     ///
     /// Must be called after all table modifications are complete (i.e., at freeze time).
     pub fn flatten_tables(&mut self) {
+        self.flatten_ft_ptrs();
+        self.build_dfa_lookup();
+    }
+
+    /// Flatten field-transition pointers into a contiguous buffer.
+    ///
+    /// Each state's `ft_start`/`ft_len` index into `self.ft_ptrs`, enabling
+    /// `ft_ptrs_of()` to return a slice without touching per-state `SmallVec`s.
+    fn flatten_ft_ptrs(&mut self) {
         let arena_len = self.states.len();
         if arena_len == 0 {
             return;
         }
         let mut ft_ptrs = Vec::new();
 
-        // Build 256-entry lookup table per state for O(1) byte transitions.
+        for state_idx in 0..arena_len {
+            let state = &self.states[state_idx];
+            let ft_start = ft_ptrs.len();
+            let ft_len = state.field_transitions.len();
+            for ft in &state.field_transitions {
+                ft_ptrs.push(Arc::as_ptr(ft) as usize);
+            }
+            self.states[state_idx].ft_start = ft_start as u32;
+            self.states[state_idx].ft_len = ft_len as u8;
+        }
+        self.ft_ptrs = ft_ptrs;
+    }
+
+    /// Build a 256-entry-per-state lookup table for O(1) byte transitions.
+    ///
+    /// Skipped under Miri: the large array (states × 256) is expensive to
+    /// interpret, and `dstep()` falls back to `ArenaSmallTable::dstep()` when
+    /// `dfa_lookup` is empty. The fallback exercises the same transitions
+    /// through the same unsafe `get_unchecked` pattern.
+    #[cfg(not(miri))]
+    fn build_dfa_lookup(&mut self) {
+        let arena_len = self.states.len();
+        if arena_len == 0 {
+            return;
+        }
         let mut dfa_lookup = vec![StateId::NONE; arena_len * 256];
 
         for state_idx in 0..arena_len {
@@ -510,14 +543,6 @@ impl StateArena {
             let ceilings = state.table.ceilings.as_slice();
             let steps = state.table.steps.as_slice();
 
-            // Flatten field transition pointers
-            let ft_start = ft_ptrs.len();
-            let ft_len = state.field_transitions.len();
-            for ft in &state.field_transitions {
-                ft_ptrs.push(Arc::as_ptr(ft) as usize);
-            }
-
-            // Build 256-entry lookup for this state
             let base = state_idx * 256;
             let mut prev_ceiling: u8 = 0;
             for (ci, &ceiling) in ceilings.iter().enumerate() {
@@ -527,13 +552,15 @@ impl StateArena {
                 }
                 prev_ceiling = ceiling;
             }
-
-            self.states[state_idx].ft_start = ft_start as u32;
-            self.states[state_idx].ft_len = ft_len as u8;
         }
-        self.ft_ptrs = ft_ptrs;
         self.dfa_lookup = dfa_lookup;
     }
+
+    /// No-op under Miri — `dstep()` falls back to `ArenaSmallTable::dstep()`.
+    /// Correctness of the lookup table is verified by
+    /// `tests::test_dfa_lookup_matches_smalltable_dstep` in non-Miri builds.
+    #[cfg(miri)]
+    fn build_dfa_lookup(&mut self) {}
 }
 
 impl std::ops::Index<StateId> for StateArena {
@@ -3882,6 +3909,57 @@ mod tests {
         assert_eq!(try_accelerate_arena(&table, b"abcdefghijz"), Some(10)); // finds 'z' at position 10
         assert_eq!(try_accelerate_arena(&table, b"abcxyz"), Some(3)); // finds 'x' at position 3
         assert!(try_accelerate_arena(&table, b"abcdefghij").is_none()); // none of x, y, z
+    }
+
+    /// Verify that `StateArena::dstep` via `dfa_lookup` returns the same result
+    /// as `ArenaSmallTable::dstep` for every byte value.
+    ///
+    /// This test is critical because `build_dfa_lookup` is skipped under Miri
+    /// (`#[cfg(miri)]` no-op) to avoid a ~165s slowdown from interpreting the
+    /// large 256-entry-per-state array on every byte transition. Under Miri,
+    /// `StateArena::dstep` falls back to `ArenaSmallTable::dstep`. This test
+    /// ensures the two paths are equivalent in non-Miri builds.
+    #[test]
+    fn test_dfa_lookup_matches_smalltable_dstep() {
+        let mut arena = StateArena::new();
+
+        // State 0: two transitions  b'a'..b'c' -> state1, b'm'..b'z' -> state2
+        let s0 = arena.alloc();
+        let s1 = arena.alloc();
+        let s2 = arena.alloc();
+
+        arena[s0].table.ceilings = smallvec![b'c', b'z'];
+        arena[s0].table.steps = smallvec![s1, s2];
+
+        // State 1: single transition  b'\x00'..b'\x80' -> state0
+        arena[s1].table.ceilings = smallvec![0x80];
+        arena[s1].table.steps = smallvec![s0];
+
+        // State 2: no transitions (empty table)
+
+        // Record expected results from ArenaSmallTable::dstep before flattening
+        let mut expected: Vec<Vec<StateId>> = Vec::new();
+        for sid in [s0, s1, s2] {
+            let mut row = Vec::new();
+            for byte in 0..=255u8 {
+                row.push(arena[sid].table.dstep(byte));
+            }
+            expected.push(row);
+        }
+
+        // Flatten — builds dfa_lookup (in non-Miri builds)
+        arena.flatten_tables();
+
+        // Verify StateArena::dstep matches for every state × byte
+        for (i, sid) in [s0, s1, s2].iter().enumerate() {
+            for byte in 0..=255u8 {
+                assert_eq!(
+                    arena.dstep(*sid, byte),
+                    expected[i][byte as usize],
+                    "mismatch at state {i}, byte {byte:#04x}"
+                );
+            }
+        }
     }
 }
 
