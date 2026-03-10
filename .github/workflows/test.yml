@@ -71,6 +71,15 @@ jobs:
         with:
           args: --output-format terse
 
+  stress:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Run stress tests
+        run: cargo test --lib -- --ignored --test-threads=1
+
   bench:
     runs-on: ubuntu-latest
     timeout-minutes: 20

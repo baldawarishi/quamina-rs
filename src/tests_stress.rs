@@ -1278,3 +1278,100 @@ fn test_pathological_correctness_miri_friendly() {
         assert_eq!(got, want, "Event: {event}");
     }
 }
+
+// ============================================================================
+// Heavy-pattern stress test (Go: dedup_500_test.go, commit 3157c6d)
+// ============================================================================
+
+/// Port of Go's TestBreak500Limit: creates 2925 overlapping wildcard patterns
+/// (*X*Y* for all 2-letter pairs + *X*Y*Z* for all 3-letter triples) and
+/// exercises matching with varied input strategies.
+///
+/// Gated behind `#[ignore]` (Go uses `//go:build stress`) because building
+/// 2925 patterns is too slow for normal CI.
+#[test]
+#[ignore]
+fn test_break_500_limit() {
+    let letters = b"abcdefghijklmnopqrstuvwxyz";
+    let mut q = QuaminaBuilder::new()
+        .with_arena_byte_budget(100 * 1024 * 1024)
+        .build()
+        .unwrap();
+    let mut pat_count = 0u32;
+
+    // All 2-letter pairs: *X*Y* — C(26,2) = 325 patterns
+    for i in 0..letters.len() {
+        for j in (i + 1)..letters.len() {
+            let ss = format!("*{}*{}*", letters[i] as char, letters[j] as char);
+            let pat = format!(r#"{{"val": [{{"shellstyle": "{ss}"}}]}}"#);
+            q.add_pattern(format!("p{pat_count}"), &pat).unwrap();
+            pat_count += 1;
+        }
+    }
+
+    // All 3-letter triples: *X*Y*Z* — C(26,3) = 2600 patterns
+    for i in 0..letters.len() {
+        for j in (i + 1)..letters.len() {
+            for k in (j + 1)..letters.len() {
+                let ss = format!(
+                    "*{}*{}*{}*",
+                    letters[i] as char, letters[j] as char, letters[k] as char
+                );
+                let pat = format!(r#"{{"val": [{{"shellstyle": "{ss}"}}]}}"#);
+                q.add_pattern(format!("p{pat_count}"), &pat).unwrap();
+                pat_count += 1;
+            }
+        }
+    }
+
+    assert_eq!(pat_count, 2925);
+
+    // Different input strategies to maximize active NFA states
+    let events: &[(&str, &str)] = &[
+        // Alphabet repeated: every char triggers branching for many patterns
+        (
+            "alpha-repeat",
+            &format!(r#"{{"val": "{}"}}"#, "abcdefghijklmnopqrstuvwxyz".repeat(4)),
+        ),
+        // Only early letters repeated: maximizes partial matches
+        (
+            "early-only",
+            &format!(r#"{{"val": "{}"}}"#, "abcabc".repeat(30)),
+        ),
+        // Interleaved early/late: forces maximum simultaneous branching
+        (
+            "interleaved",
+            &format!(r#"{{"val": "{}"}}"#, "azbyxcwdveu".repeat(16)),
+        ),
+        // Near-misses: lots of spinner work, chars almost complete patterns
+        (
+            "near-miss",
+            &format!(
+                r#"{{"val": "{}"}}"#,
+                format!(
+                    "{}b{}d{}f{}h",
+                    "a".repeat(50),
+                    "c".repeat(50),
+                    "e".repeat(50),
+                    "g".repeat(50),
+                )
+            ),
+        ),
+        // Single char repeated: all *m* spinners stay active, nothing completes
+        (
+            "single-repeat",
+            &format!(r#"{{"val": "{}"}}"#, "m".repeat(200)),
+        ),
+    ];
+
+    for (name, event) in events {
+        let start = std::time::Instant::now();
+        let matches = q.matches_for_event(event.as_bytes()).unwrap();
+        let elapsed = start.elapsed();
+        eprintln!(
+            "{name:<16} {count} matches in {elapsed:?}",
+            count = matches.len()
+        );
+        // Sanity: must not panic or timeout — correctness is the goal
+    }
+}
