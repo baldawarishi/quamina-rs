@@ -25,7 +25,7 @@ use parking_lot::Mutex;
 use super::arena::{
     make_prefix_arena_fa, make_shellstyle_arena_fa, make_string_arena_fa, merge_arena_nfas,
     traverse_arena_dfa, traverse_arena_dfa_backward, traverse_arena_nfa, ArenaNfaBuffers,
-    StateArena, StateId,
+    ArenaStats, StateArena, StateId,
 };
 use super::mutable_matcher::{
     EventField, EventFieldRef, MultiConditionNfa, MutableFieldMatcher, MutableValueMatcher,
@@ -505,6 +505,72 @@ impl<X: Clone + Eq + Hash + Send + Sync> ThreadSafeCoreMatcher<X> {
         // avoiding O(n²) cost from cloning the growing arena after every add.
         self.needs_freeze.store(true, Ordering::Release);
         Ok(())
+    }
+
+    /// Collect aggregate arena statistics from all frozen value matchers.
+    ///
+    /// Ensures the frozen snapshot is up-to-date, then walks the frozen tree
+    /// summing stats from every arena (main + suffix + multi-condition).
+    pub fn arena_stats(&self) -> ArenaStats {
+        self.ensure_frozen();
+        let root = self.root.load();
+        let mut stats = ArenaStats::default();
+        let mut visited_fm: FxHashSet<usize> = FxHashSet::default();
+        let mut visited_vm: FxHashSet<usize> = FxHashSet::default();
+        Self::collect_fm_stats(&root, &mut stats, &mut visited_fm, &mut visited_vm);
+        stats
+    }
+
+    fn collect_fm_stats(
+        fm: &FrozenFieldMatcher<X>,
+        stats: &mut ArenaStats,
+        visited_fm: &mut FxHashSet<usize>,
+        visited_vm: &mut FxHashSet<usize>,
+    ) {
+        let ptr = fm as *const _ as usize;
+        if !visited_fm.insert(ptr) {
+            return;
+        }
+        for vm in fm.transitions.values() {
+            Self::collect_vm_stats(vm, stats, visited_fm, visited_vm);
+        }
+        for fm_next in fm.exists_true.values() {
+            Self::collect_fm_stats(fm_next, stats, visited_fm, visited_vm);
+        }
+        for fm_next in fm.exists_false.values() {
+            Self::collect_fm_stats(fm_next, stats, visited_fm, visited_vm);
+        }
+    }
+
+    fn collect_vm_stats(
+        vm: &FrozenValueMatcher<X>,
+        stats: &mut ArenaStats,
+        visited_fm: &mut FxHashSet<usize>,
+        visited_vm: &mut FxHashSet<usize>,
+    ) {
+        let ptr = vm as *const _ as usize;
+        if !visited_vm.insert(ptr) {
+            return;
+        }
+        if let Some((ref arena, _)) = vm.main_arena {
+            stats.add(&arena.stats());
+        }
+        if let Some((ref arena, _)) = vm.suffix_arena {
+            stats.add(&arena.stats());
+        }
+        for mc in &vm.multi_condition_nfas {
+            stats.add(&mc.primary_arena.stats());
+            for cond in &mc.conditions {
+                stats.add(&cond.arena.stats());
+            }
+        }
+        // Walk transition_map to reach nested FrozenFieldMatchers
+        for fm_next in vm.transition_map.values() {
+            Self::collect_fm_stats(fm_next, stats, visited_fm, visited_vm);
+        }
+        if let Some(ref fm_next) = vm.singleton_transition {
+            Self::collect_fm_stats(fm_next, stats, visited_fm, visited_vm);
+        }
     }
 
     /// Freeze a MutableFieldMatcher into a FrozenFieldMatcher

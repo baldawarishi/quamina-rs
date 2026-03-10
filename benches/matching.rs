@@ -971,6 +971,9 @@ fn bench_pathological_epsilon(c: &mut Criterion) {
         let _ = q.matches_for_event(event).unwrap();
     }
 
+    // Log arena stats
+    eprintln!("  arena: {}", q.arena_stats());
+
     c.bench_function("pathological_epsilon", |b| {
         b.iter(|| {
             for event in &events {
@@ -1528,6 +1531,9 @@ fn bench_shellstyle_build_time(c: &mut Criterion) {
         let matches = q.matches_for_event(event).unwrap();
         assert!(!matches.is_empty(), "no matches for {}", word);
     }
+
+    // Log arena stats (comparable to Go's matcherStats)
+    eprintln!("  arena: {}", q.arena_stats());
 
     c.bench_function("shellstyle_build_time_1000", |b| {
         b.iter(|| {
