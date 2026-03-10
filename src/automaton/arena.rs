@@ -4176,6 +4176,8 @@ mod tests {
         // After flattening
         arena.flatten_tables();
         let stats = arena.stats();
+        // dfa_lookup is skipped under Miri (cfg(miri) no-op in build_dfa_lookup)
+        #[cfg(not(miri))]
         assert_eq!(stats.dfa_lookup_states, 3);
         assert!(stats.ft_ptrs_len > 0);
 
