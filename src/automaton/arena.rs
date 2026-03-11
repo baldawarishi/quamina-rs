@@ -232,6 +232,99 @@ impl ArenaSmallTable {
     }
 }
 
+/// Statistics about a `StateArena`'s structure.
+#[derive(Clone, Debug, Default)]
+pub struct ArenaStats {
+    /// Total states in the arena.
+    pub state_count: u32,
+    /// States with non-trivial transition tables (more than the default catch-all).
+    pub tables_with_transitions: u32,
+    /// Total ceiling entries across all transition tables.
+    pub total_ceiling_entries: u32,
+    /// Max ceiling entries in any single table.
+    pub max_ceilings: u16,
+    /// Total epsilon transitions across all states.
+    pub total_epsilons: u32,
+    /// Max epsilon transitions on any single state.
+    pub max_epsilons: u16,
+    /// States that have field transitions (match endpoints).
+    pub states_with_field_transitions: u32,
+    /// Total entries in the flattened closure_data buffer.
+    pub closure_data_len: u32,
+    /// States that have precomputed closures.
+    pub states_with_closures: u32,
+    /// Sum of all closure_len values.
+    pub total_closure_entries: u32,
+    /// Max closure_len of any single state.
+    pub max_closure_len: u16,
+    /// Total entries in the flattened ft_ptrs buffer.
+    pub ft_ptrs_len: u32,
+    /// Number of states with 256-entry DFA lookup tables (0 if not frozen).
+    pub dfa_lookup_states: u32,
+    /// Estimated total byte size of the arena.
+    pub estimated_bytes: usize,
+}
+
+impl std::fmt::Display for ArenaStats {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "states={}, tables={} (avg_ceil={:.1}, max_ceil={}), \
+             epsilons={} (max={}), field_trans={}, \
+             closures={}/{} (avg={:.1}, max={}), \
+             ft_ptrs={}, dfa_lookup={}, ~{}KB",
+            self.state_count,
+            self.tables_with_transitions,
+            if self.tables_with_transitions > 0 {
+                self.total_ceiling_entries as f64 / self.tables_with_transitions as f64
+            } else {
+                0.0
+            },
+            self.max_ceilings,
+            self.total_epsilons,
+            self.max_epsilons,
+            self.states_with_field_transitions,
+            self.states_with_closures,
+            self.state_count,
+            if self.states_with_closures > 0 {
+                self.total_closure_entries as f64 / self.states_with_closures as f64
+            } else {
+                0.0
+            },
+            self.max_closure_len,
+            self.ft_ptrs_len,
+            self.dfa_lookup_states,
+            self.estimated_bytes / 1024,
+        )
+    }
+}
+
+impl ArenaStats {
+    /// Accumulate another arena's stats into this aggregate.
+    pub fn add(&mut self, other: &Self) {
+        self.state_count += other.state_count;
+        self.tables_with_transitions += other.tables_with_transitions;
+        self.total_ceiling_entries += other.total_ceiling_entries;
+        if other.max_ceilings > self.max_ceilings {
+            self.max_ceilings = other.max_ceilings;
+        }
+        self.total_epsilons += other.total_epsilons;
+        if other.max_epsilons > self.max_epsilons {
+            self.max_epsilons = other.max_epsilons;
+        }
+        self.states_with_field_transitions += other.states_with_field_transitions;
+        self.closure_data_len += other.closure_data_len;
+        self.states_with_closures += other.states_with_closures;
+        self.total_closure_entries += other.total_closure_entries;
+        if other.max_closure_len > self.max_closure_len {
+            self.max_closure_len = other.max_closure_len;
+        }
+        self.ft_ptrs_len += other.ft_ptrs_len;
+        self.dfa_lookup_states += other.dfa_lookup_states;
+        self.estimated_bytes += other.estimated_bytes;
+    }
+}
+
 /// Arena for allocating NFA states.
 ///
 /// States are allocated contiguously and referenced by `StateId`.
@@ -406,6 +499,80 @@ impl StateArena {
     /// Check if arena is empty.
     pub fn is_empty(&self) -> bool {
         self.states.is_empty()
+    }
+
+    /// Compute statistics about this arena's structure.
+    pub fn stats(&self) -> ArenaStats {
+        let state_count = self.states.len();
+        if state_count == 0 {
+            return ArenaStats::default();
+        }
+
+        let mut tables_with_transitions = 0u32;
+        let mut total_ceiling_entries = 0u32;
+        let mut max_ceilings = 0u16;
+        let mut total_epsilons = 0u32;
+        let mut max_epsilons = 0u16;
+        let mut states_with_field_transitions = 0u32;
+        let mut total_closure_entries = 0u32;
+        let mut max_closure_len = 0u16;
+        let mut states_with_closures = 0u32;
+
+        for state in &self.states {
+            // Table stats: count states that have non-trivial transitions
+            // (more than just the default catch-all entry)
+            let nc = state.table.ceilings.len();
+            if nc > 1 {
+                tables_with_transitions += 1;
+                total_ceiling_entries += nc as u32;
+                if nc > max_ceilings as usize {
+                    max_ceilings = nc as u16;
+                }
+            }
+
+            let ne = state.table.epsilons.len();
+            if ne > 0 {
+                total_epsilons += ne as u32;
+                if ne > max_epsilons as usize {
+                    max_epsilons = ne as u16;
+                }
+            }
+
+            if !state.field_transitions.is_empty() {
+                states_with_field_transitions += 1;
+            }
+
+            if state.closure_len > 0 {
+                states_with_closures += 1;
+                total_closure_entries += state.closure_len as u32;
+                if state.closure_len > max_closure_len {
+                    max_closure_len = state.closure_len;
+                }
+            }
+        }
+
+        let dfa_lookup_states = if self.dfa_lookup.is_empty() {
+            0
+        } else {
+            self.dfa_lookup.len() / 256
+        };
+
+        ArenaStats {
+            state_count: state_count as u32,
+            tables_with_transitions,
+            total_ceiling_entries,
+            max_ceilings,
+            total_epsilons,
+            max_epsilons,
+            states_with_field_transitions,
+            closure_data_len: self.closure_data.len() as u32,
+            states_with_closures,
+            total_closure_entries,
+            max_closure_len,
+            ft_ptrs_len: self.ft_ptrs.len() as u32,
+            dfa_lookup_states: dfa_lookup_states as u32,
+            estimated_bytes: self.estimated_byte_size(),
+        }
     }
 
     /// Check if any state in the arena has epsilon transitions.
@@ -3960,6 +4127,63 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn test_arena_stats_empty() {
+        let arena = StateArena::new();
+        let stats = arena.stats();
+        assert_eq!(stats.state_count, 0);
+        assert_eq!(stats.tables_with_transitions, 0);
+        assert_eq!(stats.total_epsilons, 0);
+        // Display should not panic
+        let _s = format!("{stats}");
+    }
+
+    #[test]
+    fn test_arena_stats_basic() {
+        let mut arena = StateArena::new();
+        let s0 = arena.alloc();
+        let s1 = arena.alloc();
+        let s2 = arena.alloc();
+
+        // s0 --'a'--> s1 (via transition table)
+        arena[s0].table.set_transition(b'a', s1);
+        // s1 has an epsilon to s2
+        arena[s1].table.epsilons.push(s2);
+        // s2 is a match state
+        let fm = Arc::new(FieldMatcher::new());
+        arena[s2].field_transitions.push(fm);
+
+        let stats = arena.stats();
+        assert_eq!(stats.state_count, 3);
+        assert!(stats.tables_with_transitions >= 1); // s0 has 'a' transition
+        assert_eq!(stats.total_epsilons, 1);
+        assert_eq!(stats.max_epsilons, 1);
+        assert_eq!(stats.states_with_field_transitions, 1);
+        // alloc() gives each state a trivial self-closure (len=1)
+        assert_eq!(stats.states_with_closures, 3);
+        assert_eq!(stats.max_closure_len, 1);
+        assert_eq!(stats.dfa_lookup_states, 0);
+
+        // After precomputing closures — s1's closure should include s2 (via epsilon)
+        arena.precompute_epsilon_closures();
+        let stats = arena.stats();
+        assert_eq!(stats.states_with_closures, 3);
+        assert!(stats.max_closure_len >= 2); // s1 closure includes s1 + s2
+        assert!(stats.closure_data_len > 0);
+
+        // After flattening
+        arena.flatten_tables();
+        let stats = arena.stats();
+        // dfa_lookup is skipped under Miri (cfg(miri) no-op in build_dfa_lookup)
+        #[cfg(not(miri))]
+        assert_eq!(stats.dfa_lookup_states, 3);
+        assert!(stats.ft_ptrs_len > 0);
+
+        // Display should produce readable output
+        let display = format!("{stats}");
+        assert!(display.contains("states=3"));
     }
 }
 

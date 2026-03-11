@@ -828,6 +828,15 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
         &self.pruner_stats
     }
 
+    /// Get aggregate arena statistics across all frozen value matchers.
+    ///
+    /// Returns stats covering state counts, table sizes, epsilon transitions,
+    /// closure sizes, and flattened buffer usage. Useful for diagnostics and
+    /// verifying optimization effectiveness.
+    pub fn arena_stats(&self) -> automaton::arena::ArenaStats {
+        self.automaton.arena_stats()
+    }
+
     /// Enable or disable auto-rebuild
     pub fn set_auto_rebuild(&mut self, enabled: bool) {
         self.auto_rebuild_enabled = enabled;
