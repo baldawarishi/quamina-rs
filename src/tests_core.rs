@@ -2508,3 +2508,192 @@ fn test_builder_with_auto_rebuild_is_applied() {
 
     assert!(!q.auto_rebuild_enabled(), "auto_rebuild must be false");
 }
+
+// ============================================================================
+// Arena stats regression tests for complex multi-pattern workloads
+// (Inspired by Go's TestTablePointerDedup — ecfe50f)
+// ============================================================================
+
+struct StatsWorkload {
+    name: &'static str,
+    patterns: &'static [&'static str], // shellstyle patterns
+    regexps: &'static [&'static str],  // regexp patterns
+    state_count: u32,
+    total_closure_entries: u32,
+    max_closure_len: u16,
+    matches: [usize; 3], // expected match counts for 3 events
+}
+
+const STATS_WORKLOADS: &[StatsWorkload] = &[
+    StatsWorkload {
+        name: "6-regexps-12-shell",
+        patterns: &[
+            "*a*b*c*", "*x*y*z*", "*e*f*g*", "*m*n*o*", "*p*q*r*", "*s*t*u*", "*a*e*i*", "*b*d*f*",
+            "*c*g*k*", "*d*h*l*", "*i*o*u*", "*r*s*t*",
+        ],
+        regexps: &[
+            "(([abc]?)*)+",
+            "([abc]+)*d",
+            "(a*)*b",
+            "([xyz]?)*end",
+            "(([mno]?)*)+",
+            "([pqr]+)*s",
+        ],
+        state_count: 152,
+        total_closure_entries: 335,
+        max_closure_len: 31,
+        matches: [3, 2, 7],
+    },
+    StatsWorkload {
+        name: "20-nested-regexps",
+        patterns: &[],
+        regexps: &[
+            "(([abc]?)*)+",
+            "([abc]+)*d",
+            "(a*)*b",
+            "([xyz]?)*end",
+            "(([mno]?)*)+",
+            "([pqr]+)*s",
+            "(([def]?)*)+",
+            "([ghi]+)*j",
+            "(([stu]?)*)+",
+            "([vwx]+)*y",
+            "(b*)*c",
+            "(d*)*e",
+            "(([fg]?)*)+",
+            "([hi]+)*k",
+            "(([jk]?)*)+",
+            "([lm]+)*n",
+            "(([op]?)*)+",
+            "([qr]+)*t",
+            "(e*)*f",
+            "(g*)*h",
+        ],
+        state_count: 137,
+        total_closure_entries: 398,
+        max_closure_len: 61,
+        matches: [0, 0, 0],
+    },
+    StatsWorkload {
+        name: "deeply-nested",
+        patterns: &[],
+        regexps: &[
+            "(((a?)*b?)*c?)*",
+            "(((x?)*y?)*z?)*",
+            "(((d?)*e?)*f?)*",
+            "(((m?)*n?)*o?)*",
+            "((((a?)*b?)*c?)*d?)*",
+            "((((x?)*y?)*z?)*w?)*",
+        ],
+        state_count: 61,
+        total_closure_entries: 416,
+        max_closure_len: 47,
+        matches: [0, 0, 0],
+    },
+    StatsWorkload {
+        name: "overlapping-char-classes",
+        patterns: &[],
+        regexps: &[
+            "(([abc]?)*)+",
+            "(([bcd]?)*)+",
+            "(([cde]?)*)+",
+            "(([def]?)*)+",
+            "(([efg]?)*)+",
+            "(([fgh]?)*)+",
+            "(([ghi]?)*)+",
+            "(([hij]?)*)+",
+            "(([ijk]?)*)+",
+            "(([jkl]?)*)+",
+            "(([klm]?)*)+",
+            "(([lmn]?)*)+",
+        ],
+        state_count: 75,
+        total_closure_entries: 275,
+        max_closure_len: 49,
+        matches: [0, 0, 0],
+    },
+    StatsWorkload {
+        name: "shell+deep-overlap",
+        patterns: &[
+            "*a*b*", "*b*c*", "*c*d*", "*d*e*", "*e*f*", "*a*c*", "*b*d*", "*c*e*", "*d*f*",
+            "*a*d*",
+        ],
+        regexps: &[
+            "(((a?)*b?)*c?)*",
+            "(((b?)*c?)*d?)*",
+            "(((c?)*d?)*e?)*",
+            "(((d?)*e?)*f?)*",
+            "(([abcd]?)*)+",
+            "(([cdef]?)*)+",
+        ],
+        state_count: 121,
+        total_closure_entries: 421,
+        max_closure_len: 47,
+        matches: [10, 10, 10],
+    },
+];
+
+fn stats_events() -> Vec<Vec<u8>> {
+    vec![
+        br#"{"val": "abcdefgh"}"#.to_vec(),
+        format!(r#"{{"val": "{}"}}"#, "abcdef".repeat(5)).into_bytes(),
+        format!(r#"{{"val": "{}"}}"#, "abcdefghijklmnop".repeat(3)).into_bytes(),
+    ]
+}
+
+fn build_stats_matcher(wl: &StatsWorkload) -> Quamina<String> {
+    let mut q = Quamina::new();
+    let mut i = 0;
+    for ss in wl.patterns {
+        let pattern = format!(r#"{{"val": [{{"shellstyle": "{ss}"}}]}}"#);
+        q.add_pattern(format!("s{i}"), &pattern).unwrap();
+        i += 1;
+    }
+    for re in wl.regexps {
+        let pattern = format!(r#"{{"val": [{{"regexp": "{re}"}}]}}"#);
+        q.add_pattern(format!("r{i}"), &pattern).unwrap();
+        i += 1;
+    }
+    q
+}
+
+/// Verify arena stats and match correctness for complex multi-pattern workloads.
+/// Exact stats assertions catch regressions in NFA construction, merging, and
+/// epsilon closure computation. Match counts verify end-to-end correctness.
+/// (Inspired by Go's TestTablePointerDedup — ecfe50f)
+#[test]
+fn test_arena_stats_workloads() {
+    let events = stats_events();
+    for wl in STATS_WORKLOADS {
+        let q = build_stats_matcher(wl);
+        let stats = q.arena_stats();
+
+        assert_eq!(
+            stats.state_count, wl.state_count,
+            "{}: state_count = {}, want {}",
+            wl.name, stats.state_count, wl.state_count,
+        );
+        assert_eq!(
+            stats.total_closure_entries, wl.total_closure_entries,
+            "{}: total_closure_entries = {}, want {}",
+            wl.name, stats.total_closure_entries, wl.total_closure_entries,
+        );
+        assert_eq!(
+            stats.max_closure_len, wl.max_closure_len,
+            "{}: max_closure_len = {}, want {}",
+            wl.name, stats.max_closure_len, wl.max_closure_len,
+        );
+
+        for (ei, event) in events.iter().enumerate() {
+            let matches = q.matches_for_event(event).unwrap();
+            assert_eq!(
+                matches.len(),
+                wl.matches[ei],
+                "{}: event[{ei}] expected {} matches, got {}",
+                wl.name,
+                wl.matches[ei],
+                matches.len()
+            );
+        }
+    }
+}
