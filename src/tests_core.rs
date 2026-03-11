@@ -2662,6 +2662,7 @@ fn build_stats_matcher(wl: &StatsWorkload) -> Quamina<String> {
 /// epsilon closure computation. Match counts verify end-to-end correctness.
 /// (Inspired by Go's TestTablePointerDedup — ecfe50f)
 #[test]
+#[cfg_attr(miri, ignore)]
 fn test_arena_stats_workloads() {
     let events = stats_events();
     for wl in STATS_WORKLOADS {
