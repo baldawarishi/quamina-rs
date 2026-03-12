@@ -5887,9 +5887,63 @@ mod shellstyle_arena_tests {
             "Should match 'barfoobaz'"
         );
         assert!(
+            matches_value(&arena, start, b"foofoofoo"),
+            "Should match 'foofoofoo'"
+        );
+        assert!(
             !matches_value(&arena, start, b"bar"),
             "Should NOT match 'bar'"
         );
+        assert!(
+            !matches_value(&arena, start, b"fo"),
+            "Should NOT match 'fo'"
+        );
+        assert!(
+            !matches_value(&arena, start, b"ffo"),
+            "Should NOT match 'ffo'"
+        );
+    }
+
+    #[test]
+    fn test_shellstyle_arena_fa_foo_bar_multi_star() {
+        // Pattern: "*foo*bar*" — from Go PR #500 commit 137fe99
+        let fm = Arc::new(FieldMatcher::with_match_id(1));
+        let (arena, start) = make_shellstyle_arena_fa(b"*foo*bar*", fm.clone());
+
+        assert!(matches_value(&arena, start, b"foobar"));
+        assert!(matches_value(&arena, start, b"xfooybar"));
+        assert!(matches_value(&arena, start, b"foobarbaz"));
+        assert!(matches_value(&arena, start, b"xxfooxxbarxx"));
+        assert!(!matches_value(&arena, start, b"barfoo"));
+        assert!(!matches_value(&arena, start, b"foo"));
+        assert!(!matches_value(&arena, start, b"bar"));
+        assert!(!matches_value(&arena, start, b"fobar"));
+    }
+
+    #[test]
+    fn test_shellstyle_arena_fa_five_star() {
+        // Pattern: "*a*b*c*d*e*" — from Go PR #500 commit 137fe99
+        let fm = Arc::new(FieldMatcher::with_match_id(1));
+        let (arena, start) = make_shellstyle_arena_fa(b"*a*b*c*d*e*", fm.clone());
+
+        assert!(matches_value(&arena, start, b"abcde"));
+        assert!(matches_value(&arena, start, b"xaxbxcxdxex"));
+        assert!(matches_value(&arena, start, b"aabbccddee"));
+        assert!(!matches_value(&arena, start, b"abcd"));
+        assert!(!matches_value(&arena, start, b"edcba"));
+        assert!(!matches_value(&arena, start, b"abce"));
+    }
+
+    #[test]
+    fn test_shellstyle_arena_fa_eight_star() {
+        // Pattern: "*a*b*c*d*e*f*g*h*" — from Go PR #500 commit 137fe99
+        let fm = Arc::new(FieldMatcher::with_match_id(1));
+        let (arena, start) = make_shellstyle_arena_fa(b"*a*b*c*d*e*f*g*h*", fm.clone());
+
+        assert!(matches_value(&arena, start, b"abcdefgh"));
+        assert!(matches_value(&arena, start, b"xaxbxcxdxexfxgxhx"));
+        assert!(!matches_value(&arena, start, b"abcdefg"));
+        assert!(!matches_value(&arena, start, b"hgfedcba"));
     }
 
     #[test]
