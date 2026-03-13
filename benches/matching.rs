@@ -1544,6 +1544,25 @@ fn bench_shellstyle_build_time(c: &mut Criterion) {
     });
 }
 
+fn bench_exists_false(c: &mut Criterion) {
+    let mut q = Quamina::new();
+    // 10 exists:false patterns on fields that don't exist in the event
+    for i in 0..10 {
+        q.add_pattern(
+            format!("p{}", i),
+            &format!(r#"{{"missing_field_{}": [{{"exists": false}}]}}"#, i),
+        )
+        .unwrap();
+    }
+
+    // Event with 20 fields, none matching the exists:false field names
+    let event = r#"{"a": 1, "b": 2, "c": 3, "d": 4, "e": 5, "f": 6, "g": 7, "h": 8, "i": 9, "j": 10, "k": 11, "l": 12, "m": 13, "n": 14, "o": 15, "p": 16, "q": 17, "r": 18, "s": 19, "t": 20}"#.as_bytes();
+
+    c.bench_function("exists_false", |b| {
+        b.iter(|| q.matches_for_event(black_box(event)).unwrap())
+    });
+}
+
 // Configure longer benchmarks with minimum sample count and short warm-up.
 // bulk_10000x1 takes ~28s per iteration, so 10 samples ≈ 280s total.
 fn configure_bulk_benchmarks() -> Criterion {
@@ -1638,5 +1657,7 @@ criterion_group!(
     bench_state_acceleration,
     // Number matching at scale
     bench_number_matching_10k,
+    // Exists pattern benchmarks
+    bench_exists_false,
 );
 criterion_main!(benches, bulk_benches, stress_benches);
