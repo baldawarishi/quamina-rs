@@ -766,7 +766,9 @@ impl<X: Clone + Eq + Hash + Send + Sync> ThreadSafeCoreMatcher<X> {
         bufs: &mut NfaBuffers,
     ) {
         for (path, exists_trans) in &state.exists_false {
-            let field_exists = fields.iter().any(|f| &f.path == path);
+            let field_exists = fields
+                .binary_search_by(|f| f.path.as_str().cmp(path.as_str()))
+                .is_ok();
 
             if !field_exists {
                 for m in &exists_trans.matches {
@@ -865,7 +867,9 @@ impl<X: Clone + Eq + Hash + Send + Sync> ThreadSafeCoreMatcher<X> {
         bufs: &mut NfaBuffers,
     ) {
         for (path, exists_trans) in &state.exists_false {
-            let field_exists = fields.iter().any(|f| f.path == path);
+            let field_exists = fields
+                .binary_search_by(|f| f.path.cmp(path.as_str()))
+                .is_ok();
 
             if !field_exists {
                 for m in &exists_trans.matches {
@@ -960,7 +964,9 @@ impl<X: Clone + Eq + Hash + Send + Sync> ThreadSafeCoreMatcher<X> {
         bufs: &mut NfaBuffers,
     ) {
         for (path, exists_trans) in &state.exists_false {
-            let field_exists = fields.iter().any(|f| f.path_str() == path);
+            let field_exists = fields
+                .binary_search_by(|f| f.path.as_ref().cmp(path.as_bytes()))
+                .is_ok();
 
             if !field_exists {
                 for m in &exists_trans.matches {
