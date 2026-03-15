@@ -6,6 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 Style inspired by [ripgrep's CHANGELOG](https://github.com/BurntSushi/ripgrep/blob/master/CHANGELOG.md).
 
+## [0.4.3] — 2026-03-14
+
+### Changed
+- Flatten NFA traversal hot path: replace per-state SmallVec epsilon closures with contiguous arena buffer, add 256-entry DFA lookup table, flatten field transition pointers (~40% faster `pathological_epsilon`: 9.8 µs → 6.0 µs) (#60)
+- Generation-counter dedup for NFA traversal, preventing exponential blowup on nested quantifiers (ported from Go 3d6886a) (#59)
+- Binary search for `exists:false` field lookup (#68)
+- Skip `dfa_lookup` validation under Miri (~3 min CI saving) (#62)
+
+### Added
+- `ArenaStats` diagnostics: state counts, table sizes, epsilon/closure statistics, flattened buffer usage (#65)
+- Upstream syncs: Go ed38658..8f78c5e (#65, #66, #67)
+- Pathological correctness test (ported from Go 336e69c) (#61)
+- Heavy-pattern stress test (ported from Go 3157c6d, 7b6eb7d) (#64)
+- `cargo-mutants` config and mutation test coverage across automaton, regexp, numbits, segments_tree, flattener, and core modules (#52–#58)
+
 ## [0.4.2] — 2026-02-26
 
 ### Changed
