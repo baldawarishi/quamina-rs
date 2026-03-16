@@ -1610,6 +1610,96 @@ fn test_delete_multi_pattern_id_removes_all() {
 }
 
 // ============================================================================
+// list_pattern_ids / contains_pattern / delete interaction tests
+// ============================================================================
+
+#[test]
+fn test_list_pattern_ids_basic() {
+    let mut q: Quamina<String> = Quamina::new();
+    assert!(q.list_pattern_ids().is_empty());
+
+    q.add_pattern("p1".into(), r#"{"x": [1]}"#).unwrap();
+    q.add_pattern("p2".into(), r#"{"y": [2]}"#).unwrap();
+
+    let mut ids: Vec<&String> = q.list_pattern_ids();
+    ids.sort();
+    assert_eq!(ids, vec!["p1", "p2"]);
+}
+
+#[test]
+fn test_list_pattern_ids_excludes_deleted() {
+    let mut q: Quamina<String> = Quamina::new();
+    q.add_pattern("p1".into(), r#"{"x": [1]}"#).unwrap();
+    q.add_pattern("p2".into(), r#"{"y": [2]}"#).unwrap();
+    q.add_pattern("p3".into(), r#"{"z": [3]}"#).unwrap();
+
+    q.delete_patterns(&"p2".into()).unwrap();
+
+    let mut ids: Vec<&String> = q.list_pattern_ids();
+    ids.sort();
+    assert_eq!(ids, vec!["p1", "p3"]);
+}
+
+#[test]
+fn test_contains_pattern_basic() {
+    let mut q: Quamina<String> = Quamina::new();
+    let p1: String = "p1".into();
+    let p2: String = "p2".into();
+    let missing: String = "missing".into();
+
+    assert!(!q.contains_pattern(&p1));
+
+    q.add_pattern(p1.clone(), r#"{"x": [1]}"#).unwrap();
+    q.add_pattern(p2.clone(), r#"{"y": [2]}"#).unwrap();
+
+    assert!(q.contains_pattern(&p1));
+    assert!(q.contains_pattern(&p2));
+    assert!(!q.contains_pattern(&missing));
+}
+
+#[test]
+fn test_contains_pattern_after_delete() {
+    let mut q: Quamina<String> = Quamina::new();
+    let p1: String = "p1".into();
+
+    q.add_pattern(p1.clone(), r#"{"x": [1]}"#).unwrap();
+    assert!(q.contains_pattern(&p1));
+
+    q.delete_patterns(&p1).unwrap();
+    assert!(!q.contains_pattern(&p1));
+}
+
+#[test]
+fn test_delete_nonexistent_pattern_is_noop() {
+    let mut q: Quamina<String> = Quamina::new();
+    q.add_pattern("p1".into(), r#"{"x": [1]}"#).unwrap();
+
+    // Deleting a pattern that was never added should be a no-op
+    q.delete_patterns(&"ghost".into()).unwrap();
+
+    // p1 is still there
+    assert!(q.contains_pattern(&"p1".into()));
+    assert_eq!(q.list_pattern_ids().len(), 1);
+
+    // rebuild should report 0 purged (nothing was actually deleted)
+    assert_eq!(q.rebuild(), 0);
+}
+
+#[test]
+fn test_delete_already_deleted_pattern_is_noop() {
+    let mut q: Quamina<String> = Quamina::new();
+    q.add_pattern("p1".into(), r#"{"x": [1]}"#).unwrap();
+
+    q.delete_patterns(&"p1".into()).unwrap();
+    assert!(!q.contains_pattern(&"p1".into()));
+
+    // Deleting again should not panic or change state
+    q.delete_patterns(&"p1".into()).unwrap();
+    assert!(!q.contains_pattern(&"p1".into()));
+    assert!(q.list_pattern_ids().is_empty());
+}
+
+// ============================================================================
 // Pattern Complexity Limit Tests
 // ============================================================================
 
