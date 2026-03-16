@@ -2049,4 +2049,568 @@ mod tests {
         assert_eq!(result.len(), 3);
         assert_eq!(result, vec!["a", "b", "c"]);
     }
+
+    // =========================================================================
+    // Mutation coverage: array trail conflicts, exists:false, multi-field
+    // matching across all three CoreMatcher code paths
+    // =========================================================================
+
+    /// Helper: create a CoreMatcher with a two-field pattern (level=high AND status=active).
+    fn cm_two_field() -> CoreMatcher<String> {
+        let cm: CoreMatcher<String> = CoreMatcher::new();
+        cm.add_pattern(
+            "p1".to_string(),
+            &[
+                (
+                    "level".to_string(),
+                    vec![Matcher::Exact("\"high\"".to_string())],
+                ),
+                (
+                    "status".to_string(),
+                    vec![Matcher::Exact("\"active\"".to_string())],
+                ),
+            ],
+        )
+        .unwrap();
+        cm
+    }
+
+    /// Helper: create a CoreMatcher with an exists:false pattern.
+    fn cm_exists_false() -> CoreMatcher<String> {
+        let cm: CoreMatcher<String> = CoreMatcher::new();
+        cm.add_pattern(
+            "p1".to_string(),
+            &[("gone".to_string(), vec![Matcher::Exists(false)])],
+        )
+        .unwrap();
+        cm
+    }
+
+    // -- matches_for_fields (owned EventField) --
+
+    #[test]
+    fn test_core_matcher_array_trail_conflict() {
+        use crate::json::ArrayPos;
+        let cm = cm_two_field();
+
+        // Same array, different pos → conflict → no match
+        let conflicting = vec![
+            EventField {
+                path: "level".to_string(),
+                value: "\"high\"".to_string(),
+                array_trail: vec![ArrayPos { array: 1, pos: 0 }],
+                is_number: false,
+            },
+            EventField {
+                path: "status".to_string(),
+                value: "\"active\"".to_string(),
+                array_trail: vec![ArrayPos { array: 1, pos: 1 }],
+                is_number: false,
+            },
+        ];
+        assert!(cm.matches_for_fields(&conflicting).is_empty());
+
+        // Same array, same pos → no conflict → match
+        let compatible = vec![
+            EventField {
+                path: "level".to_string(),
+                value: "\"high\"".to_string(),
+                array_trail: vec![ArrayPos { array: 1, pos: 0 }],
+                is_number: false,
+            },
+            EventField {
+                path: "status".to_string(),
+                value: "\"active\"".to_string(),
+                array_trail: vec![ArrayPos { array: 1, pos: 0 }],
+                is_number: false,
+            },
+        ];
+        assert_eq!(cm.matches_for_fields(&compatible), vec!["p1"]);
+    }
+
+    #[test]
+    fn test_core_matcher_multi_field_owned() {
+        let cm = cm_two_field();
+
+        // Both fields present → match
+        let fields = vec![
+            EventField {
+                path: "level".to_string(),
+                value: "\"high\"".to_string(),
+                array_trail: vec![],
+                is_number: false,
+            },
+            EventField {
+                path: "status".to_string(),
+                value: "\"active\"".to_string(),
+                array_trail: vec![],
+                is_number: false,
+            },
+        ];
+        assert_eq!(cm.matches_for_fields(&fields), vec!["p1"]);
+
+        // Only one field → no match (catches index + 1 → index * 1)
+        let single = vec![EventField {
+            path: "status".to_string(),
+            value: "\"active\"".to_string(),
+            array_trail: vec![],
+            is_number: false,
+        }];
+        assert!(cm.matches_for_fields(&single).is_empty());
+    }
+
+    // -- matches_for_fields_ref (borrowed EventFieldRef) --
+
+    #[test]
+    fn test_core_matcher_ref_multi_field() {
+        let cm = cm_two_field();
+        let mut bufs = NfaBuffers::new();
+
+        let fields = vec![
+            EventFieldRef {
+                path: "level",
+                value: b"\"high\"",
+                array_trail: &[],
+                is_number: false,
+            },
+            EventFieldRef {
+                path: "status",
+                value: b"\"active\"",
+                array_trail: &[],
+                is_number: false,
+            },
+        ];
+        assert_eq!(cm.matches_for_fields_ref(&fields, &mut bufs), vec!["p1"]);
+
+        // Only one field → no match
+        let single = vec![EventFieldRef {
+            path: "status",
+            value: b"\"active\"",
+            array_trail: &[],
+            is_number: false,
+        }];
+        assert!(cm.matches_for_fields_ref(&single, &mut bufs).is_empty());
+    }
+
+    #[test]
+    fn test_core_matcher_ref_array_trail_conflict() {
+        use crate::flatten_json::ArrayPos;
+        let cm = cm_two_field();
+        let mut bufs = NfaBuffers::new();
+
+        let trail_a = [ArrayPos { array: 1, pos: 0 }];
+        let trail_b = [ArrayPos { array: 1, pos: 1 }];
+
+        // Conflict → no match
+        let conflicting = vec![
+            EventFieldRef {
+                path: "level",
+                value: b"\"high\"",
+                array_trail: &trail_a,
+                is_number: false,
+            },
+            EventFieldRef {
+                path: "status",
+                value: b"\"active\"",
+                array_trail: &trail_b,
+                is_number: false,
+            },
+        ];
+        assert!(cm
+            .matches_for_fields_ref(&conflicting, &mut bufs)
+            .is_empty());
+
+        // Compatible → match
+        let compatible = vec![
+            EventFieldRef {
+                path: "level",
+                value: b"\"high\"",
+                array_trail: &trail_a,
+                is_number: false,
+            },
+            EventFieldRef {
+                path: "status",
+                value: b"\"active\"",
+                array_trail: &trail_a,
+                is_number: false,
+            },
+        ];
+        assert_eq!(
+            cm.matches_for_fields_ref(&compatible, &mut bufs),
+            vec!["p1"]
+        );
+    }
+
+    #[test]
+    fn test_core_matcher_ref_exists_false() {
+        let cm = cm_exists_false();
+        let mut bufs = NfaBuffers::new();
+
+        // Field absent → match
+        let without = vec![EventFieldRef {
+            path: "other",
+            value: b"123",
+            array_trail: &[],
+            is_number: false,
+        }];
+        assert_eq!(cm.matches_for_fields_ref(&without, &mut bufs), vec!["p1"]);
+
+        // Field present → no match
+        let with = vec![EventFieldRef {
+            path: "gone",
+            value: b"here",
+            array_trail: &[],
+            is_number: false,
+        }];
+        assert!(cm.matches_for_fields_ref(&with, &mut bufs).is_empty());
+    }
+
+    // -- matches_for_fields_direct (flatten_json::Field) --
+
+    #[test]
+    fn test_core_matcher_direct_multi_field() {
+        use std::sync::Arc;
+        let cm = cm_two_field();
+        let mut bufs = NfaBuffers::new();
+
+        let fields = vec![
+            crate::flatten_json::Field {
+                path: Arc::from(b"level".as_slice()),
+                val: crate::flatten_json::FieldValue::Borrowed(b"\"high\""),
+                array_trail: [].as_slice().into(),
+                is_number: false,
+            },
+            crate::flatten_json::Field {
+                path: Arc::from(b"status".as_slice()),
+                val: crate::flatten_json::FieldValue::Borrowed(b"\"active\""),
+                array_trail: [].as_slice().into(),
+                is_number: false,
+            },
+        ];
+        assert_eq!(cm.matches_for_fields_direct(&fields, &mut bufs), vec!["p1"]);
+
+        // Only one field → no match
+        let single = vec![crate::flatten_json::Field {
+            path: Arc::from(b"status".as_slice()),
+            val: crate::flatten_json::FieldValue::Borrowed(b"\"active\""),
+            array_trail: [].as_slice().into(),
+            is_number: false,
+        }];
+        assert!(cm.matches_for_fields_direct(&single, &mut bufs).is_empty());
+    }
+
+    #[test]
+    fn test_core_matcher_direct_array_trail_conflict() {
+        use crate::flatten_json::ArrayPos;
+        use std::sync::Arc;
+        let cm = cm_two_field();
+        let mut bufs = NfaBuffers::new();
+
+        let trail_a: crate::flatten_json::ArrayTrailVec =
+            [ArrayPos { array: 1, pos: 0 }].as_slice().into();
+        let trail_b: crate::flatten_json::ArrayTrailVec =
+            [ArrayPos { array: 1, pos: 1 }].as_slice().into();
+
+        // Conflict → no match
+        let conflicting = vec![
+            crate::flatten_json::Field {
+                path: Arc::from(b"level".as_slice()),
+                val: crate::flatten_json::FieldValue::Borrowed(b"\"high\""),
+                array_trail: trail_a.clone(),
+                is_number: false,
+            },
+            crate::flatten_json::Field {
+                path: Arc::from(b"status".as_slice()),
+                val: crate::flatten_json::FieldValue::Borrowed(b"\"active\""),
+                array_trail: trail_b,
+                is_number: false,
+            },
+        ];
+        assert!(cm
+            .matches_for_fields_direct(&conflicting, &mut bufs)
+            .is_empty());
+
+        // Compatible → match
+        let compatible = vec![
+            crate::flatten_json::Field {
+                path: Arc::from(b"level".as_slice()),
+                val: crate::flatten_json::FieldValue::Borrowed(b"\"high\""),
+                array_trail: trail_a.clone(),
+                is_number: false,
+            },
+            crate::flatten_json::Field {
+                path: Arc::from(b"status".as_slice()),
+                val: crate::flatten_json::FieldValue::Borrowed(b"\"active\""),
+                array_trail: trail_a,
+                is_number: false,
+            },
+        ];
+        assert_eq!(
+            cm.matches_for_fields_direct(&compatible, &mut bufs),
+            vec!["p1"]
+        );
+    }
+
+    /// Helper: create a CoreMatcher with a pattern requiring TWO fields with the
+    /// same path: a=1 then a=1. This requires two distinct field occurrences
+    /// (e.g., from an array). A single occurrence should NOT match.
+    fn cm_same_field_twice() -> CoreMatcher<String> {
+        let cm: CoreMatcher<String> = CoreMatcher::new();
+        cm.add_pattern(
+            "p1".to_string(),
+            &[
+                ("a".to_string(), vec![Matcher::Exact("\"1\"".to_string())]),
+                ("a".to_string(), vec![Matcher::Exact("\"1\"".to_string())]),
+            ],
+        )
+        .unwrap();
+        cm
+    }
+
+    #[test]
+    fn test_core_matcher_no_self_match_owned() {
+        let cm = cm_same_field_twice();
+
+        // Single field should NOT match a pattern requiring two occurrences
+        let single = vec![EventField {
+            path: "a".to_string(),
+            value: "\"1\"".to_string(),
+            array_trail: vec![],
+            is_number: false,
+        }];
+        assert!(
+            cm.matches_for_fields(&single).is_empty(),
+            "single field must not self-match a two-condition pattern"
+        );
+
+        // Two fields should match
+        let two = vec![
+            EventField {
+                path: "a".to_string(),
+                value: "\"1\"".to_string(),
+                array_trail: vec![],
+                is_number: false,
+            },
+            EventField {
+                path: "a".to_string(),
+                value: "\"1\"".to_string(),
+                array_trail: vec![],
+                is_number: false,
+            },
+        ];
+        assert_eq!(cm.matches_for_fields(&two), vec!["p1"]);
+    }
+
+    #[test]
+    fn test_core_matcher_no_self_match_ref() {
+        let cm = cm_same_field_twice();
+        let mut bufs = NfaBuffers::new();
+
+        let single = vec![EventFieldRef {
+            path: "a",
+            value: b"\"1\"",
+            array_trail: &[],
+            is_number: false,
+        }];
+        assert!(
+            cm.matches_for_fields_ref(&single, &mut bufs).is_empty(),
+            "single field must not self-match"
+        );
+
+        let two = vec![
+            EventFieldRef {
+                path: "a",
+                value: b"\"1\"",
+                array_trail: &[],
+                is_number: false,
+            },
+            EventFieldRef {
+                path: "a",
+                value: b"\"1\"",
+                array_trail: &[],
+                is_number: false,
+            },
+        ];
+        assert_eq!(cm.matches_for_fields_ref(&two, &mut bufs), vec!["p1"]);
+    }
+
+    #[test]
+    fn test_core_matcher_no_self_match_direct() {
+        use std::sync::Arc;
+        let cm = cm_same_field_twice();
+        let mut bufs = NfaBuffers::new();
+
+        let single = vec![crate::flatten_json::Field {
+            path: Arc::from(b"a".as_slice()),
+            val: crate::flatten_json::FieldValue::Borrowed(b"\"1\""),
+            array_trail: [].as_slice().into(),
+            is_number: false,
+        }];
+        assert!(
+            cm.matches_for_fields_direct(&single, &mut bufs).is_empty(),
+            "single field must not self-match"
+        );
+
+        let two = vec![
+            crate::flatten_json::Field {
+                path: Arc::from(b"a".as_slice()),
+                val: crate::flatten_json::FieldValue::Borrowed(b"\"1\""),
+                array_trail: [].as_slice().into(),
+                is_number: false,
+            },
+            crate::flatten_json::Field {
+                path: Arc::from(b"a".as_slice()),
+                val: crate::flatten_json::FieldValue::Borrowed(b"\"1\""),
+                array_trail: [].as_slice().into(),
+                is_number: false,
+            },
+        ];
+        assert_eq!(cm.matches_for_fields_direct(&two, &mut bufs), vec!["p1"]);
+    }
+
+    /// Helper: pattern `exists:true(a) AND a=1`. After the exists:true fires on
+    /// field "a", the next state expects a value match on "a". A single-field
+    /// event [a=1] should NOT satisfy both conditions because the SAME field
+    /// occurrence must not be used twice.
+    fn cm_exists_true_then_value() -> CoreMatcher<String> {
+        let cm: CoreMatcher<String> = CoreMatcher::new();
+        cm.add_pattern(
+            "p1".to_string(),
+            &[
+                ("a".to_string(), vec![Matcher::Exists(true)]),
+                ("a".to_string(), vec![Matcher::Exact("\"1\"".to_string())]),
+            ],
+        )
+        .unwrap();
+        cm
+    }
+
+    #[test]
+    fn test_core_matcher_exists_true_no_self_match_owned() {
+        let cm = cm_exists_true_then_value();
+
+        // Single a=1 should NOT match (exists:true consumes it, no second field)
+        let single = vec![EventField {
+            path: "a".to_string(),
+            value: "\"1\"".to_string(),
+            array_trail: vec![],
+            is_number: false,
+        }];
+        assert!(
+            cm.matches_for_fields(&single).is_empty(),
+            "single field must not satisfy exists:true AND value on the same field"
+        );
+
+        // Two a=1 fields should match
+        let two = vec![
+            EventField {
+                path: "a".to_string(),
+                value: "\"1\"".to_string(),
+                array_trail: vec![],
+                is_number: false,
+            },
+            EventField {
+                path: "a".to_string(),
+                value: "\"1\"".to_string(),
+                array_trail: vec![],
+                is_number: false,
+            },
+        ];
+        assert_eq!(cm.matches_for_fields(&two), vec!["p1"]);
+    }
+
+    #[test]
+    fn test_core_matcher_exists_true_no_self_match_ref() {
+        let cm = cm_exists_true_then_value();
+        let mut bufs = NfaBuffers::new();
+
+        let single = vec![EventFieldRef {
+            path: "a",
+            value: b"\"1\"",
+            array_trail: &[],
+            is_number: false,
+        }];
+        assert!(
+            cm.matches_for_fields_ref(&single, &mut bufs).is_empty(),
+            "single field must not satisfy exists:true AND value"
+        );
+
+        let two = vec![
+            EventFieldRef {
+                path: "a",
+                value: b"\"1\"",
+                array_trail: &[],
+                is_number: false,
+            },
+            EventFieldRef {
+                path: "a",
+                value: b"\"1\"",
+                array_trail: &[],
+                is_number: false,
+            },
+        ];
+        assert_eq!(cm.matches_for_fields_ref(&two, &mut bufs), vec!["p1"]);
+    }
+
+    #[test]
+    fn test_core_matcher_exists_true_no_self_match_direct() {
+        use std::sync::Arc;
+        let cm = cm_exists_true_then_value();
+        let mut bufs = NfaBuffers::new();
+
+        let single = vec![crate::flatten_json::Field {
+            path: Arc::from(b"a".as_slice()),
+            val: crate::flatten_json::FieldValue::Borrowed(b"\"1\""),
+            array_trail: [].as_slice().into(),
+            is_number: false,
+        }];
+        assert!(
+            cm.matches_for_fields_direct(&single, &mut bufs).is_empty(),
+            "single field must not satisfy exists:true AND value"
+        );
+
+        let two = vec![
+            crate::flatten_json::Field {
+                path: Arc::from(b"a".as_slice()),
+                val: crate::flatten_json::FieldValue::Borrowed(b"\"1\""),
+                array_trail: [].as_slice().into(),
+                is_number: false,
+            },
+            crate::flatten_json::Field {
+                path: Arc::from(b"a".as_slice()),
+                val: crate::flatten_json::FieldValue::Borrowed(b"\"1\""),
+                array_trail: [].as_slice().into(),
+                is_number: false,
+            },
+        ];
+        assert_eq!(cm.matches_for_fields_direct(&two, &mut bufs), vec!["p1"]);
+    }
+
+    #[test]
+    fn test_core_matcher_direct_exists_false() {
+        use std::sync::Arc;
+        let cm = cm_exists_false();
+        let mut bufs = NfaBuffers::new();
+
+        // Field absent → match
+        let without = vec![crate::flatten_json::Field {
+            path: Arc::from(b"other".as_slice()),
+            val: crate::flatten_json::FieldValue::Borrowed(b"123"),
+            array_trail: [].as_slice().into(),
+            is_number: false,
+        }];
+        assert_eq!(
+            cm.matches_for_fields_direct(&without, &mut bufs),
+            vec!["p1"]
+        );
+
+        // Field present → no match
+        let with = vec![crate::flatten_json::Field {
+            path: Arc::from(b"gone".as_slice()),
+            val: crate::flatten_json::FieldValue::Borrowed(b"here"),
+            array_trail: [].as_slice().into(),
+            is_number: false,
+        }];
+        assert!(cm.matches_for_fields_direct(&with, &mut bufs).is_empty());
+    }
 }
