@@ -1163,4 +1163,181 @@ mod tests {
 
         assert_eq!(matches, vec!["p1".to_string()]);
     }
+
+    /// Test that `matches_for_fields` correctly detects array trail conflicts.
+    /// Two fields from the same array but different positions should NOT both
+    /// contribute to a multi-field pattern match.
+    #[test]
+    fn test_matches_for_fields_array_trail_conflict() {
+        use crate::json::ArrayPos;
+
+        let matcher: ThreadSafeCoreMatcher<String> = ThreadSafeCoreMatcher::new();
+
+        // Pattern: status == "active" AND level == "high"
+        matcher
+            .add_pattern(
+                "p1".to_string(),
+                &[
+                    (
+                        "level".to_string(),
+                        vec![Matcher::Exact("high".to_string())],
+                    ),
+                    (
+                        "status".to_string(),
+                        vec![Matcher::Exact("active".to_string())],
+                    ),
+                ],
+            )
+            .unwrap();
+
+        // Fields from different positions in the same array → conflict → no match
+        let conflicting = vec![
+            EventField {
+                path: "level".to_string(),
+                value: "high".to_string(),
+                array_trail: vec![ArrayPos { array: 1, pos: 0 }],
+                is_number: false,
+            },
+            EventField {
+                path: "status".to_string(),
+                value: "active".to_string(),
+                array_trail: vec![ArrayPos { array: 1, pos: 1 }],
+                is_number: false,
+            },
+        ];
+        let matches = matcher.matches_for_fields(&conflicting);
+        assert!(
+            matches.is_empty(),
+            "Fields from different array positions should conflict: {matches:?}"
+        );
+
+        // Fields from the same position in the same array → no conflict → match
+        let compatible = vec![
+            EventField {
+                path: "level".to_string(),
+                value: "high".to_string(),
+                array_trail: vec![ArrayPos { array: 1, pos: 0 }],
+                is_number: false,
+            },
+            EventField {
+                path: "status".to_string(),
+                value: "active".to_string(),
+                array_trail: vec![ArrayPos { array: 1, pos: 0 }],
+                is_number: false,
+            },
+        ];
+        let matches = matcher.matches_for_fields(&compatible);
+        assert_eq!(matches, vec!["p1".to_string()]);
+
+        // Fields from different arrays → no conflict → match
+        let different_arrays = vec![
+            EventField {
+                path: "level".to_string(),
+                value: "high".to_string(),
+                array_trail: vec![ArrayPos { array: 1, pos: 0 }],
+                is_number: false,
+            },
+            EventField {
+                path: "status".to_string(),
+                value: "active".to_string(),
+                array_trail: vec![ArrayPos { array: 2, pos: 1 }],
+                is_number: false,
+            },
+        ];
+        let matches = matcher.matches_for_fields(&different_arrays);
+        assert_eq!(matches, vec!["p1".to_string()]);
+    }
+
+    /// Test that `matches_for_fields_ref` correctly handles exists:false patterns.
+    #[test]
+    fn test_matches_for_fields_ref_exists_false() {
+        let matcher: ThreadSafeCoreMatcher<String> = ThreadSafeCoreMatcher::new();
+
+        // Pattern: field "gone" must NOT exist
+        matcher
+            .add_pattern(
+                "p1".to_string(),
+                &[("gone".to_string(), vec![Matcher::Exists(false)])],
+            )
+            .unwrap();
+
+        let mut bufs = NfaBuffers::new();
+
+        // Event without the field → should match
+        let fields_without = vec![EventFieldRef {
+            path: "other",
+            value: b"123",
+            array_trail: &[],
+            is_number: false,
+        }];
+        let matches = matcher.matches_for_fields_ref(&fields_without, &mut bufs);
+        assert_eq!(
+            matches,
+            vec!["p1".to_string()],
+            "exists:false should match when field is absent"
+        );
+
+        // Event with the field present → should NOT match
+        let fields_with = vec![EventFieldRef {
+            path: "gone",
+            value: b"here",
+            array_trail: &[],
+            is_number: false,
+        }];
+        let matches = matcher.matches_for_fields_ref(&fields_with, &mut bufs);
+        assert!(
+            matches.is_empty(),
+            "exists:false should not match when field is present: {matches:?}"
+        );
+    }
+
+    /// Test exists:false combined with a value match via the _ref path.
+    #[test]
+    fn test_matches_for_fields_ref_exists_false_with_value() {
+        let matcher: ThreadSafeCoreMatcher<String> = ThreadSafeCoreMatcher::new();
+
+        // Pattern: status == "active" AND "gone" must not exist
+        matcher
+            .add_pattern(
+                "p1".to_string(),
+                &[
+                    ("gone".to_string(), vec![Matcher::Exists(false)]),
+                    (
+                        "status".to_string(),
+                        vec![Matcher::Exact("active".to_string())],
+                    ),
+                ],
+            )
+            .unwrap();
+
+        let mut bufs = NfaBuffers::new();
+
+        // status=active, "gone" absent → match
+        let fields_match = vec![EventFieldRef {
+            path: "status",
+            value: b"active",
+            array_trail: &[],
+            is_number: false,
+        }];
+        let matches = matcher.matches_for_fields_ref(&fields_match, &mut bufs);
+        assert_eq!(matches, vec!["p1".to_string()]);
+
+        // status=active, "gone" present → no match
+        let fields_no_match = vec![
+            EventFieldRef {
+                path: "gone",
+                value: b"oops",
+                array_trail: &[],
+                is_number: false,
+            },
+            EventFieldRef {
+                path: "status",
+                value: b"active",
+                array_trail: &[],
+                is_number: false,
+            },
+        ];
+        let matches = matcher.matches_for_fields_ref(&fields_no_match, &mut bufs);
+        assert!(matches.is_empty());
+    }
 }
