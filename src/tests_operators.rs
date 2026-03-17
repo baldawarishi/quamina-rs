@@ -664,6 +664,49 @@ fn test_cidr_invalid_patterns() {
     assert!(result.is_err(), "Invalid prefix length should be rejected");
 }
 
+#[test]
+fn test_cidr_ipv4_prefix_mask_boundary() {
+    // Test to catch mutations in mask computation (replace - with / in CidrPattern::parse)
+    // For /32 (prefix_len = 32): shift should be 32-32=0, not 32/32=1
+    // A wrong shift by 1 would zero out the last bit, changing 10.0.0.1 → 10.0.0.0
+    let q = q!("p32" => r#"{"ip": [{"cidr": "10.0.0.1/32"}]}"#);
+
+    // Exact match for single IP
+    assert_matches!(
+        q,
+        r#"{"ip": "10.0.0.1"}"#,
+        vec!["p32"],
+        "10.0.0.1 should match /32 with 10.0.0.1"
+    );
+
+    // Adjacent IP should NOT match
+    assert_no_match!(q, r#"{"ip": "10.0.0.0"}"#, "10.0.0.0 should NOT match /32 with 10.0.0.1");
+    assert_no_match!(q, r#"{"ip": "10.0.0.2"}"#, "10.0.0.2 should NOT match /32 with 10.0.0.1");
+}
+
+#[test]
+fn test_cidr_ipv4_prefix_various_lengths() {
+    // Comprehensive test for various prefix lengths to catch arithmetic errors in mask
+    let tests = vec![
+        ("/16", "172.16.0.0/16", "172.16.255.255", "172.17.0.0"),
+        ("/25", "10.0.0.128/25", "10.0.0.255", "10.0.1.0"),
+        ("/30", "192.168.1.0/30", "192.168.1.3", "192.168.1.4"),
+    ];
+
+    for (name, pattern_cidr, ip_match, ip_nomatch) in tests {
+        let pattern = format!(r#"{{"ip": [{{"cidr": "{}"}}]}}"#, pattern_cidr);
+        let q = q!("p1" => pattern.as_str());
+
+        let event_match = format!(r#"{{"ip": "{}"}}"#, ip_match);
+        let msg_match = format!("{}: {} should match {}", name, ip_match, pattern_cidr);
+        assert_matches!(q, &event_match, vec!["p1"], &msg_match);
+
+        let event_nomatch = format!(r#"{{"ip": "{}"}}"#, ip_nomatch);
+        let msg_nomatch = format!("{}: {} should NOT match {}", name, ip_nomatch, pattern_cidr);
+        assert_no_match!(q, &event_nomatch, &msg_nomatch);
+    }
+}
+
 // ============================================================================
 // Lookaround Tests
 // ============================================================================
