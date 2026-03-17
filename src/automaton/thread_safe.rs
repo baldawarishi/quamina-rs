@@ -1340,4 +1340,550 @@ mod tests {
         let matches = matcher.matches_for_fields_ref(&fields_no_match, &mut bufs);
         assert!(matches.is_empty());
     }
+
+    // =========================================================================
+    // Mutation coverage: try_to_match*, add_pattern, AutomatonValueMatcher,
+    // ensure_frozen, collect_fm_stats / collect_vm_stats
+    // =========================================================================
+
+    /// Helper: TSM with a two-field pattern (level=high AND status=active).
+    fn tsm_two_field() -> ThreadSafeCoreMatcher<String> {
+        let m: ThreadSafeCoreMatcher<String> = ThreadSafeCoreMatcher::new();
+        m.add_pattern(
+            "p1".to_string(),
+            &[
+                (
+                    "level".to_string(),
+                    vec![Matcher::Exact("high".to_string())],
+                ),
+                (
+                    "status".to_string(),
+                    vec![Matcher::Exact("active".to_string())],
+                ),
+            ],
+        )
+        .unwrap();
+        m
+    }
+
+    /// Helper: TSM with a pattern requiring two occurrences of the same field.
+    fn tsm_same_field_twice() -> ThreadSafeCoreMatcher<String> {
+        let m: ThreadSafeCoreMatcher<String> = ThreadSafeCoreMatcher::new();
+        m.add_pattern(
+            "p1".to_string(),
+            &[
+                ("a".to_string(), vec![Matcher::Exact("1".to_string())]),
+                ("a".to_string(), vec![Matcher::Exact("1".to_string())]),
+            ],
+        )
+        .unwrap();
+        m
+    }
+
+    /// Helper: TSM with pattern `exists:true(a) AND a=1`.
+    fn tsm_exists_true_then_value() -> ThreadSafeCoreMatcher<String> {
+        let m: ThreadSafeCoreMatcher<String> = ThreadSafeCoreMatcher::new();
+        m.add_pattern(
+            "p1".to_string(),
+            &[
+                ("a".to_string(), vec![Matcher::Exists(true)]),
+                ("a".to_string(), vec![Matcher::Exact("1".to_string())]),
+            ],
+        )
+        .unwrap();
+        m
+    }
+
+    // -- matches_for_fields (owned EventField) --
+
+    #[test]
+    fn test_tsm_multi_field_owned() {
+        let m = tsm_two_field();
+
+        // Both fields present → match
+        let fields = vec![
+            EventField {
+                path: "level".to_string(),
+                value: "high".to_string(),
+                array_trail: vec![],
+                is_number: false,
+            },
+            EventField {
+                path: "status".to_string(),
+                value: "active".to_string(),
+                array_trail: vec![],
+                is_number: false,
+            },
+        ];
+        assert_eq!(m.matches_for_fields(&fields), vec!["p1".to_string()]);
+
+        // Only one field → no match (catches index + 1 → index * 1 and replace with ())
+        let single = vec![EventField {
+            path: "status".to_string(),
+            value: "active".to_string(),
+            array_trail: vec![],
+            is_number: false,
+        }];
+        assert!(m.matches_for_fields(&single).is_empty());
+    }
+
+    #[test]
+    fn test_tsm_no_self_match_owned() {
+        let m = tsm_same_field_twice();
+
+        // Single a=1 must NOT satisfy the pattern (no self-matching)
+        let single = vec![EventField {
+            path: "a".to_string(),
+            value: "1".to_string(),
+            array_trail: vec![],
+            is_number: false,
+        }];
+        assert!(
+            m.matches_for_fields(&single).is_empty(),
+            "single field must not self-match a two-occurrence pattern"
+        );
+
+        // Two a=1 fields should match
+        let two = vec![
+            EventField {
+                path: "a".to_string(),
+                value: "1".to_string(),
+                array_trail: vec![],
+                is_number: false,
+            },
+            EventField {
+                path: "a".to_string(),
+                value: "1".to_string(),
+                array_trail: vec![],
+                is_number: false,
+            },
+        ];
+        assert_eq!(m.matches_for_fields(&two), vec!["p1".to_string()]);
+    }
+
+    #[test]
+    fn test_tsm_exists_true_no_self_match_owned() {
+        let m = tsm_exists_true_then_value();
+
+        // Single a=1 must NOT match (exists:true fires, no second field for value check)
+        let single = vec![EventField {
+            path: "a".to_string(),
+            value: "1".to_string(),
+            array_trail: vec![],
+            is_number: false,
+        }];
+        assert!(
+            m.matches_for_fields(&single).is_empty(),
+            "single field must not satisfy exists:true AND value on the same field"
+        );
+
+        // Two a=1 fields should match
+        let two = vec![
+            EventField {
+                path: "a".to_string(),
+                value: "1".to_string(),
+                array_trail: vec![],
+                is_number: false,
+            },
+            EventField {
+                path: "a".to_string(),
+                value: "1".to_string(),
+                array_trail: vec![],
+                is_number: false,
+            },
+        ];
+        assert_eq!(m.matches_for_fields(&two), vec!["p1".to_string()]);
+    }
+
+    // -- matches_for_fields_ref (borrowed EventFieldRef) --
+
+    #[test]
+    fn test_tsm_multi_field_ref() {
+        let m = tsm_two_field();
+        let mut bufs = NfaBuffers::new();
+
+        let fields = vec![
+            EventFieldRef {
+                path: "level",
+                value: b"high",
+                array_trail: &[],
+                is_number: false,
+            },
+            EventFieldRef {
+                path: "status",
+                value: b"active",
+                array_trail: &[],
+                is_number: false,
+            },
+        ];
+        assert_eq!(
+            m.matches_for_fields_ref(&fields, &mut bufs),
+            vec!["p1".to_string()]
+        );
+
+        // Only one field → no match
+        let single = vec![EventFieldRef {
+            path: "status",
+            value: b"active",
+            array_trail: &[],
+            is_number: false,
+        }];
+        assert!(m.matches_for_fields_ref(&single, &mut bufs).is_empty());
+    }
+
+    #[test]
+    fn test_tsm_no_self_match_ref() {
+        let m = tsm_same_field_twice();
+        let mut bufs = NfaBuffers::new();
+
+        let single = vec![EventFieldRef {
+            path: "a",
+            value: b"1",
+            array_trail: &[],
+            is_number: false,
+        }];
+        assert!(
+            m.matches_for_fields_ref(&single, &mut bufs).is_empty(),
+            "single field must not self-match"
+        );
+
+        let two = vec![
+            EventFieldRef {
+                path: "a",
+                value: b"1",
+                array_trail: &[],
+                is_number: false,
+            },
+            EventFieldRef {
+                path: "a",
+                value: b"1",
+                array_trail: &[],
+                is_number: false,
+            },
+        ];
+        assert_eq!(
+            m.matches_for_fields_ref(&two, &mut bufs),
+            vec!["p1".to_string()]
+        );
+    }
+
+    #[test]
+    fn test_tsm_exists_true_no_self_match_ref() {
+        let m = tsm_exists_true_then_value();
+        let mut bufs = NfaBuffers::new();
+
+        let single = vec![EventFieldRef {
+            path: "a",
+            value: b"1",
+            array_trail: &[],
+            is_number: false,
+        }];
+        assert!(
+            m.matches_for_fields_ref(&single, &mut bufs).is_empty(),
+            "single field must not satisfy exists:true AND value"
+        );
+
+        let two = vec![
+            EventFieldRef {
+                path: "a",
+                value: b"1",
+                array_trail: &[],
+                is_number: false,
+            },
+            EventFieldRef {
+                path: "a",
+                value: b"1",
+                array_trail: &[],
+                is_number: false,
+            },
+        ];
+        assert_eq!(
+            m.matches_for_fields_ref(&two, &mut bufs),
+            vec!["p1".to_string()]
+        );
+    }
+
+    // -- matches_for_fields_direct (flatten_json::Field) --
+
+    #[test]
+    fn test_tsm_multi_field_direct() {
+        use std::sync::Arc;
+        let m = tsm_two_field();
+        let mut bufs = NfaBuffers::new();
+
+        let fields = vec![
+            crate::flatten_json::Field {
+                path: Arc::from(b"level".as_slice()),
+                val: crate::flatten_json::FieldValue::Borrowed(b"high"),
+                array_trail: [].as_slice().into(),
+                is_number: false,
+            },
+            crate::flatten_json::Field {
+                path: Arc::from(b"status".as_slice()),
+                val: crate::flatten_json::FieldValue::Borrowed(b"active"),
+                array_trail: [].as_slice().into(),
+                is_number: false,
+            },
+        ];
+        assert_eq!(
+            m.matches_for_fields_direct(&fields, &mut bufs),
+            vec!["p1".to_string()]
+        );
+
+        // Only one field → no match
+        let single = vec![crate::flatten_json::Field {
+            path: Arc::from(b"status".as_slice()),
+            val: crate::flatten_json::FieldValue::Borrowed(b"active"),
+            array_trail: [].as_slice().into(),
+            is_number: false,
+        }];
+        assert!(m.matches_for_fields_direct(&single, &mut bufs).is_empty());
+    }
+
+    #[test]
+    fn test_tsm_no_self_match_direct() {
+        use std::sync::Arc;
+        let m = tsm_same_field_twice();
+        let mut bufs = NfaBuffers::new();
+
+        let single = vec![crate::flatten_json::Field {
+            path: Arc::from(b"a".as_slice()),
+            val: crate::flatten_json::FieldValue::Borrowed(b"1"),
+            array_trail: [].as_slice().into(),
+            is_number: false,
+        }];
+        assert!(
+            m.matches_for_fields_direct(&single, &mut bufs).is_empty(),
+            "single field must not self-match"
+        );
+
+        let two = vec![
+            crate::flatten_json::Field {
+                path: Arc::from(b"a".as_slice()),
+                val: crate::flatten_json::FieldValue::Borrowed(b"1"),
+                array_trail: [].as_slice().into(),
+                is_number: false,
+            },
+            crate::flatten_json::Field {
+                path: Arc::from(b"a".as_slice()),
+                val: crate::flatten_json::FieldValue::Borrowed(b"1"),
+                array_trail: [].as_slice().into(),
+                is_number: false,
+            },
+        ];
+        assert_eq!(
+            m.matches_for_fields_direct(&two, &mut bufs),
+            vec!["p1".to_string()]
+        );
+    }
+
+    #[test]
+    fn test_tsm_exists_true_no_self_match_direct() {
+        use std::sync::Arc;
+        let m = tsm_exists_true_then_value();
+        let mut bufs = NfaBuffers::new();
+
+        let single = vec![crate::flatten_json::Field {
+            path: Arc::from(b"a".as_slice()),
+            val: crate::flatten_json::FieldValue::Borrowed(b"1"),
+            array_trail: [].as_slice().into(),
+            is_number: false,
+        }];
+        assert!(
+            m.matches_for_fields_direct(&single, &mut bufs).is_empty(),
+            "single field must not satisfy exists:true AND value on same field"
+        );
+
+        let two = vec![
+            crate::flatten_json::Field {
+                path: Arc::from(b"a".as_slice()),
+                val: crate::flatten_json::FieldValue::Borrowed(b"1"),
+                array_trail: [].as_slice().into(),
+                is_number: false,
+            },
+            crate::flatten_json::Field {
+                path: Arc::from(b"a".as_slice()),
+                val: crate::flatten_json::FieldValue::Borrowed(b"1"),
+                array_trail: [].as_slice().into(),
+                is_number: false,
+            },
+        ];
+        assert_eq!(
+            m.matches_for_fields_direct(&two, &mut bufs),
+            vec!["p1".to_string()]
+        );
+    }
+
+    #[test]
+    fn test_tsm_exists_false_direct() {
+        use std::sync::Arc;
+        let m: ThreadSafeCoreMatcher<String> = ThreadSafeCoreMatcher::new();
+        m.add_pattern(
+            "p1".to_string(),
+            &[("gone".to_string(), vec![Matcher::Exists(false)])],
+        )
+        .unwrap();
+        let mut bufs = NfaBuffers::new();
+
+        // Field "gone" absent → match
+        let without = vec![crate::flatten_json::Field {
+            path: Arc::from(b"other".as_slice()),
+            val: crate::flatten_json::FieldValue::Borrowed(b"123"),
+            array_trail: [].as_slice().into(),
+            is_number: false,
+        }];
+        assert_eq!(
+            m.matches_for_fields_direct(&without, &mut bufs),
+            vec!["p1".to_string()],
+            "exists:false should match when field is absent"
+        );
+
+        // Field "gone" present → no match
+        let with_field = vec![crate::flatten_json::Field {
+            path: Arc::from(b"gone".as_slice()),
+            val: crate::flatten_json::FieldValue::Borrowed(b"here"),
+            array_trail: [].as_slice().into(),
+            is_number: false,
+        }];
+        assert!(
+            m.matches_for_fields_direct(&with_field, &mut bufs)
+                .is_empty(),
+            "exists:false should not match when field is present"
+        );
+    }
+
+    // -- add_pattern: exists:true and max_states_per_pattern limit --
+
+    #[test]
+    fn test_add_pattern_exists_true() {
+        let m: ThreadSafeCoreMatcher<String> = ThreadSafeCoreMatcher::new();
+        m.add_pattern(
+            "p1".to_string(),
+            &[("field".to_string(), vec![Matcher::Exists(true)])],
+        )
+        .unwrap();
+
+        // Field present → match
+        let fields = vec![EventField {
+            path: "field".to_string(),
+            value: "anything".to_string(),
+            array_trail: vec![],
+            is_number: false,
+        }];
+        assert_eq!(
+            m.matches_for_fields(&fields),
+            vec!["p1".to_string()],
+            "exists:true should match when field is present"
+        );
+
+        // No fields → no match
+        assert!(
+            m.matches_for_fields(&[]).is_empty(),
+            "exists:true should not match when no fields present"
+        );
+    }
+
+    #[test]
+    fn test_add_pattern_max_states_limit() {
+        // limit=0: any field with ≥1 matcher creates 1 state (1 > 0) → error
+        let m: ThreadSafeCoreMatcher<String> = ThreadSafeCoreMatcher::with_limits(1024 * 1024, 0);
+        let result = m.add_pattern(
+            "p1".to_string(),
+            &[("f".to_string(), vec![Matcher::Exact("v".to_string())])],
+        );
+        assert!(
+            result.is_err(),
+            "should fail when state count exceeds max_states_per_pattern"
+        );
+
+        // limit=1: single exact matcher creates exactly 1 state (1 > 1 is false) → ok
+        let m2: ThreadSafeCoreMatcher<String> = ThreadSafeCoreMatcher::with_limits(1024 * 1024, 1);
+        assert!(
+            m2.add_pattern(
+                "p1".to_string(),
+                &[("f".to_string(), vec![Matcher::Exact("v".to_string())])],
+            )
+            .is_ok(),
+            "should succeed when state count equals max_states_per_pattern"
+        );
+    }
+
+    // -- AutomatonValueMatcher --
+
+    #[test]
+    fn test_automaton_value_matcher_string_match() {
+        let mut avm: AutomatonValueMatcher<String> = AutomatonValueMatcher::new();
+        avm.add_string_match(b"hello", "p1".to_string());
+        avm.add_string_match(b"world", "p2".to_string());
+
+        assert_eq!(avm.match_value(b"hello"), vec!["p1".to_string()]);
+        assert_eq!(avm.match_value(b"world"), vec!["p2".to_string()]);
+        assert!(avm.match_value(b"other").is_empty());
+    }
+
+    #[test]
+    fn test_automaton_value_matcher_prefix_match() {
+        let mut avm: AutomatonValueMatcher<String> = AutomatonValueMatcher::new();
+        avm.add_prefix_match(b"foo", "p1".to_string());
+        avm.add_prefix_match(b"bar", "p2".to_string());
+
+        assert_eq!(avm.match_value(b"foobar"), vec!["p1".to_string()]);
+        assert_eq!(avm.match_value(b"barbaz"), vec!["p2".to_string()]);
+        assert!(avm.match_value(b"baz").is_empty());
+    }
+
+    #[test]
+    fn test_automaton_value_matcher_shellstyle_match() {
+        // Two shellstyle patterns exercise add_shellstyle_match mutations:
+        // - replace with (): match_value returns empty
+        // - += → *=: both patterns get ID=1, second overwrites first → wrong match
+        // - += → -=: second call attempts 0-1 which panics in debug mode
+        let mut avm: AutomatonValueMatcher<String> = AutomatonValueMatcher::new();
+        avm.add_shellstyle_match(b"hello", "p1".to_string());
+        avm.add_shellstyle_match(b"world", "p2".to_string());
+
+        assert_eq!(avm.match_value(b"hello"), vec!["p1".to_string()]);
+        assert_eq!(avm.match_value(b"world"), vec!["p2".to_string()]);
+        assert!(avm.match_value(b"other").is_empty());
+    }
+
+    #[test]
+    fn test_automaton_value_matcher_multi_count() {
+        // Three patterns exercise `next_match_id += 1`.
+        // With `+= → *=` all IDs stay at 1 (pattern_map last-wins → wrong matches).
+        // With `+= → -=` the second call wraps usize::MAX and panics in debug.
+        let mut avm: AutomatonValueMatcher<u32> = AutomatonValueMatcher::new();
+        avm.add_string_match(b"x", 10);
+        avm.add_string_match(b"y", 20);
+        avm.add_string_match(b"z", 30);
+
+        assert_eq!(avm.match_value(b"x"), vec![10]);
+        assert_eq!(avm.match_value(b"y"), vec![20]);
+        assert_eq!(avm.match_value(b"z"), vec![30]);
+        assert!(avm.match_value(b"w").is_empty());
+    }
+
+    // -- ensure_frozen + collect_fm_stats / collect_vm_stats dedup --
+
+    #[test]
+    fn test_arena_stats_non_zero() {
+        // Prefix pattern creates an arena with multiple states.
+        // If collect_vm_stats has its `!` guard deleted, every state returns
+        // immediately before adding stats → state_count stays 0.
+        let m: ThreadSafeCoreMatcher<String> = ThreadSafeCoreMatcher::new();
+        m.add_pattern(
+            "p1".to_string(),
+            &[(
+                "status".to_string(),
+                vec![Matcher::Prefix("act".to_string())],
+            )],
+        )
+        .unwrap();
+
+        let stats = m.arena_stats();
+        assert!(
+            stats.state_count > 0,
+            "arena should have states after adding a prefix pattern; got {stats:?}"
+        );
+    }
 }
