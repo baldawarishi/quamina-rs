@@ -3317,7 +3317,10 @@ fn test_equals_ignore_case_length_boundaries() {
 // Mutation Testing: regexp/nfa.rs
 // ============================================================================
 
+// MIRI SKIP RATIONALE: ~p{L} (Unicode Letter category) covers ~130K codepoints, creating
+// a massive automaton that takes 3.5+ minutes under Miri, pushing CI past the 20min timeout.
 #[test]
+#[cfg_attr(miri, ignore)]
 fn test_unicode_category_epsilon_closure() {
     // Tests line 509: `if !eps.is_none()` in instantiate_shell epsilon remapping.
     // Unicode category patterns (e.g., ~p{L}) use cached shells with epsilon transitions.
