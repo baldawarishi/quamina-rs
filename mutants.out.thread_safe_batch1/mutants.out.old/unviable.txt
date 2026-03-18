@@ -1,0 +1,1 @@
+src/automaton/thread_safe.rs:1010:9: replace FrozenMatchSet<X>::into_vec -> Vec<X> with vec![Default::default()]

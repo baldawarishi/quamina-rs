@@ -1,0 +1,47 @@
+{
+  "outcomes": [
+    {
+      "scenario": "Baseline",
+      "summary": "Timeout",
+      "log_path": "log/baseline.log",
+      "diff_path": null,
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 12.4558105,
+          "process_status": "Success",
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--no-run",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 60.003599416,
+          "process_status": "Timeout",
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3",
+            "--all-targets"
+          ]
+        }
+      ]
+    }
+  ],
+  "total_mutants": 0,
+  "missed": 0,
+  "caught": 0,
+  "timeout": 0,
+  "unviable": 0,
+  "success": 0,
+  "start_time": "2026-03-16T00:09:40.886173Z",
+  "end_time": "2026-03-16T00:10:57.317203Z",
+  "cargo_mutants_version": "26.2.0"
+}

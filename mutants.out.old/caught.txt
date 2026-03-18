@@ -1,0 +1,22 @@
+src/json.rs:70:9: replace CidrPattern::parse -> Option<Self> with None
+src/json.rs:75:27: replace > with == in CidrPattern::parse
+src/json.rs:75:27: replace > with < in CidrPattern::parse
+src/json.rs:75:27: replace > with >= in CidrPattern::parse
+src/json.rs:79:38: replace == with != in CidrPattern::parse
+src/json.rs:82:23: replace << with >> in CidrPattern::parse
+src/json.rs:82:17: delete ! in CidrPattern::parse
+src/json.rs:82:30: replace - with + in CidrPattern::parse
+src/json.rs:82:30: replace - with / in CidrPattern::parse
+src/json.rs:84:57: replace & with | in CidrPattern::parse
+src/json.rs:84:57: replace & with ^ in CidrPattern::parse
+src/json.rs:93:27: replace > with == in CidrPattern::parse
+src/json.rs:93:27: replace > with < in CidrPattern::parse
+src/json.rs:93:27: replace > with >= in CidrPattern::parse
+src/json.rs:109:9: replace CidrPattern::parse_ipv4 -> Option<[u8; 4]> with None
+src/json.rs:109:9: replace CidrPattern::parse_ipv4 -> Option<[u8; 4]> with Some([0; 4])
+src/json.rs:109:9: replace CidrPattern::parse_ipv4 -> Option<[u8; 4]> with Some([1; 4])
+src/json.rs:110:24: replace != with == in CidrPattern::parse_ipv4
+src/json.rs:122:9: replace CidrPattern::parse_ipv6 -> Option<[u8; 16]> with None
+src/json.rs:122:9: replace CidrPattern::parse_ipv6 -> Option<[u8; 16]> with Some([0; 16])
+src/json.rs:122:9: replace CidrPattern::parse_ipv6 -> Option<[u8; 16]> with Some([1; 16])
+src/json.rs:127:28: replace > with == in CidrPattern::parse_ipv6

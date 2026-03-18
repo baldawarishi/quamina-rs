@@ -1,0 +1,13 @@
+src/automaton/thread_safe.rs:93:5: replace no_array_trail_conflict_ref -> bool with true
+src/automaton/thread_safe.rs:95:47: replace && with || in no_array_trail_conflict_ref
+src/automaton/thread_safe.rs:93:5: replace no_array_trail_conflict_ref -> bool with false
+src/automaton/thread_safe.rs:95:31: replace == with != in no_array_trail_conflict_ref
+src/automaton/thread_safe.rs:95:63: replace != with == in no_array_trail_conflict_ref
+src/automaton/thread_safe.rs:105:5: replace no_array_trail_conflict -> bool with false
+src/automaton/thread_safe.rs:768:9: replace ThreadSafeCoreMatcher<X>::check_exists_false with ()
+src/automaton/thread_safe.rs:773:16: delete ! in ThreadSafeCoreMatcher<X>::check_exists_false
+src/automaton/thread_safe.rs:966:9: replace ThreadSafeCoreMatcher<X>::check_exists_false_direct with ()
+src/automaton/thread_safe.rs:971:16: delete ! in ThreadSafeCoreMatcher<X>::check_exists_false_direct
+src/automaton/thread_safe.rs:1004:9: replace FrozenMatchSet<X>::add with ()
+src/automaton/thread_safe.rs:1004:12: delete ! in FrozenMatchSet<X>::add
+src/automaton/thread_safe.rs:1010:9: replace FrozenMatchSet<X>::into_vec -> Vec<X> with vec![]

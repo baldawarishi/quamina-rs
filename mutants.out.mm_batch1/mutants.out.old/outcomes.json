@@ -1,0 +1,2404 @@
+{
+  "outcomes": [
+    {
+      "scenario": "Baseline",
+      "summary": "Success",
+      "log_path": "log/baseline.log",
+      "diff_path": null,
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 8.925256291,
+          "process_status": "Success",
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--no-run",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 64.51538,
+          "process_status": "Success",
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3",
+            "--all-targets"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/automaton/mutable_matcher.rs:1073:5: replace no_array_trail_conflict_ref -> bool with true",
+          "package": "quamina",
+          "file": "src/automaton/mutable_matcher.rs",
+          "function": {
+            "function_name": "no_array_trail_conflict_ref",
+            "return_type": "-> bool",
+            "span": {
+              "start": {
+                "line": 1068,
+                "column": 1
+              },
+              "end": {
+                "line": 1081,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 1073,
+              "column": 5
+            },
+            "end": {
+              "line": 1080,
+              "column": 9
+            }
+          },
+          "replacement": "true",
+          "genre": "FnValue"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__automaton__mutable_matcher.rs_line_1073_col_5.log",
+      "diff_path": "diff/src__automaton__mutable_matcher.rs_line_1073_col_5.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 1.291138416,
+          "process_status": "Success",
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--no-run",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 8.723555875,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3",
+            "--all-targets"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/automaton/mutable_matcher.rs:1075:47: replace && with || in no_array_trail_conflict_ref",
+          "package": "quamina",
+          "file": "src/automaton/mutable_matcher.rs",
+          "function": {
+            "function_name": "no_array_trail_conflict_ref",
+            "return_type": "-> bool",
+            "span": {
+              "start": {
+                "line": 1068,
+                "column": 1
+              },
+              "end": {
+                "line": 1081,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 1075,
+              "column": 47
+            },
+            "end": {
+              "line": 1075,
+              "column": 49
+            }
+          },
+          "replacement": "||",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__automaton__mutable_matcher.rs_line_1075_col_47.log",
+      "diff_path": "diff/src__automaton__mutable_matcher.rs_line_1075_col_47.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 1.132481792,
+          "process_status": "Success",
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--no-run",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 8.371769917,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3",
+            "--all-targets"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/automaton/mutable_matcher.rs:1073:5: replace no_array_trail_conflict_ref -> bool with false",
+          "package": "quamina",
+          "file": "src/automaton/mutable_matcher.rs",
+          "function": {
+            "function_name": "no_array_trail_conflict_ref",
+            "return_type": "-> bool",
+            "span": {
+              "start": {
+                "line": 1068,
+                "column": 1
+              },
+              "end": {
+                "line": 1081,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 1073,
+              "column": 5
+            },
+            "end": {
+              "line": 1080,
+              "column": 9
+            }
+          },
+          "replacement": "false",
+          "genre": "FnValue"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__automaton__mutable_matcher.rs_line_1073_col_5_001.log",
+      "diff_path": "diff/src__automaton__mutable_matcher.rs_line_1073_col_5_001.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 8.652826166,
+          "process_status": "Success",
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--no-run",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 8.525594125,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3",
+            "--all-targets"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/automaton/mutable_matcher.rs:1075:31: replace == with != in no_array_trail_conflict_ref",
+          "package": "quamina",
+          "file": "src/automaton/mutable_matcher.rs",
+          "function": {
+            "function_name": "no_array_trail_conflict_ref",
+            "return_type": "-> bool",
+            "span": {
+              "start": {
+                "line": 1068,
+                "column": 1
+              },
+              "end": {
+                "line": 1081,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 1075,
+              "column": 31
+            },
+            "end": {
+              "line": 1075,
+              "column": 33
+            }
+          },
+          "replacement": "!=",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__automaton__mutable_matcher.rs_line_1075_col_31.log",
+      "diff_path": "diff/src__automaton__mutable_matcher.rs_line_1075_col_31.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.934314125,
+          "process_status": "Success",
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--no-run",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 8.617374666,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3",
+            "--all-targets"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/automaton/mutable_matcher.rs:1075:63: replace != with == in no_array_trail_conflict_ref",
+          "package": "quamina",
+          "file": "src/automaton/mutable_matcher.rs",
+          "function": {
+            "function_name": "no_array_trail_conflict_ref",
+            "return_type": "-> bool",
+            "span": {
+              "start": {
+                "line": 1068,
+                "column": 1
+              },
+              "end": {
+                "line": 1081,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 1075,
+              "column": 63
+            },
+            "end": {
+              "line": 1075,
+              "column": 65
+            }
+          },
+          "replacement": "==",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__automaton__mutable_matcher.rs_line_1075_col_63.log",
+      "diff_path": "diff/src__automaton__mutable_matcher.rs_line_1075_col_63.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 1.055130459,
+          "process_status": "Success",
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--no-run",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 8.338899334,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3",
+            "--all-targets"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/automaton/mutable_matcher.rs:1085:5: replace no_array_trail_conflict -> bool with true",
+          "package": "quamina",
+          "file": "src/automaton/mutable_matcher.rs",
+          "function": {
+            "function_name": "no_array_trail_conflict",
+            "return_type": "-> bool",
+            "span": {
+              "start": {
+                "line": 1083,
+                "column": 1
+              },
+              "end": {
+                "line": 1093,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 1085,
+              "column": 5
+            },
+            "end": {
+              "line": 1092,
+              "column": 9
+            }
+          },
+          "replacement": "true",
+          "genre": "FnValue"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__automaton__mutable_matcher.rs_line_1085_col_5.log",
+      "diff_path": "diff/src__automaton__mutable_matcher.rs_line_1085_col_5.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.989897,
+          "process_status": "Success",
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--no-run",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 8.58357775,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3",
+            "--all-targets"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/automaton/mutable_matcher.rs:1085:5: replace no_array_trail_conflict -> bool with false",
+          "package": "quamina",
+          "file": "src/automaton/mutable_matcher.rs",
+          "function": {
+            "function_name": "no_array_trail_conflict",
+            "return_type": "-> bool",
+            "span": {
+              "start": {
+                "line": 1083,
+                "column": 1
+              },
+              "end": {
+                "line": 1093,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 1085,
+              "column": 5
+            },
+            "end": {
+              "line": 1092,
+              "column": 9
+            }
+          },
+          "replacement": "false",
+          "genre": "FnValue"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__automaton__mutable_matcher.rs_line_1085_col_5_001.log",
+      "diff_path": "diff/src__automaton__mutable_matcher.rs_line_1085_col_5_001.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 1.036889792,
+          "process_status": "Success",
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--no-run",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 8.205132375,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3",
+            "--all-targets"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/automaton/mutable_matcher.rs:1087:47: replace && with || in no_array_trail_conflict",
+          "package": "quamina",
+          "file": "src/automaton/mutable_matcher.rs",
+          "function": {
+            "function_name": "no_array_trail_conflict",
+            "return_type": "-> bool",
+            "span": {
+              "start": {
+                "line": 1083,
+                "column": 1
+              },
+              "end": {
+                "line": 1093,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 1087,
+              "column": 47
+            },
+            "end": {
+              "line": 1087,
+              "column": 49
+            }
+          },
+          "replacement": "||",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__automaton__mutable_matcher.rs_line_1087_col_47.log",
+      "diff_path": "diff/src__automaton__mutable_matcher.rs_line_1087_col_47.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 1.02157925,
+          "process_status": "Success",
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--no-run",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 8.650423375,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3",
+            "--all-targets"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/automaton/mutable_matcher.rs:1087:31: replace == with != in no_array_trail_conflict",
+          "package": "quamina",
+          "file": "src/automaton/mutable_matcher.rs",
+          "function": {
+            "function_name": "no_array_trail_conflict",
+            "return_type": "-> bool",
+            "span": {
+              "start": {
+                "line": 1083,
+                "column": 1
+              },
+              "end": {
+                "line": 1093,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 1087,
+              "column": 31
+            },
+            "end": {
+              "line": 1087,
+              "column": 33
+            }
+          },
+          "replacement": "!=",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__automaton__mutable_matcher.rs_line_1087_col_31.log",
+      "diff_path": "diff/src__automaton__mutable_matcher.rs_line_1087_col_31.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 1.168574833,
+          "process_status": "Success",
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--no-run",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 8.374585583,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3",
+            "--all-targets"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/automaton/mutable_matcher.rs:1087:63: replace != with == in no_array_trail_conflict",
+          "package": "quamina",
+          "file": "src/automaton/mutable_matcher.rs",
+          "function": {
+            "function_name": "no_array_trail_conflict",
+            "return_type": "-> bool",
+            "span": {
+              "start": {
+                "line": 1083,
+                "column": 1
+              },
+              "end": {
+                "line": 1093,
+                "column": 2
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 1087,
+              "column": 63
+            },
+            "end": {
+              "line": 1087,
+              "column": 65
+            }
+          },
+          "replacement": "==",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__automaton__mutable_matcher.rs_line_1087_col_63.log",
+      "diff_path": "diff/src__automaton__mutable_matcher.rs_line_1087_col_63.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 1.222467708,
+          "process_status": "Success",
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--no-run",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 8.672208458,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3",
+            "--all-targets"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/automaton/mutable_matcher.rs:1110:9: replace MatchSet<X>::add with ()",
+          "package": "quamina",
+          "file": "src/automaton/mutable_matcher.rs",
+          "function": {
+            "function_name": "MatchSet<X>::add",
+            "return_type": "",
+            "span": {
+              "start": {
+                "line": 1109,
+                "column": 5
+              },
+              "end": {
+                "line": 1114,
+                "column": 6
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 1110,
+              "column": 9
+            },
+            "end": {
+              "line": 1113,
+              "column": 10
+            }
+          },
+          "replacement": "()",
+          "genre": "FnValue"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__automaton__mutable_matcher.rs_line_1110_col_9.log",
+      "diff_path": "diff/src__automaton__mutable_matcher.rs_line_1110_col_9.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 1.478457917,
+          "process_status": "Success",
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--no-run",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 8.418333083,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3",
+            "--all-targets"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/automaton/mutable_matcher.rs:1110:12: delete ! in MatchSet<X>::add",
+          "package": "quamina",
+          "file": "src/automaton/mutable_matcher.rs",
+          "function": {
+            "function_name": "MatchSet<X>::add",
+            "return_type": "",
+            "span": {
+              "start": {
+                "line": 1109,
+                "column": 5
+              },
+              "end": {
+                "line": 1114,
+                "column": 6
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 1110,
+              "column": 12
+            },
+            "end": {
+              "line": 1110,
+              "column": 13
+            }
+          },
+          "replacement": "",
+          "genre": "UnaryOperator"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__automaton__mutable_matcher.rs_line_1110_col_12.log",
+      "diff_path": "diff/src__automaton__mutable_matcher.rs_line_1110_col_12.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.967450875,
+          "process_status": "Success",
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--no-run",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 8.71688125,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3",
+            "--all-targets"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/automaton/mutable_matcher.rs:1117:9: replace MatchSet<X>::into_vec -> Vec<X> with vec![Default::default()]",
+          "package": "quamina",
+          "file": "src/automaton/mutable_matcher.rs",
+          "function": {
+            "function_name": "MatchSet<X>::into_vec",
+            "return_type": "-> Vec<X>",
+            "span": {
+              "start": {
+                "line": 1116,
+                "column": 5
+              },
+              "end": {
+                "line": 1118,
+                "column": 6
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 1117,
+              "column": 9
+            },
+            "end": {
+              "line": 1117,
+              "column": 21
+            }
+          },
+          "replacement": "vec![Default::default()]",
+          "genre": "FnValue"
+        }
+      },
+      "summary": "Unviable",
+      "log_path": "log/src__automaton__mutable_matcher.rs_line_1117_col_9_001.log",
+      "diff_path": "diff/src__automaton__mutable_matcher.rs_line_1117_col_9_001.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.447473833,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--no-run",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/automaton/mutable_matcher.rs:1117:9: replace MatchSet<X>::into_vec -> Vec<X> with vec![]",
+          "package": "quamina",
+          "file": "src/automaton/mutable_matcher.rs",
+          "function": {
+            "function_name": "MatchSet<X>::into_vec",
+            "return_type": "-> Vec<X>",
+            "span": {
+              "start": {
+                "line": 1116,
+                "column": 5
+              },
+              "end": {
+                "line": 1118,
+                "column": 6
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 1117,
+              "column": 9
+            },
+            "end": {
+              "line": 1117,
+              "column": 21
+            }
+          },
+          "replacement": "vec![]",
+          "genre": "FnValue"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__automaton__mutable_matcher.rs_line_1117_col_9.log",
+      "diff_path": "diff/src__automaton__mutable_matcher.rs_line_1117_col_9.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 1.248373542,
+          "process_status": "Success",
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--no-run",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 8.510101125,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3",
+            "--all-targets"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/automaton/mutable_matcher.rs:1226:9: replace CoreMatcher<X>::try_to_match with ()",
+          "package": "quamina",
+          "file": "src/automaton/mutable_matcher.rs",
+          "function": {
+            "function_name": "CoreMatcher<X>::try_to_match",
+            "return_type": "",
+            "span": {
+              "start": {
+                "line": 1217,
+                "column": 5
+              },
+              "end": {
+                "line": 1267,
+                "column": 6
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 1226,
+              "column": 9
+            },
+            "end": {
+              "line": 1266,
+              "column": 10
+            }
+          },
+          "replacement": "()",
+          "genre": "FnValue"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__automaton__mutable_matcher.rs_line_1226_col_9.log",
+      "diff_path": "diff/src__automaton__mutable_matcher.rs_line_1226_col_9.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 1.048697375,
+          "process_status": "Success",
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--no-run",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 9.20225675,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3",
+            "--all-targets"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/automaton/mutable_matcher.rs:1235:36: replace + with - in CoreMatcher<X>::try_to_match",
+          "package": "quamina",
+          "file": "src/automaton/mutable_matcher.rs",
+          "function": {
+            "function_name": "CoreMatcher<X>::try_to_match",
+            "return_type": "",
+            "span": {
+              "start": {
+                "line": 1217,
+                "column": 5
+              },
+              "end": {
+                "line": 1267,
+                "column": 6
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 1235,
+              "column": 36
+            },
+            "end": {
+              "line": 1235,
+              "column": 37
+            }
+          },
+          "replacement": "-",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__automaton__mutable_matcher.rs_line_1235_col_36.log",
+      "diff_path": "diff/src__automaton__mutable_matcher.rs_line_1235_col_36.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 1.328983458,
+          "process_status": "Success",
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--no-run",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 8.646650458,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3",
+            "--all-targets"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/automaton/mutable_matcher.rs:1258:36: replace + with - in CoreMatcher<X>::try_to_match",
+          "package": "quamina",
+          "file": "src/automaton/mutable_matcher.rs",
+          "function": {
+            "function_name": "CoreMatcher<X>::try_to_match",
+            "return_type": "",
+            "span": {
+              "start": {
+                "line": 1217,
+                "column": 5
+              },
+              "end": {
+                "line": 1267,
+                "column": 6
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 1258,
+              "column": 36
+            },
+            "end": {
+              "line": 1258,
+              "column": 37
+            }
+          },
+          "replacement": "-",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__automaton__mutable_matcher.rs_line_1258_col_36.log",
+      "diff_path": "diff/src__automaton__mutable_matcher.rs_line_1258_col_36.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 1.4574743749999999,
+          "process_status": "Success",
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--no-run",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 8.631738792,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3",
+            "--all-targets"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/automaton/mutable_matcher.rs:1258:36: replace + with * in CoreMatcher<X>::try_to_match",
+          "package": "quamina",
+          "file": "src/automaton/mutable_matcher.rs",
+          "function": {
+            "function_name": "CoreMatcher<X>::try_to_match",
+            "return_type": "",
+            "span": {
+              "start": {
+                "line": 1217,
+                "column": 5
+              },
+              "end": {
+                "line": 1267,
+                "column": 6
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 1258,
+              "column": 36
+            },
+            "end": {
+              "line": 1258,
+              "column": 37
+            }
+          },
+          "replacement": "*",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__automaton__mutable_matcher.rs_line_1258_col_36_001.log",
+      "diff_path": "diff/src__automaton__mutable_matcher.rs_line_1258_col_36_001.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.974331458,
+          "process_status": "Success",
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--no-run",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 8.374226,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3",
+            "--all-targets"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/automaton/mutable_matcher.rs:1278:9: replace CoreMatcher<X>::check_exists_false with ()",
+          "package": "quamina",
+          "file": "src/automaton/mutable_matcher.rs",
+          "function": {
+            "function_name": "CoreMatcher<X>::check_exists_false",
+            "return_type": "",
+            "span": {
+              "start": {
+                "line": 1269,
+                "column": 5
+              },
+              "end": {
+                "line": 1293,
+                "column": 6
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 1278,
+              "column": 9
+            },
+            "end": {
+              "line": 1292,
+              "column": 10
+            }
+          },
+          "replacement": "()",
+          "genre": "FnValue"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__automaton__mutable_matcher.rs_line_1278_col_9.log",
+      "diff_path": "diff/src__automaton__mutable_matcher.rs_line_1278_col_9.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.989671958,
+          "process_status": "Success",
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--no-run",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 8.382296125,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3",
+            "--all-targets"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/automaton/mutable_matcher.rs:1284:16: delete ! in CoreMatcher<X>::check_exists_false",
+          "package": "quamina",
+          "file": "src/automaton/mutable_matcher.rs",
+          "function": {
+            "function_name": "CoreMatcher<X>::check_exists_false",
+            "return_type": "",
+            "span": {
+              "start": {
+                "line": 1269,
+                "column": 5
+              },
+              "end": {
+                "line": 1293,
+                "column": 6
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 1284,
+              "column": 16
+            },
+            "end": {
+              "line": 1284,
+              "column": 17
+            }
+          },
+          "replacement": "",
+          "genre": "UnaryOperator"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__automaton__mutable_matcher.rs_line_1284_col_16.log",
+      "diff_path": "diff/src__automaton__mutable_matcher.rs_line_1284_col_16.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.976324,
+          "process_status": "Success",
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--no-run",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 8.288352208,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3",
+            "--all-targets"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/automaton/mutable_matcher.rs:1336:9: replace CoreMatcher<X>::try_to_match_ref with ()",
+          "package": "quamina",
+          "file": "src/automaton/mutable_matcher.rs",
+          "function": {
+            "function_name": "CoreMatcher<X>::try_to_match_ref",
+            "return_type": "",
+            "span": {
+              "start": {
+                "line": 1327,
+                "column": 5
+              },
+              "end": {
+                "line": 1370,
+                "column": 6
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 1336,
+              "column": 9
+            },
+            "end": {
+              "line": 1369,
+              "column": 10
+            }
+          },
+          "replacement": "()",
+          "genre": "FnValue"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__automaton__mutable_matcher.rs_line_1336_col_9.log",
+      "diff_path": "diff/src__automaton__mutable_matcher.rs_line_1336_col_9.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 1.026151083,
+          "process_status": "Success",
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--no-run",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 8.409379708,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3",
+            "--all-targets"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/automaton/mutable_matcher.rs:1235:36: replace + with * in CoreMatcher<X>::try_to_match",
+          "package": "quamina",
+          "file": "src/automaton/mutable_matcher.rs",
+          "function": {
+            "function_name": "CoreMatcher<X>::try_to_match",
+            "return_type": "",
+            "span": {
+              "start": {
+                "line": 1217,
+                "column": 5
+              },
+              "end": {
+                "line": 1267,
+                "column": 6
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 1235,
+              "column": 36
+            },
+            "end": {
+              "line": 1235,
+              "column": 37
+            }
+          },
+          "replacement": "*",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "MissedMutant",
+      "log_path": "log/src__automaton__mutable_matcher.rs_line_1235_col_36_001.log",
+      "diff_path": "diff/src__automaton__mutable_matcher.rs_line_1235_col_36_001.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 1.128593667,
+          "process_status": "Success",
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--no-run",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 65.783644583,
+          "process_status": "Success",
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3",
+            "--all-targets"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/automaton/mutable_matcher.rs:1343:36: replace + with - in CoreMatcher<X>::try_to_match_ref",
+          "package": "quamina",
+          "file": "src/automaton/mutable_matcher.rs",
+          "function": {
+            "function_name": "CoreMatcher<X>::try_to_match_ref",
+            "return_type": "",
+            "span": {
+              "start": {
+                "line": 1327,
+                "column": 5
+              },
+              "end": {
+                "line": 1370,
+                "column": 6
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 1343,
+              "column": 36
+            },
+            "end": {
+              "line": 1343,
+              "column": 37
+            }
+          },
+          "replacement": "-",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "MissedMutant",
+      "log_path": "log/src__automaton__mutable_matcher.rs_line_1343_col_36.log",
+      "diff_path": "diff/src__automaton__mutable_matcher.rs_line_1343_col_36.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.992136959,
+          "process_status": "Success",
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--no-run",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 64.942987833,
+          "process_status": "Success",
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3",
+            "--all-targets"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/automaton/mutable_matcher.rs:1362:36: replace + with - in CoreMatcher<X>::try_to_match_ref",
+          "package": "quamina",
+          "file": "src/automaton/mutable_matcher.rs",
+          "function": {
+            "function_name": "CoreMatcher<X>::try_to_match_ref",
+            "return_type": "",
+            "span": {
+              "start": {
+                "line": 1327,
+                "column": 5
+              },
+              "end": {
+                "line": 1370,
+                "column": 6
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 1362,
+              "column": 36
+            },
+            "end": {
+              "line": 1362,
+              "column": 37
+            }
+          },
+          "replacement": "-",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__automaton__mutable_matcher.rs_line_1362_col_36.log",
+      "diff_path": "diff/src__automaton__mutable_matcher.rs_line_1362_col_36.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 1.1496089999999999,
+          "process_status": "Success",
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--no-run",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 8.435749083,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3",
+            "--all-targets"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/automaton/mutable_matcher.rs:1343:36: replace + with * in CoreMatcher<X>::try_to_match_ref",
+          "package": "quamina",
+          "file": "src/automaton/mutable_matcher.rs",
+          "function": {
+            "function_name": "CoreMatcher<X>::try_to_match_ref",
+            "return_type": "",
+            "span": {
+              "start": {
+                "line": 1327,
+                "column": 5
+              },
+              "end": {
+                "line": 1370,
+                "column": 6
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 1343,
+              "column": 36
+            },
+            "end": {
+              "line": 1343,
+              "column": 37
+            }
+          },
+          "replacement": "*",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "MissedMutant",
+      "log_path": "log/src__automaton__mutable_matcher.rs_line_1343_col_36_001.log",
+      "diff_path": "diff/src__automaton__mutable_matcher.rs_line_1343_col_36_001.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 1.0878985,
+          "process_status": "Success",
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--no-run",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 64.332194083,
+          "process_status": "Success",
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3",
+            "--all-targets"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/automaton/mutable_matcher.rs:1362:36: replace + with * in CoreMatcher<X>::try_to_match_ref",
+          "package": "quamina",
+          "file": "src/automaton/mutable_matcher.rs",
+          "function": {
+            "function_name": "CoreMatcher<X>::try_to_match_ref",
+            "return_type": "",
+            "span": {
+              "start": {
+                "line": 1327,
+                "column": 5
+              },
+              "end": {
+                "line": 1370,
+                "column": 6
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 1362,
+              "column": 36
+            },
+            "end": {
+              "line": 1362,
+              "column": 37
+            }
+          },
+          "replacement": "*",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__automaton__mutable_matcher.rs_line_1362_col_36_001.log",
+      "diff_path": "diff/src__automaton__mutable_matcher.rs_line_1362_col_36_001.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.925322167,
+          "process_status": "Success",
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--no-run",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 8.42802875,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3",
+            "--all-targets"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/automaton/mutable_matcher.rs:1381:9: replace CoreMatcher<X>::check_exists_false_ref with ()",
+          "package": "quamina",
+          "file": "src/automaton/mutable_matcher.rs",
+          "function": {
+            "function_name": "CoreMatcher<X>::check_exists_false_ref",
+            "return_type": "",
+            "span": {
+              "start": {
+                "line": 1372,
+                "column": 5
+              },
+              "end": {
+                "line": 1393,
+                "column": 6
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 1381,
+              "column": 9
+            },
+            "end": {
+              "line": 1392,
+              "column": 10
+            }
+          },
+          "replacement": "()",
+          "genre": "FnValue"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__automaton__mutable_matcher.rs_line_1381_col_9.log",
+      "diff_path": "diff/src__automaton__mutable_matcher.rs_line_1381_col_9.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 1.148014709,
+          "process_status": "Success",
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--no-run",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 9.063900125,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3",
+            "--all-targets"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/automaton/mutable_matcher.rs:1386:16: delete ! in CoreMatcher<X>::check_exists_false_ref",
+          "package": "quamina",
+          "file": "src/automaton/mutable_matcher.rs",
+          "function": {
+            "function_name": "CoreMatcher<X>::check_exists_false_ref",
+            "return_type": "",
+            "span": {
+              "start": {
+                "line": 1372,
+                "column": 5
+              },
+              "end": {
+                "line": 1393,
+                "column": 6
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 1386,
+              "column": 16
+            },
+            "end": {
+              "line": 1386,
+              "column": 17
+            }
+          },
+          "replacement": "",
+          "genre": "UnaryOperator"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__automaton__mutable_matcher.rs_line_1386_col_16.log",
+      "diff_path": "diff/src__automaton__mutable_matcher.rs_line_1386_col_16.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 1.386656417,
+          "process_status": "Success",
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--no-run",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 8.673030583,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3",
+            "--all-targets"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/automaton/mutable_matcher.rs:1427:9: replace CoreMatcher<X>::try_to_match_direct with ()",
+          "package": "quamina",
+          "file": "src/automaton/mutable_matcher.rs",
+          "function": {
+            "function_name": "CoreMatcher<X>::try_to_match_direct",
+            "return_type": "",
+            "span": {
+              "start": {
+                "line": 1418,
+                "column": 5
+              },
+              "end": {
+                "line": 1464,
+                "column": 6
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 1427,
+              "column": 9
+            },
+            "end": {
+              "line": 1463,
+              "column": 10
+            }
+          },
+          "replacement": "()",
+          "genre": "FnValue"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__automaton__mutable_matcher.rs_line_1427_col_9.log",
+      "diff_path": "diff/src__automaton__mutable_matcher.rs_line_1427_col_9.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 1.082114291,
+          "process_status": "Success",
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--no-run",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 8.984164208,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3",
+            "--all-targets"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/automaton/mutable_matcher.rs:1437:36: replace + with - in CoreMatcher<X>::try_to_match_direct",
+          "package": "quamina",
+          "file": "src/automaton/mutable_matcher.rs",
+          "function": {
+            "function_name": "CoreMatcher<X>::try_to_match_direct",
+            "return_type": "",
+            "span": {
+              "start": {
+                "line": 1418,
+                "column": 5
+              },
+              "end": {
+                "line": 1464,
+                "column": 6
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 1437,
+              "column": 36
+            },
+            "end": {
+              "line": 1437,
+              "column": 37
+            }
+          },
+          "replacement": "-",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "MissedMutant",
+      "log_path": "log/src__automaton__mutable_matcher.rs_line_1437_col_36.log",
+      "diff_path": "diff/src__automaton__mutable_matcher.rs_line_1437_col_36.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 1.548676792,
+          "process_status": "Success",
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--no-run",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 64.565093791,
+          "process_status": "Success",
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3",
+            "--all-targets"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/automaton/mutable_matcher.rs:1437:36: replace + with * in CoreMatcher<X>::try_to_match_direct",
+          "package": "quamina",
+          "file": "src/automaton/mutable_matcher.rs",
+          "function": {
+            "function_name": "CoreMatcher<X>::try_to_match_direct",
+            "return_type": "",
+            "span": {
+              "start": {
+                "line": 1418,
+                "column": 5
+              },
+              "end": {
+                "line": 1464,
+                "column": 6
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 1437,
+              "column": 36
+            },
+            "end": {
+              "line": 1437,
+              "column": 37
+            }
+          },
+          "replacement": "*",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "MissedMutant",
+      "log_path": "log/src__automaton__mutable_matcher.rs_line_1437_col_36_001.log",
+      "diff_path": "diff/src__automaton__mutable_matcher.rs_line_1437_col_36_001.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.940167,
+          "process_status": "Success",
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--no-run",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 64.152416792,
+          "process_status": "Success",
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3",
+            "--all-targets"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/automaton/mutable_matcher.rs:1456:36: replace + with - in CoreMatcher<X>::try_to_match_direct",
+          "package": "quamina",
+          "file": "src/automaton/mutable_matcher.rs",
+          "function": {
+            "function_name": "CoreMatcher<X>::try_to_match_direct",
+            "return_type": "",
+            "span": {
+              "start": {
+                "line": 1418,
+                "column": 5
+              },
+              "end": {
+                "line": 1464,
+                "column": 6
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 1456,
+              "column": 36
+            },
+            "end": {
+              "line": 1456,
+              "column": 37
+            }
+          },
+          "replacement": "-",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__automaton__mutable_matcher.rs_line_1456_col_36.log",
+      "diff_path": "diff/src__automaton__mutable_matcher.rs_line_1456_col_36.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 1.189537958,
+          "process_status": "Success",
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--no-run",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 8.588559416,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3",
+            "--all-targets"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/automaton/mutable_matcher.rs:1456:36: replace + with * in CoreMatcher<X>::try_to_match_direct",
+          "package": "quamina",
+          "file": "src/automaton/mutable_matcher.rs",
+          "function": {
+            "function_name": "CoreMatcher<X>::try_to_match_direct",
+            "return_type": "",
+            "span": {
+              "start": {
+                "line": 1418,
+                "column": 5
+              },
+              "end": {
+                "line": 1464,
+                "column": 6
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 1456,
+              "column": 36
+            },
+            "end": {
+              "line": 1456,
+              "column": 37
+            }
+          },
+          "replacement": "*",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__automaton__mutable_matcher.rs_line_1456_col_36_001.log",
+      "diff_path": "diff/src__automaton__mutable_matcher.rs_line_1456_col_36_001.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 1.013590417,
+          "process_status": "Success",
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--no-run",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 8.7206165,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3",
+            "--all-targets"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/automaton/mutable_matcher.rs:1475:9: replace CoreMatcher<X>::check_exists_false_direct with ()",
+          "package": "quamina",
+          "file": "src/automaton/mutable_matcher.rs",
+          "function": {
+            "function_name": "CoreMatcher<X>::check_exists_false_direct",
+            "return_type": "",
+            "span": {
+              "start": {
+                "line": 1466,
+                "column": 5
+              },
+              "end": {
+                "line": 1487,
+                "column": 6
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 1475,
+              "column": 9
+            },
+            "end": {
+              "line": 1486,
+              "column": 10
+            }
+          },
+          "replacement": "()",
+          "genre": "FnValue"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__automaton__mutable_matcher.rs_line_1475_col_9.log",
+      "diff_path": "diff/src__automaton__mutable_matcher.rs_line_1475_col_9.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 1.223747917,
+          "process_status": "Success",
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--no-run",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 8.37620925,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3",
+            "--all-targets"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/automaton/mutable_matcher.rs:1480:16: delete ! in CoreMatcher<X>::check_exists_false_direct",
+          "package": "quamina",
+          "file": "src/automaton/mutable_matcher.rs",
+          "function": {
+            "function_name": "CoreMatcher<X>::check_exists_false_direct",
+            "return_type": "",
+            "span": {
+              "start": {
+                "line": 1466,
+                "column": 5
+              },
+              "end": {
+                "line": 1487,
+                "column": 6
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 1480,
+              "column": 16
+            },
+            "end": {
+              "line": 1480,
+              "column": 17
+            }
+          },
+          "replacement": "",
+          "genre": "UnaryOperator"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__automaton__mutable_matcher.rs_line_1480_col_16.log",
+      "diff_path": "diff/src__automaton__mutable_matcher.rs_line_1480_col_16.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 1.122723083,
+          "process_status": "Success",
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--no-run",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 8.575100125,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3",
+            "--all-targets"
+          ]
+        }
+      ]
+    }
+  ],
+  "total_mutants": 35,
+  "missed": 5,
+  "caught": 29,
+  "timeout": 0,
+  "unviable": 1,
+  "success": 0,
+  "start_time": "2026-03-16T15:43:21.311374Z",
+  "end_time": "2026-03-16T15:49:55.573498Z",
+  "cargo_mutants_version": "26.2.0"
+}

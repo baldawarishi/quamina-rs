@@ -1,0 +1,29 @@
+src/automaton/mutable_matcher.rs:1073:5: replace no_array_trail_conflict_ref -> bool with true
+src/automaton/mutable_matcher.rs:1075:47: replace && with || in no_array_trail_conflict_ref
+src/automaton/mutable_matcher.rs:1073:5: replace no_array_trail_conflict_ref -> bool with false
+src/automaton/mutable_matcher.rs:1075:31: replace == with != in no_array_trail_conflict_ref
+src/automaton/mutable_matcher.rs:1075:63: replace != with == in no_array_trail_conflict_ref
+src/automaton/mutable_matcher.rs:1085:5: replace no_array_trail_conflict -> bool with true
+src/automaton/mutable_matcher.rs:1085:5: replace no_array_trail_conflict -> bool with false
+src/automaton/mutable_matcher.rs:1087:47: replace && with || in no_array_trail_conflict
+src/automaton/mutable_matcher.rs:1087:31: replace == with != in no_array_trail_conflict
+src/automaton/mutable_matcher.rs:1087:63: replace != with == in no_array_trail_conflict
+src/automaton/mutable_matcher.rs:1110:9: replace MatchSet<X>::add with ()
+src/automaton/mutable_matcher.rs:1110:12: delete ! in MatchSet<X>::add
+src/automaton/mutable_matcher.rs:1117:9: replace MatchSet<X>::into_vec -> Vec<X> with vec![]
+src/automaton/mutable_matcher.rs:1226:9: replace CoreMatcher<X>::try_to_match with ()
+src/automaton/mutable_matcher.rs:1235:36: replace + with - in CoreMatcher<X>::try_to_match
+src/automaton/mutable_matcher.rs:1258:36: replace + with - in CoreMatcher<X>::try_to_match
+src/automaton/mutable_matcher.rs:1258:36: replace + with * in CoreMatcher<X>::try_to_match
+src/automaton/mutable_matcher.rs:1278:9: replace CoreMatcher<X>::check_exists_false with ()
+src/automaton/mutable_matcher.rs:1284:16: delete ! in CoreMatcher<X>::check_exists_false
+src/automaton/mutable_matcher.rs:1336:9: replace CoreMatcher<X>::try_to_match_ref with ()
+src/automaton/mutable_matcher.rs:1362:36: replace + with - in CoreMatcher<X>::try_to_match_ref
+src/automaton/mutable_matcher.rs:1362:36: replace + with * in CoreMatcher<X>::try_to_match_ref
+src/automaton/mutable_matcher.rs:1381:9: replace CoreMatcher<X>::check_exists_false_ref with ()
+src/automaton/mutable_matcher.rs:1386:16: delete ! in CoreMatcher<X>::check_exists_false_ref
+src/automaton/mutable_matcher.rs:1427:9: replace CoreMatcher<X>::try_to_match_direct with ()
+src/automaton/mutable_matcher.rs:1456:36: replace + with - in CoreMatcher<X>::try_to_match_direct
+src/automaton/mutable_matcher.rs:1456:36: replace + with * in CoreMatcher<X>::try_to_match_direct
+src/automaton/mutable_matcher.rs:1475:9: replace CoreMatcher<X>::check_exists_false_direct with ()
+src/automaton/mutable_matcher.rs:1480:16: delete ! in CoreMatcher<X>::check_exists_false_direct

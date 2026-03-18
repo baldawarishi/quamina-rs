@@ -1,0 +1,21 @@
+--- src/automaton/mutable_matcher.rs
++++ replace MatchSet<X>::into_vec -> Vec<X> with vec![Default::default()]
+@@ -1109,17 +1109,17 @@
+     fn add(&mut self, x: X) {
+         if !self.seen.contains(&x) {
+             self.seen.insert(x.clone());
+             self.matches.push(x);
+         }
+     }
+ 
+     fn into_vec(self) -> Vec<X> {
+-        self.matches
++        vec![Default::default()] /* ~ changed by cargo-mutants ~ */
+     }
+ }
+ 
+ /// Core matcher that uses automaton-based matching for multiple fields.
+ ///
+ /// This implements the Go quamina matching algorithm:
+ /// 1. Patterns are added by building a graph of FieldMatcher -> MutableValueMatcher -> FieldMatcher
+ /// 2. Event fields are sorted and matched against the automaton

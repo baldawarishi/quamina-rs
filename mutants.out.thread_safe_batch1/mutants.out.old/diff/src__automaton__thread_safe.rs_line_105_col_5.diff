@@ -1,0 +1,28 @@
+--- src/automaton/thread_safe.rs
++++ replace no_array_trail_conflict -> bool with true
+@@ -97,24 +97,17 @@
+             }
+         }
+     }
+     true
+ }
+ 
+ /// Check if two array trails have no conflicts
+ fn no_array_trail_conflict(from: &[crate::json::ArrayPos], to: &[crate::json::ArrayPos]) -> bool {
+-    for from_pos in from {
+-        for to_pos in to {
+-            if from_pos.array == to_pos.array && from_pos.pos != to_pos.pos {
+-                return false;
+-            }
+-        }
+-    }
+-    true
++    true /* ~ changed by cargo-mutants ~ */
+ }
+ 
+ /// Frozen (immutable) field matcher - Send + Sync
+ ///
+ /// This is the immutable counterpart to MutableFieldMatcher.
+ /// Once created, it cannot be modified, making it safe for concurrent access.
+ #[derive(Clone, Default)]
+ pub struct FrozenFieldMatcher<X: Clone + Eq + Hash> {

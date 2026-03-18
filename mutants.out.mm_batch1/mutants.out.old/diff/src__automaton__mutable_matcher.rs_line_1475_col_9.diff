@@ -1,0 +1,32 @@
+--- src/automaton/mutable_matcher.rs
++++ replace CoreMatcher<X>::check_exists_false_direct with ()
+@@ -1467,28 +1467,17 @@
+     fn check_exists_false_direct(
+         &self,
+         state: &Rc<MutableFieldMatcher<X>>,
+         fields: &[crate::flatten_json::Field<'_>],
+         index: usize,
+         matches: &mut MatchSet<X>,
+         bufs: &mut NfaBuffers,
+     ) {
+-        for (path, exists_trans) in state.exists_false.borrow().iter() {
+-            let field_exists = fields
+-                .binary_search_by(|f| f.path.as_ref().cmp(path.as_bytes()))
+-                .is_ok();
+-
+-            if !field_exists {
+-                for m in exists_trans.matches.borrow().iter() {
+-                    matches.add(m.clone());
+-                }
+-                self.try_to_match_direct(fields, index, exists_trans, matches, bufs);
+-            }
+-        }
++        () /* ~ changed by cargo-mutants ~ */
+     }
+ }
+ 
+ #[cfg(test)]
+ mod tests {
+     use super::*;
+     use crate::json::Matcher;
+     use crate::regexp::parse_regexp;

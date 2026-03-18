@@ -1,0 +1,21 @@
+--- src/automaton/mutable_matcher.rs
++++ delete ! in CoreMatcher<X>::check_exists_false_ref
+@@ -1378,17 +1378,17 @@
+         matches: &mut MatchSet<X>,
+         bufs: &mut NfaBuffers,
+     ) {
+         for (path, exists_trans) in state.exists_false.borrow().iter() {
+             let field_exists = fields
+                 .binary_search_by(|f| f.path.cmp(path.as_str()))
+                 .is_ok();
+ 
+-            if !field_exists {
++            if  /* ~ changed by cargo-mutants ~ */field_exists {
+                 for m in exists_trans.matches.borrow().iter() {
+                     matches.add(m.clone());
+                 }
+                 self.try_to_match_ref(fields, index, exists_trans, matches, bufs);
+             }
+         }
+     }
+ 

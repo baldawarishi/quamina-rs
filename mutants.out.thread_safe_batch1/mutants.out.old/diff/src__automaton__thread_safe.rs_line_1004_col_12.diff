@@ -1,0 +1,21 @@
+--- src/automaton/thread_safe.rs
++++ delete ! in FrozenMatchSet<X>::add
+@@ -996,17 +996,17 @@
+ impl<X: Clone + Eq> FrozenMatchSet<X> {
+     fn new() -> Self {
+         Self {
+             matches: Vec::new(),
+         }
+     }
+ 
+     fn add(&mut self, x: X) {
+-        if !self.matches.contains(&x) {
++        if  /* ~ changed by cargo-mutants ~ */self.matches.contains(&x) {
+             self.matches.push(x);
+         }
+     }
+ 
+     fn into_vec(self) -> Vec<X> {
+         self.matches
+     }
+ }

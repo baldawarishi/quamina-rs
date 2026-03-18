@@ -1,0 +1,57 @@
+--- src/automaton/mutable_matcher.rs
++++ replace CoreMatcher<X>::try_to_match_direct with ()
+@@ -1419,53 +1419,17 @@
+     fn try_to_match_direct(
+         &self,
+         fields: &[crate::flatten_json::Field<'_>],
+         index: usize,
+         state: &Rc<MutableFieldMatcher<X>>,
+         matches: &mut MatchSet<X>,
+         bufs: &mut NfaBuffers,
+     ) {
+-        let field = &fields[index];
+-        let path = field.path_str();
+-        let value = field.value_bytes();
+-        let array_trail = field.array_trail_slice();
+-
+-        // Check exists:true transition
+-        if let Some(exists_trans) = state.exists_true.borrow().get(path) {
+-            for m in exists_trans.matches.borrow().iter() {
+-                matches.add(m.clone());
+-            }
+-            for next_idx in (index + 1)..fields.len() {
+-                if no_array_trail_conflict_ref(array_trail, fields[next_idx].array_trail_slice()) {
+-                    self.try_to_match_direct(fields, next_idx, exists_trans, matches, bufs);
+-                }
+-            }
+-            self.check_exists_false_direct(state, fields, index, matches, bufs);
+-        }
+-
+-        // Check exists:false
+-        self.check_exists_false_direct(state, fields, index, matches, bufs);
+-
+-        // Try value transitions
+-        let next_states = state.transition_on(path, value, field.is_number, bufs);
+-
+-        for next_state in next_states {
+-            for m in next_state.matches.borrow().iter() {
+-                matches.add(m.clone());
+-            }
+-
+-            for next_idx in (index + 1)..fields.len() {
+-                if no_array_trail_conflict_ref(array_trail, fields[next_idx].array_trail_slice()) {
+-                    self.try_to_match_direct(fields, next_idx, &next_state, matches, bufs);
+-                }
+-            }
+-
+-            self.check_exists_false_direct(&next_state, fields, index, matches, bufs);
+-        }
++        () /* ~ changed by cargo-mutants ~ */
+     }
+ 
+     /// Check exists:false patterns (direct Field version)
+     fn check_exists_false_direct(
+         &self,
+         state: &Rc<MutableFieldMatcher<X>>,
+         fields: &[crate::flatten_json::Field<'_>],
+         index: usize,

@@ -1,0 +1,35 @@
+--- src/automaton/mutable_matcher.rs
++++ replace CoreMatcher<X>::check_exists_false with ()
+@@ -1270,31 +1270,17 @@
+     fn check_exists_false(
+         &self,
+         state: &Rc<MutableFieldMatcher<X>>,
+         fields: &[EventField],
+         index: usize,
+         matches: &mut MatchSet<X>,
+         bufs: &mut NfaBuffers,
+     ) {
+-        for (path, exists_trans) in state.exists_false.borrow().iter() {
+-            // Check if this path exists in the fields
+-            let field_exists = fields
+-                .binary_search_by(|f| f.path.as_str().cmp(path.as_str()))
+-                .is_ok();
+-
+-            if !field_exists {
+-                // Field doesn't exist - exists:false matches
+-                for m in exists_trans.matches.borrow().iter() {
+-                    matches.add(m.clone());
+-                }
+-                // Continue matching from this state
+-                self.try_to_match(fields, index, exists_trans, matches, bufs);
+-            }
+-        }
++        () /* ~ changed by cargo-mutants ~ */
+     }
+ 
+     /// Collect matches from exists:false patterns when there are no fields
+     fn collect_exists_false_matches(&self, state: &Rc<MutableFieldMatcher<X>>) -> Vec<X> {
+         let mut result = Vec::new();
+         for exists_trans in state.exists_false.borrow().values() {
+             result.extend(exists_trans.matches.borrow().iter().cloned());
+         }

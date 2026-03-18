@@ -1,0 +1,21 @@
+--- src/automaton/mutable_matcher.rs
++++ replace && with || in no_array_trail_conflict_ref
+@@ -1067,17 +1067,17 @@
+ 
+ /// Check if two array trails have no conflicts (using flatten_json::ArrayPos)
+ fn no_array_trail_conflict_ref(
+     from: &[crate::flatten_json::ArrayPos],
+     to: &[crate::flatten_json::ArrayPos],
+ ) -> bool {
+     for from_pos in from {
+         for to_pos in to {
+-            if from_pos.array == to_pos.array && from_pos.pos != to_pos.pos {
++            if from_pos.array == to_pos.array || /* ~ changed by cargo-mutants ~ */ from_pos.pos != to_pos.pos {
+                 return false;
+             }
+         }
+     }
+     true
+ }
+ 
+ /// Check if two array trails have no conflicts

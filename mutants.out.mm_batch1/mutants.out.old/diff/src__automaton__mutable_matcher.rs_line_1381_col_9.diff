@@ -1,0 +1,32 @@
+--- src/automaton/mutable_matcher.rs
++++ replace CoreMatcher<X>::check_exists_false_ref with ()
+@@ -1373,28 +1373,17 @@
+     fn check_exists_false_ref(
+         &self,
+         state: &Rc<MutableFieldMatcher<X>>,
+         fields: &[EventFieldRef<'_>],
+         index: usize,
+         matches: &mut MatchSet<X>,
+         bufs: &mut NfaBuffers,
+     ) {
+-        for (path, exists_trans) in state.exists_false.borrow().iter() {
+-            let field_exists = fields
+-                .binary_search_by(|f| f.path.cmp(path.as_str()))
+-                .is_ok();
+-
+-            if !field_exists {
+-                for m in exists_trans.matches.borrow().iter() {
+-                    matches.add(m.clone());
+-                }
+-                self.try_to_match_ref(fields, index, exists_trans, matches, bufs);
+-            }
+-        }
++        () /* ~ changed by cargo-mutants ~ */
+     }
+ 
+     /// Match fields against patterns using flattened fields directly.
+     ///
+     /// This avoids the intermediate EventFieldRef allocation by working
+     /// directly with flatten_json::Field. Fields should already be sorted by path.
+     pub fn matches_for_fields_direct(
+         &self,

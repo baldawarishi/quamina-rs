@@ -1,0 +1,1 @@
+src/automaton/mutable_matcher.rs:1117:9: replace MatchSet<X>::into_vec -> Vec<X> with vec![Default::default()]

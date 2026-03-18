@@ -1,0 +1,21 @@
+--- src/json.rs
++++ delete ! in CidrPattern::parse
+@@ -74,17 +74,17 @@
+         if let Some(addr) = Self::parse_ipv4(addr_str) {
+             if prefix_len > 32 {
+                 return None;
+             }
+             // Apply mask to get network address
+             let mask = if prefix_len == 0 {
+                 0u32
+             } else {
+-                !0u32 << (32 - prefix_len)
++                 /* ~ changed by cargo-mutants ~ */0u32 << (32 - prefix_len)
+             };
+             let network_bits = u32::from_be_bytes(addr) & mask;
+             return Some(Self::V4 {
+                 network: network_bits.to_be_bytes(),
+                 prefix_len,
+             });
+         }
+ 

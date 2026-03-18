@@ -1,0 +1,21 @@
+--- src/json.rs
++++ replace & with ^ in CidrPattern::parse
+@@ -76,17 +76,17 @@
+                 return None;
+             }
+             // Apply mask to get network address
+             let mask = if prefix_len == 0 {
+                 0u32
+             } else {
+                 !0u32 << (32 - prefix_len)
+             };
+-            let network_bits = u32::from_be_bytes(addr) & mask;
++            let network_bits = u32::from_be_bytes(addr) ^ /* ~ changed by cargo-mutants ~ */ mask;
+             return Some(Self::V4 {
+                 network: network_bits.to_be_bytes(),
+                 prefix_len,
+             });
+         }
+ 
+         // Try IPv6
+         if let Some(addr) = Self::parse_ipv6(addr_str) {

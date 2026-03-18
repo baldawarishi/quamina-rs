@@ -680,8 +680,16 @@ fn test_cidr_ipv4_prefix_mask_boundary() {
     );
 
     // Adjacent IP should NOT match
-    assert_no_match!(q, r#"{"ip": "10.0.0.0"}"#, "10.0.0.0 should NOT match /32 with 10.0.0.1");
-    assert_no_match!(q, r#"{"ip": "10.0.0.2"}"#, "10.0.0.2 should NOT match /32 with 10.0.0.1");
+    assert_no_match!(
+        q,
+        r#"{"ip": "10.0.0.0"}"#,
+        "10.0.0.0 should NOT match /32 with 10.0.0.1"
+    );
+    assert_no_match!(
+        q,
+        r#"{"ip": "10.0.0.2"}"#,
+        "10.0.0.2 should NOT match /32 with 10.0.0.1"
+    );
 }
 
 #[test]
@@ -705,6 +713,86 @@ fn test_cidr_ipv4_prefix_various_lengths() {
         let msg_nomatch = format!("{}: {} should NOT match {}", name, ip_nomatch, pattern_cidr);
         assert_no_match!(q, &event_nomatch, &msg_nomatch);
     }
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn test_cidr_ipv6_double_colon_variations() {
+    // Test to catch mutations in IPv6 :: handling (line 127:28, 136:51)
+    // Line 127: if parts.len() > 2 should reject ":::" (3 parts split by ::)
+    // Changing to < would accept multiple :: which is invalid
+
+    // Valid patterns with :: shorthand (in pattern) but expanded form in events
+    let tests = vec![
+        (
+            "2001:db8::1/128",
+            "2001:db8:0:0:0:0:0:1",
+            "2001:db8:0:0:0:0:0:2",
+        ),
+        ("::1/128", "0:0:0:0:0:0:0:1", "0:0:0:0:0:0:0:2"),
+        (
+            "2001:db8::/32",
+            "2001:db8:0:0:0:0:0:1",
+            "2001:db9:0:0:0:0:0:1",
+        ),
+    ];
+
+    for (pattern_cidr, ip_match, ip_nomatch) in tests {
+        let pattern = format!(r#"{{"ip": [{{"cidr": "{}"}}]}}"#, pattern_cidr);
+        let q = q!("p1" => pattern.as_str());
+
+        let event_match = format!(r#"{{"ip": "{}"}}"#, ip_match);
+        let msg_match = format!("{} should match {}", ip_match, pattern_cidr);
+        assert_matches!(q, &event_match, vec!["p1"], &msg_match);
+
+        let event_nomatch = format!(r#"{{"ip": "{}"}}"#, ip_nomatch);
+        let msg_nomatch = format!("{} should NOT match {}", ip_nomatch, pattern_cidr);
+        assert_no_match!(q, &event_nomatch, &msg_nomatch);
+    }
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn test_cidr_ipv6_group_limit() {
+    // Test to catch mutations in IPv6 group count validation (line 142:41)
+    // if left.len() + right.len() > 8 should reject more than 8 groups
+    // Changing to == would only reject exactly 8, allowing 9+
+    // Changing to >= would reject valid 8-group addresses
+
+    // IPv6 must have exactly 8 groups. With ::, fewer explicit groups are valid
+    // but the total cannot exceed 8 (else it's invalid)
+    let q = q!("p1" => r#"{"ip": [{"cidr": "2001:db8:0:0:0:0:0:1/128"}]}"#);
+
+    // Full address should match
+    assert_matches!(
+        q,
+        r#"{"ip": "2001:db8:0:0:0:0:0:1"}"#,
+        vec!["p1"],
+        "Full IPv6 should match exact /128"
+    );
+
+    // Different last group should not match
+    assert_no_match!(
+        q,
+        r#"{"ip": "2001:db8:0:0:0:0:0:2"}"#,
+        "Different final group should not match /128"
+    );
+}
+
+#[test]
+fn test_cidr_ipv6_invalid_formats() {
+    // Test to catch mutations in IPv6 validation
+    // Line 127: if parts.len() > 2 — reject multiple ::
+    let mut q = Quamina::new();
+
+    let result = q.add_pattern("p1", r#"{"ip": [{"cidr": "2001:db8:::1/64"}]}"#);
+    assert!(result.is_err(), "Multiple :: should be rejected");
+
+    let result = q.add_pattern("p2", r#"{"ip": [{"cidr": "2001:db8::/129"}]}"#);
+    assert!(result.is_err(), "IPv6 prefix > 128 should be rejected");
+
+    let result = q.add_pattern("p3", r#"{"ip": [{"cidr": "gggg::1/64"}]}"#);
+    assert!(result.is_err(), "Invalid hex should be rejected");
 }
 
 // ============================================================================

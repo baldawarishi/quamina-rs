@@ -1,0 +1,6 @@
+src/automaton/thread_safe.rs:105:5: replace no_array_trail_conflict -> bool with true
+src/automaton/thread_safe.rs:107:47: replace && with || in no_array_trail_conflict
+src/automaton/thread_safe.rs:107:31: replace == with != in no_array_trail_conflict
+src/automaton/thread_safe.rs:107:63: replace != with == in no_array_trail_conflict
+src/automaton/thread_safe.rs:869:9: replace ThreadSafeCoreMatcher<X>::check_exists_false_ref with ()
+src/automaton/thread_safe.rs:874:16: delete ! in ThreadSafeCoreMatcher<X>::check_exists_false_ref

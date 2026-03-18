@@ -1,0 +1,32 @@
+--- src/automaton/thread_safe.rs
++++ replace ThreadSafeCoreMatcher<X>::check_exists_false with ()
+@@ -760,28 +760,17 @@
+     fn check_exists_false(
+         &self,
+         state: &Arc<FrozenFieldMatcher<X>>,
+         fields: &[EventField],
+         index: usize,
+         matches: &mut FrozenMatchSet<X>,
+         bufs: &mut NfaBuffers,
+     ) {
+-        for (path, exists_trans) in &state.exists_false {
+-            let field_exists = fields
+-                .binary_search_by(|f| f.path.as_str().cmp(path.as_str()))
+-                .is_ok();
+-
+-            if !field_exists {
+-                for m in &exists_trans.matches {
+-                    matches.add(m.clone());
+-                }
+-                self.try_to_match(fields, index, exists_trans, matches, bufs);
+-            }
+-        }
++        () /* ~ changed by cargo-mutants ~ */
+     }
+ 
+     fn collect_exists_false_matches(&self, state: &Arc<FrozenFieldMatcher<X>>) -> Vec<X> {
+         let mut result = Vec::new();
+         for exists_trans in state.exists_false.values() {
+             result.extend(exists_trans.matches.iter().cloned());
+         }
+         result

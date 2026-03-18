@@ -1,0 +1,21 @@
+--- src/automaton/mutable_matcher.rs
++++ replace + with - in CoreMatcher<X>::try_to_match_direct
+@@ -1429,17 +1429,17 @@
+         let value = field.value_bytes();
+         let array_trail = field.array_trail_slice();
+ 
+         // Check exists:true transition
+         if let Some(exists_trans) = state.exists_true.borrow().get(path) {
+             for m in exists_trans.matches.borrow().iter() {
+                 matches.add(m.clone());
+             }
+-            for next_idx in (index + 1)..fields.len() {
++            for next_idx in (index - /* ~ changed by cargo-mutants ~ */ 1)..fields.len() {
+                 if no_array_trail_conflict_ref(array_trail, fields[next_idx].array_trail_slice()) {
+                     self.try_to_match_direct(fields, next_idx, exists_trans, matches, bufs);
+                 }
+             }
+             self.check_exists_false_direct(state, fields, index, matches, bufs);
+         }
+ 
+         // Check exists:false

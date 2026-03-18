@@ -1,0 +1,21 @@
+--- src/automaton/thread_safe.rs
++++ replace FrozenMatchSet<X>::into_vec -> Vec<X> with vec![Default::default()]
+@@ -1002,17 +1002,17 @@
+ 
+     fn add(&mut self, x: X) {
+         if !self.matches.contains(&x) {
+             self.matches.push(x);
+         }
+     }
+ 
+     fn into_vec(self) -> Vec<X> {
+-        self.matches
++        vec![Default::default()] /* ~ changed by cargo-mutants ~ */
+     }
+ }
+ 
+ /// A working value matcher that uses automata for matching
+ ///
+ /// This demonstrates how automaton-based value matching works.
+ /// Values are matched by traversing the automaton on the value bytes.
+ #[derive(Clone, Default)]

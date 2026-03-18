@@ -1,0 +1,29 @@
+--- src/json.rs
++++ replace CidrPattern::parse_ipv4 -> Option<[u8; 4]> with None
+@@ -101,25 +101,17 @@
+             });
+         }
+ 
+         None
+     }
+ 
+     /// Parse an IPv4 address string
+     fn parse_ipv4(s: &str) -> Option<[u8; 4]> {
+-        let parts: Vec<&str> = s.split('.').collect();
+-        if parts.len() != 4 {
+-            return None;
+-        }
+-        let mut addr = [0u8; 4];
+-        for (i, part) in parts.iter().enumerate() {
+-            addr[i] = part.parse().ok()?;
+-        }
+-        Some(addr)
++        None /* ~ changed by cargo-mutants ~ */
+     }
+ 
+     /// Parse an IPv6 address string (supports :: shorthand)
+     fn parse_ipv6(s: &str) -> Option<[u8; 16]> {
+         let mut addr = [0u8; 16];
+ 
+         // Handle :: shorthand
+         if s.contains("::") {

@@ -1,0 +1,2345 @@
+
+*** src/automaton/thread_safe.rs:1004:12: delete ! in FrozenMatchSet<X>::add
+
+*** mutation diff:
+--- src/automaton/thread_safe.rs
++++ delete ! in FrozenMatchSet<X>::add
+@@ -996,17 +996,17 @@
+ impl<X: Clone + Eq> FrozenMatchSet<X> {
+     fn new() -> Self {
+         Self {
+             matches: Vec::new(),
+         }
+     }
+ 
+     fn add(&mut self, x: X) {
+-        if !self.matches.contains(&x) {
++        if  /* ~ changed by cargo-mutants ~ */self.matches.contains(&x) {
+             self.matches.push(x);
+         }
+     }
+ 
+     fn into_vec(self) -> Vec<X> {
+         self.matches
+     }
+ }
+
+
+*** /Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo test --no-run --profile=mutants --verbose --package=quamina@0.4.3
+       Fresh cfg-if v1.0.4
+       Fresh unicode-ident v1.0.22
+       Fresh memchr v2.7.6
+       Fresh find-msvc-tools v0.1.9
+       Fresh autocfg v1.5.0
+       Fresh shlex v1.3.0
+       Fresh proc-macro2 v1.0.105
+       Fresh cc v1.2.55
+       Fresh adler2 v2.0.1
+       Fresh itoa v1.0.17
+       Fresh quote v1.0.43
+       Fresh libc v0.2.180
+       Fresh serde_core v1.0.228
+       Fresh crossbeam-utils v0.8.21
+       Fresh zmij v1.0.15
+       Fresh either v1.15.0
+       Fresh smallvec v1.15.1
+       Fresh simd-adler32 v0.3.8
+       Fresh scopeguard v1.2.0
+       Fresh syn v2.0.114
+       Fresh crossbeam-epoch v0.9.18
+       Fresh miniz_oxide v0.8.9
+       Fresh lock_api v0.4.14
+       Fresh parking_lot_core v0.9.12
+       Fresh serde_json v1.0.149
+       Fresh aho-corasick v1.1.4
+       Fresh ciborium-io v0.2.2
+       Fresh clap_lex v0.7.7
+       Fresh anstyle v1.0.13
+       Fresh regex-syntax v0.8.8
+       Fresh gimli v0.32.3
+       Fresh serde_derive v1.0.228
+       Fresh zerocopy-derive v0.8.33
+       Fresh crossbeam-deque v0.8.6
+       Fresh plotters-backend v0.3.7
+       Fresh rand_core v0.10.0
+       Fresh clap_builder v4.5.54
+       Fresh object v0.37.3
+       Fresh parking_lot v0.12.5
+       Fresh regex-automata v0.4.13
+       Fresh rustversion v1.0.22
+       Fresh addr2line v0.25.1
+       Fresh num-traits v0.2.19
+       Fresh serde v1.0.228
+       Fresh zerocopy v0.8.33
+       Fresh plotters-svg v0.3.7
+       Fresh rayon-core v1.13.0
+       Fresh itertools v0.13.0
+       Fresh rustc-demangle v0.1.27
+       Fresh same-file v1.0.6
+       Fresh cast v0.3.0
+       Fresh arc-swap v1.8.0
+       Fresh clap v4.5.54
+       Fresh getrandom v0.4.1
+       Fresh regex v1.12.2
+       Fresh chacha20 v0.10.0
+       Fresh half v2.7.1
+       Fresh crc32fast v1.5.0
+       Fresh plotters v0.3.7
+       Fresh walkdir v2.5.0
+       Fresh criterion-plot v0.8.1
+       Fresh rayon v1.11.0
+       Fresh tinytemplate v1.2.1
+       Fresh backtrace v0.3.76
+       Fresh alloca v0.4.0
+       Fresh page_size v0.6.0
+       Fresh rustc-hash v2.1.1
+       Fresh oorandom v11.1.5
+       Fresh lazy_static v1.5.0
+       Fresh mintex v0.1.4
+       Fresh ciborium-ll v0.2.2
+       Fresh thousands v0.2.0
+       Fresh fast-float2 v0.2.3
+       Fresh rustc-hash v1.1.0
+       Fresh anes v0.1.6
+       Fresh cargo-husky v1.5.0
+       Fresh flate2 v1.1.8
+       Fresh rand v0.10.0
+       Fresh ciborium v0.2.2
+       Fresh dhat v0.3.3
+       Dirty quamina v0.4.3 (/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp): the file `src/automaton/thread_safe.rs` has changed (1773669743.687518644s, 9s after last build at 1773669734.009428262s)
+   Compiling quamina v0.4.3 (/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp)
+       Fresh criterion v0.8.1
+     Running `/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/rustc --crate-name quamina --edition=2021 src/lib.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --emit=dep-info,link -C embed-bitcode=no '--warn=clippy::perf' '--warn=clippy::use_self' '--warn=clippy::unused_peekable' --warn=unsafe_code --warn=unexpected_cfgs '--warn=clippy::undocumented_unsafe_blocks' '--warn=clippy::transmute_ptr_to_ptr' '--warn=clippy::redundant_clone' '--warn=clippy::or_fun_call' '--warn=clippy::equatable_if_let' '--warn=clippy::derive_partial_eq_without_eq' '--warn=clippy::branches_sharing_code' --check-cfg 'cfg(kani)' --test --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values("dhat-heap"))' -C metadata=8daadff97ac78112 -C extra-filename=-137b7d067facf300 --out-dir /private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps -C incremental=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/incremental -C strip=debuginfo -L dependency=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps --extern arc_swap=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libarc_swap-8dc94c7baf7d6503.rlib --extern cargo_husky=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libcargo_husky-959d622cb0e854bd.rlib --extern criterion=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libcriterion-5d01252276bfc921.rlib --extern dhat=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libdhat-be327f7d283e6040.rlib --extern fast_float2=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libfast_float2-ab4bcc5370fb9d9d.rlib --extern flate2=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libflate2-770fd3ea371cf479.rlib --extern memchr=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libmemchr-fad7cfa0ce919f3e.rlib --extern parking_lot=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libparking_lot-ea040230acb2cfe8.rlib --extern rand=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/librand-d62286a2584f1923.rlib --extern regex=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libregex-143ef4a17e2e5f75.rlib --extern rustc_hash=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/librustc_hash-475025c22853c846.rlib --extern smallvec=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libsmallvec-aef4c19c0cf1c118.rlib -L native=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/build/alloca-02cacc78a7329cb4/out`
+     Running `/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/rustc --crate-name quamina --edition=2021 src/lib.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --crate-type lib --emit=dep-info,metadata,link -C embed-bitcode=no '--warn=clippy::perf' '--warn=clippy::use_self' '--warn=clippy::unused_peekable' --warn=unsafe_code --warn=unexpected_cfgs '--warn=clippy::undocumented_unsafe_blocks' '--warn=clippy::transmute_ptr_to_ptr' '--warn=clippy::redundant_clone' '--warn=clippy::or_fun_call' '--warn=clippy::equatable_if_let' '--warn=clippy::derive_partial_eq_without_eq' '--warn=clippy::branches_sharing_code' --check-cfg 'cfg(kani)' --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values("dhat-heap"))' -C metadata=7632b1bb87c843c6 -C extra-filename=-28509fa74a3a2eed --out-dir /private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps -C incremental=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/incremental -C strip=debuginfo -L dependency=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps --extern arc_swap=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libarc_swap-8dc94c7baf7d6503.rmeta --extern fast_float2=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libfast_float2-ab4bcc5370fb9d9d.rmeta --extern memchr=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libmemchr-fad7cfa0ce919f3e.rmeta --extern parking_lot=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libparking_lot-ea040230acb2cfe8.rmeta --extern rustc_hash=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/librustc_hash-475025c22853c846.rmeta --extern smallvec=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libsmallvec-aef4c19c0cf1c118.rmeta`
+     Running `/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/rustc --crate-name profile_citylots --edition=2021 examples/profile_citylots.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --crate-type bin --emit=dep-info,link -C embed-bitcode=no '--warn=clippy::perf' '--warn=clippy::use_self' '--warn=clippy::unused_peekable' --warn=unsafe_code --warn=unexpected_cfgs '--warn=clippy::undocumented_unsafe_blocks' '--warn=clippy::transmute_ptr_to_ptr' '--warn=clippy::redundant_clone' '--warn=clippy::or_fun_call' '--warn=clippy::equatable_if_let' '--warn=clippy::derive_partial_eq_without_eq' '--warn=clippy::branches_sharing_code' --check-cfg 'cfg(kani)' --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values("dhat-heap"))' -C metadata=981009bbc3295b3e -C extra-filename=-86163ab00eefc0b6 --out-dir /private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/examples -C incremental=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/incremental -C strip=debuginfo -L dependency=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps --extern arc_swap=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libarc_swap-8dc94c7baf7d6503.rlib --extern cargo_husky=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libcargo_husky-959d622cb0e854bd.rlib --extern criterion=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libcriterion-5d01252276bfc921.rlib --extern dhat=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libdhat-be327f7d283e6040.rlib --extern fast_float2=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libfast_float2-ab4bcc5370fb9d9d.rlib --extern flate2=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libflate2-770fd3ea371cf479.rlib --extern memchr=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libmemchr-fad7cfa0ce919f3e.rlib --extern parking_lot=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libparking_lot-ea040230acb2cfe8.rlib --extern quamina=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libquamina-28509fa74a3a2eed.rlib --extern rand=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/librand-d62286a2584f1923.rlib --extern regex=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libregex-143ef4a17e2e5f75.rlib --extern rustc_hash=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/librustc_hash-475025c22853c846.rlib --extern smallvec=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libsmallvec-aef4c19c0cf1c118.rlib -L native=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/build/alloca-02cacc78a7329cb4/out`
+     Running `/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/rustc --crate-name smoke --edition=2021 examples/smoke.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --crate-type bin --emit=dep-info,link -C embed-bitcode=no '--warn=clippy::perf' '--warn=clippy::use_self' '--warn=clippy::unused_peekable' --warn=unsafe_code --warn=unexpected_cfgs '--warn=clippy::undocumented_unsafe_blocks' '--warn=clippy::transmute_ptr_to_ptr' '--warn=clippy::redundant_clone' '--warn=clippy::or_fun_call' '--warn=clippy::equatable_if_let' '--warn=clippy::derive_partial_eq_without_eq' '--warn=clippy::branches_sharing_code' --check-cfg 'cfg(kani)' --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values("dhat-heap"))' -C metadata=9e01bfaade60c5a3 -C extra-filename=-4836a85ebcf42562 --out-dir /private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/examples -C incremental=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/incremental -C strip=debuginfo -L dependency=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps --extern arc_swap=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libarc_swap-8dc94c7baf7d6503.rlib --extern cargo_husky=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libcargo_husky-959d622cb0e854bd.rlib --extern criterion=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libcriterion-5d01252276bfc921.rlib --extern dhat=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libdhat-be327f7d283e6040.rlib --extern fast_float2=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libfast_float2-ab4bcc5370fb9d9d.rlib --extern flate2=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libflate2-770fd3ea371cf479.rlib --extern memchr=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libmemchr-fad7cfa0ce919f3e.rlib --extern parking_lot=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libparking_lot-ea040230acb2cfe8.rlib --extern quamina=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libquamina-28509fa74a3a2eed.rlib --extern rand=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/librand-d62286a2584f1923.rlib --extern regex=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libregex-143ef4a17e2e5f75.rlib --extern rustc_hash=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/librustc_hash-475025c22853c846.rlib --extern smallvec=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libsmallvec-aef4c19c0cf1c118.rlib -L native=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/build/alloca-02cacc78a7329cb4/out`
+     Running `/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/rustc --crate-name profile_shellstyle --edition=2021 examples/profile_shellstyle.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --crate-type bin --emit=dep-info,link -C embed-bitcode=no '--warn=clippy::perf' '--warn=clippy::use_self' '--warn=clippy::unused_peekable' --warn=unsafe_code --warn=unexpected_cfgs '--warn=clippy::undocumented_unsafe_blocks' '--warn=clippy::transmute_ptr_to_ptr' '--warn=clippy::redundant_clone' '--warn=clippy::or_fun_call' '--warn=clippy::equatable_if_let' '--warn=clippy::derive_partial_eq_without_eq' '--warn=clippy::branches_sharing_code' --check-cfg 'cfg(kani)' --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values("dhat-heap"))' -C metadata=b090ced4cf867fae -C extra-filename=-f05994167a64dd15 --out-dir /private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/examples -C incremental=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/incremental -C strip=debuginfo -L dependency=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps --extern arc_swap=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libarc_swap-8dc94c7baf7d6503.rlib --extern cargo_husky=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libcargo_husky-959d622cb0e854bd.rlib --extern criterion=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libcriterion-5d01252276bfc921.rlib --extern dhat=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libdhat-be327f7d283e6040.rlib --extern fast_float2=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libfast_float2-ab4bcc5370fb9d9d.rlib --extern flate2=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libflate2-770fd3ea371cf479.rlib --extern memchr=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libmemchr-fad7cfa0ce919f3e.rlib --extern parking_lot=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libparking_lot-ea040230acb2cfe8.rlib --extern quamina=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libquamina-28509fa74a3a2eed.rlib --extern rand=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/librand-d62286a2584f1923.rlib --extern regex=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libregex-143ef4a17e2e5f75.rlib --extern rustc_hash=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/librustc_hash-475025c22853c846.rlib --extern smallvec=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libsmallvec-aef4c19c0cf1c118.rlib -L native=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/build/alloca-02cacc78a7329cb4/out`
+     Running `/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/rustc --crate-name profile_pathological --edition=2021 examples/profile_pathological.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --crate-type bin --emit=dep-info,link -C embed-bitcode=no '--warn=clippy::perf' '--warn=clippy::use_self' '--warn=clippy::unused_peekable' --warn=unsafe_code --warn=unexpected_cfgs '--warn=clippy::undocumented_unsafe_blocks' '--warn=clippy::transmute_ptr_to_ptr' '--warn=clippy::redundant_clone' '--warn=clippy::or_fun_call' '--warn=clippy::equatable_if_let' '--warn=clippy::derive_partial_eq_without_eq' '--warn=clippy::branches_sharing_code' --check-cfg 'cfg(kani)' --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values("dhat-heap"))' -C metadata=4ab4091f48300c18 -C extra-filename=-6843d868e4b50205 --out-dir /private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/examples -C incremental=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/incremental -C strip=debuginfo -L dependency=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps --extern arc_swap=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libarc_swap-8dc94c7baf7d6503.rlib --extern cargo_husky=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libcargo_husky-959d622cb0e854bd.rlib --extern criterion=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libcriterion-5d01252276bfc921.rlib --extern dhat=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libdhat-be327f7d283e6040.rlib --extern fast_float2=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libfast_float2-ab4bcc5370fb9d9d.rlib --extern flate2=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libflate2-770fd3ea371cf479.rlib --extern memchr=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libmemchr-fad7cfa0ce919f3e.rlib --extern parking_lot=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libparking_lot-ea040230acb2cfe8.rlib --extern quamina=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libquamina-28509fa74a3a2eed.rlib --extern rand=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/librand-d62286a2584f1923.rlib --extern regex=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libregex-143ef4a17e2e5f75.rlib --extern rustc_hash=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/librustc_hash-475025c22853c846.rlib --extern smallvec=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libsmallvec-aef4c19c0cf1c118.rlib -L native=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/build/alloca-02cacc78a7329cb4/out`
+    Finished `mutants` profile [unoptimized] target(s) in 0.88s
+  Executable `/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/quamina-137b7d067facf300`
+
+*** result: Success
+
+*** /Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo test --profile=mutants --verbose --package=quamina@0.4.3 --all-targets
+       Fresh cfg-if v1.0.4
+       Fresh unicode-ident v1.0.22
+       Fresh memchr v2.7.6
+       Fresh autocfg v1.5.0
+       Fresh shlex v1.3.0
+       Fresh proc-macro2 v1.0.105
+       Fresh find-msvc-tools v0.1.9
+       Fresh simd-adler32 v0.3.8
+       Fresh adler2 v2.0.1
+       Fresh scopeguard v1.2.0
+       Fresh quote v1.0.43
+       Fresh libc v0.2.180
+       Fresh serde_core v1.0.228
+       Fresh crossbeam-utils v0.8.21
+       Fresh zmij v1.0.15
+       Fresh cc v1.2.55
+       Fresh either v1.15.0
+       Fresh smallvec v1.15.1
+       Fresh itoa v1.0.17
+       Fresh miniz_oxide v0.8.9
+       Fresh lock_api v0.4.14
+       Fresh syn v2.0.114
+       Fresh crossbeam-epoch v0.9.18
+       Fresh parking_lot_core v0.9.12
+       Fresh serde_json v1.0.149
+       Fresh aho-corasick v1.1.4
+       Fresh rand_core v0.10.0
+       Fresh regex-syntax v0.8.8
+       Fresh clap_lex v0.7.7
+       Fresh plotters-backend v0.3.7
+       Fresh zerocopy-derive v0.8.33
+       Fresh serde_derive v1.0.228
+       Fresh crossbeam-deque v0.8.6
+       Fresh gimli v0.32.3
+       Fresh ciborium-io v0.2.2
+       Fresh anstyle v1.0.13
+       Fresh regex-automata v0.4.13
+       Fresh rustversion v1.0.22
+       Fresh parking_lot v0.12.5
+       Fresh object v0.37.3
+       Fresh plotters-svg v0.3.7
+       Fresh itertools v0.13.0
+       Fresh serde v1.0.228
+       Fresh zerocopy v0.8.33
+       Fresh addr2line v0.25.1
+       Fresh rayon-core v1.13.0
+       Fresh clap_builder v4.5.54
+       Fresh num-traits v0.2.19
+       Fresh cast v0.3.0
+       Fresh same-file v1.0.6
+       Fresh rustc-demangle v0.1.27
+       Fresh arc-swap v1.8.0
+       Fresh alloca v0.4.0
+       Fresh regex v1.12.2
+       Fresh getrandom v0.4.1
+       Fresh crc32fast v1.5.0
+       Fresh half v2.7.1
+       Fresh tinytemplate v1.2.1
+       Fresh walkdir v2.5.0
+       Fresh clap v4.5.54
+       Fresh rayon v1.11.0
+       Fresh backtrace v0.3.76
+       Fresh criterion-plot v0.8.1
+       Fresh plotters v0.3.7
+       Fresh chacha20 v0.10.0
+       Fresh page_size v0.6.0
+       Fresh anes v0.1.6
+       Fresh lazy_static v1.5.0
+       Fresh fast-float2 v0.2.3
+       Fresh mintex v0.1.4
+       Fresh ciborium-ll v0.2.2
+       Fresh oorandom v11.1.5
+       Fresh rustc-hash v1.1.0
+       Fresh rustc-hash v2.1.1
+       Fresh thousands v0.2.0
+       Fresh cargo-husky v1.5.0
+       Fresh rand v0.10.0
+       Fresh flate2 v1.1.8
+       Fresh ciborium v0.2.2
+       Fresh dhat v0.3.3
+       Fresh criterion v0.8.1
+       Dirty quamina v0.4.3 (/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp): the dependency quamina was rebuilt (1773669744.016320112s, 9s after last build at 1773669735.204844457s)
+   Compiling quamina v0.4.3 (/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp)
+     Running `/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/rustc --crate-name profile_shellstyle --edition=2021 examples/profile_shellstyle.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --emit=dep-info,link -C embed-bitcode=no '--warn=clippy::perf' '--warn=clippy::use_self' '--warn=clippy::unused_peekable' --warn=unsafe_code --warn=unexpected_cfgs '--warn=clippy::undocumented_unsafe_blocks' '--warn=clippy::transmute_ptr_to_ptr' '--warn=clippy::redundant_clone' '--warn=clippy::or_fun_call' '--warn=clippy::equatable_if_let' '--warn=clippy::derive_partial_eq_without_eq' '--warn=clippy::branches_sharing_code' --check-cfg 'cfg(kani)' --test --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values("dhat-heap"))' -C metadata=e4f3c5f0c26b0914 -C extra-filename=-6aaf8d9505430e71 --out-dir /private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/examples -C incremental=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/incremental -C strip=debuginfo -L dependency=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps --extern arc_swap=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libarc_swap-8dc94c7baf7d6503.rlib --extern cargo_husky=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libcargo_husky-959d622cb0e854bd.rlib --extern criterion=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libcriterion-5d01252276bfc921.rlib --extern dhat=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libdhat-be327f7d283e6040.rlib --extern fast_float2=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libfast_float2-ab4bcc5370fb9d9d.rlib --extern flate2=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libflate2-770fd3ea371cf479.rlib --extern memchr=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libmemchr-fad7cfa0ce919f3e.rlib --extern parking_lot=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libparking_lot-ea040230acb2cfe8.rlib --extern quamina=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libquamina-28509fa74a3a2eed.rlib --extern rand=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/librand-d62286a2584f1923.rlib --extern regex=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libregex-143ef4a17e2e5f75.rlib --extern rustc_hash=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/librustc_hash-475025c22853c846.rlib --extern smallvec=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libsmallvec-aef4c19c0cf1c118.rlib -L native=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/build/alloca-02cacc78a7329cb4/out`
+     Running `/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/rustc --crate-name bulk_10k --edition=2021 benches/bulk_10k.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --emit=dep-info,link -C embed-bitcode=no '--warn=clippy::perf' '--warn=clippy::use_self' '--warn=clippy::unused_peekable' --warn=unsafe_code --warn=unexpected_cfgs '--warn=clippy::undocumented_unsafe_blocks' '--warn=clippy::transmute_ptr_to_ptr' '--warn=clippy::redundant_clone' '--warn=clippy::or_fun_call' '--warn=clippy::equatable_if_let' '--warn=clippy::derive_partial_eq_without_eq' '--warn=clippy::branches_sharing_code' --check-cfg 'cfg(kani)' --cfg test --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values("dhat-heap"))' -C metadata=9f5b1c8138038d52 -C extra-filename=-c55937e16f51c58a --out-dir /private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps -C incremental=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/incremental -C strip=debuginfo -L dependency=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps --extern arc_swap=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libarc_swap-8dc94c7baf7d6503.rlib --extern cargo_husky=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libcargo_husky-959d622cb0e854bd.rlib --extern criterion=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libcriterion-5d01252276bfc921.rlib --extern dhat=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libdhat-be327f7d283e6040.rlib --extern fast_float2=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libfast_float2-ab4bcc5370fb9d9d.rlib --extern flate2=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libflate2-770fd3ea371cf479.rlib --extern memchr=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libmemchr-fad7cfa0ce919f3e.rlib --extern parking_lot=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libparking_lot-ea040230acb2cfe8.rlib --extern quamina=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libquamina-28509fa74a3a2eed.rlib --extern rand=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/librand-d62286a2584f1923.rlib --extern regex=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libregex-143ef4a17e2e5f75.rlib --extern rustc_hash=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/librustc_hash-475025c22853c846.rlib --extern smallvec=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libsmallvec-aef4c19c0cf1c118.rlib -L native=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/build/alloca-02cacc78a7329cb4/out`
+     Running `/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/rustc --crate-name smoke --edition=2021 examples/smoke.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --emit=dep-info,link -C embed-bitcode=no '--warn=clippy::perf' '--warn=clippy::use_self' '--warn=clippy::unused_peekable' --warn=unsafe_code --warn=unexpected_cfgs '--warn=clippy::undocumented_unsafe_blocks' '--warn=clippy::transmute_ptr_to_ptr' '--warn=clippy::redundant_clone' '--warn=clippy::or_fun_call' '--warn=clippy::equatable_if_let' '--warn=clippy::derive_partial_eq_without_eq' '--warn=clippy::branches_sharing_code' --check-cfg 'cfg(kani)' --test --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values("dhat-heap"))' -C metadata=0024f46443f80b14 -C extra-filename=-b622ae32677953bb --out-dir /private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/examples -C incremental=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/incremental -C strip=debuginfo -L dependency=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps --extern arc_swap=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libarc_swap-8dc94c7baf7d6503.rlib --extern cargo_husky=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libcargo_husky-959d622cb0e854bd.rlib --extern criterion=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libcriterion-5d01252276bfc921.rlib --extern dhat=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libdhat-be327f7d283e6040.rlib --extern fast_float2=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libfast_float2-ab4bcc5370fb9d9d.rlib --extern flate2=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libflate2-770fd3ea371cf479.rlib --extern memchr=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libmemchr-fad7cfa0ce919f3e.rlib --extern parking_lot=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libparking_lot-ea040230acb2cfe8.rlib --extern quamina=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libquamina-28509fa74a3a2eed.rlib --extern rand=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/librand-d62286a2584f1923.rlib --extern regex=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libregex-143ef4a17e2e5f75.rlib --extern rustc_hash=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/librustc_hash-475025c22853c846.rlib --extern smallvec=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libsmallvec-aef4c19c0cf1c118.rlib -L native=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/build/alloca-02cacc78a7329cb4/out`
+     Running `/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/rustc --crate-name matching --edition=2021 benches/matching.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --emit=dep-info,link -C embed-bitcode=no '--warn=clippy::perf' '--warn=clippy::use_self' '--warn=clippy::unused_peekable' --warn=unsafe_code --warn=unexpected_cfgs '--warn=clippy::undocumented_unsafe_blocks' '--warn=clippy::transmute_ptr_to_ptr' '--warn=clippy::redundant_clone' '--warn=clippy::or_fun_call' '--warn=clippy::equatable_if_let' '--warn=clippy::derive_partial_eq_without_eq' '--warn=clippy::branches_sharing_code' --check-cfg 'cfg(kani)' --cfg test --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values("dhat-heap"))' -C metadata=36a5dd4bf24a2904 -C extra-filename=-55f5e7b21be2df53 --out-dir /private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps -C incremental=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/incremental -C strip=debuginfo -L dependency=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps --extern arc_swap=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libarc_swap-8dc94c7baf7d6503.rlib --extern cargo_husky=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libcargo_husky-959d622cb0e854bd.rlib --extern criterion=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libcriterion-5d01252276bfc921.rlib --extern dhat=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libdhat-be327f7d283e6040.rlib --extern fast_float2=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libfast_float2-ab4bcc5370fb9d9d.rlib --extern flate2=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libflate2-770fd3ea371cf479.rlib --extern memchr=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libmemchr-fad7cfa0ce919f3e.rlib --extern parking_lot=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libparking_lot-ea040230acb2cfe8.rlib --extern quamina=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libquamina-28509fa74a3a2eed.rlib --extern rand=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/librand-d62286a2584f1923.rlib --extern regex=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libregex-143ef4a17e2e5f75.rlib --extern rustc_hash=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/librustc_hash-475025c22853c846.rlib --extern smallvec=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libsmallvec-aef4c19c0cf1c118.rlib -L native=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/build/alloca-02cacc78a7329cb4/out`
+     Running `/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/rustc --crate-name profile_pathological --edition=2021 examples/profile_pathological.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --emit=dep-info,link -C embed-bitcode=no '--warn=clippy::perf' '--warn=clippy::use_self' '--warn=clippy::unused_peekable' --warn=unsafe_code --warn=unexpected_cfgs '--warn=clippy::undocumented_unsafe_blocks' '--warn=clippy::transmute_ptr_to_ptr' '--warn=clippy::redundant_clone' '--warn=clippy::or_fun_call' '--warn=clippy::equatable_if_let' '--warn=clippy::derive_partial_eq_without_eq' '--warn=clippy::branches_sharing_code' --check-cfg 'cfg(kani)' --test --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values("dhat-heap"))' -C metadata=593a33a3a5e44193 -C extra-filename=-dd244cd3e6984c6e --out-dir /private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/examples -C incremental=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/incremental -C strip=debuginfo -L dependency=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps --extern arc_swap=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libarc_swap-8dc94c7baf7d6503.rlib --extern cargo_husky=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libcargo_husky-959d622cb0e854bd.rlib --extern criterion=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libcriterion-5d01252276bfc921.rlib --extern dhat=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libdhat-be327f7d283e6040.rlib --extern fast_float2=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libfast_float2-ab4bcc5370fb9d9d.rlib --extern flate2=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libflate2-770fd3ea371cf479.rlib --extern memchr=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libmemchr-fad7cfa0ce919f3e.rlib --extern parking_lot=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libparking_lot-ea040230acb2cfe8.rlib --extern quamina=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libquamina-28509fa74a3a2eed.rlib --extern rand=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/librand-d62286a2584f1923.rlib --extern regex=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libregex-143ef4a17e2e5f75.rlib --extern rustc_hash=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/librustc_hash-475025c22853c846.rlib --extern smallvec=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libsmallvec-aef4c19c0cf1c118.rlib -L native=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/build/alloca-02cacc78a7329cb4/out`
+     Running `/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/rustc --crate-name memory --edition=2021 benches/memory.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --emit=dep-info,link -C embed-bitcode=no '--warn=clippy::perf' '--warn=clippy::use_self' '--warn=clippy::unused_peekable' --warn=unsafe_code --warn=unexpected_cfgs '--warn=clippy::undocumented_unsafe_blocks' '--warn=clippy::transmute_ptr_to_ptr' '--warn=clippy::redundant_clone' '--warn=clippy::or_fun_call' '--warn=clippy::equatable_if_let' '--warn=clippy::derive_partial_eq_without_eq' '--warn=clippy::branches_sharing_code' --check-cfg 'cfg(kani)' --cfg test --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values("dhat-heap"))' -C metadata=e43666ab1d726ea7 -C extra-filename=-94c7cd016dd302fd --out-dir /private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps -C incremental=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/incremental -C strip=debuginfo -L dependency=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps --extern arc_swap=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libarc_swap-8dc94c7baf7d6503.rlib --extern cargo_husky=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libcargo_husky-959d622cb0e854bd.rlib --extern criterion=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libcriterion-5d01252276bfc921.rlib --extern dhat=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libdhat-be327f7d283e6040.rlib --extern fast_float2=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libfast_float2-ab4bcc5370fb9d9d.rlib --extern flate2=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libflate2-770fd3ea371cf479.rlib --extern memchr=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libmemchr-fad7cfa0ce919f3e.rlib --extern parking_lot=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libparking_lot-ea040230acb2cfe8.rlib --extern quamina=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libquamina-28509fa74a3a2eed.rlib --extern rand=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/librand-d62286a2584f1923.rlib --extern regex=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libregex-143ef4a17e2e5f75.rlib --extern rustc_hash=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/librustc_hash-475025c22853c846.rlib --extern smallvec=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libsmallvec-aef4c19c0cf1c118.rlib -L native=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/build/alloca-02cacc78a7329cb4/out`
+     Running `/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/rustc --crate-name profile_citylots --edition=2021 examples/profile_citylots.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --emit=dep-info,link -C embed-bitcode=no '--warn=clippy::perf' '--warn=clippy::use_self' '--warn=clippy::unused_peekable' --warn=unsafe_code --warn=unexpected_cfgs '--warn=clippy::undocumented_unsafe_blocks' '--warn=clippy::transmute_ptr_to_ptr' '--warn=clippy::redundant_clone' '--warn=clippy::or_fun_call' '--warn=clippy::equatable_if_let' '--warn=clippy::derive_partial_eq_without_eq' '--warn=clippy::branches_sharing_code' --check-cfg 'cfg(kani)' --test --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values("dhat-heap"))' -C metadata=9379508d92a0fd03 -C extra-filename=-f551dbd7e79bed79 --out-dir /private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/examples -C incremental=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/incremental -C strip=debuginfo -L dependency=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps --extern arc_swap=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libarc_swap-8dc94c7baf7d6503.rlib --extern cargo_husky=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libcargo_husky-959d622cb0e854bd.rlib --extern criterion=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libcriterion-5d01252276bfc921.rlib --extern dhat=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libdhat-be327f7d283e6040.rlib --extern fast_float2=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libfast_float2-ab4bcc5370fb9d9d.rlib --extern flate2=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libflate2-770fd3ea371cf479.rlib --extern memchr=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libmemchr-fad7cfa0ce919f3e.rlib --extern parking_lot=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libparking_lot-ea040230acb2cfe8.rlib --extern quamina=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libquamina-28509fa74a3a2eed.rlib --extern rand=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/librand-d62286a2584f1923.rlib --extern regex=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libregex-143ef4a17e2e5f75.rlib --extern rustc_hash=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/librustc_hash-475025c22853c846.rlib --extern smallvec=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/libsmallvec-aef4c19c0cf1c118.rlib -L native=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/build/alloca-02cacc78a7329cb4/out`
+    Finished `mutants` profile [unoptimized] target(s) in 0.62s
+     Running `/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-D6Bl38.tmp/target/mutants/deps/quamina-137b7d067facf300`
+
+running 593 tests
+test automaton::arena::merge_tests::test_merge_empty_arenas ... ok
+test automaton::arena::anything_but_arena_tests::test_anything_but_arena_fa_empty_excluded ... ok
+test automaton::arena::cidr_arena_tests::test_cidr_arena_fa_ipv4_exact ... ok
+test automaton::arena::merge_tests::test_merge_one_empty_arena ... ok
+test automaton::arena::cidr_arena_tests::test_cidr_arena_fa_ipv4_range ... ok
+test automaton::arena::anything_but_arena_tests::test_anything_but_arena_fa_single_value ... ok
+test automaton::arena::anything_but_arena_tests::test_anything_but_arena_fa_common_prefix ... ok
+test automaton::arena::cidr_arena_tests::test_cidr_arena_fa_ipv6_basic ... ok
+test automaton::arena::anything_but_arena_tests::test_anything_but_arena_fa_merge ... ok
+test automaton::arena::merge_tests::test_merge_overlapping_transitions ... ok
+test automaton::arena::cidr_arena_tests::test_cidr_arena_fa_merge ... ok
+test automaton::arena::anything_but_arena_tests::test_anything_but_arena_fa_multiple_values ... ok
+test automaton::arena::merge_tests::test_merge_preserves_field_transitions ... ok
+test automaton::arena::merge_tests::test_merge_multi_byte_sequences ... ok
+test automaton::arena::merge_tests::test_merge_single_transition ... ok
+test automaton::arena::monocase_arena_tests::test_monocase_arena_fa_basic_ascii ... ok
+test automaton::arena::monocase_arena_tests::test_monocase_arena_fa_empty ... ok
+test automaton::arena::merge_tests::test_merge_multiple_arenas_associative ... ok
+test automaton::arena::monocase_arena_tests::test_monocase_arena_fa_mixed_ascii ... ok
+test automaton::arena::monocase_arena_tests::test_monocase_arena_fa_no_case_chars ... ok
+test automaton::arena::monocase_arena_tests::test_monocase_arena_fa_greek_sigma ... ok
+test automaton::arena::monocase_arena_tests::test_monocase_arena_fa_merge ... ok
+test automaton::arena::monocase_arena_tests::test_monocase_arena_fa_three_chars ... ok
+test automaton::arena::monocase_arena_tests::test_monocase_arena_fa_single_char ... ok
+test automaton::arena::monocase_arena_tests::test_monocase_arena_fa_two_chars ... ok
+test automaton::arena::nfa_merge_tests::test_merge_arena_nfas_empty_cases ... ok
+test automaton::arena::nfa_merge_tests::test_flatten_epsilon_targets_on_repeated_merge ... ok
+test automaton::arena::nfa_merge_tests::test_merge_arena_both_have_spinouts ... ok
+test automaton::arena::nfa_merge_tests::test_merge_arena_with_epsilons ... ok
+test automaton::arena::nfa_merge_tests::test_merge_arena_shellstyle_patterns ... ok
+test automaton::arena::nfa_merge_tests::test_merge_arena_with_spinout ... ok
+test automaton::arena::nfa_merge_tests::test_merge_arena_preserves_cycles ... ok
+test automaton::arena::numeric_arena_tests::test_numeric_arena_fa_edge_cases ... ok
+test automaton::arena::numeric_arena_tests::test_numeric_arena_fa_float_values ... ok
+test automaton::arena::numeric_arena_tests::test_numeric_greater_arena_fa_basic ... ok
+test automaton::arena::numeric_arena_tests::test_numeric_greater_arena_fa_exclusive ... ok
+test automaton::arena::numeric_arena_tests::test_numeric_less_arena_fa_exclusive ... ok
+test automaton::arena::numeric_arena_tests::test_numeric_less_arena_fa_basic ... ok
+test automaton::arena::prefix_arena_tests::test_prefix_arena_fa_basic ... ok
+test automaton::arena::numeric_arena_tests::test_numeric_range_arena_fa_two_sided ... ok
+test automaton::arena::prefix_arena_tests::test_prefix_arena_fa_empty_prefix ... ok
+test automaton::arena::numeric_arena_tests::test_numeric_arena_fa_merge ... ok
+test automaton::arena::numeric_arena_tests::test_numeric_range_arena_fa_exclusive_bounds ... ok
+test automaton::arena::prefix_arena_tests::test_prefix_arena_fa_utf8 ... ok
+test automaton::arena::prefix_arena_tests::test_prefix_arena_fa_merge ... ok
+test automaton::arena::shellstyle_arena_tests::test_shellstyle_arena_fa_eight_star ... ok
+test automaton::arena::cidr_arena_tests::test_cidr_arena_fa_ipv4_24 ... ok
+test automaton::arena::shellstyle_arena_tests::test_shellstyle_arena_fa_no_wildcard ... ok
+test automaton::arena::prefix_arena_tests::test_prefix_arena_fa_single_char ... ok
+test automaton::arena::string_arena_tests::test_string_arena_fa_basic ... ok
+test automaton::arena::shellstyle_arena_tests::test_shellstyle_arena_fa_suffix_wildcard ... ok
+test automaton::arena::string_arena_tests::test_string_arena_fa_empty_string ... ok
+test automaton::arena::shellstyle_arena_tests::test_shellstyle_arena_fa_double_wildcard ... ok
+test automaton::arena::shellstyle_arena_tests::test_shellstyle_arena_fa_foo_bar_multi_star ... ok
+test automaton::arena::string_arena_tests::test_string_arena_fa_utf8 ... ok
+test automaton::arena::tests::test_arena_alloc ... ok
+test automaton::arena::shellstyle_arena_tests::test_shellstyle_arena_fa_five_star ... ok
+test automaton::arena::tests::test_arena_cyclic_reference ... ok
+test automaton::arena::tests::test_arena_small_table_pack ... ok
+test automaton::arena::shellstyle_arena_tests::test_shellstyle_arena_fa_only_wildcard ... ok
+test automaton::arena::shellstyle_arena_tests::test_shellstyle_arena_fa_infix_wildcard ... ok
+test automaton::arena::shellstyle_arena_tests::test_shellstyle_arena_fa_merge ... ok
+test automaton::arena::numeric_arena_tests::test_numeric_arena_fa_ordering_preserved ... ok
+test automaton::arena::shellstyle_arena_tests::test_shellstyle_arena_fa_prefix_wildcard ... ok
+test automaton::arena::tests::test_arena_state_count_vs_chain ... ok
+test automaton::arena::string_arena_tests::test_string_arena_fa_merge ... ok
+test automaton::arena::tests::test_arena_stats_empty ... ok
+test automaton::arena::tests::test_ascii_fast_path_acceleration ... ok
+test automaton::arena::tests::test_arena_stats_basic ... ok
+test automaton::arena::string_arena_tests::test_string_arena_fa_single_char ... ok
+test automaton::arena::tests::test_state_id_none ... ok
+test automaton::arena::tests::test_dfa_lookup_matches_smalltable_dstep ... ok
+test automaton::arena::tests::test_nested_quantifier_dedup ... ok
+test automaton::arena::tests::test_traverse_arena_nfa_simple ... ok
+test automaton::arena::tests::test_traverse_arena_nfa_plus_cyclic ... ok
+test automaton::arena::wildcard_arena_tests::test_wildcard_arena_fa_basic ... ok
+test automaton::arena::wildcard_arena_tests::test_wildcard_arena_fa_escape_star ... ok
+test automaton::arena::tests::test_traverse_arena_nfa_star_cyclic ... ok
+test automaton::arena::wildcard_arena_tests::test_wildcard_arena_fa_no_escape ... ok
+test automaton::arena::tests::test_try_accelerate_arena ... ok
+test automaton::arena::string_arena_tests::test_string_arena_fa_merge_common_prefix ... ok
+test automaton::arena::wildcard_arena_tests::test_wildcard_arena_fa_escape_backslash ... ok
+test automaton::arena::wildcard_arena_tests::test_wildcard_arena_fa_star_at_end_with_escape ... ok
+test automaton::arena::wildcard_arena_tests::test_wildcard_arena_fa_escape_with_wildcard ... ok
+test automaton::mutable_matcher::tests::test_arena_migration_string_single ... ok
+test automaton::mutable_matcher::tests::test_arena_migration_prefix ... ok
+test automaton::mutable_matcher::tests::test_arena_migration_monocase ... ok
+test automaton::mutable_matcher::tests::test_arena_migration_string_multiple ... ok
+test automaton::mutable_matcher::tests::test_arena_migration_shellstyle ... ok
+test automaton::mutable_matcher::tests::test_arena_migration_anything_but ... ok
+test automaton::arena::wildcard_arena_tests::test_wildcard_arena_fa_merge ... ok
+test automaton::mutable_matcher::tests::test_arena_migration_numeric_range ... ok
+test automaton::sparse_set::tests::test_sparse_set_resize ... ok
+test automaton::mutable_matcher::tests::test_value_matcher_regexp_with_plus ... ok
+test automaton::mutable_matcher::tests::test_match_set_dedup ... ok
+test automaton::sparse_set::tests::test_sparse_set_basic ... ok
+test automaton::mutable_matcher::tests::test_arena_migration_mixed_patterns ... ok
+test automaton::mutable_matcher::tests::test_arena_migration_wildcard_escape ... ok
+test automaton::mutable_matcher::tests::test_arena_migration_core_matcher_all_types ... ok
+test automaton::sparse_set::tests::test_sparse_set_insertion_order ... ok
+test automaton::sparse_set::tests::test_sparse_set_clear ... ok
+test automaton::mutable_matcher::tests::test_value_matcher_regexp_without_plus ... ok
+test automaton::mutable_matcher::tests::test_core_matcher_with_arena_regexp ... ok
+test automaton::mutable_matcher::tests::test_core_matcher_direct_with_arena_regexp ... ok
+test automaton::tests::test_arena_small_table_step ... ok
+test automaton::tests::test_arena_nfa_bufs_clear_observable_through_matching ... ok
+test automaton::tests::test_arena_small_table_with_mappings ... ok
+test automaton::tests::test_automaton_value_matcher_mixed ... ok
+test automaton::tests::test_automaton_value_matcher_prefix ... ok
+test automaton::tests::test_core_matcher_multi_field_partial_no_match ... ok
+test automaton::tests::test_automaton_value_matcher_shellstyle_single ... ok
+test automaton::tests::test_core_matcher_or_within_field ... ok
+test automaton::tests::test_core_matcher_exists_false ... ok
+test automaton::tests::test_automaton_value_matcher_shellstyle_multiple ... ok
+test automaton::tests::test_core_matcher_exists_true ... ok
+test automaton::tests::test_core_matcher_multi_field_and ... ok
+test automaton::tests::test_core_matcher_single_field_exact ... ok
+test automaton::tests::test_core_matcher_single_field_no_match ... ok
+test automaton::tests::test_field_matcher_with_match_id_stores_id ... ok
+test automaton::tests::test_core_matcher_multiple_patterns ... ok
+test automaton::tests::test_sparse_set_capacity_returns_correct_value ... ok
+test automaton::tests::test_field_matcher_with_match_id_vs_default ... ok
+test automaton::tests::test_nfa_buffers_clear ... ok
+test automaton::tests::test_sparse_set_clear_is_effective ... ok
+test automaton::tests::test_automaton_value_matcher_string ... ok
+test automaton::tests::test_sparse_set_contains_after_multiple_inserts ... ok
+test automaton::tests::test_sparse_set_contains_correctness ... ok
+test automaton::mutable_matcher::tests::test_arena_migration_cidr_v4 ... ok
+test automaton::tests::test_sparse_set_contains_cross_check ... ok
+test automaton::tests::test_sparse_set_contains_rejects_uninserted_id ... ok
+test automaton::tests::test_sparse_set_contains_single_element ... ok
+test automaton::tests::test_sparse_set_fill_to_capacity ... ok
+test automaton::tests::test_sparse_set_insert_after_clear_correctness ... ok
+test automaton::tests::test_sparse_set_insert_increments_len ... ok
+test automaton::tests::test_sparse_set_insert_return_value ... ok
+test case_folding::tests::test_case_folding_bidirectional ... ok
+test automaton::tests::test_sparse_set_no_stale_entries_after_clear ... ok
+test automaton::tests::test_sparse_set_non_zero_ids_only ... ok
+test automaton::tests::test_thread_safe_core_matcher_send_sync ... ok
+test automaton::tests::test_thread_safe_core_matcher_no_match ... ok
+test automaton::tests::test_thread_safe_core_matcher_exists_false ... FAILED
+test automaton::tests::test_thread_safe_core_matcher_single_field ... FAILED
+test automaton::thread_safe::tests::transitions_size_must_stay_compact ... ok
+test case_folding::tests::test_ascii_case_folding ... ok
+test case_folding::tests::test_old_hungarian_case_folding ... ok
+test automaton::thread_safe::tests::test_thread_safe_core_matcher_basic ... FAILED
+test case_folding::tests::test_unicode_case_folding ... ok
+test automaton::tests::test_thread_safe_core_matcher_exists_true ... FAILED
+test flatten_json::tests::test_array_simple ... ok
+test flatten_json::tests::test_early_termination ... ok
+test flatten_json::tests::test_empty_object ... ok
+test automaton::tests::test_thread_safe_core_matcher_multiple_patterns ... FAILED
+test flatten_json::tests::test_error_invalid_json_structure ... ok
+test flatten_json::tests::test_error_invalid_nested_object ... ok
+test flatten_json::tests::test_error_invalid_value ... ok
+test flatten_json::tests::test_error_skipping_never_ending_string ... ok
+test flatten_json::tests::test_error_truncated_array ... ok
+test flatten_json::tests::test_error_truncated_object ... ok
+test flatten_json::tests::test_error_truncated_string ... ok
+test flatten_json::tests::test_escape_sequences ... ok
+test flatten_json::tests::test_nested_object ... ok
+test flatten_json::tests::test_number_value ... ok
+test flatten_json::tests::test_skip_array ... ok
+test flatten_json::tests::test_simple_object ... ok
+test flatten_json::tests::test_skip_nested_object ... ok
+test flatten_json::tests::test_skips_unused_fields ... ok
+test flatten_json::tests::test_state_reuse ... ok
+test flatten_json::tests::test_unicode_escape ... ok
+test flattener::tests::test_owned_field ... ok
+test flattener::tests::test_segments_tree_tracker_impl ... ok
+test numbits::tests::test_bad_numbers ... ok
+test numbits::tests::test_byte_variants ... ok
+test numbits::tests::test_encoding_with_zero_numbits ... ok
+test numbits::tests::test_float_variants ... ok
+test numbits::tests::test_numbits_ordering_property ... ok
+test numbits::tests::test_q_number_length ... ok
+test numbits::tests::test_ordering_random_miri_friendly ... ok
+test numbits::tests::test_q_number_stack_is_empty_synthetic ... ok
+test numbits::tests::test_q_number_stack_len_matches_slice ... ok
+test numbits::tests::test_q_number_stack_length ... ok
+test numbits::tests::test_q_number_variants_equivalence ... ok
+test numbits::tests::test_wildly_varying_numbers_are_comparable ... ok
+test numbits::tests::test_zero_handling ... ok
+test regexp::parser::tests::test_detect_ascii_negated_bytes_mixed ... ok
+test numbits::tests::test_q_number_variants_random ... ok
+test regexp::parser::tests::test_detect_ascii_negated_bytes_multiple_chars ... ok
+test regexp::parser::tests::test_detect_ascii_negated_bytes_non_ascii ... ok
+test regexp::parser::tests::test_detect_ascii_negated_bytes_range ... ok
+test regexp::parser::tests::test_detect_ascii_negated_bytes_single_char ... ok
+test regexp::parser::tests::test_detect_ascii_negated_bytes_too_many ... ok
+test regexp::tests::test_arena_nfa_plus_simple ... ok
+test regexp::parser::tests::test_parse_negated_char_class_stores_ascii_bytes ... ok
+test regexp::tests::test_backreferences_not_supported ... ok
+test regexp::parser::tests::test_parse_negated_quote_class ... ok
+test regexp::parser::tests::test_parse_negated_slash_class ... ok
+test regexp::tests::test_invert_rune_range ... ok
+test regexp::parser::tests::test_parse_negated_unicode_class_no_ascii_bytes ... ok
+test regexp::parser::tests::test_parse_non_negated_class_no_ascii_bytes ... ok
+test regexp::tests::test_multi_char_escape_with_quantifier ... ok
+test regexp::parser::tests::test_wb_dot_star_expansion ... ok
+test regexp::tests::test_multi_char_escapes_parse ... ok
+test regexp::parser::tests::test_wb_impossible_boundary_empty_tree ... ok
+test regexp::parser::tests::test_wb_middle_boundary_expansion ... ok
+test regexp::parser::tests::test_wb_parse_boundary_marker ... ok
+test regexp::tests::test_lookaround_atom_properties ... ok
+test regexp::tests::test_multi_char_escapes_in_class ... ok
+test regexp::tests::test_multi_char_escapes_nfa ... ok
+test regexp::tests::test_clear_fa_shell_cache_works ... ok
+test regexp::tests::test_arena_nfa_email_pattern ... ok
+test regexp::tests::test_nfa_empty_pattern ... ok
+test regexp::tests::test_arena_nfa_star_plus_miri_friendly ... ok
+test regexp::tests::test_nfa_plus_quantifier ... ok
+test regexp::tests::test_nfa_positive_class_miri_friendly ... ok
+test regexp::tests::test_nfa_range_bounded ... ok
+test regexp::tests::test_nfa_range_exact ... ok
+test regexp::tests::test_nfa_range_with_class ... ok
+test regexp::tests::test_nfa_simple_singleton ... ok
+test regexp::tests::test_nfa_star_quantifier ... ok
+test regexp::tests::test_parse_alternation ... ok
+test regexp::tests::test_nfa_range_zero_min ... ok
+test regexp::tests::test_parse_char_class ... ok
+test regexp::tests::test_parse_char_class_subtraction ... ok
+test regexp::tests::test_parse_char_class_subtraction_depth_limit ... ok
+test regexp::tests::test_parse_char_class_subtraction_negated_inner ... ok
+test regexp::tests::test_parse_char_class_subtraction_alternation ... ok
+test regexp::tests::test_parse_char_class_subtraction_negated_subtract ... ok
+test regexp::tests::test_parse_char_class_subtraction_nested ... ok
+test regexp::tests::test_parse_char_class_subtraction_no_overlap ... ok
+test regexp::tests::test_parse_char_class_subtraction_with_negated_outer ... ok
+test regexp::tests::test_parse_char_class_subtraction_single_chars_before_bracket ... ok
+test regexp::tests::test_parse_char_range ... ok
+test regexp::tests::test_parse_empty ... ok
+test regexp::tests::test_parse_dot ... ok
+test regexp::tests::test_parse_char_class_subtraction_single_result ... ok
+test regexp::tests::test_parse_optional ... ok
+test regexp::tests::test_parse_non_capturing_group ... ok
+test regexp::tests::test_parse_lazy_quantifiers ... ok
+test regexp::tests::test_parse_group ... ok
+test regexp::tests::test_parse_invalid_unclosed_bracket ... ok
+test regexp::tests::test_parse_nested_lookaround_rejected ... ok
+test regexp::tests::test_parse_negated_class ... ok
+test regexp::tests::test_parse_non_capturing_nested ... ok
+test regexp::tests::test_parse_lookaround_supported ... ok
+test regexp::tests::test_parse_plus ... ok
+test regexp::tests::test_parse_range_quantifier ... ok
+test regexp::tests::test_parse_simple ... ok
+test regexp::tests::test_parse_star ... ok
+test regexp::tests::test_parse_unsupported_group_extension ... ok
+test regexp::tests::test_parse_variable_length_lookbehind_rejected ... ok
+test regexp::tests::test_range_quantifier_equivalence_miri_friendly ... ok
+test regexp::tests::test_range_quantifier_equivalence_question ... ok
+test regexp::tests::test_range_quantifier_equivalence_star ... ok
+test regexp::tests::test_range_quantifier_exact_one ... ok
+test regexp::tests::test_range_quantifier_equivalence_plus ... ok
+test numbits::tests::test_ordering_random ... ok
+test regexp::tests::test_range_quantifier_exact_zero ... ok
+test regexp::tests::test_range_quantifier_parse_errors ... ok
+test regexp::tests::test_range_quantifier_larger_values ... ok
+test regexp::tests::test_shell_instantiation_with_epsilons ... ok
+test regexp::tests::test_range_quantifier_with_group ... ok
+test regexp::tests::test_regexp_has_plus_star_returns_false ... ok
+test regexp::tests::test_shell_caching_xml_escape_cache_keys ... ok
+test regexp::tests::test_range_quantifier_with_dot ... ok
+test regexp::tests::test_shell_caching_cache_key ... ok
+test regexp::tests::test_simplify_rune_range ... ok
+test regexp::tests::test_star_matches_empty_miri_friendly ... ok
+test regexp::tests::test_subtract_rune_range_complete_overlap ... ok
+test regexp::tests::test_subtract_rune_range_empty_subtract ... ok
+test regexp::tests::test_subtract_rune_range_multiple_holes ... ok
+test regexp::tests::test_subtract_rune_range_suffix_removal ... ok
+test regexp::tests::test_star_matches_empty ... ok
+test regexp::tests::test_subtract_rune_range_no_overlap ... ok
+test regexp::tests::test_subtract_rune_range_prefix_removal ... ok
+test regexp::tests::test_toxic_stack_arena ... ok
+test regexp::tests::test_subtract_rune_range_basic ... ok
+test segments_tree::tests::test_both_field_and_node ... ok
+test regexp::tests::test_zero_quantifier ... ok
+test segments_tree::tests::test_nested_path ... ok
+test segments_tree::tests::test_path_arc_for_segment ... ok
+test segments_tree::tests::test_duplicate_add ... ok
+test segments_tree::tests::test_is_root ... ok
+test segments_tree::tests::test_node_then_field ... ok
+test segments_tree::tests::test_multiple_paths ... ok
+test segments_tree::tests::test_single_field ... ok
+test tests_core::test_and_across_fields ... FAILED
+test tests_core::test_arena_budget_custom ... ok
+test tests_core::test_arena_budget_enforced_on_repeated_exact_strings ... ok
+test tests_core::test_arena_error_includes_bytes ... ok
+test tests_core::test_arena_budget_sufficient ... ok
+test tests_core::test_arena_budget_exceeded ... ok
+test tests_core::test_array_cross_element_comprehensive ... FAILED
+test tests_core::test_array_cross_element_matching ... ok
+test tests_core::test_array_element_matching ... FAILED
+test tests_core::test_auto_rebuild_disabled_miri_friendly ... ok
+test tests_core::test_boolean_match ... FAILED
+test tests_core::test_bad_event_error_handling ... ok
+test tests_core::test_bad_pattern_error_handling ... ok
+test tests_core::test_builder_basic ... ok
+test tests_core::test_builder_generic_type ... FAILED
+test tests_core::test_builder_default ... ok
+test tests_core::test_builder_combined_options ... FAILED
+test tests_core::test_builder_with_auto_rebuild ... ok
+test tests_core::test_auto_rebuild_disabled ... FAILED
+test tests_core::test_builder_with_auto_rebuild_is_applied ... ok
+test tests_core::test_builder_with_arena_byte_budget_is_applied ... ok
+test tests_core::test_builder_with_flattener_blocks_second_call ... ok
+test tests_core::test_builder_with_max_fields_per_pattern_is_applied ... ok
+test tests_core::test_builder_with_flattener_is_used ... FAILED
+test tests_core::test_arena_stats_workloads ... FAILED
+test tests_core::test_builder_with_invalid_media_type ... ok
+test tests_core::test_builder_with_max_pattern_depth_is_applied ... ok
+test tests_core::test_builder_with_media_type_json ... ok
+test tests_core::test_clone_preserves_arena_budget ... ok
+test tests_core::test_contains_pattern_after_delete ... ok
+test tests_core::test_builder_with_media_type_sets_validated_flag ... ok
+test tests_core::test_builder_with_max_states_per_pattern_is_applied ... ok
+test tests_core::test_clone_for_snapshot ... FAILED
+test tests_core::test_custom_flattener_basic ... FAILED
+test tests_core::test_custom_flattener_clone ... FAILED
+test tests_core::test_count_matches ... FAILED
+test tests_core::test_custom_flattener_no_match ... ok
+test tests_core::test_deeply_nested ... FAILED
+test tests_core::test_custom_flattener_with_numbers ... FAILED
+test tests_core::test_condition_cost_ordering ... ok
+test tests_core::test_contains_pattern_basic ... ok
+test tests_core::test_delete_already_deleted_pattern_is_noop ... ok
+test tests_core::test_delete_multi_pattern_id_removes_all ... FAILED
+test tests_core::test_default_limits_allow_normal_patterns_miri_friendly ... ok
+test tests_core::test_delete_nonexistent_pattern_is_noop ... ok
+test tests_core::test_delete_patterns ... FAILED
+test regexp::tests::test_shell_cache_instantiate_epsilon_remap ... ok
+test tests_core::test_depth_error_includes_path ... ok
+test tests_core::test_empty_matcher_returns_no_matches ... ok
+test regexp::tests::test_shell_caching_nfa_correctness ... ok
+test tests_core::test_errors_return_pattern_too_complex_variant ... ok
+test tests_core::test_exists_false ... ok
+test tests_core::test_exact_match ... FAILED
+test tests_core::test_exists_true ... FAILED
+test tests_core::test_field_name_ordering_with_exists ... FAILED
+test tests_core::test_exists_with_empty_array ... ok
+test tests_core::test_flatten_only_single_field ... ok
+test tests_core::test_idempotent_add_and_delete ... FAILED
+test tests_core::test_field_count_error_includes_count ... ok
+test tests_core::test_flatten_only_untracked_fields_ignored ... ok
+test tests_core::test_flatten_only_returns_field_count ... ok
+test tests_core::test_has_matches ... FAILED
+test tests_core::test_invalid_json_events ... ok
+test tests_core::test_invalid_pattern_validation ... ok
+test tests_core::test_json_flattener_through_trait ... FAILED
+test tests_core::test_list_pattern_ids_basic ... ok
+test tests_core::test_invalid_pattern_handling ... ok
+test tests_core::test_list_pattern_ids_excludes_deleted ... ok
+test tests_core::test_mixed_number_and_string_in_same_value_array ... FAILED
+test tests_core::test_multi_condition_pattern_fields ... ok
+test tests_core::test_matcher_correct_after_rejected_pattern ... FAILED
+test tests_core::test_mixed_string_and_number_patterns_same_digits ... FAILED
+test tests_core::test_nested_object_pattern ... FAILED
+test tests_core::test_multiple_patterns_same_id ... FAILED
+test tests_core::test_no_match ... ok
+test tests_core::test_numbits_boundary_values ... ok
+test tests_core::test_null_match ... FAILED
+test regexp::tests::test_shell_caching_independent_categories ... ok
+test tests_core::test_numeric_match ... FAILED
+test tests_core::test_pattern_count_and_clear ... ok
+test tests_core::test_numeric_variant_matching ... FAILED
+test tests_core::test_numeric_pattern_should_not_match_string_event ... FAILED
+test tests_core::test_pattern_depth_custom_limit ... ok
+test tests_core::test_or_within_field ... FAILED
+test tests_core::test_pattern_depth_at_limit ... ok
+test tests_core::test_pattern_depth_exceeds_limit ... ok
+test tests_core::test_pattern_depth_shallow_ok ... ok
+test tests_core::test_pattern_fields_at_limit_miri_friendly ... ok
+test tests_core::test_default_limits_allow_normal_patterns ... ok
+test tests_core::test_pattern_fields_custom_limit ... ok
+test tests_core::test_pruner_stats_clone ... ok
+test tests_core::test_pruner_stats ... FAILED
+test tests_core::test_pruner_stats_clone_preserves_values ... ok
+test tests_core::test_pruner_stats_unit_add_and_read ... ok
+test tests_core::test_pattern_fields_exceeds_limit ... ok
+test tests_core::test_numbits_to_qnumber_utf8 ... ok
+test tests_core::test_rebuild_zero_filtered_denominator ... ok
+test tests_core::test_send_sync ... ok
+test tests_core::test_rebuild_after_delete ... FAILED
+test tests_core::test_should_rebuild_boundary ... ok
+test tests_core::test_should_rebuild_boundary_cases ... ok
+test tests_core::test_same_pattern_id_multiple_value_types ... FAILED
+test tests_core::test_state_limit_default_allows_normal_patterns ... FAILED
+test tests_core::test_string_number_type_distinction ... FAILED
+test tests_core::test_with_flattener_cannot_be_set_twice ... ok
+test tests_core::test_with_flattener_conflicts_with_media_type ... ok
+test tests_core::test_pattern_fields_at_limit ... ok
+test tests_core::test_zero_budget_panics - should panic ... ok
+test tests_core::test_zero_depth_panics - should panic ... ok
+test tests_operators::test_anything_but ... FAILED
+test tests_operators::test_anything_but_numeric ... FAILED
+test tests_core::test_zero_fields_panics - should panic ... ok
+test tests_core::test_zero_states_panics - should panic ... ok
+test tests_core::test_should_rebuild_threshold ... FAILED
+test tests_operators::test_anything_but_numeric_array ... FAILED
+test tests_operators::test_anything_but_numeric_float ... FAILED
+test tests_core::test_state_limit_exceeded ... ok
+test tests_operators::test_anything_but_numeric_single ... FAILED
+test tests_operators::test_anything_but_prefix_relationship ... FAILED
+test tests_operators::test_anything_but_validation ... ok
+test tests_operators::test_anything_but_single_string ... FAILED
+test tests_operators::test_anything_but_with_shellstyle ... FAILED
+test tests_operators::test_anything_but_with_exact_match ... FAILED
+test tests_operators::test_cidr_invalid_patterns ... ok
+test tests_operators::test_anything_but_with_overlapping_exclusions ... FAILED
+test tests_operators::test_anything_but_wordle_words ... FAILED
+test tests_operators::test_cidr_ipv6_shorthand ... FAILED
+test tests_operators::test_cidr_ipv6_basic ... FAILED
+test tests_operators::test_cidr_ipv4_basic ... FAILED
+test tests_operators::test_empty_regex_matches_empty_string ... FAILED
+test tests_operators::test_equals_ignore_case ... FAILED
+test tests_operators::test_equals_ignore_case_unicode ... FAILED
+test tests_operators::test_equals_ignore_case_length_boundaries ... FAILED
+test tests_operators::test_equals_ignore_case_multiple_patterns ... FAILED
+test tests_operators::test_exact_added_before_lookahead_on_same_field ... FAILED
+test tests_operators::test_equals_ignore_case_with_exact_match ... FAILED
+test tests_operators::test_json_all_escape_sequences ... FAILED
+test tests_operators::test_exists_false_ordering ... ok
+test tests_operators::test_cidr_miri_lightweight ... FAILED
+test tests_operators::test_lookaround_buffer_reuse_no_stale_state ... FAILED
+test tests_operators::test_lookaround_buffer_reuse_no_stale_state_miri_friendly ... FAILED
+test tests_operators::test_lookahead_with_exact_on_same_field ... FAILED
+test tests_operators::test_json_escape_sequences ... FAILED
+test tests_operators::test_lookaround_pattern_parsing ... ok
+test tests_operators::test_lookaround_pattern_add_to_quamina ... ok
+test tests_operators::test_lookaround_multiple_conditions_no_cross_contamination ... FAILED
+test tests_operators::test_lookaround_multiple_conditions_no_cross_contamination_miri_friendly ... FAILED
+test tests_operators::test_cidr_with_other_matchers ... FAILED
+test tests_operators::test_lookaround_primary_match ... FAILED
+test tests_operators::test_lookaround_rejected_patterns ... ok
+test tests_operators::test_negative_lookahead_match ... FAILED
+test tests_operators::test_lookaround_transformation ... FAILED
+test tests_operators::test_lookbehind_match ... FAILED
+test tests_operators::test_multiple_overlapping_shellstyle_patterns ... FAILED
+test tests_operators::test_negative_lookbehind_match ... FAILED
+test tests_operators::test_multiple_shellstyle_same_field ... FAILED
+test tests_operators::test_numeric_range ... FAILED
+test tests_operators::test_numeric_equals ... FAILED
+test tests_operators::test_numeric_greater_than ... FAILED
+test tests_operators::test_nwb_start_word_err ... ok
+test tests_operators::test_nwb_word_to_nonword_err ... ok
+test tests_operators::test_nwb_underscore_is_word_char ... FAILED
+test tests_operators::test_nested_transmap_safety ... FAILED
+test tests_operators::test_numeric_scientific_notation ... FAILED
+test tests_operators::test_nwb_word_to_word ... FAILED
+test tests_operators::test_overlapping_exact_match_patterns ... FAILED
+test tests_operators::test_prefix_match ... FAILED
+test tests_operators::test_positive_lookahead_match ... FAILED
+test tests_operators::test_nested_transmap_safety_miri_friendly ... FAILED
+test tests_operators::test_overlapping_shellstyle_nesting_miri_friendly ... FAILED
+test tests_operators::test_nwb_start_nonword ... FAILED
+test tests_operators::test_cidr_non_ip_values ... ok
+test tests_operators::test_regex_alternation ... FAILED
+test tests_operators::test_regex_character_class ... FAILED
+test tests_operators::test_overlapping_shellstyle_nesting ... FAILED
+test tests_operators::test_regex_various_patterns ... FAILED
+test tests_operators::test_regex_with_escape ... FAILED
+test tests_operators::test_regex_match ... FAILED
+test tests_operators::test_shellstyle_contains ... FAILED
+test tests_operators::test_regexp_simple_optional ... FAILED
+test tests_operators::test_shellstyle_contains_negative ... ok
+test tests_operators::test_shellstyle_complex_wildcards ... FAILED
+test tests_operators::test_regexp_end2end ... FAILED
+test tests_operators::test_regexp_samples_exist ... ok
+test tests_operators::test_shellstyle_double_wildcard ... FAILED
+test tests_operators::test_shellstyle_infix ... FAILED
+test tests_operators::test_shellstyle_duplicate_pattern ... FAILED
+test tests_operators::test_shellstyle_double_wildcard_variations ... FAILED
+test tests_operators::test_shellstyle_long_case ... FAILED
+test tests_operators::test_shellstyle_multiple_wildcards ... FAILED
+test tests_operators::test_shellstyle_prefix ... FAILED
+test tests_operators::test_shellstyle_prefix_negative ... ok
+test tests_operators::test_shellstyle_suffix ... FAILED
+test tests_operators::test_shellstyle_repeated_sequences ... FAILED
+test tests_operators::test_shellstyle_ruler_negative_cases ... ok
+test tests_operators::test_shellstyle_suffix_merged_bug ... FAILED
+test tests_operators::test_shellstyle_suffix_negative ... ok
+test tests_operators::test_shellstyle_subset_overlap_same_field ... FAILED
+test tests_operators::test_shellstyle_suffix_with_space ... FAILED
+test tests_operators::test_shellstyle_zero_length_prefix ... FAILED
+test tests_operators::test_unicode_escape_emoji ... FAILED
+test tests_operators::test_suffix ... FAILED
+test tests_operators::test_singleton_hit_and_multi_condition_hit_same_value ... FAILED
+test tests_operators::test_unicode_escape_in_event ... FAILED
+test tests_operators::test_wb_digit_to_space ... FAILED
+test tests_operators::test_wb_end_non_word_char ... ok
+test tests_operators::test_wb_end_word_char ... FAILED
+test tests_operators::test_wb_middle_nonword_to_word ... FAILED
+test tests_operators::test_three_level_nesting_miri_friendly ... FAILED
+test tests_operators::test_wb_middle_word_to_word_err ... ok
+test tests_operators::test_three_level_nesting ... FAILED
+test tests_operators::test_wb_optional_quantifier ... FAILED
+test tests_operators::test_wb_plus_quantifier ... FAILED
+test tests_operators::test_wb_range_quantifier ... FAILED
+test tests_operators::test_wb_utf8_emoji_boundary ... FAILED
+test tests_operators::test_wb_utf8_nonword_to_word ... FAILED
+test tests_operators::test_wb_middle_word_to_nonword ... FAILED
+test tests_operators::test_wb_underscore_is_word_char ... ok
+test tests_operators::test_wb_start_word_char ... FAILED
+test tests_operators::test_wb_utf8_multibyte ... FAILED
+test tests_operators::test_wb_start_non_word_char ... ok
+test tests_operators::test_wb_whole_word_only ... FAILED
+test tests_operators::test_wb_whole_word_at_end ... FAILED
+test tests_operators::test_wb_whole_word_no_match ... ok
+test tests_operators::test_wb_whole_word_at_start ... FAILED
+test tests_operators::test_wb_whole_word_match ... FAILED
+test tests_operators::test_wb_with_char_class ... FAILED
+test tests_operators::test_wb_with_dot ... FAILED
+test tests_operators::test_wildcard_comprehensive ... FAILED
+test tests_operators::test_wildcard_contains ... FAILED
+test tests_operators::test_wildcard_escape_backslash_star ... FAILED
+test tests_operators::test_wildcard_escape_star ... FAILED
+test tests_operators::test_wildcard_invalid_escape_sequences ... ok
+test tests_operators::test_wildcard_escape_backslash ... FAILED
+test tests_operators::test_wildcard_escape_sequences_comprehensive ... FAILED
+test tests_operators::test_wildcard_invalid_patterns ... ok
+test tests_operators::test_wildcard_matches_empty_string ... FAILED
+test tests_operators::test_wildcard_multi_patterns_complex2 ... FAILED
+test tests_operators::test_wildcard_escape_backslash_wildcard ... FAILED
+test tests_operators::test_wildcard_multi_patterns_complex1 ... FAILED
+test tests_operators::test_wildcard_multi_patterns_double_exact ... FAILED
+test tests_operators::test_wildcard_multi_patterns_infix_exact ... FAILED
+test tests_operators::test_wildcard_multi_patterns_double_exact2 ... FAILED
+test tests_operators::test_wildcard_multi_patterns_infix_exact2 ... FAILED
+test tests_operators::test_wildcard_multi_patterns_basic ... FAILED
+test tests_operators::test_wildcard_multi_patterns_infix_pair ... FAILED
+test tests_operators::test_wildcard_multi_patterns_overlap1 ... FAILED
+test tests_operators::test_wildcard_multi_patterns_overlap2 ... FAILED
+test tests_operators::test_wildcard_multi_patterns_prefix_suffix ... FAILED
+test tests_operators::test_wildcard_multi_patterns_prefix_exact ... FAILED
+test tests_operators::test_wildcard_multi_patterns_prefix_pair ... FAILED
+test tests_operators::test_wildcard_multi_patterns_suffix_double2 ... FAILED
+test tests_operators::test_wildcard_multi_patterns_prefix_suffix2 ... FAILED
+test tests_operators::test_wildcard_multi_patterns_suffix_exact ... FAILED
+test tests_operators::test_wildcard_multi_patterns_suffix_double ... FAILED
+test tests_operators::test_wildcard_multi_patterns_suffix_exact2 ... FAILED
+test tests_operators::test_wildcard_prefix ... FAILED
+test tests_operators::test_wildcard_multi_patterns_suffix_infix ... FAILED
+test tests_operators::test_wildcard_multi_patterns_zero_expansion ... FAILED
+test tests_operators::test_wildcard_suffix ... FAILED
+test tests_operators::test_wildcard_multi_patterns_suffix_pair ... FAILED
+test tests_operators::test_wildcard_multi_patterns_suffix_infix2 ... FAILED
+test tests_operators::test_wildcard_syntax_errors ... ok
+test tests_stress::test_arc_field_matcher_sharing ... FAILED
+test tests_operators::test_wildcard_unicode_strings ... FAILED
+test tests_stress::test_arc_concurrent_read_write ... FAILED
+test tests_stress::test_break_500_limit ... ignored
+test tests_stress::test_concurrent_miri_friendly ... FAILED
+test tests_stress::test_arc_snapshot_isolation ... FAILED
+test tests_stress::test_concurrent_citylots_stress ... FAILED
+test tests_stress::test_exercise_matching_comprehensive ... FAILED
+test tests_stress::test_bulk_add_correctness ... FAILED
+test tests_stress::test_arc_pattern_lifecycle ... FAILED
+test tests_stress::test_exercise_matching_miri_friendly ... FAILED
+test tests_stress::test_arc_memory_cleanup ... FAILED
+test tests_stress::test_invalid_utf8_dot_rejection ... ok
+test tests_stress::test_json_escape_all_eight ... FAILED
+test tests_operators::test_cidr_ipv4_various_prefixes ... FAILED
+test tests_stress::test_memory_cleanup_miri_friendly ... FAILED
+test tests_stress::test_multiple_patterns_same_id_comprehensive ... FAILED
+test tests_stress::test_numbits_through_numeric_matching ... FAILED
+test tests_stress::test_numbits_ordering_through_range ... FAILED
+test tests_stress::test_pathological_correctness_miri_friendly ... FAILED
+test tests_stress::test_stress_citylots2_operators ... ok
+test tests_stress::test_unicode_escape_mixed_codepoints ... FAILED
+test tests_stress::test_unicode_escape_multiple_emojis ... FAILED
+test tests_stress::test_multiple_shellstyle_citylots_patterns ... FAILED
+test tests_stress::test_unicode_escape_standard_escapes ... FAILED
+test tests_stress::test_unicode_field_names ... FAILED
+test tests_stress::test_unicode_field_names_surrogate_pairs ... FAILED
+test tests_stress::test_unicode_member_names ... FAILED
+test unicode_categories::tests::test_ascii_in_ll ... ok
+test tests_stress::test_utf16_surrogate_pairs ... FAILED
+test tests_stress::test_pathological_correctness ... FAILED
+test unicode_categories::tests::test_ascii_in_lu ... ok
+test unicode_categories::tests::test_block_lookup ... ok
+test unicode_categories::tests::test_category_lookup ... ok
+test tests_stress::test_pattern_insertion_scales_linearly ... FAILED
+test unicode_categories::tests::test_digit_in_nd ... ok
+test regexp::tests::test_negated_unicode_char_no_ascii_fast_path ... ok
+test regexp::tests::test_negated_class_nfa ... ok
+test regexp::tests::test_negated_category_star_edge_cases ... ok
+test regexp::tests::test_negated_single_char_ascii_fast_path ... ok
+test regexp::tests::test_shell_caching_negated_independent ... ok
+test regexp::tests::test_xml_escapes_nfa ... ok
+test tests_stress::test_stress_fuzz_strings ... FAILED
+test tests_stress::test_stress_fuzz_numbers ... FAILED
+test tests_operators::test_regexp_validity ... ok
+test tests_stress::test_concurrent_update_during_matching ... FAILED
+
+failures:
+
+---- automaton::tests::test_thread_safe_core_matcher_exists_false stdout ----
+
+thread 'automaton::tests::test_thread_safe_core_matcher_exists_false' (132092) panicked at src/automaton/tests.rs:488:5:
+assertion `left == right` failed: exists:false should match when field is absent
+  left: 0
+ right: 1
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- automaton::tests::test_thread_safe_core_matcher_single_field stdout ----
+
+thread 'automaton::tests::test_thread_safe_core_matcher_single_field' (132097) panicked at src/automaton/tests.rs:419:5:
+assertion `left == right` failed
+  left: 0
+ right: 1
+
+---- automaton::thread_safe::tests::test_thread_safe_core_matcher_basic stdout ----
+
+thread 'automaton::thread_safe::tests::test_thread_safe_core_matcher_basic' (132098) panicked at src/automaton/thread_safe.rs:1164:9:
+assertion `left == right` failed
+  left: []
+ right: ["p1"]
+
+---- automaton::tests::test_thread_safe_core_matcher_exists_true stdout ----
+
+thread 'automaton::tests::test_thread_safe_core_matcher_exists_true' (132093) panicked at src/automaton/tests.rs:463:5:
+assertion `left == right` failed: exists:true should match when field exists
+  left: 0
+ right: 1
+
+---- automaton::tests::test_thread_safe_core_matcher_multiple_patterns stdout ----
+
+thread 'automaton::tests::test_thread_safe_core_matcher_multiple_patterns' (132094) panicked at src/automaton/tests.rs:527:5:
+assertion `left == right` failed
+  left: 0
+ right: 1
+
+---- tests_core::test_and_across_fields stdout ----
+
+thread 'tests_core::test_and_across_fields' (132282) panicked at src/tests_core.rs:272:5:
+assertion `left == right` failed: Event: {"type": "order", "status": "pending", "priority": "high"}
+  left: []
+ right: ["p1"]
+
+---- tests_core::test_array_cross_element_comprehensive stdout ----
+
+thread 'tests_core::test_array_cross_element_comprehensive' (132295) panicked at src/tests_core.rs:230:5:
+assertion `left == right` failed: Expected 1 matches for {
+        "bands": [
+            {
+                "name": "The Clash",
+                "members": [
+                    {"given": "Joe", "surname": "Strummer", "role": ["guitar", "vocals"]},
+                    {"given": "Mick", "surname": "Jones", "role": ["guitar", "vocals"]},
+                    {"given": "Paul", "surname": "Simonon", "role": ["bass"]},
+                    {"given": "Topper", "surname": "Headon", "role": ["drums"]}
+                ]
+            },
+            {
+                "name": "Boris",
+                "members": [
+                    {"given": "Wata", "role": ["guitar", "vocals"]},
+                    {"given": "Atsuo", "role": ["drums"]},
+                    {"given": "Takeshi", "role": ["bass", "vocals"]}
+                ]
+            }
+        ]
+    }, got []
+  left: 0
+ right: 1
+
+---- tests_core::test_array_element_matching stdout ----
+
+thread 'tests_core::test_array_element_matching' (132307) panicked at src/tests_core.rs:169:5:
+assertion `left == right` failed: Should match when pattern value is in event array (event: {"ids": [116, 943, 234]})
+  left: []
+ right: ["p1"]
+
+---- tests_core::test_boolean_match stdout ----
+
+thread 'tests_core::test_boolean_match' (132314) panicked at src/tests_core.rs:65:5:
+assertion `left == right` failed: Should match boolean true (event: {"enabled": true})
+  left: []
+ right: ["p1"]
+
+---- tests_core::test_builder_generic_type stdout ----
+
+thread 'tests_core::test_builder_generic_type' (132325) panicked at src/tests_core.rs:831:5:
+assertion `left == right` failed
+  left: []
+ right: [42]
+
+---- tests_core::test_builder_combined_options stdout ----
+
+thread 'tests_core::test_builder_combined_options' (132319) panicked at src/tests_core.rs:814:5:
+assertion `left == right` failed
+  left: []
+ right: ["p1"]
+
+---- tests_core::test_auto_rebuild_disabled stdout ----
+
+thread 'tests_core::test_auto_rebuild_disabled' (132308) panicked at src/tests_core.rs:528:5:
+assertion failed: q.should_rebuild()
+
+---- tests_core::test_builder_with_flattener_is_used stdout ----
+
+thread 'tests_core::test_builder_with_flattener_is_used' (132337) panicked at src/tests_core.rs:2484:5:
+assertion `left == right` failed: custom flattener must be used
+  left: []
+ right: ["p"]
+
+---- tests_core::test_arena_stats_workloads stdout ----
+
+thread 'tests_core::test_arena_stats_workloads' (132292) panicked at src/tests_core.rs:2780:13:
+assertion `left == right` failed: 6-regexps-12-shell: event[0] expected 3 matches, got 0
+  left: 0
+ right: 3
+
+---- tests_core::test_clone_for_snapshot stdout ----
+
+thread 'tests_core::test_clone_for_snapshot' (132349) panicked at src/tests_core.rs:576:5:
+Expected "p2" in matches for {"status": "pending"}, got []
+
+---- tests_core::test_custom_flattener_basic stdout ----
+
+thread 'tests_core::test_custom_flattener_basic' (132356) panicked at src/tests_core.rs:893:5:
+assertion `left == right` failed
+  left: []
+ right: ["p1"]
+
+---- tests_core::test_custom_flattener_clone stdout ----
+
+thread 'tests_core::test_custom_flattener_clone' (132357) panicked at src/tests_core.rs:964:5:
+assertion `left == right` failed
+  left: []
+ right: ["p1"]
+
+---- tests_core::test_count_matches stdout ----
+
+thread 'tests_core::test_count_matches' (132355) panicked at src/tests_core.rs:604:5:
+assertion `left == right` failed
+  left: 0
+ right: 2
+
+---- tests_core::test_deeply_nested stdout ----
+
+thread 'tests_core::test_deeply_nested' (132361) panicked at src/tests_core.rs:155:5:
+assertion `left == right` failed: Event: {"a": {"b": {"c": "value"}}}
+  left: []
+ right: ["p1"]
+
+---- tests_core::test_custom_flattener_with_numbers stdout ----
+
+thread 'tests_core::test_custom_flattener_with_numbers' (132359) panicked at src/tests_core.rs:938:5:
+assertion `left == right` failed
+  left: []
+ right: ["p1"]
+
+---- tests_core::test_delete_multi_pattern_id_removes_all stdout ----
+
+thread 'tests_core::test_delete_multi_pattern_id_removes_all' (132371) panicked at src/tests_core.rs:1552:5:
+assertion `left == right` failed: String pattern should match (event: {"x": "a"})
+  left: []
+ right: ["shared"]
+
+---- tests_core::test_delete_patterns stdout ----
+
+thread 'tests_core::test_delete_patterns' (132373) panicked at src/tests_core.rs:293:5:
+Expected "p1" in matches for {"status": "active"}, got []
+
+---- tests_core::test_exact_match stdout ----
+
+thread 'tests_core::test_exact_match' (132386) panicked at src/tests_core.rs:25:5:
+assertion `left == right` failed: Event: {"status": "active"}
+  left: []
+ right: ["p1"]
+
+---- tests_core::test_exists_true stdout ----
+
+thread 'tests_core::test_exists_true' (132389) panicked at src/tests_core.rs:92:5:
+assertion `left == right` failed: Should match when field exists (event: {"name": "anything", "other": 1})
+  left: []
+ right: ["p1"]
+
+---- tests_core::test_field_name_ordering_with_exists stdout ----
+
+thread 'tests_core::test_field_name_ordering_with_exists' (132393) panicked at src/tests_core.rs:1064:5:
+assertion `left == right` failed: Expected 4 matches for {"b": 1}, got []
+  left: 0
+ right: 4
+
+---- tests_core::test_idempotent_add_and_delete stdout ----
+
+thread 'tests_core::test_idempotent_add_and_delete' (132400) panicked at src/tests_core.rs:1521:5:
+assertion `left == right` failed: Duplicate add should still match (event: {"x": "a"})
+  left: []
+ right: ["p1"]
+
+---- tests_core::test_has_matches stdout ----
+
+thread 'tests_core::test_has_matches' (132399) panicked at src/tests_core.rs:590:5:
+assertion failed: q.has_matches(r#"{"status": "active"}"#.as_bytes()).unwrap()
+
+---- tests_core::test_json_flattener_through_trait stdout ----
+
+thread 'tests_core::test_json_flattener_through_trait' (132406) panicked at src/tests_core.rs:1011:5:
+assertion `left == right` failed
+  left: []
+ right: ["p1"]
+
+---- tests_core::test_mixed_number_and_string_in_same_value_array stdout ----
+
+thread 'tests_core::test_mixed_number_and_string_in_same_value_array' (132412) panicked at src/tests_core.rs:1442:5:
+assertion `left == right` failed: String '3' should match the string literal in [1, "3"] (event: {"a": 1, "b": "3"})
+  left: []
+ right: ["p1"]
+
+---- tests_core::test_matcher_correct_after_rejected_pattern stdout ----
+
+thread 'tests_core::test_matcher_correct_after_rejected_pattern' (132411) panicked at src/tests_core.rs:2125:5:
+Expected "good" in matches for {"x": "hello"}, got []
+
+---- tests_core::test_mixed_string_and_number_patterns_same_digits stdout ----
+
+thread 'tests_core::test_mixed_string_and_number_patterns_same_digits' (132414) panicked at src/tests_core.rs:1419:5:
+assertion `left == right` failed: String '123' should match only string pattern (event: {"key": "123"})
+  left: []
+ right: ["str"]
+
+---- tests_core::test_nested_object_pattern stdout ----
+
+thread 'tests_core::test_nested_object_pattern' (132419) panicked at src/tests_core.rs:143:5:
+assertion `left == right` failed: Should match nested field (event: {"user": {"role": "admin", "name": "alice"}})
+  left: []
+ right: ["p1"]
+
+---- tests_core::test_multiple_patterns_same_id stdout ----
+
+thread 'tests_core::test_multiple_patterns_same_id' (132417) panicked at src/tests_core.rs:248:5:
+assertion `left == right` failed: Event: {"status": "active"}
+  left: []
+ right: ["p1"]
+
+---- tests_core::test_null_match stdout ----
+
+thread 'tests_core::test_null_match' (132421) panicked at src/tests_core.rs:76:5:
+assertion `left == right` failed: Should match null value (event: {"value": null})
+  left: []
+ right: ["p1"]
+
+---- tests_core::test_numeric_match stdout ----
+
+thread 'tests_core::test_numeric_match' (132426) panicked at src/tests_core.rs:37:5:
+assertion `left == right` failed: Should match numeric value 42 (event: {"count": 42})
+  left: []
+ right: ["p1"]
+
+---- tests_core::test_numeric_variant_matching stdout ----
+
+thread 'tests_core::test_numeric_variant_matching' (132428) panicked at src/tests_core.rs:58:9:
+assertion `left == right` failed: Event: {"x": 35}
+  left: []
+ right: ["p1"]
+
+---- tests_core::test_numeric_pattern_should_not_match_string_event stdout ----
+
+thread 'tests_core::test_numeric_pattern_should_not_match_string_event' (132427) panicked at src/tests_core.rs:1398:5:
+assertion `left == right` failed: Number 42 should match numeric pattern (event: {"key": 42})
+  left: []
+ right: ["num_pat"]
+
+---- tests_core::test_or_within_field stdout ----
+
+thread 'tests_core::test_or_within_field' (132429) panicked at src/tests_core.rs:259:9:
+assertion `left == right` failed: Event: {"status": "active"}
+  left: []
+ right: ["p1"]
+
+---- tests_core::test_pruner_stats stdout ----
+
+thread 'tests_core::test_pruner_stats' (132445) panicked at src/tests_core.rs:352:5:
+assertion `left == right` failed
+  left: 0
+ right: 1
+
+---- tests_core::test_rebuild_after_delete stdout ----
+
+thread 'tests_core::test_rebuild_after_delete' (132450) panicked at src/tests_core.rs:331:5:
+Expected "p2" in matches for {"status": "pending"}, got []
+
+---- tests_core::test_same_pattern_id_multiple_value_types stdout ----
+
+thread 'tests_core::test_same_pattern_id_multiple_value_types' (132452) panicked at src/tests_core.rs:1025:5:
+assertion `left == right` failed: number 1 should match (event: {"x": 1})
+  left: []
+ right: ["x"]
+
+---- tests_core::test_state_limit_default_allows_normal_patterns stdout ----
+
+thread 'tests_core::test_state_limit_default_allows_normal_patterns' (132460) panicked at src/tests_core.rs:2262:5:
+assertion failed: matches.contains(&&"p1")
+
+---- tests_core::test_string_number_type_distinction stdout ----
+
+thread 'tests_core::test_string_number_type_distinction' (132463) panicked at src/tests_core.rs:1377:5:
+assertion `left == right` failed: String '123' should match string pattern '123' (event: {"key": "123"})
+  left: []
+ right: ["string_pat"]
+
+---- tests_operators::test_anything_but stdout ----
+
+thread 'tests_operators::test_anything_but' (132470) panicked at src/tests_operators.rs:402:5:
+assertion `left == right` failed: Should match non-excluded value (event: {"status": "active"})
+  left: []
+ right: ["p1"]
+
+---- tests_operators::test_anything_but_numeric stdout ----
+
+thread 'tests_operators::test_anything_but_numeric' (132471) panicked at src/tests_operators.rs:449:5:
+assertion `left == right` failed: Should match non-excluded number (event: {"code": 200})
+  left: []
+ right: ["p1"]
+
+---- tests_core::test_should_rebuild_threshold stdout ----
+
+thread 'tests_core::test_should_rebuild_threshold' (132459) panicked at src/tests_core.rs:411:5:
+assertion failed: q.should_rebuild()
+
+---- tests_operators::test_anything_but_numeric_array stdout ----
+
+thread 'tests_operators::test_anything_but_numeric_array' (132472) panicked at src/tests_operators.rs:1202:5:
+assertion `left == right` failed: Should match non-excluded number (event: {"code": 200})
+  left: []
+ right: ["p1"]
+
+---- tests_operators::test_anything_but_numeric_float stdout ----
+
+thread 'tests_operators::test_anything_but_numeric_float' (132473) panicked at src/tests_operators.rs:1220:5:
+assertion `left == right` failed: Should match non-excluded float (event: {"price": 14.99})
+  left: []
+ right: ["p1"]
+
+---- tests_operators::test_anything_but_numeric_single stdout ----
+
+thread 'tests_operators::test_anything_but_numeric_single' (132476) panicked at src/tests_operators.rs:1181:5:
+assertion `left == right` failed: Should match non-excluded number (event: {"code": 200})
+  left: []
+ right: ["p1"]
+
+---- tests_operators::test_anything_but_prefix_relationship stdout ----
+
+thread 'tests_operators::test_anything_but_prefix_relationship' (132477) panicked at src/tests_operators.rs:462:5:
+assertion `left == right` failed: anything-but ['foo'] should match 'foot' (event: {"z": "foot"})
+  left: []
+ right: ["not_foo"]
+
+---- tests_operators::test_anything_but_single_string stdout ----
+
+thread 'tests_operators::test_anything_but_single_string' (132478) panicked at src/tests_operators.rs:442:5:
+assertion `left == right` failed: Event: {"status": "active"}
+  left: []
+ right: ["p1"]
+
+---- tests_operators::test_anything_but_with_shellstyle stdout ----
+
+thread 'tests_operators::test_anything_but_with_shellstyle' (132485) panicked at src/tests_operators.rs:1504:5:
+assertion `left == right` failed: Expected 2 matches for {"z": "foo"}, got []
+  left: 0
+ right: 2
+
+---- tests_operators::test_anything_but_with_exact_match stdout ----
+
+thread 'tests_operators::test_anything_but_with_exact_match' (132481) panicked at src/tests_operators.rs:479:5:
+assertion `left == right` failed: foo should match both patterns: expected 2 matches for {"z": "foo"}, got []
+  left: 0
+ right: 2
+
+---- tests_operators::test_anything_but_with_overlapping_exclusions stdout ----
+
+thread 'tests_operators::test_anything_but_with_overlapping_exclusions' (132482) panicked at src/tests_operators.rs:1538:9:
+assertion `left == right` failed: Expected 1 matches for {"x": "t"}, got []
+  left: 0
+ right: 1
+
+---- tests_operators::test_anything_but_wordle_words stdout ----
+
+thread 'tests_operators::test_anything_but_wordle_words' (132486) panicked at src/tests_operators.rs:1588:13:
+assertion `left == right` failed: Wordle word 'aahed' should match anything-but pattern
+  left: 0
+ right: 1
+
+---- tests_operators::test_cidr_ipv6_shorthand stdout ----
+
+thread 'tests_operators::test_cidr_ipv6_shorthand' (132496) panicked at src/tests_operators.rs:2844:5:
+assertion `left == right` failed: Loopback should match (event: {"ip": "0:0:0:0:0:0:0:1"})
+  left: []
+ right: ["loopback"]
+
+---- tests_operators::test_cidr_ipv6_basic stdout ----
+
+thread 'tests_operators::test_cidr_ipv6_basic' (132495) panicked at src/tests_operators.rs:2821:5:
+assertion `left == right` failed: IPv6 in range (event: {"sourceIP": "2001:db8:0:0:0:0:0:1"})
+  left: []
+ right: ["p1"]
+
+---- tests_operators::test_cidr_ipv4_basic stdout ----
+
+thread 'tests_operators::test_cidr_ipv4_basic' (132491) panicked at src/tests_operators.rs:627:5:
+assertion `left == right` failed: 10.0.0.1 in /24 (event: {"sourceIP": "10.0.0.1"})
+  left: []
+ right: ["p1"]
+
+---- tests_operators::test_empty_regex_matches_empty_string stdout ----
+
+thread 'tests_operators::test_empty_regex_matches_empty_string' (132500) panicked at src/tests_operators.rs:604:5:
+assertion `left == right` failed: empty regex should match empty string (event: {"a": ""})
+  left: []
+ right: ["a"]
+
+---- tests_operators::test_equals_ignore_case stdout ----
+
+thread 'tests_operators::test_equals_ignore_case' (132508) panicked at src/tests_operators.rs:495:9:
+assertion `left == right` failed: lowercase (event: {"name": "test"})
+  left: []
+ right: ["p1"]
+
+---- tests_operators::test_equals_ignore_case_unicode stdout ----
+
+thread 'tests_operators::test_equals_ignore_case_unicode' (132511) panicked at src/tests_operators.rs:514:5:
+assertion `left == right` failed: Greek sigma case folding (event: {"word": "σοφία"})
+  left: []
+ right: ["p1"]
+
+---- tests_operators::test_equals_ignore_case_length_boundaries stdout ----
+
+thread 'tests_operators::test_equals_ignore_case_length_boundaries' (132509) panicked at src/tests_operators.rs:3170:5:
+assertion `left == right` failed: Lowercase (event: {"name": "xyz"})
+  left: []
+ right: ["p1"]
+
+---- tests_operators::test_equals_ignore_case_multiple_patterns stdout ----
+
+thread 'tests_operators::test_equals_ignore_case_multiple_patterns' (132510) panicked at src/tests_operators.rs:507:5:
+assertion `left == right` failed: Event: {"a": "abc"}
+  left: []
+ right: ["r1"]
+
+---- tests_operators::test_exact_added_before_lookahead_on_same_field stdout ----
+
+thread 'tests_operators::test_exact_added_before_lookahead_on_same_field' (132518) panicked at src/tests_operators.rs:834:5:
+lookahead pattern should match 'foobar' when exact was added first
+
+---- tests_operators::test_equals_ignore_case_with_exact_match stdout ----
+
+thread 'tests_operators::test_equals_ignore_case_with_exact_match' (132517) panicked at src/tests_operators.rs:1238:5:
+assertion `left == right` failed: Exact match should work (event: {"x": "singleton"})
+  left: []
+ right: ["singleton"]
+
+---- tests_operators::test_json_all_escape_sequences stdout ----
+
+thread 'tests_operators::test_json_all_escape_sequences' (132521) panicked at src/tests_operators.rs:2753:5:
+assertion `left == right` failed: Quote escape should match (event: {"x": "hello\"world"})
+  left: []
+ right: ["p1"]
+
+---- tests_operators::test_cidr_miri_lightweight stdout ----
+
+thread 'tests_operators::test_cidr_miri_lightweight' (132497) panicked at src/tests_operators.rs:647:5:
+assertion `left == right` failed: 10.1.2.3 in /8 (event: {"sourceIP": "10.1.2.3"})
+  left: []
+ right: ["p1"]
+
+---- tests_operators::test_lookaround_buffer_reuse_no_stale_state stdout ----
+
+thread 'tests_operators::test_lookaround_buffer_reuse_no_stale_state' (132531) panicked at src/tests_operators.rs:3015:9:
+foobar should match lookahead
+
+---- tests_operators::test_lookaround_buffer_reuse_no_stale_state_miri_friendly stdout ----
+
+thread 'tests_operators::test_lookaround_buffer_reuse_no_stale_state_miri_friendly' (132532) panicked at src/tests_operators.rs:3088:5:
+foobar should match lookahead
+
+---- tests_operators::test_lookahead_with_exact_on_same_field stdout ----
+
+thread 'tests_operators::test_lookahead_with_exact_on_same_field' (132530) panicked at src/tests_operators.rs:794:5:
+lookahead pattern should match 'foobar' even with exact pattern on same field
+
+---- tests_operators::test_json_escape_sequences stdout ----
+
+thread 'tests_operators::test_json_escape_sequences' (132528) panicked at src/tests_operators.rs:1081:5:
+assertion `left == right` failed: Should match \n escape sequence (event: {"msg": "line1\nline2"})
+  left: []
+ right: ["p1"]
+
+---- tests_operators::test_lookaround_multiple_conditions_no_cross_contamination stdout ----
+
+thread 'tests_operators::test_lookaround_multiple_conditions_no_cross_contamination' (132538) panicked at src/tests_operators.rs:3052:9:
+foobar should match pos
+
+---- tests_operators::test_lookaround_multiple_conditions_no_cross_contamination_miri_friendly stdout ----
+
+thread 'tests_operators::test_lookaround_multiple_conditions_no_cross_contamination_miri_friendly' (132539) panicked at src/tests_operators.rs:3118:5:
+foobar should match pos
+
+---- tests_operators::test_cidr_with_other_matchers stdout ----
+
+thread 'tests_operators::test_cidr_with_other_matchers' (132499) panicked at src/tests_operators.rs:2892:5:
+Expected "internal" in matches for {"sourceIP": "10.0.0.1", "status": "active"}, got []
+
+---- tests_operators::test_lookaround_primary_match stdout ----
+
+thread 'tests_operators::test_lookaround_primary_match' (132546) panicked at src/tests_operators.rs:2976:5:
+foo(?=bar) should match 'foobar'
+
+---- tests_operators::test_negative_lookahead_match stdout ----
+
+thread 'tests_operators::test_negative_lookahead_match' (132555) panicked at src/tests_operators.rs:716:5:
+foo(?!bar)... should match 'foobaz'
+
+---- tests_operators::test_lookaround_transformation stdout ----
+
+thread 'tests_operators::test_lookaround_transformation' (132548) panicked at src/tests_operators.rs:2938:5:
+Expected "la" in matches for {"x": "foobar"}, got []
+
+---- tests_operators::test_lookbehind_match stdout ----
+
+thread 'tests_operators::test_lookbehind_match' (132549) panicked at src/tests_operators.rs:738:5:
+(?<=foo)bar should match 'foobar'
+
+---- tests_operators::test_multiple_overlapping_shellstyle_patterns stdout ----
+
+thread 'tests_operators::test_multiple_overlapping_shellstyle_patterns' (132553) panicked at src/tests_operators.rs:233:5:
+Expected "suffix_bc" in matches for {"a": "abc"}, got []
+
+---- tests_operators::test_negative_lookbehind_match stdout ----
+
+thread 'tests_operators::test_negative_lookbehind_match' (132556) panicked at src/tests_operators.rs:760:5:
+(?<!foo)bar should match 'xxxbar'
+
+---- tests_operators::test_multiple_shellstyle_same_field stdout ----
+
+thread 'tests_operators::test_multiple_shellstyle_same_field' (132554) panicked at src/tests_operators.rs:1478:5:
+Expected "suffix_bc" in matches for {"x": "abc"}, got []
+
+---- tests_operators::test_numeric_range stdout ----
+
+thread 'tests_operators::test_numeric_range' (132566) panicked at src/tests_operators.rs:538:5:
+assertion `left == right` failed: Event: {"score": 50}
+  left: []
+ right: ["p1"]
+
+---- tests_operators::test_numeric_equals stdout ----
+
+thread 'tests_operators::test_numeric_equals' (132562) panicked at src/tests_operators.rs:547:5:
+assertion `left == right` failed: Event: {"count": 42}
+  left: []
+ right: ["p1"]
+
+---- tests_operators::test_numeric_greater_than stdout ----
+
+thread 'tests_operators::test_numeric_greater_than' (132565) panicked at src/tests_operators.rs:530:5:
+assertion `left == right` failed: Event: {"age": 25}
+  left: []
+ right: ["p1"]
+
+---- tests_operators::test_nwb_underscore_is_word_char stdout ----
+
+thread 'tests_operators::test_nwb_underscore_is_word_char' (132572) panicked at src/tests_operators.rs:999:5:
+Expected "test" in matches for {"name": "a_"}, got []
+
+---- tests_operators::test_nested_transmap_safety stdout ----
+
+thread 'tests_operators::test_nested_transmap_safety' (132560) panicked at src/tests_operators.rs:255:5:
+Expected "P0" in matches for {"a": "fooXYZ", "b": "barXYZ"}, got []
+
+---- tests_operators::test_numeric_scientific_notation stdout ----
+
+thread 'tests_operators::test_numeric_scientific_notation' (132567) panicked at src/tests_operators.rs:554:5:
+assertion `left == right` failed: Integer 350 (event: {"value": 350})
+  left: []
+ right: ["p1"]
+
+---- tests_operators::test_nwb_word_to_word stdout ----
+
+thread 'tests_operators::test_nwb_word_to_word' (132574) panicked at src/tests_operators.rs:928:5:
+Expected "test" in matches for {"name": "helloworld"}, got []
+
+---- tests_operators::test_overlapping_exact_match_patterns stdout ----
+
+thread 'tests_operators::test_overlapping_exact_match_patterns' (132575) panicked at src/tests_operators.rs:1151:5:
+assertion `left == right` failed: foo should only match p1 (event: {"x": 3, "a": "foo"})
+  left: []
+ right: ["p1"]
+
+---- tests_operators::test_prefix_match stdout ----
+
+thread 'tests_operators::test_prefix_match' (132579) panicked at src/tests_operators.rs:70:5:
+assertion `left == right` failed: Should match prefix (event: {"name": "prod-server-1"})
+  left: []
+ right: ["p1"]
+
+---- tests_operators::test_positive_lookahead_match stdout ----
+
+thread 'tests_operators::test_positive_lookahead_match' (132578) panicked at src/tests_operators.rs:694:5:
+foo(?=bar)bar should match 'foobar'
+
+---- tests_operators::test_nested_transmap_safety_miri_friendly stdout ----
+
+thread 'tests_operators::test_nested_transmap_safety_miri_friendly' (132561) panicked at src/tests_operators.rs:353:5:
+Expected "P0" in matches for {"a": "fooX", "b": "barX"}, got []
+
+---- tests_operators::test_overlapping_shellstyle_nesting_miri_friendly stdout ----
+
+thread 'tests_operators::test_overlapping_shellstyle_nesting_miri_friendly' (132577) panicked at src/tests_operators.rs:370:5:
+Expected "P1" in matches for {"a": "fooX", "b": "barY"}, got []
+
+---- tests_operators::test_nwb_start_nonword stdout ----
+
+thread 'tests_operators::test_nwb_start_nonword' (132570) panicked at src/tests_operators.rs:944:5:
+Expected "test" in matches for {"name": " hello"}, got []
+
+---- tests_operators::test_regex_alternation stdout ----
+
+thread 'tests_operators::test_regex_alternation' (132583) panicked at src/tests_operators.rs:580:5:
+Expected "p1" in matches for {"a": "a"}, got []
+
+---- tests_operators::test_regex_character_class stdout ----
+
+thread 'tests_operators::test_regex_character_class' (132584) panicked at src/tests_operators.rs:588:5:
+Expected "p1" in matches for {"a": "h"}, got []
+
+---- tests_operators::test_overlapping_shellstyle_nesting stdout ----
+
+thread 'tests_operators::test_overlapping_shellstyle_nesting' (132576) panicked at src/tests_operators.rs:295:5:
+Expected "P1" in matches for {"a": "fooX", "b": "barY"}, got []
+
+---- tests_operators::test_regex_various_patterns stdout ----
+
+thread 'tests_operators::test_regex_various_patterns' (132586) panicked at src/tests_operators.rs:1275:13:
+'a|b' should match 'a': expected "p1" in matches for {"a": "a"}, got []
+
+---- tests_operators::test_regex_with_escape stdout ----
+
+thread 'tests_operators::test_regex_with_escape' (132587) panicked at src/tests_operators.rs:573:5:
+assertion `left == right` failed: Event: {"email": "alice@example.com"}
+  left: []
+ right: ["p1"]
+
+---- tests_operators::test_regex_match stdout ----
+
+thread 'tests_operators::test_regex_match' (132585) panicked at src/tests_operators.rs:565:5:
+assertion `left == right` failed: Event: {"code": "ABC-123"}
+  left: []
+ right: ["p1"]
+
+---- tests_operators::test_shellstyle_contains stdout ----
+
+thread 'tests_operators::test_shellstyle_contains' (132599) panicked at src/tests_operators.rs:219:9:
+assertion `left == right` failed: Event: {"x": "xxfooyy"}
+  left: []
+ right: ["p1"]
+
+---- tests_operators::test_regexp_simple_optional stdout ----
+
+thread 'tests_operators::test_regexp_simple_optional' (132596) panicked at src/tests_operators.rs:596:5:
+'a?b' should match 'ab': expected "test" in matches for {"a": "ab"}, got []
+
+---- tests_operators::test_shellstyle_complex_wildcards stdout ----
+
+thread 'tests_operators::test_shellstyle_complex_wildcards' (132598) panicked at src/tests_operators.rs:1670:13:
+assertion `left == right` failed: Event: {"x": "xxabyycdzz"}
+  left: []
+ right: ["p1"]
+
+---- tests_operators::test_regexp_end2end stdout ----
+
+thread 'tests_operators::test_regexp_end2end' (132593) panicked at src/tests_operators.rs:1413:13:
+Pattern '(xyz)?a?b' should match 'xyzb', but didn't
+
+---- tests_operators::test_shellstyle_double_wildcard stdout ----
+
+thread 'tests_operators::test_shellstyle_double_wildcard' (132604) panicked at src/tests_operators.rs:2315:5:
+assertion `left == right` failed: 12*4* should match 12345 (event: {"d": "12345"})
+  left: []
+ right: ["r6"]
+
+---- tests_operators::test_shellstyle_infix stdout ----
+
+thread 'tests_operators::test_shellstyle_infix' (132607) panicked at src/tests_operators.rs:201:5:
+assertion `left == right` failed: Event: {"b": "dexef"}
+  left: []
+ right: ["p1"]
+
+---- tests_operators::test_shellstyle_duplicate_pattern stdout ----
+
+thread 'tests_operators::test_shellstyle_duplicate_pattern' (132606) panicked at src/tests_operators.rs:2306:5:
+assertion `left == right` failed: Expected 2 matches for {"c": "xyzzz"}, got []
+  left: 0
+ right: 2
+
+---- tests_operators::test_shellstyle_double_wildcard_variations stdout ----
+
+thread 'tests_operators::test_shellstyle_double_wildcard_variations' (132605) panicked at src/tests_operators.rs:2453:9:
+assertion `left == right` failed: Event: {"x": "xxyycdzz"}
+  left: []
+ right: ["p1"]
+
+---- tests_operators::test_shellstyle_long_case stdout ----
+
+thread 'tests_operators::test_shellstyle_long_case' (132611) panicked at src/tests_operators.rs:1463:9:
+assertion `left == right` failed: Should match abaabab (event: {"x": "abaabab"})
+  left: []
+ right: ["p1"]
+
+---- tests_operators::test_shellstyle_multiple_wildcards stdout ----
+
+thread 'tests_operators::test_shellstyle_multiple_wildcards' (132612) panicked at src/tests_operators.rs:208:5:
+assertion `left == right` failed: Event: {"d": "12345"}
+  left: []
+ right: ["p1"]
+
+---- tests_operators::test_shellstyle_prefix stdout ----
+
+thread 'tests_operators::test_shellstyle_prefix' (132613) panicked at src/tests_operators.rs:194:5:
+assertion `left == right` failed: Event: {"c": "xyzzz"}
+  left: []
+ right: ["p1"]
+
+---- tests_operators::test_shellstyle_suffix stdout ----
+
+thread 'tests_operators::test_shellstyle_suffix' (132624) panicked at src/tests_operators.rs:186:5:
+assertion `left == right` failed: Event: {"a": "bc"}
+  left: []
+ right: ["p1"]
+
+---- tests_operators::test_shellstyle_repeated_sequences stdout ----
+
+thread 'tests_operators::test_shellstyle_repeated_sequences' (132620) panicked at src/tests_operators.rs:1608:9:
+assertion `left == right` failed: Event: {"x": "abab"}
+  left: []
+ right: ["p1"]
+
+---- tests_operators::test_shellstyle_suffix_merged_bug stdout ----
+
+thread 'tests_operators::test_shellstyle_suffix_merged_bug' (132625) panicked at src/tests_operators.rs:1632:9:
+assertion `left == right` failed: Expected 1 matches for {"Url": "xy9"}, got []
+  left: 0
+ right: 1
+
+---- tests_operators::test_shellstyle_subset_overlap_same_field stdout ----
+
+thread 'tests_operators::test_shellstyle_subset_overlap_same_field' (132623) panicked at src/tests_operators.rs:3144:5:
+Expected "r1" in matches for {"b": "dexeff"}, got []
+
+---- tests_operators::test_shellstyle_suffix_with_space stdout ----
+
+thread 'tests_operators::test_shellstyle_suffix_with_space' (132632) panicked at src/tests_operators.rs:2402:5:
+assertion `left == right` failed: *ST should match 'STA ST' (event: {"x": "STA ST"})
+  left: []
+ right: ["p1"]
+
+---- tests_operators::test_shellstyle_zero_length_prefix stdout ----
+
+thread 'tests_operators::test_shellstyle_zero_length_prefix' (132633) panicked at src/tests_operators.rs:2328:5:
+assertion `left == right` failed: *bc should match bc (zero-length prefix) (event: {"a": "bc"})
+  left: []
+ right: ["r1"]
+
+---- tests_operators::test_unicode_escape_emoji stdout ----
+
+thread 'tests_operators::test_unicode_escape_emoji' (132640) panicked at src/tests_operators.rs:1103:5:
+assertion `left == right` failed: UTF-16 surrogate pair should decode to emoji (event: {"emoji": "\ud83d\udc8b"})
+  left: []
+ right: ["p1"]
+
+---- tests_operators::test_suffix stdout ----
+
+thread 'tests_operators::test_suffix' (132637) panicked at src/tests_operators.rs:86:5:
+assertion `left == right` failed: Event: {"file": "photo.jpg"}
+  left: []
+ right: ["p1"]
+
+---- tests_operators::test_singleton_hit_and_multi_condition_hit_same_value stdout ----
+
+thread 'tests_operators::test_singleton_hit_and_multi_condition_hit_same_value' (132636) panicked at src/tests_operators.rs:863:5:
+lookahead should match 'foobar'
+
+---- tests_operators::test_unicode_escape_in_event stdout ----
+
+thread 'tests_operators::test_unicode_escape_in_event' (132641) panicked at src/tests_operators.rs:1092:5:
+assertion `left == right` failed: Unicode escape should decode to 'Hello' (event: {"greeting": "\u0048\u0065\u006c\u006c\u006f"})
+  left: []
+ right: ["p1"]
+
+---- tests_operators::test_wb_digit_to_space stdout ----
+
+thread 'tests_operators::test_wb_digit_to_space' (132646) panicked at src/tests_operators.rs:1006:5:
+Expected "test" in matches for {"name": "abc3 end"}, got []
+
+---- tests_operators::test_wb_end_word_char stdout ----
+
+thread 'tests_operators::test_wb_end_word_char' (132648) panicked at src/tests_operators.rs:895:5:
+Expected "test" in matches for {"name": "hello"}, got []
+
+---- tests_operators::test_wb_middle_nonword_to_word stdout ----
+
+thread 'tests_operators::test_wb_middle_nonword_to_word' (132649) panicked at src/tests_operators.rs:913:5:
+Expected "test" in matches for {"name": "hello world"}, got []
+
+---- tests_operators::test_three_level_nesting_miri_friendly stdout ----
+
+thread 'tests_operators::test_three_level_nesting_miri_friendly' (132639) panicked at src/tests_operators.rs:388:5:
+missing deep-1, got []
+
+---- tests_operators::test_three_level_nesting stdout ----
+
+thread 'tests_operators::test_three_level_nesting' (132638) panicked at src/tests_operators.rs:327:9:
+iter 0: missing deep-1, got []
+
+---- tests_operators::test_wb_optional_quantifier stdout ----
+
+thread 'tests_operators::test_wb_optional_quantifier' (132655) panicked at src/tests_operators.rs:1036:5:
+Expected "test" in matches for {"v": "xa "}, got []
+
+---- tests_operators::test_wb_plus_quantifier stdout ----
+
+thread 'tests_operators::test_wb_plus_quantifier' (132656) panicked at src/tests_operators.rs:1026:5:
+Expected "test" in matches for {"v": "aaa "}, got []
+
+---- tests_operators::test_wb_range_quantifier stdout ----
+
+thread 'tests_operators::test_wb_range_quantifier' (132657) panicked at src/tests_operators.rs:1044:5:
+Expected "test" in matches for {"v": "aa "}, got []
+
+---- tests_operators::test_wb_utf8_emoji_boundary stdout ----
+
+thread 'tests_operators::test_wb_utf8_emoji_boundary' (132665) panicked at src/tests_operators.rs:1062:5:
+Expected "test" in matches for {"v": "a😀"}, got []
+
+---- tests_operators::test_wb_utf8_nonword_to_word stdout ----
+
+thread 'tests_operators::test_wb_utf8_nonword_to_word' (132667) panicked at src/tests_operators.rs:1070:5:
+Expected "test" in matches for {"v": "écat"}, got []
+
+---- tests_operators::test_wb_middle_word_to_nonword stdout ----
+
+thread 'tests_operators::test_wb_middle_word_to_nonword' (132651) panicked at src/tests_operators.rs:907:5:
+Expected "test" in matches for {"name": "hello world"}, got []
+
+---- tests_operators::test_wb_start_word_char stdout ----
+
+thread 'tests_operators::test_wb_start_word_char' (132663) panicked at src/tests_operators.rs:882:5:
+Expected "test" in matches for {"name": "hello"}, got []
+
+---- tests_operators::test_wb_utf8_multibyte stdout ----
+
+thread 'tests_operators::test_wb_utf8_multibyte' (132666) panicked at src/tests_operators.rs:1054:5:
+Expected "test" in matches for {"v": "café"}, got []
+
+---- tests_operators::test_wb_whole_word_only stdout ----
+
+thread 'tests_operators::test_wb_whole_word_only' (132677) panicked at src/tests_operators.rs:983:5:
+Expected "test" in matches for {"name": "cat"}, got []
+
+---- tests_operators::test_wb_whole_word_at_end stdout ----
+
+thread 'tests_operators::test_wb_whole_word_at_end' (132670) panicked at src/tests_operators.rs:977:5:
+Expected "test" in matches for {"name": "the cat"}, got []
+
+---- tests_operators::test_wb_whole_word_at_start stdout ----
+
+thread 'tests_operators::test_wb_whole_word_at_start' (132671) panicked at src/tests_operators.rs:971:5:
+Expected "test" in matches for {"name": "cat is here"}, got []
+
+---- tests_operators::test_wb_whole_word_match stdout ----
+
+thread 'tests_operators::test_wb_whole_word_match' (132674) panicked at src/tests_operators.rs:959:5:
+Expected "test" in matches for {"name": "the cat sat"}, got []
+
+---- tests_operators::test_wb_with_char_class stdout ----
+
+thread 'tests_operators::test_wb_with_char_class' (132680) panicked at src/tests_operators.rs:1012:5:
+Expected "test" in matches for {"name": "5 "}, got []
+
+---- tests_operators::test_wb_with_dot stdout ----
+
+thread 'tests_operators::test_wb_with_dot' (132681) panicked at src/tests_operators.rs:1018:5:
+Expected "test" in matches for {"name": "a "}, got []
+
+---- tests_operators::test_wildcard_comprehensive stdout ----
+
+thread 'tests_operators::test_wildcard_comprehensive' (132682) panicked at src/test_helpers.rs:138:9:
+Pattern '*' should match '', got []
+
+---- tests_operators::test_wildcard_contains stdout ----
+
+thread 'tests_operators::test_wildcard_contains' (132683) panicked at src/tests_operators.rs:120:5:
+assertion `left == right` failed: Should match *error* (event: {"msg": "an error occurred"})
+  left: []
+ right: ["p1"]
+
+---- tests_operators::test_wildcard_escape_backslash_star stdout ----
+
+thread 'tests_operators::test_wildcard_escape_backslash_star' (132689) panicked at src/tests_operators.rs:2255:5:
+assertion `left == right` failed: Event: {"x": "he\\*llo"}
+  left: []
+ right: ["p1"]
+
+---- tests_operators::test_wildcard_escape_star stdout ----
+
+thread 'tests_operators::test_wildcard_escape_star' (132692) panicked at src/tests_operators.rs:144:5:
+assertion `left == right` failed: \* should match literal * (event: {"val": "a*b"})
+  left: []
+ right: ["p1"]
+
+---- tests_operators::test_wildcard_escape_backslash stdout ----
+
+thread 'tests_operators::test_wildcard_escape_backslash' (132688) panicked at src/tests_operators.rs:156:5:
+assertion `left == right` failed: \\ should match literal \ (event: {"path": "a\\b"})
+  left: []
+ right: ["p1"]
+
+---- tests_operators::test_wildcard_escape_sequences_comprehensive stdout ----
+
+thread 'tests_operators::test_wildcard_escape_sequences_comprehensive' (132691) panicked at src/test_helpers.rs:138:9:
+Pattern 'hel\\*o' should match 'hel*o', got []
+
+---- tests_operators::test_wildcard_matches_empty_string stdout ----
+
+thread 'tests_operators::test_wildcard_matches_empty_string' (132697) panicked at src/tests_operators.rs:132:5:
+assertion `left == right` failed: * should match empty string (event: {"x": ""})
+  left: []
+ right: ["p1"]
+
+---- tests_operators::test_wildcard_multi_patterns_complex2 stdout ----
+
+thread 'tests_operators::test_wildcard_multi_patterns_complex2' (132701) panicked at src/tests_operators.rs:40:13:
+Pattern '{"x":[{"wildcard": "h*xllo"}]}' should match 'hxllo', got []
+
+---- tests_operators::test_wildcard_escape_backslash_wildcard stdout ----
+
+thread 'tests_operators::test_wildcard_escape_backslash_wildcard' (132690) panicked at src/tests_operators.rs:2285:9:
+assertion `left == right` failed: Event: {"x": "he\\llo"}
+  left: []
+ right: ["p1"]
+
+---- tests_operators::test_wildcard_multi_patterns_complex1 stdout ----
+
+thread 'tests_operators::test_wildcard_multi_patterns_complex1' (132700) panicked at src/tests_operators.rs:40:13:
+Pattern '{"x":[{"wildcard": "h*llo"}]}' should match 'hllo', got []
+
+---- tests_operators::test_wildcard_multi_patterns_double_exact stdout ----
+
+thread 'tests_operators::test_wildcard_multi_patterns_double_exact' (132706) panicked at src/tests_operators.rs:40:13:
+Pattern '{"x":[{"wildcard": "h*l*o"}]}' should match 'hlo', got []
+
+---- tests_operators::test_wildcard_multi_patterns_infix_exact stdout ----
+
+thread 'tests_operators::test_wildcard_multi_patterns_infix_exact' (132708) panicked at src/tests_operators.rs:40:13:
+Pattern '{"x":[{"wildcard": "he*lo"}]}' should match 'helo', got []
+
+---- tests_operators::test_wildcard_multi_patterns_double_exact2 stdout ----
+
+thread 'tests_operators::test_wildcard_multi_patterns_double_exact2' (132707) panicked at src/tests_operators.rs:40:13:
+Pattern '{"x":[{"wildcard": "he*l*"}]}' should match 'hel', got []
+
+---- tests_operators::test_wildcard_multi_patterns_infix_exact2 stdout ----
+
+thread 'tests_operators::test_wildcard_multi_patterns_infix_exact2' (132709) panicked at src/tests_operators.rs:40:13:
+Pattern '{"x":[{"wildcard": "he*l"}]}' should match 'hel', got []
+
+---- tests_operators::test_wildcard_multi_patterns_basic stdout ----
+
+thread 'tests_operators::test_wildcard_multi_patterns_basic' (132699) panicked at src/tests_operators.rs:40:13:
+Pattern '{"x":[{"wildcard": "*"}]}' should match '', got []
+
+---- tests_operators::test_wildcard_multi_patterns_infix_pair stdout ----
+
+thread 'tests_operators::test_wildcard_multi_patterns_infix_pair' (132710) panicked at src/tests_operators.rs:40:13:
+Pattern '{"x":[{"wildcard": "h*llo"}]}' should match 'hllo', got []
+
+---- tests_operators::test_wildcard_multi_patterns_overlap1 stdout ----
+
+thread 'tests_operators::test_wildcard_multi_patterns_overlap1' (132715) panicked at src/tests_operators.rs:40:13:
+Pattern '{"x":[{"wildcard": "he*lo"}]}' should match 'helo', got []
+
+---- tests_operators::test_wildcard_multi_patterns_overlap2 stdout ----
+
+thread 'tests_operators::test_wildcard_multi_patterns_overlap2' (132716) panicked at src/tests_operators.rs:40:13:
+Pattern '{"x":[{"wildcard": "h*llo"}]}' should match 'hllo', got []
+
+---- tests_operators::test_wildcard_multi_patterns_prefix_suffix stdout ----
+
+thread 'tests_operators::test_wildcard_multi_patterns_prefix_suffix' (132719) panicked at src/tests_operators.rs:40:13:
+Pattern '{"x":[{"wildcard": "he*lo"}]}' should match 'helo', got []
+
+---- tests_operators::test_wildcard_multi_patterns_prefix_exact stdout ----
+
+thread 'tests_operators::test_wildcard_multi_patterns_prefix_exact' (132717) panicked at src/tests_operators.rs:40:13:
+Pattern '{"x":[{"wildcard": "he*"}]}' should match 'he', got []
+
+---- tests_operators::test_wildcard_multi_patterns_prefix_pair stdout ----
+
+thread 'tests_operators::test_wildcard_multi_patterns_prefix_pair' (132718) panicked at src/tests_operators.rs:40:13:
+Pattern '{"x":[{"wildcard": "hel*"}]}' should match 'hel', got []
+
+---- tests_operators::test_wildcard_multi_patterns_suffix_double2 stdout ----
+
+thread 'tests_operators::test_wildcard_multi_patterns_suffix_double2' (132727) panicked at src/tests_operators.rs:40:13:
+Pattern '{"x":[{"wildcard": "*hello"}]}' should match 'hello', got []
+
+---- tests_operators::test_wildcard_multi_patterns_prefix_suffix2 stdout ----
+
+thread 'tests_operators::test_wildcard_multi_patterns_prefix_suffix2' (132725) panicked at src/tests_operators.rs:40:13:
+Pattern '{"x":[{"wildcard": "hel*o"}]}' should match 'helo', got []
+
+---- tests_operators::test_wildcard_multi_patterns_suffix_exact stdout ----
+
+thread 'tests_operators::test_wildcard_multi_patterns_suffix_exact' (132728) panicked at src/tests_operators.rs:40:13:
+Pattern '{"x":[{"wildcard": "*hello"}]}' should match 'hello', got []
+
+---- tests_operators::test_wildcard_multi_patterns_suffix_double stdout ----
+
+thread 'tests_operators::test_wildcard_multi_patterns_suffix_double' (132726) panicked at src/tests_operators.rs:40:13:
+Pattern '{"x":[{"wildcard": "*elo"}]}' should match 'elo', got []
+
+---- tests_operators::test_wildcard_multi_patterns_suffix_exact2 stdout ----
+
+thread 'tests_operators::test_wildcard_multi_patterns_suffix_exact2' (132729) panicked at src/tests_operators.rs:40:13:
+Pattern '{"x":[{"wildcard": "*hello"}]}' should match 'hello', got []
+
+---- tests_operators::test_wildcard_prefix stdout ----
+
+thread 'tests_operators::test_wildcard_prefix' (132738) panicked at src/tests_operators.rs:109:5:
+assertion `left == right` failed: Should match prod-* (event: {"name": "prod-server"})
+  left: []
+ right: ["p1"]
+
+---- tests_operators::test_wildcard_multi_patterns_suffix_infix stdout ----
+
+thread 'tests_operators::test_wildcard_multi_patterns_suffix_infix' (132732) panicked at src/tests_operators.rs:40:13:
+Pattern '{"x":[{"wildcard": "*hello"}]}' should match 'hello', got []
+
+---- tests_operators::test_wildcard_multi_patterns_zero_expansion stdout ----
+
+thread 'tests_operators::test_wildcard_multi_patterns_zero_expansion' (132737) panicked at src/tests_operators.rs:40:13:
+Pattern '{"x":[{"wildcard": "abc*def"}]}' should match 'abcdef', got []
+
+---- tests_operators::test_wildcard_suffix stdout ----
+
+thread 'tests_operators::test_wildcard_suffix' (132741) panicked at src/tests_operators.rs:97:5:
+assertion `left == right` failed: Should match *.txt (event: {"file": "document.txt"})
+  left: []
+ right: ["p1"]
+
+---- tests_operators::test_wildcard_multi_patterns_suffix_pair stdout ----
+
+thread 'tests_operators::test_wildcard_multi_patterns_suffix_pair' (132736) panicked at src/tests_operators.rs:40:13:
+Pattern '{"x":[{"wildcard": "h*llox"}]}' should match 'hllox', got []
+
+---- tests_operators::test_wildcard_multi_patterns_suffix_infix2 stdout ----
+
+thread 'tests_operators::test_wildcard_multi_patterns_suffix_infix2' (132735) panicked at src/tests_operators.rs:40:13:
+Pattern '{"x":[{"wildcard": "*hello"}]}' should match 'hello', got []
+
+---- tests_stress::test_arc_field_matcher_sharing stdout ----
+
+thread 'tests_stress::test_arc_field_matcher_sharing' (132754) panicked at src/tests_stress.rs:1084:5:
+assertion `left == right` failed
+  left: []
+ right: ["id1", "id2", "id3"]
+
+---- tests_operators::test_wildcard_unicode_strings stdout ----
+
+thread 'tests_operators::test_wildcard_unicode_strings' (132752) panicked at src/tests_operators.rs:2362:5:
+assertion `left == right` failed: *hello should match 23Őzhello (event: {"x": "23Őzhello"})
+  left: []
+ right: ["p1"]
+
+---- tests_stress::test_arc_concurrent_read_write stdout ----
+
+thread '<unnamed>' (132759) panicked at src/tests_stress.rs:234:17:
+Thread 0 failed
+
+thread '<unnamed>' (132762) panicked at src/tests_stress.rs:234:17:
+Thread 3 failed
+
+thread 'tests_stress::test_arc_concurrent_read_write' (132753) panicked at src/tests_stress.rs:242:23:
+Thread panicked: Any { .. }
+
+---- tests_stress::test_concurrent_miri_friendly stdout ----
+
+thread 'tests_stress::test_concurrent_miri_friendly' (132770) panicked at src/tests_stress.rs:209:9:
+assertion failed: !matches.is_empty()
+
+---- tests_stress::test_arc_snapshot_isolation stdout ----
+
+thread 'tests_stress::test_arc_snapshot_isolation' (132758) panicked at src/tests_stress.rs:174:5:
+assertion `left == right` failed
+  left: []
+ right: ["p1"]
+
+---- tests_stress::test_concurrent_citylots_stress stdout ----
+
+thread '<unnamed>' (132771) panicked at src/tests_stress.rs:520:17:
+assertion failed: !matches.is_empty()
+
+thread '<unnamed>' (132774) panicked at src/tests_stress.rs:520:17:
+assertion failed: !matches.is_empty()
+
+thread '<unnamed>' (132772) panicked at src/tests_stress.rs:520:17:
+assertion failed: !matches.is_empty()
+
+thread '<unnamed>' (132773) panicked at src/tests_stress.rs:520:17:
+assertion failed: !matches.is_empty()
+
+thread 'tests_stress::test_concurrent_citylots_stress' (132769) panicked at src/tests_stress.rs:527:23:
+Thread panicked: Any { .. }
+
+---- tests_stress::test_exercise_matching_comprehensive stdout ----
+
+thread 'tests_stress::test_exercise_matching_comprehensive' (132781) panicked at src/tests_stress.rs:866:9:
+Pattern 'exists true on Title' should match: {"Image": {"Title": [{"exists": true}]}}: expected "exists true on Title" in matches for {
+        "Image": {
+            "Width":  800,
+            "Height": 600,
+            "Title":  "View from 15th Floor",
+            "Thumbnail": {
+                "Url":    "https://www.example.com/image/481989943",
+                "Height": 125,
+                "Width":  100
+            },
+            "Animated" : false,
+            "IDs": [116, 943, 234, 38793]
+        }
+    }, got []
+
+---- tests_stress::test_bulk_add_correctness stdout ----
+
+thread 'tests_stress::test_bulk_add_correctness' (132768) panicked at src/tests_stress.rs:548:9:
+assertion `left == right` failed: Pattern 0 should match (event: {"field0": "value0"})
+  left: []
+ right: ["p0"]
+
+---- tests_stress::test_arc_pattern_lifecycle stdout ----
+
+thread '<unnamed>' (132783) panicked at src/tests_stress.rs:271:17:
+assertion `left == right` failed
+  left: 0
+ right: 1
+
+thread '<unnamed>' (132782) panicked at src/tests_stress.rs:271:17:
+assertion `left == right` failed
+  left: 0
+ right: 1
+
+thread 'tests_stress::test_arc_pattern_lifecycle' (132757) panicked at src/tests_stress.rs:278:23:
+Thread panicked: Any { .. }
+
+thread '<unnamed>' (132789) panicked at src/tests_stress.rs:271:17:
+assertion `left == right` failed
+  left: 0
+ right: 1
+
+---- tests_stress::test_exercise_matching_miri_friendly stdout ----
+
+thread 'tests_stress::test_exercise_matching_miri_friendly' (132787) panicked at src/tests_stress.rs:933:9:
+Pattern 'exact number match' should match: {"Image": {"Width": [800]}}: expected "exact number match" in matches for {
+        "Image": {
+            "Width":  800,
+            "Height": 600,
+            "Title":  "View from 15th Floor",
+            "Thumbnail": {
+                "Url":    "https://www.example.com/image/481989943",
+                "Height": 125,
+                "Width":  100
+            },
+            "Animated" : false,
+            "IDs": [116, 943, 234, 38793]
+        }
+    }, got []
+
+---- tests_stress::test_arc_memory_cleanup stdout ----
+
+thread 'tests_stress::test_arc_memory_cleanup' (132756) panicked at src/tests_stress.rs:478:9:
+assertion `left == right` failed
+  left: []
+ right: ["p50"]
+
+---- tests_stress::test_json_escape_all_eight stdout ----
+
+thread 'tests_stress::test_json_escape_all_eight' (132790) panicked at src/tests_stress.rs:308:5:
+assertion `left == right` failed: Quote escape should match (event: {"x": "hello\"world"})
+  left: []
+ right: ["p1"]
+
+---- tests_operators::test_cidr_ipv4_various_prefixes stdout ----
+
+thread 'tests_operators::test_cidr_ipv4_various_prefixes' (132492) panicked at src/tests_operators.rs:2810:5:
+Expected "class_a" in matches for {"ip": "10.255.255.255"}, got []
+
+---- tests_stress::test_memory_cleanup_miri_friendly stdout ----
+
+thread 'tests_stress::test_memory_cleanup_miri_friendly' (132795) panicked at src/tests_stress.rs:433:5:
+assertion `left == right` failed: Event: {"x": 3}
+  left: []
+ right: ["p3"]
+
+---- tests_stress::test_multiple_patterns_same_id_comprehensive stdout ----
+
+thread 'tests_stress::test_multiple_patterns_same_id_comprehensive' (132796) panicked at src/tests_stress.rs:586:5:
+assertion `left == right` failed: string 'a' should match (event: {"x": "a"})
+  left: []
+ right: ["x"]
+
+---- tests_stress::test_numbits_through_numeric_matching stdout ----
+
+thread 'tests_stress::test_numbits_through_numeric_matching' (132804) panicked at src/tests_stress.rs:384:9:
+assertion `left == right` failed: Event: {"x": 42}
+  left: []
+ right: ["p1"]
+
+---- tests_stress::test_numbits_ordering_through_range stdout ----
+
+thread 'tests_stress::test_numbits_ordering_through_range' (132803) panicked at src/tests_stress.rs:395:5:
+assertion `left == right` failed: -100 should match (event: {"x": -100})
+  left: []
+ right: ["p1"]
+
+---- tests_stress::test_pathological_correctness_miri_friendly stdout ----
+
+thread 'tests_stress::test_pathological_correctness_miri_friendly' (132810) panicked at src/tests_stress.rs:1278:9:
+assertion `left == right` failed: Event: {"val": "ab"}
+  left: []
+ right: ["sh0"]
+
+---- tests_stress::test_unicode_escape_mixed_codepoints stdout ----
+
+thread 'tests_stress::test_unicode_escape_mixed_codepoints' (132817) panicked at src/tests_stress.rs:650:5:
+assertion `left == right` failed: Mixed codepoints should decode (event: {"mixed": "\u0416\ud83d\udc8b\u4e2d"})
+  left: []
+ right: ["p1"]
+
+---- tests_stress::test_unicode_escape_multiple_emojis stdout ----
+
+thread 'tests_stress::test_unicode_escape_multiple_emojis' (132819) panicked at src/tests_stress.rs:632:5:
+assertion `left == right` failed: Multiple surrogate pairs should decode correctly (event: {"emojis": "\ud83d\ude00\ud83d\udc8b\ud83d\ude3a"})
+  left: []
+ right: ["p1"]
+
+---- tests_stress::test_multiple_shellstyle_citylots_patterns stdout ----
+
+thread 'tests_stress::test_multiple_shellstyle_citylots_patterns' (132802) panicked at src/tests_stress.rs:725:17:
+Expected "pattern_143" in matches for {"x": "1430022"}, got []
+
+---- tests_stress::test_unicode_escape_standard_escapes stdout ----
+
+thread 'tests_stress::test_unicode_escape_standard_escapes' (132820) panicked at src/tests_stress.rs:667:5:
+assertion `left == right` failed: Newline escape should match (event: {"text": "hello\nworld"})
+  left: []
+ right: ["newline"]
+
+---- tests_stress::test_unicode_field_names stdout ----
+
+thread 'tests_stress::test_unicode_field_names' (132822) panicked at src/tests_stress.rs:363:5:
+assertion `left == right` failed: Unicode escape in field name should work (event: {"\u0066ield": "value"})
+  left: []
+ right: ["p1"]
+
+---- tests_stress::test_unicode_field_names_surrogate_pairs stdout ----
+
+thread 'tests_stress::test_unicode_field_names_surrogate_pairs' (132825) panicked at src/tests_stress.rs:739:5:
+assertion `left == right` failed: Surrogate pair in field name should decode (event: {"x\u0078\ud83d\udc8by": "value"})
+  left: []
+ right: ["p1"]
+
+---- tests_stress::test_unicode_member_names stdout ----
+
+thread 'tests_stress::test_unicode_member_names' (132826) panicked at src/tests_stress.rs:353:5:
+assertion `left == right` failed: Unicode field names should work (event: {"日本語": "はい"})
+  left: []
+ right: ["p1"]
+
+---- tests_stress::test_utf16_surrogate_pairs stdout ----
+
+thread 'tests_stress::test_utf16_surrogate_pairs' (132837) panicked at src/tests_stress.rs:293:5:
+assertion `left == right` failed: Multiple surrogate pairs should decode correctly (event: {"emoji": "\ud83d\ude00\ud83d\udc8b\ud83d\ude3a"})
+  left: []
+ right: ["p1"]
+
+---- tests_stress::test_pathological_correctness stdout ----
+
+thread 'tests_stress::test_pathological_correctness' (132809) panicked at src/tests_stress.rs:1251:9:
+assertion `left == right` failed: Event: {"val": "abc"}
+  left: []
+ right: ["re0", "shell0"]
+
+---- tests_stress::test_pattern_insertion_scales_linearly stdout ----
+
+thread 'tests_stress::test_pattern_insertion_scales_linearly' (132811) panicked at src/tests_stress.rs:1151:9:
+Pattern p0 should match after adding 50 patterns
+
+---- tests_stress::test_stress_fuzz_strings stdout ----
+
+thread 'tests_stress::test_stress_fuzz_strings' (132816) panicked at src/tests_stress.rs:57:9:
+assertion `left == right` failed: Event: {"a": "nhywqoqhqlqw"}
+  left: []
+ right: ["nhywqoqhqlqw"]
+
+---- tests_stress::test_stress_fuzz_numbers stdout ----
+
+thread 'tests_stress::test_stress_fuzz_numbers' (132815) panicked at src/tests_stress.rs:109:9:
+assertion `left == right` failed: Event: {"a": 5632915064805208706}
+  left: []
+ right: ["5632915064805208706"]
+
+---- tests_stress::test_concurrent_update_during_matching stdout ----
+
+thread 'tests_stress::test_concurrent_update_during_matching' (132778) panicked at src/tests_stress.rs:1046:9:
+Concurrent pattern CONCURRENT_STREET_1 not found in matches: []
+
+
+failures:
+    automaton::tests::test_thread_safe_core_matcher_exists_false
+    automaton::tests::test_thread_safe_core_matcher_exists_true
+    automaton::tests::test_thread_safe_core_matcher_multiple_patterns
+    automaton::tests::test_thread_safe_core_matcher_single_field
+    automaton::thread_safe::tests::test_thread_safe_core_matcher_basic
+    tests_core::test_and_across_fields
+    tests_core::test_arena_stats_workloads
+    tests_core::test_array_cross_element_comprehensive
+    tests_core::test_array_element_matching
+    tests_core::test_auto_rebuild_disabled
+    tests_core::test_boolean_match
+    tests_core::test_builder_combined_options
+    tests_core::test_builder_generic_type
+    tests_core::test_builder_with_flattener_is_used
+    tests_core::test_clone_for_snapshot
+    tests_core::test_count_matches
+    tests_core::test_custom_flattener_basic
+    tests_core::test_custom_flattener_clone
+    tests_core::test_custom_flattener_with_numbers
+    tests_core::test_deeply_nested
+    tests_core::test_delete_multi_pattern_id_removes_all
+    tests_core::test_delete_patterns
+    tests_core::test_exact_match
+    tests_core::test_exists_true
+    tests_core::test_field_name_ordering_with_exists
+    tests_core::test_has_matches
+    tests_core::test_idempotent_add_and_delete
+    tests_core::test_json_flattener_through_trait
+    tests_core::test_matcher_correct_after_rejected_pattern
+    tests_core::test_mixed_number_and_string_in_same_value_array
+    tests_core::test_mixed_string_and_number_patterns_same_digits
+    tests_core::test_multiple_patterns_same_id
+    tests_core::test_nested_object_pattern
+    tests_core::test_null_match
+    tests_core::test_numeric_match
+    tests_core::test_numeric_pattern_should_not_match_string_event
+    tests_core::test_numeric_variant_matching
+    tests_core::test_or_within_field
+    tests_core::test_pruner_stats
+    tests_core::test_rebuild_after_delete
+    tests_core::test_same_pattern_id_multiple_value_types
+    tests_core::test_should_rebuild_threshold
+    tests_core::test_state_limit_default_allows_normal_patterns
+    tests_core::test_string_number_type_distinction
+    tests_operators::test_anything_but
+    tests_operators::test_anything_but_numeric
+    tests_operators::test_anything_but_numeric_array
+    tests_operators::test_anything_but_numeric_float
+    tests_operators::test_anything_but_numeric_single
+    tests_operators::test_anything_but_prefix_relationship
+    tests_operators::test_anything_but_single_string
+    tests_operators::test_anything_but_with_exact_match
+    tests_operators::test_anything_but_with_overlapping_exclusions
+    tests_operators::test_anything_but_with_shellstyle
+    tests_operators::test_anything_but_wordle_words
+    tests_operators::test_cidr_ipv4_basic
+    tests_operators::test_cidr_ipv4_various_prefixes
+    tests_operators::test_cidr_ipv6_basic
+    tests_operators::test_cidr_ipv6_shorthand
+    tests_operators::test_cidr_miri_lightweight
+    tests_operators::test_cidr_with_other_matchers
+    tests_operators::test_empty_regex_matches_empty_string
+    tests_operators::test_equals_ignore_case
+    tests_operators::test_equals_ignore_case_length_boundaries
+    tests_operators::test_equals_ignore_case_multiple_patterns
+    tests_operators::test_equals_ignore_case_unicode
+    tests_operators::test_equals_ignore_case_with_exact_match
+    tests_operators::test_exact_added_before_lookahead_on_same_field
+    tests_operators::test_json_all_escape_sequences
+    tests_operators::test_json_escape_sequences
+    tests_operators::test_lookahead_with_exact_on_same_field
+    tests_operators::test_lookaround_buffer_reuse_no_stale_state
+    tests_operators::test_lookaround_buffer_reuse_no_stale_state_miri_friendly
+    tests_operators::test_lookaround_multiple_conditions_no_cross_contamination
+    tests_operators::test_lookaround_multiple_conditions_no_cross_contamination_miri_friendly
+    tests_operators::test_lookaround_primary_match
+    tests_operators::test_lookaround_transformation
+    tests_operators::test_lookbehind_match
+    tests_operators::test_multiple_overlapping_shellstyle_patterns
+    tests_operators::test_multiple_shellstyle_same_field
+    tests_operators::test_negative_lookahead_match
+    tests_operators::test_negative_lookbehind_match
+    tests_operators::test_nested_transmap_safety
+    tests_operators::test_nested_transmap_safety_miri_friendly
+    tests_operators::test_numeric_equals
+    tests_operators::test_numeric_greater_than
+    tests_operators::test_numeric_range
+    tests_operators::test_numeric_scientific_notation
+    tests_operators::test_nwb_start_nonword
+    tests_operators::test_nwb_underscore_is_word_char
+    tests_operators::test_nwb_word_to_word
+    tests_operators::test_overlapping_exact_match_patterns
+    tests_operators::test_overlapping_shellstyle_nesting
+    tests_operators::test_overlapping_shellstyle_nesting_miri_friendly
+    tests_operators::test_positive_lookahead_match
+    tests_operators::test_prefix_match
+    tests_operators::test_regex_alternation
+    tests_operators::test_regex_character_class
+    tests_operators::test_regex_match
+    tests_operators::test_regex_various_patterns
+    tests_operators::test_regex_with_escape
+    tests_operators::test_regexp_end2end
+    tests_operators::test_regexp_simple_optional
+    tests_operators::test_shellstyle_complex_wildcards
+    tests_operators::test_shellstyle_contains
+    tests_operators::test_shellstyle_double_wildcard
+    tests_operators::test_shellstyle_double_wildcard_variations
+    tests_operators::test_shellstyle_duplicate_pattern
+    tests_operators::test_shellstyle_infix
+    tests_operators::test_shellstyle_long_case
+    tests_operators::test_shellstyle_multiple_wildcards
+    tests_operators::test_shellstyle_prefix
+    tests_operators::test_shellstyle_repeated_sequences
+    tests_operators::test_shellstyle_subset_overlap_same_field
+    tests_operators::test_shellstyle_suffix
+    tests_operators::test_shellstyle_suffix_merged_bug
+    tests_operators::test_shellstyle_suffix_with_space
+    tests_operators::test_shellstyle_zero_length_prefix
+    tests_operators::test_singleton_hit_and_multi_condition_hit_same_value
+    tests_operators::test_suffix
+    tests_operators::test_three_level_nesting
+    tests_operators::test_three_level_nesting_miri_friendly
+    tests_operators::test_unicode_escape_emoji
+    tests_operators::test_unicode_escape_in_event
+    tests_operators::test_wb_digit_to_space
+    tests_operators::test_wb_end_word_char
+    tests_operators::test_wb_middle_nonword_to_word
+    tests_operators::test_wb_middle_word_to_nonword
+    tests_operators::test_wb_optional_quantifier
+    tests_operators::test_wb_plus_quantifier
+    tests_operators::test_wb_range_quantifier
+    tests_operators::test_wb_start_word_char
+    tests_operators::test_wb_utf8_emoji_boundary
+    tests_operators::test_wb_utf8_multibyte
+    tests_operators::test_wb_utf8_nonword_to_word
+    tests_operators::test_wb_whole_word_at_end
+    tests_operators::test_wb_whole_word_at_start
+    tests_operators::test_wb_whole_word_match
+    tests_operators::test_wb_whole_word_only
+    tests_operators::test_wb_with_char_class
+    tests_operators::test_wb_with_dot
+    tests_operators::test_wildcard_comprehensive
+    tests_operators::test_wildcard_contains
+    tests_operators::test_wildcard_escape_backslash
+    tests_operators::test_wildcard_escape_backslash_star
+    tests_operators::test_wildcard_escape_backslash_wildcard
+    tests_operators::test_wildcard_escape_sequences_comprehensive
+    tests_operators::test_wildcard_escape_star
+    tests_operators::test_wildcard_matches_empty_string
+    tests_operators::test_wildcard_multi_patterns_basic
+    tests_operators::test_wildcard_multi_patterns_complex1
+    tests_operators::test_wildcard_multi_patterns_complex2
+    tests_operators::test_wildcard_multi_patterns_double_exact
+    tests_operators::test_wildcard_multi_patterns_double_exact2
+    tests_operators::test_wildcard_multi_patterns_infix_exact
+    tests_operators::test_wildcard_multi_patterns_infix_exact2
+    tests_operators::test_wildcard_multi_patterns_infix_pair
+    tests_operators::test_wildcard_multi_patterns_overlap1
+    tests_operators::test_wildcard_multi_patterns_overlap2
+    tests_operators::test_wildcard_multi_patterns_prefix_exact
+    tests_operators::test_wildcard_multi_patterns_prefix_pair
+    tests_operators::test_wildcard_multi_patterns_prefix_suffix
+    tests_operators::test_wildcard_multi_patterns_prefix_suffix2
+    tests_operators::test_wildcard_multi_patterns_suffix_double
+    tests_operators::test_wildcard_multi_patterns_suffix_double2
+    tests_operators::test_wildcard_multi_patterns_suffix_exact
+    tests_operators::test_wildcard_multi_patterns_suffix_exact2
+    tests_operators::test_wildcard_multi_patterns_suffix_infix
+    tests_operators::test_wildcard_multi_patterns_suffix_infix2
+    tests_operators::test_wildcard_multi_patterns_suffix_pair
+    tests_operators::test_wildcard_multi_patterns_zero_expansion
+    tests_operators::test_wildcard_prefix
+    tests_operators::test_wildcard_suffix
+    tests_operators::test_wildcard_unicode_strings
+    tests_stress::test_arc_concurrent_read_write
+    tests_stress::test_arc_field_matcher_sharing
+    tests_stress::test_arc_memory_cleanup
+    tests_stress::test_arc_pattern_lifecycle
+    tests_stress::test_arc_snapshot_isolation
+    tests_stress::test_bulk_add_correctness
+    tests_stress::test_concurrent_citylots_stress
+    tests_stress::test_concurrent_miri_friendly
+    tests_stress::test_concurrent_update_during_matching
+    tests_stress::test_exercise_matching_comprehensive
+    tests_stress::test_exercise_matching_miri_friendly
+    tests_stress::test_json_escape_all_eight
+    tests_stress::test_memory_cleanup_miri_friendly
+    tests_stress::test_multiple_patterns_same_id_comprehensive
+    tests_stress::test_multiple_shellstyle_citylots_patterns
+    tests_stress::test_numbits_ordering_through_range
+    tests_stress::test_numbits_through_numeric_matching
+    tests_stress::test_pathological_correctness
+    tests_stress::test_pathological_correctness_miri_friendly
+    tests_stress::test_pattern_insertion_scales_linearly
+    tests_stress::test_stress_fuzz_numbers
+    tests_stress::test_stress_fuzz_strings
+    tests_stress::test_unicode_escape_mixed_codepoints
+    tests_stress::test_unicode_escape_multiple_emojis
+    tests_stress::test_unicode_escape_standard_escapes
+    tests_stress::test_unicode_field_names
+    tests_stress::test_unicode_field_names_surrogate_pairs
+    tests_stress::test_unicode_member_names
+    tests_stress::test_utf16_surrogate_pairs
+
+test result: FAILED. 389 passed; 203 failed; 1 ignored; 0 measured; 0 filtered out; finished in 7.55s
+
+error: test failed, to rerun pass `-p quamina --lib`
+
+*** result: Failure(101)
