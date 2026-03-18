@@ -17,3 +17,5 @@ docs/long_fuzz_output.log
 
 # Mutation testing output
 mutants.out/
+mutants.out.*/
+mutants.out.old/

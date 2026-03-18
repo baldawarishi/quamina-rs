@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 Style inspired by [ripgrep's CHANGELOG](https://github.com/BurntSushi/ripgrep/blob/master/CHANGELOG.md).
 
+## [0.4.4] — 2026-03-18
+
+### Fixed
+- Numeric range patterns (`>`, `<`, `>=`, `<=`) no longer produce false positives on string values. Added `Q_NUMBER_PREFIX` (0x80) tag byte to Q-number encodings for namespace separation from raw ASCII bytes (#72)
+
+### Added
+- Expanded mutation test coverage across thread_safe, mutable_matcher, json, flatten_json, regexp/nfa, and regexp/parser modules (#71)
+
 ## [0.4.3] — 2026-03-14
 
 ### Changed

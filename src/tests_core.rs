@@ -1180,10 +1180,18 @@ fn test_numbits_boundary_values() {
     ];
     for &val in &test_values {
         let q = q_num_from_f64(val);
-        for &byte in &q {
+        // First byte must be Q_NUMBER_PREFIX (0x80)
+        assert_eq!(
+            q[0],
+            crate::numbits::Q_NUMBER_PREFIX,
+            "Q-number should start with prefix for value {}",
+            val
+        );
+        // Content bytes (after prefix) must be < 128 (base-128 encoding)
+        for &byte in &q[1..] {
             assert!(
                 byte < 128,
-                "Q-number byte {} >= 128 for value {}",
+                "Q-number content byte {} >= 128 for value {}",
                 byte,
                 val
             );
@@ -1235,28 +1243,34 @@ fn test_numbits_to_qnumber_utf8() {
             i
         );
 
-        // Property 2: All bytes < 128 (valid for automaton)
-        for (j, &byte) in q.iter().enumerate() {
+        // Property 2: First byte is prefix, content bytes < 128
+        assert_eq!(
+            q[0],
+            crate::numbits::Q_NUMBER_PREFIX,
+            "Q-number should start with prefix for value at index {}",
+            i
+        );
+        for (j, &byte) in q[1..].iter().enumerate() {
             assert!(
                 byte < 128,
-                "Q-number byte {} at pos {} >= 128 for value at index {}",
+                "Q-number content byte {} at pos {} >= 128 for value at index {}",
                 byte,
-                j,
+                j + 1,
                 i
             );
         }
 
-        // Property 3: Valid UTF-8 (since all bytes are ASCII)
+        // Property 3: Content bytes (after prefix) are valid ASCII
         assert!(
-            std::str::from_utf8(&q).is_ok(),
-            "Q-number should be valid UTF-8 for value at index {}",
+            std::str::from_utf8(&q[1..]).is_ok(),
+            "Q-number content should be valid UTF-8 for value at index {}",
             i
         );
 
-        // Property 4: Length bounded
+        // Property 4: Length bounded (1 prefix + up to 10 content bytes)
         assert!(
-            q.len() <= 10,
-            "Q-number length {} exceeds max 10 for value at index {}",
+            q.len() <= 11,
+            "Q-number length {} exceeds max 11 for value at index {}",
             q.len(),
             i
         );
@@ -1489,6 +1503,50 @@ fn test_mixed_number_and_string_in_same_value_array() {
         r#"{"b": "3", "a": 6}"#,
         "Wrong value on field a should not match"
     );
+}
+
+// Regression tests for numeric range false positives on string values.
+// Before the Q_NUMBER_PREFIX fix, numeric range FAs would match raw ASCII bytes
+// because Q-number first bytes were small (e.g. 1 for 10.0), causing any byte
+// > bound[0] to match — including all printable ASCII.
+
+#[test]
+fn test_numeric_range_should_not_match_string_event() {
+    let mut q = Quamina::<&str>::new();
+    q.add_pattern("gt10", r#"{"val": [{"numeric": [">", 10]}]}"#)
+        .unwrap();
+
+    // String values must NOT match numeric range patterns
+    assert_no_match!(
+        q,
+        r#"{"val": "hello"}"#,
+        "String 'hello' should NOT match numeric range > 10"
+    );
+    assert_no_match!(
+        q,
+        r#"{"val": "999"}"#,
+        "String '999' should NOT match numeric range > 10"
+    );
+}
+
+#[test]
+fn test_numeric_range_should_match_numeric_event() {
+    let mut q = Quamina::<&str>::new();
+    q.add_pattern("gt10", r#"{"val": [{"numeric": [">", 10]}]}"#)
+        .unwrap();
+
+    assert_matches!(q, r#"{"val": 50}"#, vec!["gt10"]);
+    assert_matches!(q, r#"{"val": 100.5}"#, vec!["gt10"]);
+    assert_no_match!(q, r#"{"val": 5}"#);
+    assert_no_match!(q, r#"{"val": 10}"#); // strictly greater
+}
+
+#[test]
+fn test_numeric_exact_still_works_with_prefix() {
+    let q = q!("n42" => r#"{"key": [42]}"#);
+    assert_matches!(q, r#"{"key": 42}"#, vec!["n42"]);
+    assert_no_match!(q, r#"{"key": "42"}"#);
+    assert_no_match!(q, r#"{"key": 43}"#);
 }
 
 #[test]

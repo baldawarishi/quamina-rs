@@ -664,6 +664,141 @@ fn test_cidr_invalid_patterns() {
     assert!(result.is_err(), "Invalid prefix length should be rejected");
 }
 
+#[test]
+fn test_cidr_ipv4_prefix_mask_boundary() {
+    // Test to catch mutations in mask computation (replace - with / in CidrPattern::parse)
+    // For /32 (prefix_len = 32): shift should be 32-32=0, not 32/32=1
+    // A wrong shift by 1 would zero out the last bit, changing 10.0.0.1 → 10.0.0.0
+    let q = q!("p32" => r#"{"ip": [{"cidr": "10.0.0.1/32"}]}"#);
+
+    // Exact match for single IP
+    assert_matches!(
+        q,
+        r#"{"ip": "10.0.0.1"}"#,
+        vec!["p32"],
+        "10.0.0.1 should match /32 with 10.0.0.1"
+    );
+
+    // Adjacent IP should NOT match
+    assert_no_match!(
+        q,
+        r#"{"ip": "10.0.0.0"}"#,
+        "10.0.0.0 should NOT match /32 with 10.0.0.1"
+    );
+    assert_no_match!(
+        q,
+        r#"{"ip": "10.0.0.2"}"#,
+        "10.0.0.2 should NOT match /32 with 10.0.0.1"
+    );
+}
+
+// MIRI SKIP RATIONALE: Each CIDR pattern builds a large automaton; 3 patterns takes ~135s
+// under Miri. Coverage: test_cidr_ipv4_prefix_mask_boundary exercises the same mask
+// arithmetic with a /32 (single IP) which is fast under Miri.
+#[test]
+#[cfg_attr(miri, ignore)]
+fn test_cidr_ipv4_prefix_various_lengths() {
+    // Comprehensive test for various prefix lengths to catch arithmetic errors in mask
+    let tests = vec![
+        ("/16", "172.16.0.0/16", "172.16.255.255", "172.17.0.0"),
+        ("/25", "10.0.0.128/25", "10.0.0.255", "10.0.1.0"),
+        ("/30", "192.168.1.0/30", "192.168.1.3", "192.168.1.4"),
+    ];
+
+    for (name, pattern_cidr, ip_match, ip_nomatch) in tests {
+        let pattern = format!(r#"{{"ip": [{{"cidr": "{}"}}]}}"#, pattern_cidr);
+        let q = q!("p1" => pattern.as_str());
+
+        let event_match = format!(r#"{{"ip": "{}"}}"#, ip_match);
+        let msg_match = format!("{}: {} should match {}", name, ip_match, pattern_cidr);
+        assert_matches!(q, &event_match, vec!["p1"], &msg_match);
+
+        let event_nomatch = format!(r#"{{"ip": "{}"}}"#, ip_nomatch);
+        let msg_nomatch = format!("{}: {} should NOT match {}", name, ip_nomatch, pattern_cidr);
+        assert_no_match!(q, &event_nomatch, &msg_nomatch);
+    }
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn test_cidr_ipv6_double_colon_variations() {
+    // Test to catch mutations in IPv6 :: handling (line 127:28, 136:51)
+    // Line 127: if parts.len() > 2 should reject ":::" (3 parts split by ::)
+    // Changing to < would accept multiple :: which is invalid
+
+    // Valid patterns with :: shorthand (in pattern) but expanded form in events
+    let tests = vec![
+        (
+            "2001:db8::1/128",
+            "2001:db8:0:0:0:0:0:1",
+            "2001:db8:0:0:0:0:0:2",
+        ),
+        ("::1/128", "0:0:0:0:0:0:0:1", "0:0:0:0:0:0:0:2"),
+        (
+            "2001:db8::/32",
+            "2001:db8:0:0:0:0:0:1",
+            "2001:db9:0:0:0:0:0:1",
+        ),
+    ];
+
+    for (pattern_cidr, ip_match, ip_nomatch) in tests {
+        let pattern = format!(r#"{{"ip": [{{"cidr": "{}"}}]}}"#, pattern_cidr);
+        let q = q!("p1" => pattern.as_str());
+
+        let event_match = format!(r#"{{"ip": "{}"}}"#, ip_match);
+        let msg_match = format!("{} should match {}", ip_match, pattern_cidr);
+        assert_matches!(q, &event_match, vec!["p1"], &msg_match);
+
+        let event_nomatch = format!(r#"{{"ip": "{}"}}"#, ip_nomatch);
+        let msg_nomatch = format!("{} should NOT match {}", ip_nomatch, pattern_cidr);
+        assert_no_match!(q, &event_nomatch, &msg_nomatch);
+    }
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn test_cidr_ipv6_group_limit() {
+    // Test to catch mutations in IPv6 group count validation (line 142:41)
+    // if left.len() + right.len() > 8 should reject more than 8 groups
+    // Changing to == would only reject exactly 8, allowing 9+
+    // Changing to >= would reject valid 8-group addresses
+
+    // IPv6 must have exactly 8 groups. With ::, fewer explicit groups are valid
+    // but the total cannot exceed 8 (else it's invalid)
+    let q = q!("p1" => r#"{"ip": [{"cidr": "2001:db8:0:0:0:0:0:1/128"}]}"#);
+
+    // Full address should match
+    assert_matches!(
+        q,
+        r#"{"ip": "2001:db8:0:0:0:0:0:1"}"#,
+        vec!["p1"],
+        "Full IPv6 should match exact /128"
+    );
+
+    // Different last group should not match
+    assert_no_match!(
+        q,
+        r#"{"ip": "2001:db8:0:0:0:0:0:2"}"#,
+        "Different final group should not match /128"
+    );
+}
+
+#[test]
+fn test_cidr_ipv6_invalid_formats() {
+    // Test to catch mutations in IPv6 validation
+    // Line 127: if parts.len() > 2 — reject multiple ::
+    let mut q = Quamina::new();
+
+    let result = q.add_pattern("p1", r#"{"ip": [{"cidr": "2001:db8:::1/64"}]}"#);
+    assert!(result.is_err(), "Multiple :: should be rejected");
+
+    let result = q.add_pattern("p2", r#"{"ip": [{"cidr": "2001:db8::/129"}]}"#);
+    assert!(result.is_err(), "IPv6 prefix > 128 should be rejected");
+
+    let result = q.add_pattern("p3", r#"{"ip": [{"cidr": "gggg::1/64"}]}"#);
+    assert!(result.is_err(), "Invalid hex should be rejected");
+}
+
 // ============================================================================
 // Lookaround Tests
 // ============================================================================
@@ -3180,4 +3315,205 @@ fn test_equals_ignore_case_length_boundaries() {
     ] {
         assert_no_match!(q, event, desc);
     }
+}
+
+// ============================================================================
+// Mutation Testing: regexp/nfa.rs
+// ============================================================================
+
+// MIRI SKIP RATIONALE: ~p{L} (Unicode Letter category) covers ~130K codepoints, creating
+// a massive automaton that takes 3.5+ minutes under Miri, pushing CI past the 20min timeout.
+#[test]
+#[cfg_attr(miri, ignore)]
+fn test_unicode_category_epsilon_closure() {
+    // Tests line 509: `if !eps.is_none()` in instantiate_shell epsilon remapping.
+    // Unicode category patterns (e.g., ~p{L}) use cached shells with epsilon transitions.
+    // If epsilon remapping is deleted, epsilon closures have wrong state IDs, breaking matches.
+    // This test uses the fact that ~p{L} (Unicode letter category) relies on cached shells
+    // with epsilon transitions, so wrong epsilon remapping will cause incorrect matching.
+
+    let mut q = Quamina::new();
+    q.add_pattern("p1", r#"{"text": [{"regex": "~p{L}~p{L}"}]}"#)
+        .expect("Failed to add pattern");
+    q.add_pattern("p2", r#"{"text": [{"regex": "~p{L}"}]}"#)
+        .expect("Failed to add pattern");
+    q.add_pattern("p3", r#"{"text": [{"regex": "[abc]"}]}"#)
+        .expect("Failed to add pattern p3");
+
+    // p1: two consecutive letters
+    assert_has_match!(q, r#"{"text": "ab"}"#, "p1");
+    assert_has_match!(q, r#"{"text": "AB"}"#, "p1");
+    assert_no_has_match!(q, r#"{"text": "a1"}"#, "p1");
+
+    // p2: single letter (uses ~p{L} cache)
+    assert_has_match!(q, r#"{"text": "a"}"#, "p2");
+    assert_has_match!(q, r#"{"text": "Z"}"#, "p2");
+    assert_no_has_match!(q, r#"{"text": "1"}"#, "p2");
+
+    // p3: character in set [abc]
+    assert_has_match!(q, r#"{"text": "a"}"#, "p3");
+    assert_has_match!(q, r#"{"text": "b"}"#, "p3");
+    assert_no_has_match!(q, r#"{"text": "d"}"#, "p3");
+}
+
+// MIRI SKIP RATIONALE: ~p{Lu}+ and ~p{Ll}+ expand to large Unicode category automata,
+// taking ~50s under Miri. Coverage: test_fa_shell_cache_clearing_miri_friendly exercises
+// the same clear + rebuild path using small ASCII patterns.
+#[test]
+#[cfg_attr(miri, ignore)]
+fn test_fa_shell_cache_clearing() {
+    // Tests line 550: clear_fa_shell_cache() function call.
+    // NOTE: This mutation (replace with ()) is semantically equivalent — clearing
+    // the cache vs not clearing it produces identical matching results because the
+    // cache only affects build-time performance, not correctness. The cache stores
+    // pre-built shell NFAs for Unicode categories; a stale cache just means a cache
+    // hit instead of a rebuild, producing the same NFA either way.
+    // This test exists as a smoke test to verify the function doesn't panic.
+    use crate::regexp::clear_fa_shell_cache;
+
+    let mut q = Quamina::new();
+
+    q.add_pattern("p1", r#"{"text": [{"regex": "~p{Lu}+"}]}"#)
+        .expect("Failed to add pattern 1");
+    assert_has_match!(q, r#"{"text": "HELLO"}"#, "p1");
+
+    clear_fa_shell_cache();
+
+    q.add_pattern("p2", r#"{"text": [{"regex": "~p{Ll}+"}]}"#)
+        .expect("Failed to add pattern 2");
+
+    assert_has_match!(q, r#"{"text": "HELLO"}"#, "p1");
+    assert_has_match!(q, r#"{"text": "hello"}"#, "p2");
+    assert_no_has_match!(q, r#"{"text": "hello"}"#, "p1");
+    assert_no_has_match!(q, r#"{"text": "HELLO"}"#, "p2");
+}
+
+/// Miri-friendly version — uses small ASCII character classes instead of Unicode categories.
+#[test]
+fn test_fa_shell_cache_clearing_miri_friendly() {
+    use crate::regexp::clear_fa_shell_cache;
+
+    let mut q = Quamina::new();
+
+    q.add_pattern("p1", r#"{"text": [{"regex": "[A-Z]+"}]}"#)
+        .expect("Failed to add pattern 1");
+    assert_has_match!(q, r#"{"text": "HELLO"}"#, "p1");
+
+    clear_fa_shell_cache();
+
+    q.add_pattern("p2", r#"{"text": [{"regex": "[a-z]+"}]}"#)
+        .expect("Failed to add pattern 2");
+
+    assert_has_match!(q, r#"{"text": "HELLO"}"#, "p1");
+    assert_has_match!(q, r#"{"text": "hello"}"#, "p2");
+    assert_no_has_match!(q, r#"{"text": "hello"}"#, "p1");
+    assert_no_has_match!(q, r#"{"text": "HELLO"}"#, "p2");
+}
+
+#[test]
+fn test_surrogate_boundary_before() {
+    // Tests lines 625-626: surrogate range boundary checks in add_arena_rune_pair_tree_entry.
+    // Surrogate range is U+D800–U+DFFF. Test boundary: U+D7FF (just before).
+    // Mutations:
+    // - Line 625: `&&` → `||`, `<=` → `>`, `>=` → `<`
+    // - Line 626: `<` → `==`, `<` → `>`
+    // If these mutations occur, the code incorrectly handles the pre-surrogate range.
+
+    let mut q = Quamina::new();
+
+    // Character just before surrogate block (U+D7FF)
+    let char_d7ff = '\u{D7FF}'; // ߿
+    let pattern_d7ff = format!(r#"{{"text": [{{"regex": "[{}]"}}]}}"#, char_d7ff);
+    q.add_pattern("p1", &pattern_d7ff)
+        .expect("Failed to add pattern with U+D7FF");
+
+    // Should match the exact character
+    let event_d7ff = format!(r#"{{"text": "{}"}}"#, char_d7ff);
+    assert_has_match!(q, &event_d7ff, "p1");
+
+    // Should not match other characters
+    assert_no_has_match!(q, r#"{"text": "a"}"#, "p1");
+
+    // Character just after surrogate block (U+E000)
+    let char_e000 = '\u{E000}'; // private use area
+    let pattern_e000 = format!(r#"{{"text": [{{"regex": "[{}]"}}]}}"#, char_e000);
+    let mut q2 = Quamina::new();
+    q2.add_pattern("p2", &pattern_e000)
+        .expect("Failed to add pattern with U+E000");
+
+    let event_e000 = format!(r#"{{"text": "{}"}}"#, char_e000);
+    assert_has_match!(q2, &event_e000, "p2");
+    assert_no_has_match!(q2, r#"{"text": "a"}"#, "p2");
+}
+
+#[test]
+fn test_surrogate_boundary_range() {
+    // Tests lines 625-626: surrogate range boundary checks with a range that spans the boundary.
+    // Character range from U+D7FC to U+E003 crosses the surrogate block.
+
+    let mut q = Quamina::new();
+
+    let char_d7fc = '\u{D7FC}'; // before surrogate
+    let char_e003 = '\u{E003}'; // after surrogate
+    let pattern = format!(
+        r#"{{"text": [{{"regex": "[{}-{}]"}}]}}"#,
+        char_d7fc, char_e003
+    );
+
+    q.add_pattern("p1", &pattern)
+        .expect("Failed to add pattern with range spanning surrogate");
+
+    // Should match chars before surrogate
+    let event_d7fc = format!(r#"{{"text": "{}"}}"#, char_d7fc);
+    assert_has_match!(q, &event_d7fc, "p1");
+
+    // Should match chars after surrogate
+    let char_e000 = '\u{E000}'; // after surrogate
+    let event_e000 = format!(r#"{{"text": "{}"}}"#, char_e000);
+    assert_has_match!(q, &event_e000, "p1");
+
+    let event_e003 = format!(r#"{{"text": "{}"}}"#, char_e003);
+    assert_has_match!(q, &event_e003, "p1");
+
+    // Should not match outside range
+    assert_no_has_match!(q, r#"{"text": "a"}"#, "p1");
+
+    let char_d7fb = '\u{D7FB}'; // outside before range
+    let event_d7fb = format!(r#"{{"text": "{}"}}"#, char_d7fb);
+    assert_no_has_match!(q, &event_d7fb, "p1");
+}
+
+#[test]
+fn test_surrogate_boundary_multiple_ranges() {
+    // Tests lines 625-626: surrogate boundary handling with multiple character ranges in a pattern.
+    // Ensures boundary logic correctly handles transitions between normal and surrogate-straddling ranges.
+
+    let mut q = Quamina::new();
+
+    q.add_pattern("p1", r#"{"text": [{"regex": "[a-z]"}]}"#)
+        .expect("Failed to add pattern p1");
+
+    let char_d7fe = '\u{D7FE}'; // before surrogate
+    let char_e002 = '\u{E002}'; // after surrogate
+    let pattern_p2 = format!(
+        r#"{{"text": [{{"regex": "[{}-{}]"}}]}}"#,
+        char_d7fe, char_e002
+    );
+    q.add_pattern("p2", &pattern_p2)
+        .expect("Failed to add pattern p2");
+
+    // p1 matches lowercase letters
+    assert_has_match!(q, r#"{"text": "m"}"#, "p1");
+    assert_no_has_match!(q, r#"{"text": "M"}"#, "p1");
+
+    // p2 matches in the surrogate-crossing range
+    let event_d7fe = format!(r#"{{"text": "{}"}}"#, char_d7fe);
+    assert_has_match!(q, &event_d7fe, "p2");
+
+    let event_e002 = format!(r#"{{"text": "{}"}}"#, char_e002);
+    assert_has_match!(q, &event_e002, "p2");
+
+    // Patterns don't cross-match
+    assert_no_has_match!(q, &event_d7fe, "p1");
+    assert_no_has_match!(q, r#"{"text": "m"}"#, "p2");
 }
