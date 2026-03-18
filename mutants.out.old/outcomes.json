@@ -8,7 +8,7 @@
       "phase_results": [
         {
           "phase": "Build",
-          "duration": 8.389568292,
+          "duration": 8.424563125,
           "process_status": "Success",
           "argv": [
             "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
@@ -21,7 +21,7 @@
         },
         {
           "phase": "Test",
-          "duration": 61.505404958,
+          "duration": 61.771232917,
           "process_status": "Success",
           "argv": [
             "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
@@ -74,7 +74,7 @@
       "phase_results": [
         {
           "phase": "Build",
-          "duration": 1.082357833,
+          "duration": 1.149183917,
           "process_status": "Success",
           "argv": [
             "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
@@ -87,7 +87,7 @@
         },
         {
           "phase": "Test",
-          "duration": 8.365978125,
+          "duration": 8.314060792,
           "process_status": {
             "Failure": 101
           },
@@ -142,7 +142,7 @@
       "phase_results": [
         {
           "phase": "Build",
-          "duration": 0.432126166,
+          "duration": 0.433526959,
           "process_status": {
             "Failure": 101
           },
@@ -197,7 +197,7 @@
       "phase_results": [
         {
           "phase": "Build",
-          "duration": 0.932884458,
+          "duration": 0.990729,
           "process_status": "Success",
           "argv": [
             "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
@@ -210,7 +210,7 @@
         },
         {
           "phase": "Test",
-          "duration": 8.385570625,
+          "duration": 8.161756125,
           "process_status": {
             "Failure": 101
           },
@@ -265,7 +265,7 @@
       "phase_results": [
         {
           "phase": "Build",
-          "duration": 0.936720792,
+          "duration": 0.922862042,
           "process_status": "Success",
           "argv": [
             "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
@@ -278,7 +278,7 @@
         },
         {
           "phase": "Test",
-          "duration": 8.171959375,
+          "duration": 7.997827125,
           "process_status": {
             "Failure": 101
           },
@@ -333,7 +333,7 @@
       "phase_results": [
         {
           "phase": "Build",
-          "duration": 0.929601125,
+          "duration": 0.927361333,
           "process_status": "Success",
           "argv": [
             "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
@@ -346,7 +346,7 @@
         },
         {
           "phase": "Test",
-          "duration": 8.093332541,
+          "duration": 8.114831958,
           "process_status": {
             "Failure": 101
           },
@@ -401,7 +401,7 @@
       "phase_results": [
         {
           "phase": "Build",
-          "duration": 0.984597625,
+          "duration": 0.916473125,
           "process_status": "Success",
           "argv": [
             "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
@@ -414,7 +414,7 @@
         },
         {
           "phase": "Test",
-          "duration": 8.062331541,
+          "duration": 8.08171575,
           "process_status": {
             "Failure": 101
           },
@@ -469,7 +469,7 @@
       "phase_results": [
         {
           "phase": "Build",
-          "duration": 0.920939333,
+          "duration": 0.934246083,
           "process_status": "Success",
           "argv": [
             "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
@@ -482,7 +482,7 @@
         },
         {
           "phase": "Test",
-          "duration": 8.205081167,
+          "duration": 8.055832417,
           "process_status": {
             "Failure": 101
           },
@@ -537,7 +537,7 @@
       "phase_results": [
         {
           "phase": "Build",
-          "duration": 0.933335542,
+          "duration": 1.028857208,
           "process_status": "Success",
           "argv": [
             "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
@@ -550,7 +550,7 @@
         },
         {
           "phase": "Test",
-          "duration": 8.166690042,
+          "duration": 8.150603166,
           "process_status": {
             "Failure": 101
           },
@@ -605,7 +605,7 @@
       "phase_results": [
         {
           "phase": "Build",
-          "duration": 0.932333708,
+          "duration": 0.979258667,
           "process_status": "Success",
           "argv": [
             "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
@@ -618,7 +618,7 @@
         },
         {
           "phase": "Test",
-          "duration": 8.068454875,
+          "duration": 8.15215525,
           "process_status": {
             "Failure": 101
           },
@@ -673,7 +673,7 @@
       "phase_results": [
         {
           "phase": "Build",
-          "duration": 0.934248625,
+          "duration": 0.986381833,
           "process_status": "Success",
           "argv": [
             "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
@@ -686,7 +686,7 @@
         },
         {
           "phase": "Test",
-          "duration": 8.025119333,
+          "duration": 8.064236167,
           "process_status": {
             "Failure": 101
           },
@@ -741,7 +741,7 @@
       "phase_results": [
         {
           "phase": "Build",
-          "duration": 0.923542834,
+          "duration": 0.912784917,
           "process_status": "Success",
           "argv": [
             "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
@@ -754,7 +754,7 @@
         },
         {
           "phase": "Test",
-          "duration": 8.097824542,
+          "duration": 8.204605875,
           "process_status": {
             "Failure": 101
           },
@@ -809,7 +809,7 @@
       "phase_results": [
         {
           "phase": "Build",
-          "duration": 0.864315292,
+          "duration": 0.92291375,
           "process_status": "Success",
           "argv": [
             "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
@@ -822,7 +822,7 @@
         },
         {
           "phase": "Test",
-          "duration": 8.127307875,
+          "duration": 8.144987375,
           "process_status": {
             "Failure": 101
           },
@@ -877,7 +877,7 @@
       "phase_results": [
         {
           "phase": "Build",
-          "duration": 0.920537208,
+          "duration": 0.986928459,
           "process_status": "Success",
           "argv": [
             "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
@@ -890,7 +890,7 @@
         },
         {
           "phase": "Test",
-          "duration": 8.091035125,
+          "duration": 8.078025583,
           "process_status": {
             "Failure": 101
           },
@@ -945,7 +945,7 @@
       "phase_results": [
         {
           "phase": "Build",
-          "duration": 0.927559084,
+          "duration": 0.93505725,
           "process_status": "Success",
           "argv": [
             "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
@@ -958,7 +958,7 @@
         },
         {
           "phase": "Test",
-          "duration": 8.163172583,
+          "duration": 8.096999083,
           "process_status": {
             "Failure": 101
           },
@@ -1013,7 +1013,7 @@
       "phase_results": [
         {
           "phase": "Build",
-          "duration": 0.976384083,
+          "duration": 0.92115425,
           "process_status": "Success",
           "argv": [
             "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
@@ -1026,7 +1026,7 @@
         },
         {
           "phase": "Test",
-          "duration": 8.176539333,
+          "duration": 8.109059125,
           "process_status": {
             "Failure": 101
           },
@@ -1081,7 +1081,7 @@
       "phase_results": [
         {
           "phase": "Build",
-          "duration": 0.926543209,
+          "duration": 0.979065208,
           "process_status": "Success",
           "argv": [
             "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
@@ -1094,7 +1094,7 @@
         },
         {
           "phase": "Test",
-          "duration": 8.53504925,
+          "duration": 8.083077166,
           "process_status": {
             "Failure": 101
           },
@@ -1149,7 +1149,7 @@
       "phase_results": [
         {
           "phase": "Build",
-          "duration": 0.913771208,
+          "duration": 0.930981666,
           "process_status": "Success",
           "argv": [
             "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
@@ -1162,7 +1162,7 @@
         },
         {
           "phase": "Test",
-          "duration": 8.082533042,
+          "duration": 8.028193875,
           "process_status": {
             "Failure": 101
           },
@@ -1217,7 +1217,7 @@
       "phase_results": [
         {
           "phase": "Build",
-          "duration": 0.92738875,
+          "duration": 0.923621458,
           "process_status": "Success",
           "argv": [
             "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
@@ -1230,7 +1230,7 @@
         },
         {
           "phase": "Test",
-          "duration": 8.1030295,
+          "duration": 8.071861167,
           "process_status": {
             "Failure": 101
           },
@@ -1285,7 +1285,7 @@
       "phase_results": [
         {
           "phase": "Build",
-          "duration": 0.930100666,
+          "duration": 0.973176208,
           "process_status": "Success",
           "argv": [
             "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
@@ -1298,7 +1298,7 @@
         },
         {
           "phase": "Test",
-          "duration": 8.165058542,
+          "duration": 8.107863333,
           "process_status": {
             "Failure": 101
           },
@@ -1353,7 +1353,7 @@
       "phase_results": [
         {
           "phase": "Build",
-          "duration": 0.977264333,
+          "duration": 0.925019917,
           "process_status": "Success",
           "argv": [
             "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
@@ -1366,7 +1366,7 @@
         },
         {
           "phase": "Test",
-          "duration": 8.42991075,
+          "duration": 8.192510042,
           "process_status": {
             "Failure": 101
           },
@@ -1421,7 +1421,7 @@
       "phase_results": [
         {
           "phase": "Build",
-          "duration": 0.923253833,
+          "duration": 0.92348075,
           "process_status": "Success",
           "argv": [
             "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
@@ -1434,7 +1434,7 @@
         },
         {
           "phase": "Test",
-          "duration": 8.66492575,
+          "duration": 8.030045959,
           "process_status": {
             "Failure": 101
           },
@@ -1489,7 +1489,7 @@
       "phase_results": [
         {
           "phase": "Build",
-          "duration": 1.01590975,
+          "duration": 0.878099292,
           "process_status": "Success",
           "argv": [
             "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
@@ -1502,7 +1502,7 @@
         },
         {
           "phase": "Test",
-          "duration": 8.322397167,
+          "duration": 7.928729541,
           "process_status": {
             "Failure": 101
           },
@@ -1557,7 +1557,7 @@
       "phase_results": [
         {
           "phase": "Build",
-          "duration": 1.205059834,
+          "duration": 0.968913459,
           "process_status": "Success",
           "argv": [
             "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
@@ -1570,7 +1570,747 @@
         },
         {
           "phase": "Test",
-          "duration": 8.554840375,
+          "duration": 8.197480792,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3",
+            "--all-targets"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/json.rs:127:28: replace > with < in CidrPattern::parse_ipv6",
+          "package": "quamina",
+          "file": "src/json.rs",
+          "function": {
+            "function_name": "CidrPattern::parse_ipv6",
+            "return_type": "-> Option<[u8; 16]>",
+            "span": {
+              "start": {
+                "line": 120,
+                "column": 5
+              },
+              "end": {
+                "line": 174,
+                "column": 6
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 127,
+              "column": 28
+            },
+            "end": {
+              "line": 127,
+              "column": 29
+            }
+          },
+          "replacement": "<",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "MissedMutant",
+      "log_path": "log/src__json.rs_line_127_col_28_001.log",
+      "diff_path": "diff/src__json.rs_line_127_col_28_001.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.934040375,
+          "process_status": "Success",
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--no-run",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 60.950366959,
+          "process_status": "Success",
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3",
+            "--all-targets"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/json.rs:127:28: replace > with >= in CidrPattern::parse_ipv6",
+          "package": "quamina",
+          "file": "src/json.rs",
+          "function": {
+            "function_name": "CidrPattern::parse_ipv6",
+            "return_type": "-> Option<[u8; 16]>",
+            "span": {
+              "start": {
+                "line": 120,
+                "column": 5
+              },
+              "end": {
+                "line": 174,
+                "column": 6
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 127,
+              "column": 28
+            },
+            "end": {
+              "line": 127,
+              "column": 29
+            }
+          },
+          "replacement": ">=",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__json.rs_line_127_col_28_002.log",
+      "diff_path": "diff/src__json.rs_line_127_col_28_002.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 1.034101667,
+          "process_status": "Success",
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--no-run",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 8.129083958,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3",
+            "--all-targets"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/json.rs:136:55: replace && with || in CidrPattern::parse_ipv6",
+          "package": "quamina",
+          "file": "src/json.rs",
+          "function": {
+            "function_name": "CidrPattern::parse_ipv6",
+            "return_type": "-> Option<[u8; 16]>",
+            "span": {
+              "start": {
+                "line": 120,
+                "column": 5
+              },
+              "end": {
+                "line": 174,
+                "column": 6
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 136,
+              "column": 55
+            },
+            "end": {
+              "line": 136,
+              "column": 57
+            }
+          },
+          "replacement": "||",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__json.rs_line_136_col_55.log",
+      "diff_path": "diff/src__json.rs_line_136_col_55.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.927652625,
+          "process_status": "Success",
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--no-run",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 8.066117916,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3",
+            "--all-targets"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/json.rs:136:51: replace > with == in CidrPattern::parse_ipv6",
+          "package": "quamina",
+          "file": "src/json.rs",
+          "function": {
+            "function_name": "CidrPattern::parse_ipv6",
+            "return_type": "-> Option<[u8; 16]>",
+            "span": {
+              "start": {
+                "line": 120,
+                "column": 5
+              },
+              "end": {
+                "line": 174,
+                "column": 6
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 136,
+              "column": 51
+            },
+            "end": {
+              "line": 136,
+              "column": 52
+            }
+          },
+          "replacement": "==",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__json.rs_line_136_col_51.log",
+      "diff_path": "diff/src__json.rs_line_136_col_51.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.915381625,
+          "process_status": "Success",
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--no-run",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 8.07394075,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3",
+            "--all-targets"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/json.rs:136:51: replace > with < in CidrPattern::parse_ipv6",
+          "package": "quamina",
+          "file": "src/json.rs",
+          "function": {
+            "function_name": "CidrPattern::parse_ipv6",
+            "return_type": "-> Option<[u8; 16]>",
+            "span": {
+              "start": {
+                "line": 120,
+                "column": 5
+              },
+              "end": {
+                "line": 174,
+                "column": 6
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 136,
+              "column": 51
+            },
+            "end": {
+              "line": 136,
+              "column": 52
+            }
+          },
+          "replacement": "<",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__json.rs_line_136_col_51_001.log",
+      "diff_path": "diff/src__json.rs_line_136_col_51_001.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.972681167,
+          "process_status": "Success",
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--no-run",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 8.034759083,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3",
+            "--all-targets"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/json.rs:136:51: replace > with >= in CidrPattern::parse_ipv6",
+          "package": "quamina",
+          "file": "src/json.rs",
+          "function": {
+            "function_name": "CidrPattern::parse_ipv6",
+            "return_type": "-> Option<[u8; 16]>",
+            "span": {
+              "start": {
+                "line": 120,
+                "column": 5
+              },
+              "end": {
+                "line": 174,
+                "column": 6
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 136,
+              "column": 51
+            },
+            "end": {
+              "line": 136,
+              "column": 52
+            }
+          },
+          "replacement": ">=",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "MissedMutant",
+      "log_path": "log/src__json.rs_line_136_col_51_002.log",
+      "diff_path": "diff/src__json.rs_line_136_col_51_002.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.978514,
+          "process_status": "Success",
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--no-run",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 61.280124959,
+          "process_status": "Success",
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3",
+            "--all-targets"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/json.rs:136:58: delete ! in CidrPattern::parse_ipv6",
+          "package": "quamina",
+          "file": "src/json.rs",
+          "function": {
+            "function_name": "CidrPattern::parse_ipv6",
+            "return_type": "-> Option<[u8; 16]>",
+            "span": {
+              "start": {
+                "line": 120,
+                "column": 5
+              },
+              "end": {
+                "line": 174,
+                "column": 6
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 136,
+              "column": 58
+            },
+            "end": {
+              "line": 136,
+              "column": 59
+            }
+          },
+          "replacement": "",
+          "genre": "UnaryOperator"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__json.rs_line_136_col_58.log",
+      "diff_path": "diff/src__json.rs_line_136_col_58.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 1.025332917,
+          "process_status": "Success",
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--no-run",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 8.123543875,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3",
+            "--all-targets"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/json.rs:142:41: replace > with == in CidrPattern::parse_ipv6",
+          "package": "quamina",
+          "file": "src/json.rs",
+          "function": {
+            "function_name": "CidrPattern::parse_ipv6",
+            "return_type": "-> Option<[u8; 16]>",
+            "span": {
+              "start": {
+                "line": 120,
+                "column": 5
+              },
+              "end": {
+                "line": 174,
+                "column": 6
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 142,
+              "column": 41
+            },
+            "end": {
+              "line": 142,
+              "column": 42
+            }
+          },
+          "replacement": "==",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "MissedMutant",
+      "log_path": "log/src__json.rs_line_142_col_41.log",
+      "diff_path": "diff/src__json.rs_line_142_col_41.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 1.025438291,
+          "process_status": "Success",
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--no-run",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 60.7549205,
+          "process_status": "Success",
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3",
+            "--all-targets"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/json.rs:142:41: replace > with < in CidrPattern::parse_ipv6",
+          "package": "quamina",
+          "file": "src/json.rs",
+          "function": {
+            "function_name": "CidrPattern::parse_ipv6",
+            "return_type": "-> Option<[u8; 16]>",
+            "span": {
+              "start": {
+                "line": 120,
+                "column": 5
+              },
+              "end": {
+                "line": 174,
+                "column": 6
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 142,
+              "column": 41
+            },
+            "end": {
+              "line": 142,
+              "column": 42
+            }
+          },
+          "replacement": "<",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__json.rs_line_142_col_41_001.log",
+      "diff_path": "diff/src__json.rs_line_142_col_41_001.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.925277,
+          "process_status": "Success",
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--no-run",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 8.1222,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3",
+            "--all-targets"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/json.rs:142:41: replace > with >= in CidrPattern::parse_ipv6",
+          "package": "quamina",
+          "file": "src/json.rs",
+          "function": {
+            "function_name": "CidrPattern::parse_ipv6",
+            "return_type": "-> Option<[u8; 16]>",
+            "span": {
+              "start": {
+                "line": 120,
+                "column": 5
+              },
+              "end": {
+                "line": 174,
+                "column": 6
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 142,
+              "column": 41
+            },
+            "end": {
+              "line": 142,
+              "column": 42
+            }
+          },
+          "replacement": ">=",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "MissedMutant",
+      "log_path": "log/src__json.rs_line_142_col_41_002.log",
+      "diff_path": "diff/src__json.rs_line_142_col_41_002.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.978331125,
+          "process_status": "Success",
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--no-run",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 60.679442292,
+          "process_status": "Success",
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3",
+            "--all-targets"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/json.rs:142:27: replace + with - in CidrPattern::parse_ipv6",
+          "package": "quamina",
+          "file": "src/json.rs",
+          "function": {
+            "function_name": "CidrPattern::parse_ipv6",
+            "return_type": "-> Option<[u8; 16]>",
+            "span": {
+              "start": {
+                "line": 120,
+                "column": 5
+              },
+              "end": {
+                "line": 174,
+                "column": 6
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 142,
+              "column": 27
+            },
+            "end": {
+              "line": 142,
+              "column": 28
+            }
+          },
+          "replacement": "-",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__json.rs_line_142_col_27.log",
+      "diff_path": "diff/src__json.rs_line_142_col_27.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.983286209,
+          "process_status": "Success",
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--no-run",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 8.153576875,
           "process_status": {
             "Failure": 101
           },
@@ -1586,13 +2326,13 @@
       ]
     }
   ],
-  "total_mutants": 23,
-  "missed": 0,
-  "caught": 22,
+  "total_mutants": 34,
+  "missed": 4,
+  "caught": 29,
   "timeout": 0,
   "unviable": 1,
   "success": 0,
-  "start_time": "2026-03-17T23:32:25.210527Z",
+  "start_time": "2026-03-18T00:02:12.775427Z",
   "end_time": null,
   "cargo_mutants_version": "26.2.0"
 }

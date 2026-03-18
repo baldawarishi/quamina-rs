@@ -1,0 +1,4 @@
+src/json.rs:127:28: replace > with < in CidrPattern::parse_ipv6
+src/json.rs:136:51: replace > with >= in CidrPattern::parse_ipv6
+src/json.rs:142:41: replace > with == in CidrPattern::parse_ipv6
+src/json.rs:142:41: replace > with >= in CidrPattern::parse_ipv6

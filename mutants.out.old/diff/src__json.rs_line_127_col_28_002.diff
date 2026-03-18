@@ -1,0 +1,21 @@
+--- src/json.rs
++++ replace > with >= in CidrPattern::parse_ipv6
+@@ -119,17 +119,17 @@
+ 
+     /// Parse an IPv6 address string (supports :: shorthand)
+     fn parse_ipv6(s: &str) -> Option<[u8; 16]> {
+         let mut addr = [0u8; 16];
+ 
+         // Handle :: shorthand
+         if s.contains("::") {
+             let parts: Vec<&str> = s.split("::").collect();
+-            if parts.len() > 2 {
++            if parts.len() >= /* ~ changed by cargo-mutants ~ */ 2 {
+                 return None; // Invalid: more than one ::
+             }
+ 
+             let left: Vec<&str> = if parts[0].is_empty() {
+                 vec![]
+             } else {
+                 parts[0].split(':').collect()
+             };

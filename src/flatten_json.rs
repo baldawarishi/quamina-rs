@@ -1222,6 +1222,79 @@ mod tests {
         }
     }
 
+    #[test]
+    fn test_trailing_garbage_after_close_brace() {
+        // Test to catch mutations at lines 233-241 (boundary checks and index updates)
+        // Mutations: line 233 replace < with >, line 235 delete !
+        // line 241 replace += with -= or *=, line 246 replace >= with <
+        // Use a tree looking for a non-existent field so we parse the whole object
+        // without early termination
+        let tree = make_tree(&["nonexistent"]);
+        let mut state = FlattenJsonState::new();
+
+        // Valid: simple object with trailing whitespace
+        let result = state.flatten(br#"{"status": "ok"}  "#, &tree);
+        assert!(
+            result.is_ok(),
+            "Valid JSON with trailing spaces should succeed"
+        );
+
+        // Valid: single space after close brace
+        let result = state.flatten(br#"{"status": "ok"} "#, &tree);
+        assert!(
+            result.is_ok(),
+            "Valid JSON with single trailing space should succeed"
+        );
+
+        // Invalid: garbage character after close brace (catches line 235 delete !)
+        let result = state.flatten(br#"{"status": "ok"}x"#, &tree);
+        assert!(
+            result.is_err(),
+            "JSON with garbage char after close brace should fail"
+        );
+
+        // Invalid: newline and then garbage
+        let result = state.flatten(
+            br#"{"status": "ok"}
+x"#,
+            &tree,
+        );
+        assert!(
+            result.is_err(),
+            "JSON with newline then garbage should fail"
+        );
+    }
+
+    #[test]
+    fn test_whitespace_before_opening_brace() {
+        // Test to catch mutations at line 245 (index += 1 during whitespace skip)
+        // Also tests the >= check at line 246
+        let tree = make_tree(&["x"]);
+        let mut state = FlattenJsonState::new();
+
+        // Valid: spaces before open brace
+        let result = state.flatten(b"  {\"x\": 1}", &tree);
+        assert!(result.is_ok(), "Spaces before open brace should be skipped");
+
+        // Valid: tabs and newlines before open brace
+        let result = state.flatten(b" \t\n {\"x\": 1}", &tree);
+        assert!(
+            result.is_ok(),
+            "Mixed whitespace before open brace should work"
+        );
+
+        // Invalid: EOF during whitespace skip (catches >= mutation to <)
+        let result = state.flatten(b"   ", &tree);
+        assert!(
+            result.is_err(),
+            "Whitespace-only input should fail with EOF"
+        );
+
+        // Invalid: non-{ after whitespace
+        let result = state.flatten(b" [1,2,3]", &tree);
+        assert!(result.is_err(), "Non-object after whitespace should fail");
+    }
+
     // Error handling tests - based on Go quamina's TestFJErrorCases
     #[test]
     fn test_error_truncated_object() {
