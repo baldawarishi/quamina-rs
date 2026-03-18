@@ -1,0 +1,23 @@
+--- src/regexp/parser.rs
++++ replace RegexpParse::unnest -> RegexpRoot with Default::default()
+@@ -214,19 +214,17 @@
+         }
+     }
+ 
+     fn nest(&mut self) {
+         self.nesting.push(std::mem::take(&mut self.tree));
+     }
+ 
+     fn unnest(&mut self) -> RegexpRoot {
+-        let subtree = std::mem::take(&mut self.tree);
+-        self.tree = self.nesting.pop().unwrap_or_default();
+-        subtree
++        Default::default() /* ~ changed by cargo-mutants ~ */
+     }
+ 
+     fn is_nested(&self) -> bool {
+         !self.nesting.is_empty()
+     }
+ 
+     fn next_rune(&mut self) -> Result<char, RegexpError> {
+         if self.index >= self.bytes.len() {

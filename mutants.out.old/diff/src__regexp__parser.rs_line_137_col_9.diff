@@ -1,0 +1,21 @@
+--- src/regexp/parser.rs
++++ replace LookaroundType::is_lookbehind -> bool with true
+@@ -129,17 +129,17 @@
+ impl LookaroundType {
+     /// Returns true if this is a negative lookaround ((?!...) or (?<!...))
+     pub fn is_negative(&self) -> bool {
+         matches!(self, Self::NegativeLookahead | Self::NegativeLookbehind)
+     }
+ 
+     /// Returns true if this is a lookbehind ((?<=...) or (?<!...))
+     pub fn is_lookbehind(&self) -> bool {
+-        matches!(self, Self::PositiveLookbehind | Self::NegativeLookbehind)
++        true /* ~ changed by cargo-mutants ~ */
+     }
+ }
+ 
+ /// Features found during parsing (for validation).
+ #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+ pub enum RegexpFeature {
+     Dot,
+     Star,

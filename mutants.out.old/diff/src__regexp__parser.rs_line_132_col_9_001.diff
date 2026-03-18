@@ -1,0 +1,21 @@
+--- src/regexp/parser.rs
++++ replace LookaroundType::is_negative -> bool with false
+@@ -124,17 +124,17 @@
+     PositiveLookbehind,
+     /// `(?<!...)` - negative lookbehind: match if NOT preceded by pattern
+     NegativeLookbehind,
+ }
+ 
+ impl LookaroundType {
+     /// Returns true if this is a negative lookaround ((?!...) or (?<!...))
+     pub fn is_negative(&self) -> bool {
+-        matches!(self, Self::NegativeLookahead | Self::NegativeLookbehind)
++        false /* ~ changed by cargo-mutants ~ */
+     }
+ 
+     /// Returns true if this is a lookbehind ((?<=...) or (?<!...))
+     pub fn is_lookbehind(&self) -> bool {
+         matches!(self, Self::PositiveLookbehind | Self::NegativeLookbehind)
+     }
+ }
+ 

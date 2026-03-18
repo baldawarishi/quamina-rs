@@ -1,0 +1,21 @@
+--- src/regexp/parser.rs
++++ replace QuantifiedAtom::is_plus -> bool with true
+@@ -92,17 +92,17 @@
+     #[inline]
+     pub fn is_qm(&self) -> bool {
+         self.quant_min == 0 && self.quant_max == 1
+     }
+ 
+     /// Returns true if this atom uses + (one or more).
+     #[inline]
+     pub fn is_plus(&self) -> bool {
+-        self.quant_min == 1 && self.quant_max == REGEXP_QUANTIFIER_MAX
++        true /* ~ changed by cargo-mutants ~ */
+     }
+ 
+     /// Returns true if this atom uses * (zero or more).
+     #[inline]
+     pub fn is_star(&self) -> bool {
+         self.quant_min == 0 && self.quant_max == REGEXP_QUANTIFIER_MAX
+     }
+ }

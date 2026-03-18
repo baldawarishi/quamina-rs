@@ -1,30 +1,26 @@
-src/flatten_json.rs:57:9: replace Field<'_>::path_str -> &str with ""
-src/flatten_json.rs:57:9: replace Field<'_>::path_str -> &str with "xyzzy"
-src/flatten_json.rs:67:9: replace Field<'_>::value_bytes -> &[u8] with Vec::leak(Vec::new())
-src/flatten_json.rs:67:9: replace Field<'_>::value_bytes -> &[u8] with Vec::leak(vec![0])
-src/flatten_json.rs:67:9: replace Field<'_>::value_bytes -> &[u8] with Vec::leak(vec![1])
-src/flatten_json.rs:73:9: replace Field<'_>::array_trail_slice -> &[ArrayPos] with Vec::leak(Vec::new())
-src/flatten_json.rs:95:9: replace MemberName<'_>::as_bytes -> &[u8] with Vec::leak(Vec::new())
-src/flatten_json.rs:95:9: replace MemberName<'_>::as_bytes -> &[u8] with Vec::leak(vec![0])
-src/flatten_json.rs:95:9: replace MemberName<'_>::as_bytes -> &[u8] with Vec::leak(vec![1])
-src/flatten_json.rs:104:9: replace FieldValue<'_>::as_bytes -> &[u8] with Vec::leak(Vec::new())
-src/flatten_json.rs:104:9: replace FieldValue<'_>::as_bytes -> &[u8] with Vec::leak(vec![0])
-src/flatten_json.rs:104:9: replace FieldValue<'_>::as_bytes -> &[u8] with Vec::leak(vec![1])
-src/flatten_json.rs:165:9: replace FlattenJsonState::flatten -> Result<&mut[Field<'a>], QuaminaError> with Ok(Vec::leak(Vec::new()))
-src/flatten_json.rs:211:9: replace FlattenContext<'a, '_>::push_field with ()
-src/flatten_json.rs:218:9: replace FlattenContext<'a, '_>::flatten_impl -> Result<(), QuaminaError> with Ok(())
-src/flatten_json.rs:225:19: replace == with != in FlattenContext<'a, '_>::flatten_impl
-src/flatten_json.rs:232:28: replace += with -= in FlattenContext<'a, '_>::flatten_impl
-src/flatten_json.rs:232:28: replace += with *= in FlattenContext<'a, '_>::flatten_impl
-src/flatten_json.rs:233:34: replace < with == in FlattenContext<'a, '_>::flatten_impl
-src/flatten_json.rs:233:34: replace < with <= in FlattenContext<'a, '_>::flatten_impl
-src/flatten_json.rs:258:9: replace FlattenContext<'a, '_>::read_object -> Result<(), FlattenError> with Ok(())
-src/flatten_json.rs:264:59: replace == with != in FlattenContext<'a, '_>::read_object
-src/flatten_json.rs:283:33: replace && with || in FlattenContext<'a, '_>::read_object
-src/flatten_json.rs:283:28: replace == with != in FlattenContext<'a, '_>::read_object
-src/flatten_json.rs:283:49: replace == with != in FlattenContext<'a, '_>::read_object
-src/flatten_json.rs:297:34: replace == with != in FlattenContext<'a, '_>::read_object
-src/flatten_json.rs:300:57: replace == with != in FlattenContext<'a, '_>::read_object
-src/flatten_json.rs:307:34: replace == with != in FlattenContext<'a, '_>::read_object
-src/flatten_json.rs:320:34: replace == with != in FlattenContext<'a, '_>::read_object
-src/flatten_json.rs:343:25: delete match arm b'"' in FlattenContext<'a, '_>::read_object
+src/regexp/parser.rs:88:9: replace QuantifiedAtom::is_singleton -> bool with true
+src/regexp/parser.rs:88:29: replace && with || in QuantifiedAtom::is_singleton
+src/regexp/parser.rs:88:47: replace == with != in QuantifiedAtom::is_singleton
+src/regexp/parser.rs:94:9: replace QuantifiedAtom::is_qm -> bool with true
+src/regexp/parser.rs:94:9: replace QuantifiedAtom::is_qm -> bool with false
+src/regexp/parser.rs:94:29: replace && with || in QuantifiedAtom::is_qm
+src/regexp/parser.rs:94:24: replace == with != in QuantifiedAtom::is_qm
+src/regexp/parser.rs:94:47: replace == with != in QuantifiedAtom::is_qm
+src/regexp/parser.rs:100:9: replace QuantifiedAtom::is_plus -> bool with true
+src/regexp/parser.rs:100:9: replace QuantifiedAtom::is_plus -> bool with false
+src/regexp/parser.rs:100:29: replace && with || in QuantifiedAtom::is_plus
+src/regexp/parser.rs:100:24: replace == with != in QuantifiedAtom::is_plus
+src/regexp/parser.rs:100:47: replace == with != in QuantifiedAtom::is_plus
+src/regexp/parser.rs:106:9: replace QuantifiedAtom::is_star -> bool with true
+src/regexp/parser.rs:106:9: replace QuantifiedAtom::is_star -> bool with false
+src/regexp/parser.rs:106:29: replace && with || in QuantifiedAtom::is_star
+src/regexp/parser.rs:106:24: replace == with != in QuantifiedAtom::is_star
+src/regexp/parser.rs:106:47: replace == with != in QuantifiedAtom::is_star
+src/regexp/parser.rs:137:9: replace LookaroundType::is_lookbehind -> bool with false
+src/regexp/parser.rs:218:9: replace RegexpParse::nest with ()
+src/regexp/parser.rs:222:9: replace RegexpParse::unnest -> RegexpRoot with Default::default()
+src/regexp/parser.rs:228:9: replace RegexpParse::is_nested -> bool with true
+src/regexp/parser.rs:228:9: replace RegexpParse::is_nested -> bool with false
+src/regexp/parser.rs:228:9: delete ! in RegexpParse::is_nested
+src/regexp/parser.rs:232:9: replace RegexpParse::next_rune -> Result<char, RegexpError> with Ok(Default::default())
+src/regexp/parser.rs:232:23: replace >= with < in RegexpParse::next_rune

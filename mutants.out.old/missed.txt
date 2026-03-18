@@ -1,7 +1,6 @@
-src/flatten_json.rs:233:34: replace < with > in FlattenContext<'a, '_>::flatten_impl
-src/flatten_json.rs:235:24: delete ! in FlattenContext<'a, '_>::flatten_impl
-src/flatten_json.rs:241:32: replace += with -= in FlattenContext<'a, '_>::flatten_impl
-src/flatten_json.rs:241:32: replace += with *= in FlattenContext<'a, '_>::flatten_impl
-src/flatten_json.rs:245:28: replace += with -= in FlattenContext<'a, '_>::flatten_impl
-src/flatten_json.rs:245:28: replace += with *= in FlattenContext<'a, '_>::flatten_impl
-src/flatten_json.rs:246:31: replace >= with < in FlattenContext<'a, '_>::flatten_impl
+src/regexp/parser.rs:88:9: replace QuantifiedAtom::is_singleton -> bool with false
+src/regexp/parser.rs:88:24: replace == with != in QuantifiedAtom::is_singleton
+src/regexp/parser.rs:132:9: replace LookaroundType::is_negative -> bool with true
+src/regexp/parser.rs:132:9: replace LookaroundType::is_negative -> bool with false
+src/regexp/parser.rs:137:9: replace LookaroundType::is_lookbehind -> bool with true
+src/regexp/parser.rs:199:9: replace <impl std::fmt::Display for RegexpError>::fmt -> std::fmt::Result with Ok(Default::default())

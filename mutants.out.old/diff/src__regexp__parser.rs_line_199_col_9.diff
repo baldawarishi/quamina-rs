@@ -1,0 +1,21 @@
+--- src/regexp/parser.rs
++++ replace <impl std::fmt::Display for RegexpError>::fmt -> std::fmt::Result with Ok(Default::default())
+@@ -191,17 +191,17 @@
+ #[derive(Debug, Clone, PartialEq, Eq)]
+ pub struct RegexpError {
+     pub message: String,
+     pub offset: usize,
+ }
+ 
+ impl std::fmt::Display for RegexpError {
+     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+-        write!(f, "{} at offset {}", self.message, self.offset)
++        Ok(Default::default()) /* ~ changed by cargo-mutants ~ */
+     }
+ }
+ 
+ impl std::error::Error for RegexpError {}
+ 
+ impl RegexpParse {
+     fn new(re: &str) -> Self {
+         Self {

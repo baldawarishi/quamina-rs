@@ -1,0 +1,21 @@
+--- src/regexp/parser.rs
++++ replace += with -= in RegexpParse::next_rune
+@@ -244,17 +244,17 @@
+             offset: self.index,
+         })?;
+ 
+         let c = s.chars().next().ok_or_else(|| RegexpError {
+             message: "empty string".into(),
+             offset: self.index,
+         })?;
+ 
+-        self.index += c.len_utf8();
++        self.index -= /* ~ changed by cargo-mutants ~ */ c.len_utf8();
+         Ok(c)
+     }
+ 
+     fn require(&mut self, wanted: char) -> Result<(), RegexpError> {
+         let got = self.next_rune()?;
+         if got != wanted {
+             return Err(RegexpError {
+                 message: format!("expected '{}', got '{}'", wanted, got),

@@ -1,0 +1,21 @@
+--- src/regexp/parser.rs
++++ delete ! in RegexpParse::is_nested
+@@ -220,17 +220,17 @@
+ 
+     fn unnest(&mut self) -> RegexpRoot {
+         let subtree = std::mem::take(&mut self.tree);
+         self.tree = self.nesting.pop().unwrap_or_default();
+         subtree
+     }
+ 
+     fn is_nested(&self) -> bool {
+-        !self.nesting.is_empty()
++         /* ~ changed by cargo-mutants ~ */self.nesting.is_empty()
+     }
+ 
+     fn next_rune(&mut self) -> Result<char, RegexpError> {
+         if self.index >= self.bytes.len() {
+             return Err(RegexpError {
+                 message: "end of string".into(),
+                 offset: self.index,
+             });

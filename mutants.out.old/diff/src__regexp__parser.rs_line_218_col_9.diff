@@ -1,0 +1,21 @@
+--- src/regexp/parser.rs
++++ replace RegexpParse::nest with ()
+@@ -210,17 +210,17 @@
+             last_index: 0,
+             nesting: Vec::new(),
+             found_features: Vec::new(),
+             tree: Vec::new(),
+         }
+     }
+ 
+     fn nest(&mut self) {
+-        self.nesting.push(std::mem::take(&mut self.tree));
++        () /* ~ changed by cargo-mutants ~ */
+     }
+ 
+     fn unnest(&mut self) -> RegexpRoot {
+         let subtree = std::mem::take(&mut self.tree);
+         self.tree = self.nesting.pop().unwrap_or_default();
+         subtree
+     }
+ 

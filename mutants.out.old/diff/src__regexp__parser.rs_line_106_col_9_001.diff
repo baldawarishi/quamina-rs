@@ -1,0 +1,21 @@
+--- src/regexp/parser.rs
++++ replace QuantifiedAtom::is_star -> bool with false
+@@ -98,17 +98,17 @@
+     #[inline]
+     pub fn is_plus(&self) -> bool {
+         self.quant_min == 1 && self.quant_max == REGEXP_QUANTIFIER_MAX
+     }
+ 
+     /// Returns true if this atom uses * (zero or more).
+     #[inline]
+     pub fn is_star(&self) -> bool {
+-        self.quant_min == 0 && self.quant_max == REGEXP_QUANTIFIER_MAX
++        false /* ~ changed by cargo-mutants ~ */
+     }
+ }
+ 
+ /// A branch in the regexp (sequence of atoms).
+ pub type RegexpBranch = Vec<QuantifiedAtom>;
+ 
+ /// The root of a parsed regexp (alternatives separated by |).
+ pub type RegexpRoot = Vec<RegexpBranch>;

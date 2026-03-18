@@ -1,0 +1,21 @@
+--- src/regexp/parser.rs
++++ replace >= with < in RegexpParse::next_rune
+@@ -224,17 +224,17 @@
+         subtree
+     }
+ 
+     fn is_nested(&self) -> bool {
+         !self.nesting.is_empty()
+     }
+ 
+     fn next_rune(&mut self) -> Result<char, RegexpError> {
+-        if self.index >= self.bytes.len() {
++        if self.index < /* ~ changed by cargo-mutants ~ */ self.bytes.len() {
+             return Err(RegexpError {
+                 message: "end of string".into(),
+                 offset: self.index,
+             });
+         }
+         self.last_index = self.index;
+ 
+         // Decode UTF-8

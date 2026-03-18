@@ -8,7 +8,7 @@
       "phase_results": [
         {
           "phase": "Build",
-          "duration": 8.422942083,
+          "duration": 8.623689875,
           "process_status": "Success",
           "argv": [
             "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
@@ -21,7 +21,7 @@
         },
         {
           "phase": "Test",
-          "duration": 60.479125958,
+          "duration": 62.33715725,
           "process_status": "Success",
           "argv": [
             "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
@@ -37,44 +37,44 @@
     {
       "scenario": {
         "Mutant": {
-          "name": "src/flatten_json.rs:57:9: replace Field<'_>::path_str -> &str with \"\"",
+          "name": "src/regexp/parser.rs:88:9: replace QuantifiedAtom::is_singleton -> bool with true",
           "package": "quamina",
-          "file": "src/flatten_json.rs",
+          "file": "src/regexp/parser.rs",
           "function": {
-            "function_name": "Field<'_>::path_str",
-            "return_type": "-> &str",
+            "function_name": "QuantifiedAtom::is_singleton",
+            "return_type": "-> bool",
             "span": {
               "start": {
-                "line": 49,
+                "line": 85,
                 "column": 5
               },
               "end": {
-                "line": 58,
+                "line": 89,
                 "column": 6
               }
             }
           },
           "span": {
             "start": {
-              "line": 57,
+              "line": 88,
               "column": 9
             },
             "end": {
-              "line": 57,
-              "column": 61
+              "line": 88,
+              "column": 51
             }
           },
-          "replacement": "\"\"",
+          "replacement": "true",
           "genre": "FnValue"
         }
       },
       "summary": "CaughtMutant",
-      "log_path": "log/src__flatten_json.rs_line_57_col_9.log",
-      "diff_path": "diff/src__flatten_json.rs_line_57_col_9.diff",
+      "log_path": "log/src__regexp__parser.rs_line_88_col_9.log",
+      "diff_path": "diff/src__regexp__parser.rs_line_88_col_9.diff",
       "phase_results": [
         {
           "phase": "Build",
-          "duration": 0.9880045,
+          "duration": 1.089882708,
           "process_status": "Success",
           "argv": [
             "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
@@ -87,7 +87,7 @@
         },
         {
           "phase": "Test",
-          "duration": 7.907848417,
+          "duration": 8.166029167,
           "process_status": {
             "Failure": 101
           },
@@ -105,44 +105,44 @@
     {
       "scenario": {
         "Mutant": {
-          "name": "src/flatten_json.rs:57:9: replace Field<'_>::path_str -> &str with \"xyzzy\"",
+          "name": "src/regexp/parser.rs:88:9: replace QuantifiedAtom::is_singleton -> bool with false",
           "package": "quamina",
-          "file": "src/flatten_json.rs",
+          "file": "src/regexp/parser.rs",
           "function": {
-            "function_name": "Field<'_>::path_str",
-            "return_type": "-> &str",
+            "function_name": "QuantifiedAtom::is_singleton",
+            "return_type": "-> bool",
             "span": {
               "start": {
-                "line": 49,
+                "line": 85,
                 "column": 5
               },
               "end": {
-                "line": 58,
+                "line": 89,
                 "column": 6
               }
             }
           },
           "span": {
             "start": {
-              "line": 57,
+              "line": 88,
               "column": 9
             },
             "end": {
-              "line": 57,
-              "column": 61
+              "line": 88,
+              "column": 51
             }
           },
-          "replacement": "\"xyzzy\"",
+          "replacement": "false",
           "genre": "FnValue"
         }
       },
-      "summary": "CaughtMutant",
-      "log_path": "log/src__flatten_json.rs_line_57_col_9_001.log",
-      "diff_path": "diff/src__flatten_json.rs_line_57_col_9_001.diff",
+      "summary": "MissedMutant",
+      "log_path": "log/src__regexp__parser.rs_line_88_col_9_001.log",
+      "diff_path": "diff/src__regexp__parser.rs_line_88_col_9_001.diff",
       "phase_results": [
         {
           "phase": "Build",
-          "duration": 0.924891583,
+          "duration": 0.916324416,
           "process_status": "Success",
           "argv": [
             "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
@@ -155,10 +155,8 @@
         },
         {
           "phase": "Test",
-          "duration": 7.928803084,
-          "process_status": {
-            "Failure": 101
-          },
+          "duration": 61.624141584,
+          "process_status": "Success",
           "argv": [
             "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
             "test",
@@ -173,779 +171,44 @@
     {
       "scenario": {
         "Mutant": {
-          "name": "src/flatten_json.rs:67:9: replace Field<'_>::value_bytes -> &[u8] with Vec::leak(Vec::new())",
+          "name": "src/regexp/parser.rs:88:29: replace && with || in QuantifiedAtom::is_singleton",
           "package": "quamina",
-          "file": "src/flatten_json.rs",
+          "file": "src/regexp/parser.rs",
           "function": {
-            "function_name": "Field<'_>::value_bytes",
-            "return_type": "-> &[u8]",
+            "function_name": "QuantifiedAtom::is_singleton",
+            "return_type": "-> bool",
             "span": {
               "start": {
-                "line": 60,
+                "line": 85,
                 "column": 5
               },
               "end": {
-                "line": 68,
+                "line": 89,
                 "column": 6
               }
             }
           },
           "span": {
             "start": {
-              "line": 67,
-              "column": 9
-            },
-            "end": {
-              "line": 67,
-              "column": 28
-            }
-          },
-          "replacement": "Vec::leak(Vec::new())",
-          "genre": "FnValue"
-        }
-      },
-      "summary": "CaughtMutant",
-      "log_path": "log/src__flatten_json.rs_line_67_col_9.log",
-      "diff_path": "diff/src__flatten_json.rs_line_67_col_9.diff",
-      "phase_results": [
-        {
-          "phase": "Build",
-          "duration": 0.932874125,
-          "process_status": "Success",
-          "argv": [
-            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
-            "test",
-            "--no-run",
-            "--profile=mutants",
-            "--verbose",
-            "--package=quamina@0.4.3"
-          ]
-        },
-        {
-          "phase": "Test",
-          "duration": 8.060868209,
-          "process_status": {
-            "Failure": 101
-          },
-          "argv": [
-            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
-            "test",
-            "--profile=mutants",
-            "--verbose",
-            "--package=quamina@0.4.3",
-            "--all-targets"
-          ]
-        }
-      ]
-    },
-    {
-      "scenario": {
-        "Mutant": {
-          "name": "src/flatten_json.rs:67:9: replace Field<'_>::value_bytes -> &[u8] with Vec::leak(vec![0])",
-          "package": "quamina",
-          "file": "src/flatten_json.rs",
-          "function": {
-            "function_name": "Field<'_>::value_bytes",
-            "return_type": "-> &[u8]",
-            "span": {
-              "start": {
-                "line": 60,
-                "column": 5
-              },
-              "end": {
-                "line": 68,
-                "column": 6
-              }
-            }
-          },
-          "span": {
-            "start": {
-              "line": 67,
-              "column": 9
-            },
-            "end": {
-              "line": 67,
-              "column": 28
-            }
-          },
-          "replacement": "Vec::leak(vec![0])",
-          "genre": "FnValue"
-        }
-      },
-      "summary": "CaughtMutant",
-      "log_path": "log/src__flatten_json.rs_line_67_col_9_001.log",
-      "diff_path": "diff/src__flatten_json.rs_line_67_col_9_001.diff",
-      "phase_results": [
-        {
-          "phase": "Build",
-          "duration": 0.931405834,
-          "process_status": "Success",
-          "argv": [
-            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
-            "test",
-            "--no-run",
-            "--profile=mutants",
-            "--verbose",
-            "--package=quamina@0.4.3"
-          ]
-        },
-        {
-          "phase": "Test",
-          "duration": 7.9956116250000004,
-          "process_status": {
-            "Failure": 101
-          },
-          "argv": [
-            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
-            "test",
-            "--profile=mutants",
-            "--verbose",
-            "--package=quamina@0.4.3",
-            "--all-targets"
-          ]
-        }
-      ]
-    },
-    {
-      "scenario": {
-        "Mutant": {
-          "name": "src/flatten_json.rs:67:9: replace Field<'_>::value_bytes -> &[u8] with Vec::leak(vec![1])",
-          "package": "quamina",
-          "file": "src/flatten_json.rs",
-          "function": {
-            "function_name": "Field<'_>::value_bytes",
-            "return_type": "-> &[u8]",
-            "span": {
-              "start": {
-                "line": 60,
-                "column": 5
-              },
-              "end": {
-                "line": 68,
-                "column": 6
-              }
-            }
-          },
-          "span": {
-            "start": {
-              "line": 67,
-              "column": 9
-            },
-            "end": {
-              "line": 67,
-              "column": 28
-            }
-          },
-          "replacement": "Vec::leak(vec![1])",
-          "genre": "FnValue"
-        }
-      },
-      "summary": "CaughtMutant",
-      "log_path": "log/src__flatten_json.rs_line_67_col_9_002.log",
-      "diff_path": "diff/src__flatten_json.rs_line_67_col_9_002.diff",
-      "phase_results": [
-        {
-          "phase": "Build",
-          "duration": 0.924783125,
-          "process_status": "Success",
-          "argv": [
-            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
-            "test",
-            "--no-run",
-            "--profile=mutants",
-            "--verbose",
-            "--package=quamina@0.4.3"
-          ]
-        },
-        {
-          "phase": "Test",
-          "duration": 7.956408292,
-          "process_status": {
-            "Failure": 101
-          },
-          "argv": [
-            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
-            "test",
-            "--profile=mutants",
-            "--verbose",
-            "--package=quamina@0.4.3",
-            "--all-targets"
-          ]
-        }
-      ]
-    },
-    {
-      "scenario": {
-        "Mutant": {
-          "name": "src/flatten_json.rs:73:9: replace Field<'_>::array_trail_slice -> &[ArrayPos] with Vec::leak(Vec::new())",
-          "package": "quamina",
-          "file": "src/flatten_json.rs",
-          "function": {
-            "function_name": "Field<'_>::array_trail_slice",
-            "return_type": "-> &[ArrayPos]",
-            "span": {
-              "start": {
-                "line": 70,
-                "column": 5
-              },
-              "end": {
-                "line": 74,
-                "column": 6
-              }
-            }
-          },
-          "span": {
-            "start": {
-              "line": 73,
-              "column": 9
-            },
-            "end": {
-              "line": 73,
-              "column": 26
-            }
-          },
-          "replacement": "Vec::leak(Vec::new())",
-          "genre": "FnValue"
-        }
-      },
-      "summary": "CaughtMutant",
-      "log_path": "log/src__flatten_json.rs_line_73_col_9.log",
-      "diff_path": "diff/src__flatten_json.rs_line_73_col_9.diff",
-      "phase_results": [
-        {
-          "phase": "Build",
-          "duration": 0.927275084,
-          "process_status": "Success",
-          "argv": [
-            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
-            "test",
-            "--no-run",
-            "--profile=mutants",
-            "--verbose",
-            "--package=quamina@0.4.3"
-          ]
-        },
-        {
-          "phase": "Test",
-          "duration": 8.053910791,
-          "process_status": {
-            "Failure": 101
-          },
-          "argv": [
-            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
-            "test",
-            "--profile=mutants",
-            "--verbose",
-            "--package=quamina@0.4.3",
-            "--all-targets"
-          ]
-        }
-      ]
-    },
-    {
-      "scenario": {
-        "Mutant": {
-          "name": "src/flatten_json.rs:73:9: replace Field<'_>::array_trail_slice -> &[ArrayPos] with Vec::leak(vec![Default::default()])",
-          "package": "quamina",
-          "file": "src/flatten_json.rs",
-          "function": {
-            "function_name": "Field<'_>::array_trail_slice",
-            "return_type": "-> &[ArrayPos]",
-            "span": {
-              "start": {
-                "line": 70,
-                "column": 5
-              },
-              "end": {
-                "line": 74,
-                "column": 6
-              }
-            }
-          },
-          "span": {
-            "start": {
-              "line": 73,
-              "column": 9
-            },
-            "end": {
-              "line": 73,
-              "column": 26
-            }
-          },
-          "replacement": "Vec::leak(vec![Default::default()])",
-          "genre": "FnValue"
-        }
-      },
-      "summary": "Unviable",
-      "log_path": "log/src__flatten_json.rs_line_73_col_9_001.log",
-      "diff_path": "diff/src__flatten_json.rs_line_73_col_9_001.diff",
-      "phase_results": [
-        {
-          "phase": "Build",
-          "duration": 0.382370959,
-          "process_status": {
-            "Failure": 101
-          },
-          "argv": [
-            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
-            "test",
-            "--no-run",
-            "--profile=mutants",
-            "--verbose",
-            "--package=quamina@0.4.3"
-          ]
-        }
-      ]
-    },
-    {
-      "scenario": {
-        "Mutant": {
-          "name": "src/flatten_json.rs:95:9: replace MemberName<'_>::as_bytes -> &[u8] with Vec::leak(Vec::new())",
-          "package": "quamina",
-          "file": "src/flatten_json.rs",
-          "function": {
-            "function_name": "MemberName<'_>::as_bytes",
-            "return_type": "-> &[u8]",
-            "span": {
-              "start": {
-                "line": 94,
-                "column": 5
-              },
-              "end": {
-                "line": 99,
-                "column": 6
-              }
-            }
-          },
-          "span": {
-            "start": {
-              "line": 95,
-              "column": 9
-            },
-            "end": {
-              "line": 98,
-              "column": 10
-            }
-          },
-          "replacement": "Vec::leak(Vec::new())",
-          "genre": "FnValue"
-        }
-      },
-      "summary": "CaughtMutant",
-      "log_path": "log/src__flatten_json.rs_line_95_col_9.log",
-      "diff_path": "diff/src__flatten_json.rs_line_95_col_9.diff",
-      "phase_results": [
-        {
-          "phase": "Build",
-          "duration": 0.986809625,
-          "process_status": "Success",
-          "argv": [
-            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
-            "test",
-            "--no-run",
-            "--profile=mutants",
-            "--verbose",
-            "--package=quamina@0.4.3"
-          ]
-        },
-        {
-          "phase": "Test",
-          "duration": 8.338284125,
-          "process_status": {
-            "Failure": 101
-          },
-          "argv": [
-            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
-            "test",
-            "--profile=mutants",
-            "--verbose",
-            "--package=quamina@0.4.3",
-            "--all-targets"
-          ]
-        }
-      ]
-    },
-    {
-      "scenario": {
-        "Mutant": {
-          "name": "src/flatten_json.rs:95:9: replace MemberName<'_>::as_bytes -> &[u8] with Vec::leak(vec![0])",
-          "package": "quamina",
-          "file": "src/flatten_json.rs",
-          "function": {
-            "function_name": "MemberName<'_>::as_bytes",
-            "return_type": "-> &[u8]",
-            "span": {
-              "start": {
-                "line": 94,
-                "column": 5
-              },
-              "end": {
-                "line": 99,
-                "column": 6
-              }
-            }
-          },
-          "span": {
-            "start": {
-              "line": 95,
-              "column": 9
-            },
-            "end": {
-              "line": 98,
-              "column": 10
-            }
-          },
-          "replacement": "Vec::leak(vec![0])",
-          "genre": "FnValue"
-        }
-      },
-      "summary": "CaughtMutant",
-      "log_path": "log/src__flatten_json.rs_line_95_col_9_001.log",
-      "diff_path": "diff/src__flatten_json.rs_line_95_col_9_001.diff",
-      "phase_results": [
-        {
-          "phase": "Build",
-          "duration": 0.921892584,
-          "process_status": "Success",
-          "argv": [
-            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
-            "test",
-            "--no-run",
-            "--profile=mutants",
-            "--verbose",
-            "--package=quamina@0.4.3"
-          ]
-        },
-        {
-          "phase": "Test",
-          "duration": 8.276406667,
-          "process_status": {
-            "Failure": 101
-          },
-          "argv": [
-            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
-            "test",
-            "--profile=mutants",
-            "--verbose",
-            "--package=quamina@0.4.3",
-            "--all-targets"
-          ]
-        }
-      ]
-    },
-    {
-      "scenario": {
-        "Mutant": {
-          "name": "src/flatten_json.rs:95:9: replace MemberName<'_>::as_bytes -> &[u8] with Vec::leak(vec![1])",
-          "package": "quamina",
-          "file": "src/flatten_json.rs",
-          "function": {
-            "function_name": "MemberName<'_>::as_bytes",
-            "return_type": "-> &[u8]",
-            "span": {
-              "start": {
-                "line": 94,
-                "column": 5
-              },
-              "end": {
-                "line": 99,
-                "column": 6
-              }
-            }
-          },
-          "span": {
-            "start": {
-              "line": 95,
-              "column": 9
-            },
-            "end": {
-              "line": 98,
-              "column": 10
-            }
-          },
-          "replacement": "Vec::leak(vec![1])",
-          "genre": "FnValue"
-        }
-      },
-      "summary": "CaughtMutant",
-      "log_path": "log/src__flatten_json.rs_line_95_col_9_002.log",
-      "diff_path": "diff/src__flatten_json.rs_line_95_col_9_002.diff",
-      "phase_results": [
-        {
-          "phase": "Build",
-          "duration": 0.9173485,
-          "process_status": "Success",
-          "argv": [
-            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
-            "test",
-            "--no-run",
-            "--profile=mutants",
-            "--verbose",
-            "--package=quamina@0.4.3"
-          ]
-        },
-        {
-          "phase": "Test",
-          "duration": 8.329324709,
-          "process_status": {
-            "Failure": 101
-          },
-          "argv": [
-            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
-            "test",
-            "--profile=mutants",
-            "--verbose",
-            "--package=quamina@0.4.3",
-            "--all-targets"
-          ]
-        }
-      ]
-    },
-    {
-      "scenario": {
-        "Mutant": {
-          "name": "src/flatten_json.rs:104:9: replace FieldValue<'_>::as_bytes -> &[u8] with Vec::leak(Vec::new())",
-          "package": "quamina",
-          "file": "src/flatten_json.rs",
-          "function": {
-            "function_name": "FieldValue<'_>::as_bytes",
-            "return_type": "-> &[u8]",
-            "span": {
-              "start": {
-                "line": 103,
-                "column": 5
-              },
-              "end": {
-                "line": 108,
-                "column": 6
-              }
-            }
-          },
-          "span": {
-            "start": {
-              "line": 104,
-              "column": 9
-            },
-            "end": {
-              "line": 107,
-              "column": 10
-            }
-          },
-          "replacement": "Vec::leak(Vec::new())",
-          "genre": "FnValue"
-        }
-      },
-      "summary": "CaughtMutant",
-      "log_path": "log/src__flatten_json.rs_line_104_col_9.log",
-      "diff_path": "diff/src__flatten_json.rs_line_104_col_9.diff",
-      "phase_results": [
-        {
-          "phase": "Build",
-          "duration": 0.919697417,
-          "process_status": "Success",
-          "argv": [
-            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
-            "test",
-            "--no-run",
-            "--profile=mutants",
-            "--verbose",
-            "--package=quamina@0.4.3"
-          ]
-        },
-        {
-          "phase": "Test",
-          "duration": 8.050562666,
-          "process_status": {
-            "Failure": 101
-          },
-          "argv": [
-            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
-            "test",
-            "--profile=mutants",
-            "--verbose",
-            "--package=quamina@0.4.3",
-            "--all-targets"
-          ]
-        }
-      ]
-    },
-    {
-      "scenario": {
-        "Mutant": {
-          "name": "src/flatten_json.rs:104:9: replace FieldValue<'_>::as_bytes -> &[u8] with Vec::leak(vec![0])",
-          "package": "quamina",
-          "file": "src/flatten_json.rs",
-          "function": {
-            "function_name": "FieldValue<'_>::as_bytes",
-            "return_type": "-> &[u8]",
-            "span": {
-              "start": {
-                "line": 103,
-                "column": 5
-              },
-              "end": {
-                "line": 108,
-                "column": 6
-              }
-            }
-          },
-          "span": {
-            "start": {
-              "line": 104,
-              "column": 9
-            },
-            "end": {
-              "line": 107,
-              "column": 10
-            }
-          },
-          "replacement": "Vec::leak(vec![0])",
-          "genre": "FnValue"
-        }
-      },
-      "summary": "CaughtMutant",
-      "log_path": "log/src__flatten_json.rs_line_104_col_9_001.log",
-      "diff_path": "diff/src__flatten_json.rs_line_104_col_9_001.diff",
-      "phase_results": [
-        {
-          "phase": "Build",
-          "duration": 0.937709125,
-          "process_status": "Success",
-          "argv": [
-            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
-            "test",
-            "--no-run",
-            "--profile=mutants",
-            "--verbose",
-            "--package=quamina@0.4.3"
-          ]
-        },
-        {
-          "phase": "Test",
-          "duration": 8.02501725,
-          "process_status": {
-            "Failure": 101
-          },
-          "argv": [
-            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
-            "test",
-            "--profile=mutants",
-            "--verbose",
-            "--package=quamina@0.4.3",
-            "--all-targets"
-          ]
-        }
-      ]
-    },
-    {
-      "scenario": {
-        "Mutant": {
-          "name": "src/flatten_json.rs:104:9: replace FieldValue<'_>::as_bytes -> &[u8] with Vec::leak(vec![1])",
-          "package": "quamina",
-          "file": "src/flatten_json.rs",
-          "function": {
-            "function_name": "FieldValue<'_>::as_bytes",
-            "return_type": "-> &[u8]",
-            "span": {
-              "start": {
-                "line": 103,
-                "column": 5
-              },
-              "end": {
-                "line": 108,
-                "column": 6
-              }
-            }
-          },
-          "span": {
-            "start": {
-              "line": 104,
-              "column": 9
-            },
-            "end": {
-              "line": 107,
-              "column": 10
-            }
-          },
-          "replacement": "Vec::leak(vec![1])",
-          "genre": "FnValue"
-        }
-      },
-      "summary": "CaughtMutant",
-      "log_path": "log/src__flatten_json.rs_line_104_col_9_002.log",
-      "diff_path": "diff/src__flatten_json.rs_line_104_col_9_002.diff",
-      "phase_results": [
-        {
-          "phase": "Build",
-          "duration": 0.930705542,
-          "process_status": "Success",
-          "argv": [
-            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
-            "test",
-            "--no-run",
-            "--profile=mutants",
-            "--verbose",
-            "--package=quamina@0.4.3"
-          ]
-        },
-        {
-          "phase": "Test",
-          "duration": 8.047824375,
-          "process_status": {
-            "Failure": 101
-          },
-          "argv": [
-            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
-            "test",
-            "--profile=mutants",
-            "--verbose",
-            "--package=quamina@0.4.3",
-            "--all-targets"
-          ]
-        }
-      ]
-    },
-    {
-      "scenario": {
-        "Mutant": {
-          "name": "src/flatten_json.rs:148:9: replace FlattenJsonState::reset with ()",
-          "package": "quamina",
-          "file": "src/flatten_json.rs",
-          "function": {
-            "function_name": "FlattenJsonState::reset",
-            "return_type": "",
-            "span": {
-              "start": {
-                "line": 144,
-                "column": 5
-              },
-              "end": {
-                "line": 150,
-                "column": 6
-              }
-            }
-          },
-          "span": {
-            "start": {
-              "line": 148,
-              "column": 9
-            },
-            "end": {
-              "line": 149,
+              "line": 88,
               "column": 29
+            },
+            "end": {
+              "line": 88,
+              "column": 31
             }
           },
-          "replacement": "()",
-          "genre": "FnValue"
+          "replacement": "||",
+          "genre": "BinaryOperator"
         }
       },
-      "summary": "Timeout",
-      "log_path": "log/src__flatten_json.rs_line_148_col_9.log",
-      "diff_path": "diff/src__flatten_json.rs_line_148_col_9.diff",
+      "summary": "CaughtMutant",
+      "log_path": "log/src__regexp__parser.rs_line_88_col_29.log",
+      "diff_path": "diff/src__regexp__parser.rs_line_88_col_29.diff",
       "phase_results": [
         {
           "phase": "Build",
-          "duration": 1.031655167,
+          "duration": 1.143813875,
           "process_status": "Success",
           "argv": [
             "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
@@ -958,8 +221,10 @@
         },
         {
           "phase": "Test",
-          "duration": 120.044439334,
-          "process_status": "Timeout",
+          "duration": 8.244624583,
+          "process_status": {
+            "Failure": 101
+          },
           "argv": [
             "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
             "test",
@@ -974,44 +239,178 @@
     {
       "scenario": {
         "Mutant": {
-          "name": "src/flatten_json.rs:165:9: replace FlattenJsonState::flatten -> Result<&mut[Field<'a>], QuaminaError> with Ok(Vec::leak(Vec::new()))",
+          "name": "src/regexp/parser.rs:88:24: replace == with != in QuantifiedAtom::is_singleton",
           "package": "quamina",
-          "file": "src/flatten_json.rs",
+          "file": "src/regexp/parser.rs",
           "function": {
-            "function_name": "FlattenJsonState::flatten",
-            "return_type": "-> Result<&mut[Field<'a>], QuaminaError>",
+            "function_name": "QuantifiedAtom::is_singleton",
+            "return_type": "-> bool",
             "span": {
               "start": {
-                "line": 152,
+                "line": 85,
                 "column": 5
               },
               "end": {
-                "line": 188,
+                "line": 89,
                 "column": 6
               }
             }
           },
           "span": {
             "start": {
-              "line": 165,
+              "line": 88,
+              "column": 24
+            },
+            "end": {
+              "line": 88,
+              "column": 26
+            }
+          },
+          "replacement": "!=",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "MissedMutant",
+      "log_path": "log/src__regexp__parser.rs_line_88_col_24.log",
+      "diff_path": "diff/src__regexp__parser.rs_line_88_col_24.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.970627958,
+          "process_status": "Success",
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--no-run",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 62.319308667,
+          "process_status": "Success",
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3",
+            "--all-targets"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/regexp/parser.rs:88:47: replace == with != in QuantifiedAtom::is_singleton",
+          "package": "quamina",
+          "file": "src/regexp/parser.rs",
+          "function": {
+            "function_name": "QuantifiedAtom::is_singleton",
+            "return_type": "-> bool",
+            "span": {
+              "start": {
+                "line": 85,
+                "column": 5
+              },
+              "end": {
+                "line": 89,
+                "column": 6
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 88,
+              "column": 47
+            },
+            "end": {
+              "line": 88,
+              "column": 49
+            }
+          },
+          "replacement": "!=",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__regexp__parser.rs_line_88_col_47.log",
+      "diff_path": "diff/src__regexp__parser.rs_line_88_col_47.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 1.172676917,
+          "process_status": "Success",
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--no-run",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 8.216826584,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3",
+            "--all-targets"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/regexp/parser.rs:94:9: replace QuantifiedAtom::is_qm -> bool with true",
+          "package": "quamina",
+          "file": "src/regexp/parser.rs",
+          "function": {
+            "function_name": "QuantifiedAtom::is_qm",
+            "return_type": "-> bool",
+            "span": {
+              "start": {
+                "line": 91,
+                "column": 5
+              },
+              "end": {
+                "line": 95,
+                "column": 6
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 94,
               "column": 9
             },
             "end": {
-              "line": 187,
-              "column": 25
+              "line": 94,
+              "column": 51
             }
           },
-          "replacement": "Ok(Vec::leak(Vec::new()))",
+          "replacement": "true",
           "genre": "FnValue"
         }
       },
       "summary": "CaughtMutant",
-      "log_path": "log/src__flatten_json.rs_line_165_col_9.log",
-      "diff_path": "diff/src__flatten_json.rs_line_165_col_9.diff",
+      "log_path": "log/src__regexp__parser.rs_line_94_col_9.log",
+      "diff_path": "diff/src__regexp__parser.rs_line_94_col_9.diff",
       "phase_results": [
         {
           "phase": "Build",
-          "duration": 1.042116583,
+          "duration": 0.967734583,
           "process_status": "Success",
           "argv": [
             "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
@@ -1024,7 +423,7 @@
         },
         {
           "phase": "Test",
-          "duration": 7.845130458,
+          "duration": 8.048750791,
           "process_status": {
             "Failure": 101
           },
@@ -1042,47 +441,45 @@
     {
       "scenario": {
         "Mutant": {
-          "name": "src/flatten_json.rs:165:9: replace FlattenJsonState::flatten -> Result<&mut[Field<'a>], QuaminaError> with Ok(Vec::leak(vec![Default::default()]))",
+          "name": "src/regexp/parser.rs:94:9: replace QuantifiedAtom::is_qm -> bool with false",
           "package": "quamina",
-          "file": "src/flatten_json.rs",
+          "file": "src/regexp/parser.rs",
           "function": {
-            "function_name": "FlattenJsonState::flatten",
-            "return_type": "-> Result<&mut[Field<'a>], QuaminaError>",
+            "function_name": "QuantifiedAtom::is_qm",
+            "return_type": "-> bool",
             "span": {
               "start": {
-                "line": 152,
+                "line": 91,
                 "column": 5
               },
               "end": {
-                "line": 188,
+                "line": 95,
                 "column": 6
               }
             }
           },
           "span": {
             "start": {
-              "line": 165,
+              "line": 94,
               "column": 9
             },
             "end": {
-              "line": 187,
-              "column": 25
+              "line": 94,
+              "column": 51
             }
           },
-          "replacement": "Ok(Vec::leak(vec![Default::default()]))",
+          "replacement": "false",
           "genre": "FnValue"
         }
       },
-      "summary": "Unviable",
-      "log_path": "log/src__flatten_json.rs_line_165_col_9_001.log",
-      "diff_path": "diff/src__flatten_json.rs_line_165_col_9_001.diff",
+      "summary": "CaughtMutant",
+      "log_path": "log/src__regexp__parser.rs_line_94_col_9_001.log",
+      "diff_path": "diff/src__regexp__parser.rs_line_94_col_9_001.diff",
       "phase_results": [
         {
           "phase": "Build",
-          "duration": 0.386795333,
-          "process_status": {
-            "Failure": 101
-          },
+          "duration": 1.024723958,
+          "process_status": "Success",
           "argv": [
             "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
             "test",
@@ -1091,93 +488,1256 @@
             "--verbose",
             "--package=quamina@0.4.3"
           ]
+        },
+        {
+          "phase": "Test",
+          "duration": 8.165897542,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3",
+            "--all-targets"
+          ]
         }
       ]
     },
     {
       "scenario": {
         "Mutant": {
-          "name": "src/flatten_json.rs:211:9: replace FlattenContext<'a, '_>::push_field with ()",
+          "name": "src/regexp/parser.rs:94:29: replace && with || in QuantifiedAtom::is_qm",
           "package": "quamina",
-          "file": "src/flatten_json.rs",
+          "file": "src/regexp/parser.rs",
           "function": {
-            "function_name": "FlattenContext<'a, '_>::push_field",
+            "function_name": "QuantifiedAtom::is_qm",
+            "return_type": "-> bool",
+            "span": {
+              "start": {
+                "line": 91,
+                "column": 5
+              },
+              "end": {
+                "line": 95,
+                "column": 6
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 94,
+              "column": 29
+            },
+            "end": {
+              "line": 94,
+              "column": 31
+            }
+          },
+          "replacement": "||",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__regexp__parser.rs_line_94_col_29.log",
+      "diff_path": "diff/src__regexp__parser.rs_line_94_col_29.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 1.033706,
+          "process_status": "Success",
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--no-run",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 8.157067292,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3",
+            "--all-targets"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/regexp/parser.rs:94:24: replace == with != in QuantifiedAtom::is_qm",
+          "package": "quamina",
+          "file": "src/regexp/parser.rs",
+          "function": {
+            "function_name": "QuantifiedAtom::is_qm",
+            "return_type": "-> bool",
+            "span": {
+              "start": {
+                "line": 91,
+                "column": 5
+              },
+              "end": {
+                "line": 95,
+                "column": 6
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 94,
+              "column": 24
+            },
+            "end": {
+              "line": 94,
+              "column": 26
+            }
+          },
+          "replacement": "!=",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__regexp__parser.rs_line_94_col_24.log",
+      "diff_path": "diff/src__regexp__parser.rs_line_94_col_24.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.976233917,
+          "process_status": "Success",
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--no-run",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 8.107588,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3",
+            "--all-targets"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/regexp/parser.rs:94:47: replace == with != in QuantifiedAtom::is_qm",
+          "package": "quamina",
+          "file": "src/regexp/parser.rs",
+          "function": {
+            "function_name": "QuantifiedAtom::is_qm",
+            "return_type": "-> bool",
+            "span": {
+              "start": {
+                "line": 91,
+                "column": 5
+              },
+              "end": {
+                "line": 95,
+                "column": 6
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 94,
+              "column": 47
+            },
+            "end": {
+              "line": 94,
+              "column": 49
+            }
+          },
+          "replacement": "!=",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__regexp__parser.rs_line_94_col_47.log",
+      "diff_path": "diff/src__regexp__parser.rs_line_94_col_47.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.9775845,
+          "process_status": "Success",
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--no-run",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 8.210509166,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3",
+            "--all-targets"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/regexp/parser.rs:100:9: replace QuantifiedAtom::is_plus -> bool with true",
+          "package": "quamina",
+          "file": "src/regexp/parser.rs",
+          "function": {
+            "function_name": "QuantifiedAtom::is_plus",
+            "return_type": "-> bool",
+            "span": {
+              "start": {
+                "line": 97,
+                "column": 5
+              },
+              "end": {
+                "line": 101,
+                "column": 6
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 100,
+              "column": 9
+            },
+            "end": {
+              "line": 100,
+              "column": 71
+            }
+          },
+          "replacement": "true",
+          "genre": "FnValue"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__regexp__parser.rs_line_100_col_9.log",
+      "diff_path": "diff/src__regexp__parser.rs_line_100_col_9.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.9741135,
+          "process_status": "Success",
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--no-run",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 8.29085125,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3",
+            "--all-targets"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/regexp/parser.rs:100:9: replace QuantifiedAtom::is_plus -> bool with false",
+          "package": "quamina",
+          "file": "src/regexp/parser.rs",
+          "function": {
+            "function_name": "QuantifiedAtom::is_plus",
+            "return_type": "-> bool",
+            "span": {
+              "start": {
+                "line": 97,
+                "column": 5
+              },
+              "end": {
+                "line": 101,
+                "column": 6
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 100,
+              "column": 9
+            },
+            "end": {
+              "line": 100,
+              "column": 71
+            }
+          },
+          "replacement": "false",
+          "genre": "FnValue"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__regexp__parser.rs_line_100_col_9_001.log",
+      "diff_path": "diff/src__regexp__parser.rs_line_100_col_9_001.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.969411167,
+          "process_status": "Success",
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--no-run",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 57.256781,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3",
+            "--all-targets"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/regexp/parser.rs:100:29: replace && with || in QuantifiedAtom::is_plus",
+          "package": "quamina",
+          "file": "src/regexp/parser.rs",
+          "function": {
+            "function_name": "QuantifiedAtom::is_plus",
+            "return_type": "-> bool",
+            "span": {
+              "start": {
+                "line": 97,
+                "column": 5
+              },
+              "end": {
+                "line": 101,
+                "column": 6
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 100,
+              "column": 29
+            },
+            "end": {
+              "line": 100,
+              "column": 31
+            }
+          },
+          "replacement": "||",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__regexp__parser.rs_line_100_col_29.log",
+      "diff_path": "diff/src__regexp__parser.rs_line_100_col_29.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 1.133428125,
+          "process_status": "Success",
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--no-run",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 8.167559125,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3",
+            "--all-targets"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/regexp/parser.rs:100:24: replace == with != in QuantifiedAtom::is_plus",
+          "package": "quamina",
+          "file": "src/regexp/parser.rs",
+          "function": {
+            "function_name": "QuantifiedAtom::is_plus",
+            "return_type": "-> bool",
+            "span": {
+              "start": {
+                "line": 97,
+                "column": 5
+              },
+              "end": {
+                "line": 101,
+                "column": 6
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 100,
+              "column": 24
+            },
+            "end": {
+              "line": 100,
+              "column": 26
+            }
+          },
+          "replacement": "!=",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__regexp__parser.rs_line_100_col_24.log",
+      "diff_path": "diff/src__regexp__parser.rs_line_100_col_24.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.930860125,
+          "process_status": "Success",
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--no-run",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 57.129133541,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3",
+            "--all-targets"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/regexp/parser.rs:100:47: replace == with != in QuantifiedAtom::is_plus",
+          "package": "quamina",
+          "file": "src/regexp/parser.rs",
+          "function": {
+            "function_name": "QuantifiedAtom::is_plus",
+            "return_type": "-> bool",
+            "span": {
+              "start": {
+                "line": 97,
+                "column": 5
+              },
+              "end": {
+                "line": 101,
+                "column": 6
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 100,
+              "column": 47
+            },
+            "end": {
+              "line": 100,
+              "column": 49
+            }
+          },
+          "replacement": "!=",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__regexp__parser.rs_line_100_col_47.log",
+      "diff_path": "diff/src__regexp__parser.rs_line_100_col_47.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.819767458,
+          "process_status": "Success",
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--no-run",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 14.237093125,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3",
+            "--all-targets"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/regexp/parser.rs:106:9: replace QuantifiedAtom::is_star -> bool with true",
+          "package": "quamina",
+          "file": "src/regexp/parser.rs",
+          "function": {
+            "function_name": "QuantifiedAtom::is_star",
+            "return_type": "-> bool",
+            "span": {
+              "start": {
+                "line": 103,
+                "column": 5
+              },
+              "end": {
+                "line": 107,
+                "column": 6
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 106,
+              "column": 9
+            },
+            "end": {
+              "line": 106,
+              "column": 71
+            }
+          },
+          "replacement": "true",
+          "genre": "FnValue"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__regexp__parser.rs_line_106_col_9.log",
+      "diff_path": "diff/src__regexp__parser.rs_line_106_col_9.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.9126065,
+          "process_status": "Success",
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--no-run",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 8.014446916,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3",
+            "--all-targets"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/regexp/parser.rs:106:9: replace QuantifiedAtom::is_star -> bool with false",
+          "package": "quamina",
+          "file": "src/regexp/parser.rs",
+          "function": {
+            "function_name": "QuantifiedAtom::is_star",
+            "return_type": "-> bool",
+            "span": {
+              "start": {
+                "line": 103,
+                "column": 5
+              },
+              "end": {
+                "line": 107,
+                "column": 6
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 106,
+              "column": 9
+            },
+            "end": {
+              "line": 106,
+              "column": 71
+            }
+          },
+          "replacement": "false",
+          "genre": "FnValue"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__regexp__parser.rs_line_106_col_9_001.log",
+      "diff_path": "diff/src__regexp__parser.rs_line_106_col_9_001.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.915446125,
+          "process_status": "Success",
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--no-run",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 60.297833708,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3",
+            "--all-targets"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/regexp/parser.rs:106:29: replace && with || in QuantifiedAtom::is_star",
+          "package": "quamina",
+          "file": "src/regexp/parser.rs",
+          "function": {
+            "function_name": "QuantifiedAtom::is_star",
+            "return_type": "-> bool",
+            "span": {
+              "start": {
+                "line": 103,
+                "column": 5
+              },
+              "end": {
+                "line": 107,
+                "column": 6
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 106,
+              "column": 29
+            },
+            "end": {
+              "line": 106,
+              "column": 31
+            }
+          },
+          "replacement": "||",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__regexp__parser.rs_line_106_col_29.log",
+      "diff_path": "diff/src__regexp__parser.rs_line_106_col_29.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 1.2682775,
+          "process_status": "Success",
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--no-run",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 8.1824035,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3",
+            "--all-targets"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/regexp/parser.rs:106:24: replace == with != in QuantifiedAtom::is_star",
+          "package": "quamina",
+          "file": "src/regexp/parser.rs",
+          "function": {
+            "function_name": "QuantifiedAtom::is_star",
+            "return_type": "-> bool",
+            "span": {
+              "start": {
+                "line": 103,
+                "column": 5
+              },
+              "end": {
+                "line": 107,
+                "column": 6
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 106,
+              "column": 24
+            },
+            "end": {
+              "line": 106,
+              "column": 26
+            }
+          },
+          "replacement": "!=",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__regexp__parser.rs_line_106_col_24.log",
+      "diff_path": "diff/src__regexp__parser.rs_line_106_col_24.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.920191125,
+          "process_status": "Success",
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--no-run",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 59.604326875,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3",
+            "--all-targets"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/regexp/parser.rs:106:47: replace == with != in QuantifiedAtom::is_star",
+          "package": "quamina",
+          "file": "src/regexp/parser.rs",
+          "function": {
+            "function_name": "QuantifiedAtom::is_star",
+            "return_type": "-> bool",
+            "span": {
+              "start": {
+                "line": 103,
+                "column": 5
+              },
+              "end": {
+                "line": 107,
+                "column": 6
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 106,
+              "column": 47
+            },
+            "end": {
+              "line": 106,
+              "column": 49
+            }
+          },
+          "replacement": "!=",
+          "genre": "BinaryOperator"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__regexp__parser.rs_line_106_col_47.log",
+      "diff_path": "diff/src__regexp__parser.rs_line_106_col_47.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 1.135047541,
+          "process_status": "Success",
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--no-run",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 8.133120583,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3",
+            "--all-targets"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/regexp/parser.rs:132:9: replace LookaroundType::is_negative -> bool with true",
+          "package": "quamina",
+          "file": "src/regexp/parser.rs",
+          "function": {
+            "function_name": "LookaroundType::is_negative",
+            "return_type": "-> bool",
+            "span": {
+              "start": {
+                "line": 130,
+                "column": 5
+              },
+              "end": {
+                "line": 133,
+                "column": 6
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 132,
+              "column": 9
+            },
+            "end": {
+              "line": 132,
+              "column": 75
+            }
+          },
+          "replacement": "true",
+          "genre": "FnValue"
+        }
+      },
+      "summary": "MissedMutant",
+      "log_path": "log/src__regexp__parser.rs_line_132_col_9.log",
+      "diff_path": "diff/src__regexp__parser.rs_line_132_col_9.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.930610625,
+          "process_status": "Success",
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--no-run",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 60.726377375,
+          "process_status": "Success",
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3",
+            "--all-targets"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/regexp/parser.rs:132:9: replace LookaroundType::is_negative -> bool with false",
+          "package": "quamina",
+          "file": "src/regexp/parser.rs",
+          "function": {
+            "function_name": "LookaroundType::is_negative",
+            "return_type": "-> bool",
+            "span": {
+              "start": {
+                "line": 130,
+                "column": 5
+              },
+              "end": {
+                "line": 133,
+                "column": 6
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 132,
+              "column": 9
+            },
+            "end": {
+              "line": 132,
+              "column": 75
+            }
+          },
+          "replacement": "false",
+          "genre": "FnValue"
+        }
+      },
+      "summary": "MissedMutant",
+      "log_path": "log/src__regexp__parser.rs_line_132_col_9_001.log",
+      "diff_path": "diff/src__regexp__parser.rs_line_132_col_9_001.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.931797666,
+          "process_status": "Success",
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--no-run",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 59.933611209,
+          "process_status": "Success",
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3",
+            "--all-targets"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/regexp/parser.rs:137:9: replace LookaroundType::is_lookbehind -> bool with true",
+          "package": "quamina",
+          "file": "src/regexp/parser.rs",
+          "function": {
+            "function_name": "LookaroundType::is_lookbehind",
+            "return_type": "-> bool",
+            "span": {
+              "start": {
+                "line": 135,
+                "column": 5
+              },
+              "end": {
+                "line": 138,
+                "column": 6
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 137,
+              "column": 9
+            },
+            "end": {
+              "line": 137,
+              "column": 76
+            }
+          },
+          "replacement": "true",
+          "genre": "FnValue"
+        }
+      },
+      "summary": "MissedMutant",
+      "log_path": "log/src__regexp__parser.rs_line_137_col_9.log",
+      "diff_path": "diff/src__regexp__parser.rs_line_137_col_9.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.935373334,
+          "process_status": "Success",
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--no-run",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 60.848411875,
+          "process_status": "Success",
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3",
+            "--all-targets"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/regexp/parser.rs:137:9: replace LookaroundType::is_lookbehind -> bool with false",
+          "package": "quamina",
+          "file": "src/regexp/parser.rs",
+          "function": {
+            "function_name": "LookaroundType::is_lookbehind",
+            "return_type": "-> bool",
+            "span": {
+              "start": {
+                "line": 135,
+                "column": 5
+              },
+              "end": {
+                "line": 138,
+                "column": 6
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 137,
+              "column": 9
+            },
+            "end": {
+              "line": 137,
+              "column": 76
+            }
+          },
+          "replacement": "false",
+          "genre": "FnValue"
+        }
+      },
+      "summary": "CaughtMutant",
+      "log_path": "log/src__regexp__parser.rs_line_137_col_9_001.log",
+      "diff_path": "diff/src__regexp__parser.rs_line_137_col_9_001.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.931825041,
+          "process_status": "Success",
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--no-run",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 8.025886375,
+          "process_status": {
+            "Failure": 101
+          },
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3",
+            "--all-targets"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/regexp/parser.rs:199:9: replace <impl std::fmt::Display for RegexpError>::fmt -> std::fmt::Result with Ok(Default::default())",
+          "package": "quamina",
+          "file": "src/regexp/parser.rs",
+          "function": {
+            "function_name": "<impl std::fmt::Display for RegexpError>::fmt",
+            "return_type": "-> std::fmt::Result",
+            "span": {
+              "start": {
+                "line": 198,
+                "column": 5
+              },
+              "end": {
+                "line": 200,
+                "column": 6
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 199,
+              "column": 9
+            },
+            "end": {
+              "line": 199,
+              "column": 64
+            }
+          },
+          "replacement": "Ok(Default::default())",
+          "genre": "FnValue"
+        }
+      },
+      "summary": "MissedMutant",
+      "log_path": "log/src__regexp__parser.rs_line_199_col_9.log",
+      "diff_path": "diff/src__regexp__parser.rs_line_199_col_9.diff",
+      "phase_results": [
+        {
+          "phase": "Build",
+          "duration": 0.914292583,
+          "process_status": "Success",
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--no-run",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3"
+          ]
+        },
+        {
+          "phase": "Test",
+          "duration": 60.437809334,
+          "process_status": "Success",
+          "argv": [
+            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
+            "test",
+            "--profile=mutants",
+            "--verbose",
+            "--package=quamina@0.4.3",
+            "--all-targets"
+          ]
+        }
+      ]
+    },
+    {
+      "scenario": {
+        "Mutant": {
+          "name": "src/regexp/parser.rs:218:9: replace RegexpParse::nest with ()",
+          "package": "quamina",
+          "file": "src/regexp/parser.rs",
+          "function": {
+            "function_name": "RegexpParse::nest",
             "return_type": "",
-            "span": {
-              "start": {
-                "line": 205,
-                "column": 5
-              },
-              "end": {
-                "line": 213,
-                "column": 6
-              }
-            }
-          },
-          "span": {
-            "start": {
-              "line": 211,
-              "column": 9
-            },
-            "end": {
-              "line": 212,
-              "column": 40
-            }
-          },
-          "replacement": "()",
-          "genre": "FnValue"
-        }
-      },
-      "summary": "CaughtMutant",
-      "log_path": "log/src__flatten_json.rs_line_211_col_9.log",
-      "diff_path": "diff/src__flatten_json.rs_line_211_col_9.diff",
-      "phase_results": [
-        {
-          "phase": "Build",
-          "duration": 1.039977458,
-          "process_status": "Success",
-          "argv": [
-            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
-            "test",
-            "--no-run",
-            "--profile=mutants",
-            "--verbose",
-            "--package=quamina@0.4.3"
-          ]
-        },
-        {
-          "phase": "Test",
-          "duration": 8.111889167,
-          "process_status": {
-            "Failure": 101
-          },
-          "argv": [
-            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
-            "test",
-            "--profile=mutants",
-            "--verbose",
-            "--package=quamina@0.4.3",
-            "--all-targets"
-          ]
-        }
-      ]
-    },
-    {
-      "scenario": {
-        "Mutant": {
-          "name": "src/flatten_json.rs:218:9: replace FlattenContext<'a, '_>::flatten_impl -> Result<(), QuaminaError> with Ok(())",
-          "package": "quamina",
-          "file": "src/flatten_json.rs",
-          "function": {
-            "function_name": "FlattenContext<'a, '_>::flatten_impl",
-            "return_type": "-> Result<(), QuaminaError>",
             "span": {
               "start": {
                 "line": 217,
                 "column": 5
               },
               "end": {
-                "line": 253,
+                "line": 219,
                 "column": 6
               }
             }
@@ -1188,21 +1748,21 @@
               "column": 9
             },
             "end": {
-              "line": 252,
-              "column": 10
+              "line": 218,
+              "column": 59
             }
           },
-          "replacement": "Ok(())",
+          "replacement": "()",
           "genre": "FnValue"
         }
       },
       "summary": "CaughtMutant",
-      "log_path": "log/src__flatten_json.rs_line_218_col_9.log",
-      "diff_path": "diff/src__flatten_json.rs_line_218_col_9.diff",
+      "log_path": "log/src__regexp__parser.rs_line_218_col_9.log",
+      "diff_path": "diff/src__regexp__parser.rs_line_218_col_9.diff",
       "phase_results": [
         {
           "phase": "Build",
-          "duration": 1.044147208,
+          "duration": 0.976623458,
           "process_status": "Success",
           "argv": [
             "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
@@ -1215,7 +1775,7 @@
         },
         {
           "phase": "Test",
-          "duration": 7.7449140419999996,
+          "duration": 8.464204625,
           "process_status": {
             "Failure": 101
           },
@@ -1233,44 +1793,44 @@
     {
       "scenario": {
         "Mutant": {
-          "name": "src/flatten_json.rs:225:19: replace == with != in FlattenContext<'a, '_>::flatten_impl",
+          "name": "src/regexp/parser.rs:222:9: replace RegexpParse::unnest -> RegexpRoot with Default::default()",
           "package": "quamina",
-          "file": "src/flatten_json.rs",
+          "file": "src/regexp/parser.rs",
           "function": {
-            "function_name": "FlattenContext<'a, '_>::flatten_impl",
-            "return_type": "-> Result<(), QuaminaError>",
+            "function_name": "RegexpParse::unnest",
+            "return_type": "-> RegexpRoot",
             "span": {
               "start": {
-                "line": 217,
+                "line": 221,
                 "column": 5
               },
               "end": {
-                "line": 253,
+                "line": 225,
                 "column": 6
               }
             }
           },
           "span": {
             "start": {
-              "line": 225,
-              "column": 19
+              "line": 222,
+              "column": 9
             },
             "end": {
-              "line": 225,
-              "column": 21
+              "line": 224,
+              "column": 16
             }
           },
-          "replacement": "!=",
-          "genre": "BinaryOperator"
+          "replacement": "Default::default()",
+          "genre": "FnValue"
         }
       },
       "summary": "CaughtMutant",
-      "log_path": "log/src__flatten_json.rs_line_225_col_19.log",
-      "diff_path": "diff/src__flatten_json.rs_line_225_col_19.diff",
+      "log_path": "log/src__regexp__parser.rs_line_222_col_9.log",
+      "diff_path": "diff/src__regexp__parser.rs_line_222_col_9.diff",
       "phase_results": [
         {
           "phase": "Build",
-          "duration": 1.009987625,
+          "duration": 0.985175208,
           "process_status": "Success",
           "argv": [
             "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
@@ -1283,7 +1843,7 @@
         },
         {
           "phase": "Test",
-          "duration": 7.603670833,
+          "duration": 8.384985667,
           "process_status": {
             "Failure": 101
           },
@@ -1301,44 +1861,44 @@
     {
       "scenario": {
         "Mutant": {
-          "name": "src/flatten_json.rs:232:28: replace += with -= in FlattenContext<'a, '_>::flatten_impl",
+          "name": "src/regexp/parser.rs:228:9: replace RegexpParse::is_nested -> bool with true",
           "package": "quamina",
-          "file": "src/flatten_json.rs",
+          "file": "src/regexp/parser.rs",
           "function": {
-            "function_name": "FlattenContext<'a, '_>::flatten_impl",
-            "return_type": "-> Result<(), QuaminaError>",
+            "function_name": "RegexpParse::is_nested",
+            "return_type": "-> bool",
             "span": {
               "start": {
-                "line": 217,
+                "line": 227,
                 "column": 5
               },
               "end": {
-                "line": 253,
+                "line": 229,
                 "column": 6
               }
             }
           },
           "span": {
             "start": {
-              "line": 232,
-              "column": 28
+              "line": 228,
+              "column": 9
             },
             "end": {
-              "line": 232,
-              "column": 30
+              "line": 228,
+              "column": 33
             }
           },
-          "replacement": "-=",
-          "genre": "BinaryOperator"
+          "replacement": "true",
+          "genre": "FnValue"
         }
       },
       "summary": "CaughtMutant",
-      "log_path": "log/src__flatten_json.rs_line_232_col_28.log",
-      "diff_path": "diff/src__flatten_json.rs_line_232_col_28.diff",
+      "log_path": "log/src__regexp__parser.rs_line_228_col_9.log",
+      "diff_path": "diff/src__regexp__parser.rs_line_228_col_9.diff",
       "phase_results": [
         {
           "phase": "Build",
-          "duration": 0.934587416,
+          "duration": 1.018524542,
           "process_status": "Success",
           "argv": [
             "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
@@ -1351,7 +1911,7 @@
         },
         {
           "phase": "Test",
-          "duration": 8.052845792,
+          "duration": 7.848125375,
           "process_status": {
             "Failure": 101
           },
@@ -1369,44 +1929,44 @@
     {
       "scenario": {
         "Mutant": {
-          "name": "src/flatten_json.rs:232:28: replace += with *= in FlattenContext<'a, '_>::flatten_impl",
+          "name": "src/regexp/parser.rs:228:9: replace RegexpParse::is_nested -> bool with false",
           "package": "quamina",
-          "file": "src/flatten_json.rs",
+          "file": "src/regexp/parser.rs",
           "function": {
-            "function_name": "FlattenContext<'a, '_>::flatten_impl",
-            "return_type": "-> Result<(), QuaminaError>",
+            "function_name": "RegexpParse::is_nested",
+            "return_type": "-> bool",
             "span": {
               "start": {
-                "line": 217,
+                "line": 227,
                 "column": 5
               },
               "end": {
-                "line": 253,
+                "line": 229,
                 "column": 6
               }
             }
           },
           "span": {
             "start": {
-              "line": 232,
-              "column": 28
+              "line": 228,
+              "column": 9
             },
             "end": {
-              "line": 232,
-              "column": 30
+              "line": 228,
+              "column": 33
             }
           },
-          "replacement": "*=",
-          "genre": "BinaryOperator"
+          "replacement": "false",
+          "genre": "FnValue"
         }
       },
       "summary": "CaughtMutant",
-      "log_path": "log/src__flatten_json.rs_line_232_col_28_001.log",
-      "diff_path": "diff/src__flatten_json.rs_line_232_col_28_001.diff",
+      "log_path": "log/src__regexp__parser.rs_line_228_col_9_001.log",
+      "diff_path": "diff/src__regexp__parser.rs_line_228_col_9_001.diff",
       "phase_results": [
         {
           "phase": "Build",
-          "duration": 0.916750541,
+          "duration": 0.966138792,
           "process_status": "Success",
           "argv": [
             "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
@@ -1419,7 +1979,7 @@
         },
         {
           "phase": "Test",
-          "duration": 8.073579375,
+          "duration": 8.02519975,
           "process_status": {
             "Failure": 101
           },
@@ -1437,246 +1997,44 @@
     {
       "scenario": {
         "Mutant": {
-          "name": "src/flatten_json.rs:233:34: replace < with == in FlattenContext<'a, '_>::flatten_impl",
+          "name": "src/regexp/parser.rs:228:9: delete ! in RegexpParse::is_nested",
           "package": "quamina",
-          "file": "src/flatten_json.rs",
+          "file": "src/regexp/parser.rs",
           "function": {
-            "function_name": "FlattenContext<'a, '_>::flatten_impl",
-            "return_type": "-> Result<(), QuaminaError>",
+            "function_name": "RegexpParse::is_nested",
+            "return_type": "-> bool",
             "span": {
               "start": {
-                "line": 217,
+                "line": 227,
                 "column": 5
               },
               "end": {
-                "line": 253,
+                "line": 229,
                 "column": 6
               }
             }
           },
           "span": {
             "start": {
-              "line": 233,
-              "column": 34
+              "line": 228,
+              "column": 9
             },
             "end": {
-              "line": 233,
-              "column": 35
-            }
-          },
-          "replacement": "==",
-          "genre": "BinaryOperator"
-        }
-      },
-      "summary": "CaughtMutant",
-      "log_path": "log/src__flatten_json.rs_line_233_col_34.log",
-      "diff_path": "diff/src__flatten_json.rs_line_233_col_34.diff",
-      "phase_results": [
-        {
-          "phase": "Build",
-          "duration": 0.917438083,
-          "process_status": "Success",
-          "argv": [
-            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
-            "test",
-            "--no-run",
-            "--profile=mutants",
-            "--verbose",
-            "--package=quamina@0.4.3"
-          ]
-        },
-        {
-          "phase": "Test",
-          "duration": 8.045943208,
-          "process_status": {
-            "Failure": 101
-          },
-          "argv": [
-            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
-            "test",
-            "--profile=mutants",
-            "--verbose",
-            "--package=quamina@0.4.3",
-            "--all-targets"
-          ]
-        }
-      ]
-    },
-    {
-      "scenario": {
-        "Mutant": {
-          "name": "src/flatten_json.rs:233:34: replace < with > in FlattenContext<'a, '_>::flatten_impl",
-          "package": "quamina",
-          "file": "src/flatten_json.rs",
-          "function": {
-            "function_name": "FlattenContext<'a, '_>::flatten_impl",
-            "return_type": "-> Result<(), QuaminaError>",
-            "span": {
-              "start": {
-                "line": 217,
-                "column": 5
-              },
-              "end": {
-                "line": 253,
-                "column": 6
-              }
-            }
-          },
-          "span": {
-            "start": {
-              "line": 233,
-              "column": 34
-            },
-            "end": {
-              "line": 233,
-              "column": 35
-            }
-          },
-          "replacement": ">",
-          "genre": "BinaryOperator"
-        }
-      },
-      "summary": "MissedMutant",
-      "log_path": "log/src__flatten_json.rs_line_233_col_34_001.log",
-      "diff_path": "diff/src__flatten_json.rs_line_233_col_34_001.diff",
-      "phase_results": [
-        {
-          "phase": "Build",
-          "duration": 0.966691542,
-          "process_status": "Success",
-          "argv": [
-            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
-            "test",
-            "--no-run",
-            "--profile=mutants",
-            "--verbose",
-            "--package=quamina@0.4.3"
-          ]
-        },
-        {
-          "phase": "Test",
-          "duration": 61.041249083,
-          "process_status": "Success",
-          "argv": [
-            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
-            "test",
-            "--profile=mutants",
-            "--verbose",
-            "--package=quamina@0.4.3",
-            "--all-targets"
-          ]
-        }
-      ]
-    },
-    {
-      "scenario": {
-        "Mutant": {
-          "name": "src/flatten_json.rs:233:34: replace < with <= in FlattenContext<'a, '_>::flatten_impl",
-          "package": "quamina",
-          "file": "src/flatten_json.rs",
-          "function": {
-            "function_name": "FlattenContext<'a, '_>::flatten_impl",
-            "return_type": "-> Result<(), QuaminaError>",
-            "span": {
-              "start": {
-                "line": 217,
-                "column": 5
-              },
-              "end": {
-                "line": 253,
-                "column": 6
-              }
-            }
-          },
-          "span": {
-            "start": {
-              "line": 233,
-              "column": 34
-            },
-            "end": {
-              "line": 233,
-              "column": 35
-            }
-          },
-          "replacement": "<=",
-          "genre": "BinaryOperator"
-        }
-      },
-      "summary": "CaughtMutant",
-      "log_path": "log/src__flatten_json.rs_line_233_col_34_002.log",
-      "diff_path": "diff/src__flatten_json.rs_line_233_col_34_002.diff",
-      "phase_results": [
-        {
-          "phase": "Build",
-          "duration": 0.933796083,
-          "process_status": "Success",
-          "argv": [
-            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
-            "test",
-            "--no-run",
-            "--profile=mutants",
-            "--verbose",
-            "--package=quamina@0.4.3"
-          ]
-        },
-        {
-          "phase": "Test",
-          "duration": 8.065754667,
-          "process_status": {
-            "Failure": 101
-          },
-          "argv": [
-            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
-            "test",
-            "--profile=mutants",
-            "--verbose",
-            "--package=quamina@0.4.3",
-            "--all-targets"
-          ]
-        }
-      ]
-    },
-    {
-      "scenario": {
-        "Mutant": {
-          "name": "src/flatten_json.rs:235:24: delete ! in FlattenContext<'a, '_>::flatten_impl",
-          "package": "quamina",
-          "file": "src/flatten_json.rs",
-          "function": {
-            "function_name": "FlattenContext<'a, '_>::flatten_impl",
-            "return_type": "-> Result<(), QuaminaError>",
-            "span": {
-              "start": {
-                "line": 217,
-                "column": 5
-              },
-              "end": {
-                "line": 253,
-                "column": 6
-              }
-            }
-          },
-          "span": {
-            "start": {
-              "line": 235,
-              "column": 24
-            },
-            "end": {
-              "line": 235,
-              "column": 25
+              "line": 228,
+              "column": 10
             }
           },
           "replacement": "",
           "genre": "UnaryOperator"
         }
       },
-      "summary": "MissedMutant",
-      "log_path": "log/src__flatten_json.rs_line_235_col_24.log",
-      "diff_path": "diff/src__flatten_json.rs_line_235_col_24.diff",
+      "summary": "CaughtMutant",
+      "log_path": "log/src__regexp__parser.rs_line_228_col_9_002.log",
+      "diff_path": "diff/src__regexp__parser.rs_line_228_col_9_002.diff",
       "phase_results": [
         {
           "phase": "Build",
-          "duration": 0.918006042,
+          "duration": 0.932654334,
           "process_status": "Success",
           "argv": [
             "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
@@ -1689,8 +2047,10 @@
         },
         {
           "phase": "Test",
-          "duration": 60.499093834,
-          "process_status": "Success",
+          "duration": 8.010340041,
+          "process_status": {
+            "Failure": 101
+          },
           "argv": [
             "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
             "test",
@@ -1705,44 +2065,44 @@
     {
       "scenario": {
         "Mutant": {
-          "name": "src/flatten_json.rs:241:32: replace += with -= in FlattenContext<'a, '_>::flatten_impl",
+          "name": "src/regexp/parser.rs:232:9: replace RegexpParse::next_rune -> Result<char, RegexpError> with Ok(Default::default())",
           "package": "quamina",
-          "file": "src/flatten_json.rs",
+          "file": "src/regexp/parser.rs",
           "function": {
-            "function_name": "FlattenContext<'a, '_>::flatten_impl",
-            "return_type": "-> Result<(), QuaminaError>",
+            "function_name": "RegexpParse::next_rune",
+            "return_type": "-> Result<char, RegexpError>",
             "span": {
               "start": {
-                "line": 217,
+                "line": 231,
                 "column": 5
               },
               "end": {
-                "line": 253,
+                "line": 254,
                 "column": 6
               }
             }
           },
           "span": {
             "start": {
-              "line": 241,
-              "column": 32
+              "line": 232,
+              "column": 9
             },
             "end": {
-              "line": 241,
-              "column": 34
+              "line": 253,
+              "column": 14
             }
           },
-          "replacement": "-=",
-          "genre": "BinaryOperator"
+          "replacement": "Ok(Default::default())",
+          "genre": "FnValue"
         }
       },
-      "summary": "MissedMutant",
-      "log_path": "log/src__flatten_json.rs_line_241_col_32.log",
-      "diff_path": "diff/src__flatten_json.rs_line_241_col_32.diff",
+      "summary": "CaughtMutant",
+      "log_path": "log/src__regexp__parser.rs_line_232_col_9.log",
+      "diff_path": "diff/src__regexp__parser.rs_line_232_col_9.diff",
       "phase_results": [
         {
           "phase": "Build",
-          "duration": 0.975038542,
+          "duration": 0.976257417,
           "process_status": "Success",
           "argv": [
             "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
@@ -1755,8 +2115,10 @@
         },
         {
           "phase": "Test",
-          "duration": 60.443320791,
-          "process_status": "Success",
+          "duration": 8.111340167,
+          "process_status": {
+            "Failure": 101
+          },
           "argv": [
             "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
             "test",
@@ -1771,308 +2133,44 @@
     {
       "scenario": {
         "Mutant": {
-          "name": "src/flatten_json.rs:241:32: replace += with *= in FlattenContext<'a, '_>::flatten_impl",
+          "name": "src/regexp/parser.rs:232:23: replace >= with < in RegexpParse::next_rune",
           "package": "quamina",
-          "file": "src/flatten_json.rs",
+          "file": "src/regexp/parser.rs",
           "function": {
-            "function_name": "FlattenContext<'a, '_>::flatten_impl",
-            "return_type": "-> Result<(), QuaminaError>",
+            "function_name": "RegexpParse::next_rune",
+            "return_type": "-> Result<char, RegexpError>",
             "span": {
               "start": {
-                "line": 217,
+                "line": 231,
                 "column": 5
               },
               "end": {
-                "line": 253,
+                "line": 254,
                 "column": 6
               }
             }
           },
           "span": {
             "start": {
-              "line": 241,
-              "column": 32
+              "line": 232,
+              "column": 23
             },
             "end": {
-              "line": 241,
-              "column": 34
-            }
-          },
-          "replacement": "*=",
-          "genre": "BinaryOperator"
-        }
-      },
-      "summary": "MissedMutant",
-      "log_path": "log/src__flatten_json.rs_line_241_col_32_001.log",
-      "diff_path": "diff/src__flatten_json.rs_line_241_col_32_001.diff",
-      "phase_results": [
-        {
-          "phase": "Build",
-          "duration": 0.923867416,
-          "process_status": "Success",
-          "argv": [
-            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
-            "test",
-            "--no-run",
-            "--profile=mutants",
-            "--verbose",
-            "--package=quamina@0.4.3"
-          ]
-        },
-        {
-          "phase": "Test",
-          "duration": 60.546059875,
-          "process_status": "Success",
-          "argv": [
-            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
-            "test",
-            "--profile=mutants",
-            "--verbose",
-            "--package=quamina@0.4.3",
-            "--all-targets"
-          ]
-        }
-      ]
-    },
-    {
-      "scenario": {
-        "Mutant": {
-          "name": "src/flatten_json.rs:245:28: replace += with -= in FlattenContext<'a, '_>::flatten_impl",
-          "package": "quamina",
-          "file": "src/flatten_json.rs",
-          "function": {
-            "function_name": "FlattenContext<'a, '_>::flatten_impl",
-            "return_type": "-> Result<(), QuaminaError>",
-            "span": {
-              "start": {
-                "line": 217,
-                "column": 5
-              },
-              "end": {
-                "line": 253,
-                "column": 6
-              }
-            }
-          },
-          "span": {
-            "start": {
-              "line": 245,
-              "column": 28
-            },
-            "end": {
-              "line": 245,
-              "column": 30
-            }
-          },
-          "replacement": "-=",
-          "genre": "BinaryOperator"
-        }
-      },
-      "summary": "MissedMutant",
-      "log_path": "log/src__flatten_json.rs_line_245_col_28.log",
-      "diff_path": "diff/src__flatten_json.rs_line_245_col_28.diff",
-      "phase_results": [
-        {
-          "phase": "Build",
-          "duration": 0.939513,
-          "process_status": "Success",
-          "argv": [
-            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
-            "test",
-            "--no-run",
-            "--profile=mutants",
-            "--verbose",
-            "--package=quamina@0.4.3"
-          ]
-        },
-        {
-          "phase": "Test",
-          "duration": 60.37426425,
-          "process_status": "Success",
-          "argv": [
-            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
-            "test",
-            "--profile=mutants",
-            "--verbose",
-            "--package=quamina@0.4.3",
-            "--all-targets"
-          ]
-        }
-      ]
-    },
-    {
-      "scenario": {
-        "Mutant": {
-          "name": "src/flatten_json.rs:245:28: replace += with *= in FlattenContext<'a, '_>::flatten_impl",
-          "package": "quamina",
-          "file": "src/flatten_json.rs",
-          "function": {
-            "function_name": "FlattenContext<'a, '_>::flatten_impl",
-            "return_type": "-> Result<(), QuaminaError>",
-            "span": {
-              "start": {
-                "line": 217,
-                "column": 5
-              },
-              "end": {
-                "line": 253,
-                "column": 6
-              }
-            }
-          },
-          "span": {
-            "start": {
-              "line": 245,
-              "column": 28
-            },
-            "end": {
-              "line": 245,
-              "column": 30
-            }
-          },
-          "replacement": "*=",
-          "genre": "BinaryOperator"
-        }
-      },
-      "summary": "MissedMutant",
-      "log_path": "log/src__flatten_json.rs_line_245_col_28_001.log",
-      "diff_path": "diff/src__flatten_json.rs_line_245_col_28_001.diff",
-      "phase_results": [
-        {
-          "phase": "Build",
-          "duration": 0.979887334,
-          "process_status": "Success",
-          "argv": [
-            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
-            "test",
-            "--no-run",
-            "--profile=mutants",
-            "--verbose",
-            "--package=quamina@0.4.3"
-          ]
-        },
-        {
-          "phase": "Test",
-          "duration": 60.808242958,
-          "process_status": "Success",
-          "argv": [
-            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
-            "test",
-            "--profile=mutants",
-            "--verbose",
-            "--package=quamina@0.4.3",
-            "--all-targets"
-          ]
-        }
-      ]
-    },
-    {
-      "scenario": {
-        "Mutant": {
-          "name": "src/flatten_json.rs:246:31: replace >= with < in FlattenContext<'a, '_>::flatten_impl",
-          "package": "quamina",
-          "file": "src/flatten_json.rs",
-          "function": {
-            "function_name": "FlattenContext<'a, '_>::flatten_impl",
-            "return_type": "-> Result<(), QuaminaError>",
-            "span": {
-              "start": {
-                "line": 217,
-                "column": 5
-              },
-              "end": {
-                "line": 253,
-                "column": 6
-              }
-            }
-          },
-          "span": {
-            "start": {
-              "line": 246,
-              "column": 31
-            },
-            "end": {
-              "line": 246,
-              "column": 33
+              "line": 232,
+              "column": 25
             }
           },
           "replacement": "<",
           "genre": "BinaryOperator"
         }
       },
-      "summary": "MissedMutant",
-      "log_path": "log/src__flatten_json.rs_line_246_col_31.log",
-      "diff_path": "diff/src__flatten_json.rs_line_246_col_31.diff",
-      "phase_results": [
-        {
-          "phase": "Build",
-          "duration": 0.988012583,
-          "process_status": "Success",
-          "argv": [
-            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
-            "test",
-            "--no-run",
-            "--profile=mutants",
-            "--verbose",
-            "--package=quamina@0.4.3"
-          ]
-        },
-        {
-          "phase": "Test",
-          "duration": 60.990920416,
-          "process_status": "Success",
-          "argv": [
-            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
-            "test",
-            "--profile=mutants",
-            "--verbose",
-            "--package=quamina@0.4.3",
-            "--all-targets"
-          ]
-        }
-      ]
-    },
-    {
-      "scenario": {
-        "Mutant": {
-          "name": "src/flatten_json.rs:258:9: replace FlattenContext<'a, '_>::read_object -> Result<(), FlattenError> with Ok(())",
-          "package": "quamina",
-          "file": "src/flatten_json.rs",
-          "function": {
-            "function_name": "FlattenContext<'a, '_>::read_object",
-            "return_type": "-> Result<(), FlattenError>",
-            "span": {
-              "start": {
-                "line": 255,
-                "column": 5
-              },
-              "end": {
-                "line": 461,
-                "column": 6
-              }
-            }
-          },
-          "span": {
-            "start": {
-              "line": 258,
-              "column": 9
-            },
-            "end": {
-              "line": 460,
-              "column": 10
-            }
-          },
-          "replacement": "Ok(())",
-          "genre": "FnValue"
-        }
-      },
       "summary": "CaughtMutant",
-      "log_path": "log/src__flatten_json.rs_line_258_col_9.log",
-      "diff_path": "diff/src__flatten_json.rs_line_258_col_9.diff",
+      "log_path": "log/src__regexp__parser.rs_line_232_col_23.log",
+      "diff_path": "diff/src__regexp__parser.rs_line_232_col_23.diff",
       "phase_results": [
         {
           "phase": "Build",
-          "duration": 1.205266833,
+          "duration": 1.03794225,
           "process_status": "Success",
           "argv": [
             "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
@@ -2085,619 +2183,7 @@
         },
         {
           "phase": "Test",
-          "duration": 7.790674084,
-          "process_status": {
-            "Failure": 101
-          },
-          "argv": [
-            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
-            "test",
-            "--profile=mutants",
-            "--verbose",
-            "--package=quamina@0.4.3",
-            "--all-targets"
-          ]
-        }
-      ]
-    },
-    {
-      "scenario": {
-        "Mutant": {
-          "name": "src/flatten_json.rs:264:59: replace == with != in FlattenContext<'a, '_>::read_object",
-          "package": "quamina",
-          "file": "src/flatten_json.rs",
-          "function": {
-            "function_name": "FlattenContext<'a, '_>::read_object",
-            "return_type": "-> Result<(), FlattenError>",
-            "span": {
-              "start": {
-                "line": 255,
-                "column": 5
-              },
-              "end": {
-                "line": 461,
-                "column": 6
-              }
-            }
-          },
-          "span": {
-            "start": {
-              "line": 264,
-              "column": 59
-            },
-            "end": {
-              "line": 264,
-              "column": 61
-            }
-          },
-          "replacement": "!=",
-          "genre": "BinaryOperator"
-        }
-      },
-      "summary": "CaughtMutant",
-      "log_path": "log/src__flatten_json.rs_line_264_col_59.log",
-      "diff_path": "diff/src__flatten_json.rs_line_264_col_59.diff",
-      "phase_results": [
-        {
-          "phase": "Build",
-          "duration": 1.020035333,
-          "process_status": "Success",
-          "argv": [
-            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
-            "test",
-            "--no-run",
-            "--profile=mutants",
-            "--verbose",
-            "--package=quamina@0.4.3"
-          ]
-        },
-        {
-          "phase": "Test",
-          "duration": 8.078267792,
-          "process_status": {
-            "Failure": 101
-          },
-          "argv": [
-            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
-            "test",
-            "--profile=mutants",
-            "--verbose",
-            "--package=quamina@0.4.3",
-            "--all-targets"
-          ]
-        }
-      ]
-    },
-    {
-      "scenario": {
-        "Mutant": {
-          "name": "src/flatten_json.rs:283:33: replace && with || in FlattenContext<'a, '_>::read_object",
-          "package": "quamina",
-          "file": "src/flatten_json.rs",
-          "function": {
-            "function_name": "FlattenContext<'a, '_>::read_object",
-            "return_type": "-> Result<(), FlattenError>",
-            "span": {
-              "start": {
-                "line": 255,
-                "column": 5
-              },
-              "end": {
-                "line": 461,
-                "column": 6
-              }
-            }
-          },
-          "span": {
-            "start": {
-              "line": 283,
-              "column": 33
-            },
-            "end": {
-              "line": 283,
-              "column": 35
-            }
-          },
-          "replacement": "||",
-          "genre": "BinaryOperator"
-        }
-      },
-      "summary": "CaughtMutant",
-      "log_path": "log/src__flatten_json.rs_line_283_col_33.log",
-      "diff_path": "diff/src__flatten_json.rs_line_283_col_33.diff",
-      "phase_results": [
-        {
-          "phase": "Build",
-          "duration": 0.926838583,
-          "process_status": "Success",
-          "argv": [
-            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
-            "test",
-            "--no-run",
-            "--profile=mutants",
-            "--verbose",
-            "--package=quamina@0.4.3"
-          ]
-        },
-        {
-          "phase": "Test",
-          "duration": 7.598353458,
-          "process_status": {
-            "Failure": 101
-          },
-          "argv": [
-            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
-            "test",
-            "--profile=mutants",
-            "--verbose",
-            "--package=quamina@0.4.3",
-            "--all-targets"
-          ]
-        }
-      ]
-    },
-    {
-      "scenario": {
-        "Mutant": {
-          "name": "src/flatten_json.rs:283:28: replace == with != in FlattenContext<'a, '_>::read_object",
-          "package": "quamina",
-          "file": "src/flatten_json.rs",
-          "function": {
-            "function_name": "FlattenContext<'a, '_>::read_object",
-            "return_type": "-> Result<(), FlattenError>",
-            "span": {
-              "start": {
-                "line": 255,
-                "column": 5
-              },
-              "end": {
-                "line": 461,
-                "column": 6
-              }
-            }
-          },
-          "span": {
-            "start": {
-              "line": 283,
-              "column": 28
-            },
-            "end": {
-              "line": 283,
-              "column": 30
-            }
-          },
-          "replacement": "!=",
-          "genre": "BinaryOperator"
-        }
-      },
-      "summary": "CaughtMutant",
-      "log_path": "log/src__flatten_json.rs_line_283_col_28.log",
-      "diff_path": "diff/src__flatten_json.rs_line_283_col_28.diff",
-      "phase_results": [
-        {
-          "phase": "Build",
-          "duration": 0.922518667,
-          "process_status": "Success",
-          "argv": [
-            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
-            "test",
-            "--no-run",
-            "--profile=mutants",
-            "--verbose",
-            "--package=quamina@0.4.3"
-          ]
-        },
-        {
-          "phase": "Test",
-          "duration": 7.744379458,
-          "process_status": {
-            "Failure": 101
-          },
-          "argv": [
-            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
-            "test",
-            "--profile=mutants",
-            "--verbose",
-            "--package=quamina@0.4.3",
-            "--all-targets"
-          ]
-        }
-      ]
-    },
-    {
-      "scenario": {
-        "Mutant": {
-          "name": "src/flatten_json.rs:283:49: replace == with != in FlattenContext<'a, '_>::read_object",
-          "package": "quamina",
-          "file": "src/flatten_json.rs",
-          "function": {
-            "function_name": "FlattenContext<'a, '_>::read_object",
-            "return_type": "-> Result<(), FlattenError>",
-            "span": {
-              "start": {
-                "line": 255,
-                "column": 5
-              },
-              "end": {
-                "line": 461,
-                "column": 6
-              }
-            }
-          },
-          "span": {
-            "start": {
-              "line": 283,
-              "column": 49
-            },
-            "end": {
-              "line": 283,
-              "column": 51
-            }
-          },
-          "replacement": "!=",
-          "genre": "BinaryOperator"
-        }
-      },
-      "summary": "CaughtMutant",
-      "log_path": "log/src__flatten_json.rs_line_283_col_49.log",
-      "diff_path": "diff/src__flatten_json.rs_line_283_col_49.diff",
-      "phase_results": [
-        {
-          "phase": "Build",
-          "duration": 0.972440542,
-          "process_status": "Success",
-          "argv": [
-            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
-            "test",
-            "--no-run",
-            "--profile=mutants",
-            "--verbose",
-            "--package=quamina@0.4.3"
-          ]
-        },
-        {
-          "phase": "Test",
-          "duration": 8.478095291,
-          "process_status": {
-            "Failure": 101
-          },
-          "argv": [
-            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
-            "test",
-            "--profile=mutants",
-            "--verbose",
-            "--package=quamina@0.4.3",
-            "--all-targets"
-          ]
-        }
-      ]
-    },
-    {
-      "scenario": {
-        "Mutant": {
-          "name": "src/flatten_json.rs:297:34: replace == with != in FlattenContext<'a, '_>::read_object",
-          "package": "quamina",
-          "file": "src/flatten_json.rs",
-          "function": {
-            "function_name": "FlattenContext<'a, '_>::read_object",
-            "return_type": "-> Result<(), FlattenError>",
-            "span": {
-              "start": {
-                "line": 255,
-                "column": 5
-              },
-              "end": {
-                "line": 461,
-                "column": 6
-              }
-            }
-          },
-          "span": {
-            "start": {
-              "line": 297,
-              "column": 34
-            },
-            "end": {
-              "line": 297,
-              "column": 36
-            }
-          },
-          "replacement": "!=",
-          "genre": "BinaryOperator"
-        }
-      },
-      "summary": "CaughtMutant",
-      "log_path": "log/src__flatten_json.rs_line_297_col_34.log",
-      "diff_path": "diff/src__flatten_json.rs_line_297_col_34.diff",
-      "phase_results": [
-        {
-          "phase": "Build",
-          "duration": 0.969271625,
-          "process_status": "Success",
-          "argv": [
-            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
-            "test",
-            "--no-run",
-            "--profile=mutants",
-            "--verbose",
-            "--package=quamina@0.4.3"
-          ]
-        },
-        {
-          "phase": "Test",
-          "duration": 7.406638,
-          "process_status": {
-            "Failure": 101
-          },
-          "argv": [
-            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
-            "test",
-            "--profile=mutants",
-            "--verbose",
-            "--package=quamina@0.4.3",
-            "--all-targets"
-          ]
-        }
-      ]
-    },
-    {
-      "scenario": {
-        "Mutant": {
-          "name": "src/flatten_json.rs:300:57: replace == with != in FlattenContext<'a, '_>::read_object",
-          "package": "quamina",
-          "file": "src/flatten_json.rs",
-          "function": {
-            "function_name": "FlattenContext<'a, '_>::read_object",
-            "return_type": "-> Result<(), FlattenError>",
-            "span": {
-              "start": {
-                "line": 255,
-                "column": 5
-              },
-              "end": {
-                "line": 461,
-                "column": 6
-              }
-            }
-          },
-          "span": {
-            "start": {
-              "line": 300,
-              "column": 57
-            },
-            "end": {
-              "line": 300,
-              "column": 59
-            }
-          },
-          "replacement": "!=",
-          "genre": "BinaryOperator"
-        }
-      },
-      "summary": "CaughtMutant",
-      "log_path": "log/src__flatten_json.rs_line_300_col_57.log",
-      "diff_path": "diff/src__flatten_json.rs_line_300_col_57.diff",
-      "phase_results": [
-        {
-          "phase": "Build",
-          "duration": 0.92696925,
-          "process_status": "Success",
-          "argv": [
-            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
-            "test",
-            "--no-run",
-            "--profile=mutants",
-            "--verbose",
-            "--package=quamina@0.4.3"
-          ]
-        },
-        {
-          "phase": "Test",
-          "duration": 8.227390041,
-          "process_status": {
-            "Failure": 101
-          },
-          "argv": [
-            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
-            "test",
-            "--profile=mutants",
-            "--verbose",
-            "--package=quamina@0.4.3",
-            "--all-targets"
-          ]
-        }
-      ]
-    },
-    {
-      "scenario": {
-        "Mutant": {
-          "name": "src/flatten_json.rs:307:34: replace == with != in FlattenContext<'a, '_>::read_object",
-          "package": "quamina",
-          "file": "src/flatten_json.rs",
-          "function": {
-            "function_name": "FlattenContext<'a, '_>::read_object",
-            "return_type": "-> Result<(), FlattenError>",
-            "span": {
-              "start": {
-                "line": 255,
-                "column": 5
-              },
-              "end": {
-                "line": 461,
-                "column": 6
-              }
-            }
-          },
-          "span": {
-            "start": {
-              "line": 307,
-              "column": 34
-            },
-            "end": {
-              "line": 307,
-              "column": 36
-            }
-          },
-          "replacement": "!=",
-          "genre": "BinaryOperator"
-        }
-      },
-      "summary": "CaughtMutant",
-      "log_path": "log/src__flatten_json.rs_line_307_col_34.log",
-      "diff_path": "diff/src__flatten_json.rs_line_307_col_34.diff",
-      "phase_results": [
-        {
-          "phase": "Build",
-          "duration": 0.9784345,
-          "process_status": "Success",
-          "argv": [
-            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
-            "test",
-            "--no-run",
-            "--profile=mutants",
-            "--verbose",
-            "--package=quamina@0.4.3"
-          ]
-        },
-        {
-          "phase": "Test",
-          "duration": 8.0265925,
-          "process_status": {
-            "Failure": 101
-          },
-          "argv": [
-            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
-            "test",
-            "--profile=mutants",
-            "--verbose",
-            "--package=quamina@0.4.3",
-            "--all-targets"
-          ]
-        }
-      ]
-    },
-    {
-      "scenario": {
-        "Mutant": {
-          "name": "src/flatten_json.rs:320:34: replace == with != in FlattenContext<'a, '_>::read_object",
-          "package": "quamina",
-          "file": "src/flatten_json.rs",
-          "function": {
-            "function_name": "FlattenContext<'a, '_>::read_object",
-            "return_type": "-> Result<(), FlattenError>",
-            "span": {
-              "start": {
-                "line": 255,
-                "column": 5
-              },
-              "end": {
-                "line": 461,
-                "column": 6
-              }
-            }
-          },
-          "span": {
-            "start": {
-              "line": 320,
-              "column": 34
-            },
-            "end": {
-              "line": 320,
-              "column": 36
-            }
-          },
-          "replacement": "!=",
-          "genre": "BinaryOperator"
-        }
-      },
-      "summary": "CaughtMutant",
-      "log_path": "log/src__flatten_json.rs_line_320_col_34.log",
-      "diff_path": "diff/src__flatten_json.rs_line_320_col_34.diff",
-      "phase_results": [
-        {
-          "phase": "Build",
-          "duration": 0.932723417,
-          "process_status": "Success",
-          "argv": [
-            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
-            "test",
-            "--no-run",
-            "--profile=mutants",
-            "--verbose",
-            "--package=quamina@0.4.3"
-          ]
-        },
-        {
-          "phase": "Test",
-          "duration": 7.423673375,
-          "process_status": {
-            "Failure": 101
-          },
-          "argv": [
-            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
-            "test",
-            "--profile=mutants",
-            "--verbose",
-            "--package=quamina@0.4.3",
-            "--all-targets"
-          ]
-        }
-      ]
-    },
-    {
-      "scenario": {
-        "Mutant": {
-          "name": "src/flatten_json.rs:343:25: delete match arm b'\"' in FlattenContext<'a, '_>::read_object",
-          "package": "quamina",
-          "file": "src/flatten_json.rs",
-          "function": {
-            "function_name": "FlattenContext<'a, '_>::read_object",
-            "return_type": "-> Result<(), FlattenError>",
-            "span": {
-              "start": {
-                "line": 255,
-                "column": 5
-              },
-              "end": {
-                "line": 461,
-                "column": 6
-              }
-            }
-          },
-          "span": {
-            "start": {
-              "line": 343,
-              "column": 25
-            },
-            "end": {
-              "line": 350,
-              "column": 26
-            }
-          },
-          "replacement": "",
-          "genre": "MatchArm"
-        }
-      },
-      "summary": "CaughtMutant",
-      "log_path": "log/src__flatten_json.rs_line_343_col_25.log",
-      "diff_path": "diff/src__flatten_json.rs_line_343_col_25.diff",
-      "phase_results": [
-        {
-          "phase": "Build",
-          "duration": 0.972451792,
-          "process_status": "Success",
-          "argv": [
-            "/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo",
-            "test",
-            "--no-run",
-            "--profile=mutants",
-            "--verbose",
-            "--package=quamina@0.4.3"
-          ]
-        },
-        {
-          "phase": "Test",
-          "duration": 7.577665875,
+          "duration": 8.015311917,
           "process_status": {
             "Failure": 101
           },
@@ -2713,13 +2199,13 @@
       ]
     }
   ],
-  "total_mutants": 40,
-  "missed": 7,
-  "caught": 30,
-  "timeout": 1,
-  "unviable": 2,
+  "total_mutants": 32,
+  "missed": 6,
+  "caught": 26,
+  "timeout": 0,
+  "unviable": 0,
   "success": 0,
-  "start_time": "2026-03-18T00:49:02.94279Z",
+  "start_time": "2026-03-18T01:06:26.570585Z",
   "end_time": null,
   "cargo_mutants_version": "26.2.0"
 }
