@@ -692,7 +692,11 @@ fn test_cidr_ipv4_prefix_mask_boundary() {
     );
 }
 
+// MIRI SKIP RATIONALE: Each CIDR pattern builds a large automaton; 3 patterns takes ~135s
+// under Miri. Coverage: test_cidr_ipv4_prefix_mask_boundary exercises the same mask
+// arithmetic with a /32 (single IP) which is fast under Miri.
 #[test]
+#[cfg_attr(miri, ignore)]
 fn test_cidr_ipv4_prefix_various_lengths() {
     // Comprehensive test for various prefix lengths to catch arithmetic errors in mask
     let tests = vec![
@@ -3352,7 +3356,11 @@ fn test_unicode_category_epsilon_closure() {
     assert_no_has_match!(q, r#"{"text": "d"}"#, "p3");
 }
 
+// MIRI SKIP RATIONALE: ~p{Lu}+ and ~p{Ll}+ expand to large Unicode category automata,
+// taking ~50s under Miri. Coverage: test_fa_shell_cache_clearing_miri_friendly exercises
+// the same clear + rebuild path using small ASCII patterns.
 #[test]
+#[cfg_attr(miri, ignore)]
 fn test_fa_shell_cache_clearing() {
     // Tests line 550: clear_fa_shell_cache() function call.
     // NOTE: This mutation (replace with ()) is semantically equivalent — clearing
@@ -3372,6 +3380,28 @@ fn test_fa_shell_cache_clearing() {
     clear_fa_shell_cache();
 
     q.add_pattern("p2", r#"{"text": [{"regex": "~p{Ll}+"}]}"#)
+        .expect("Failed to add pattern 2");
+
+    assert_has_match!(q, r#"{"text": "HELLO"}"#, "p1");
+    assert_has_match!(q, r#"{"text": "hello"}"#, "p2");
+    assert_no_has_match!(q, r#"{"text": "hello"}"#, "p1");
+    assert_no_has_match!(q, r#"{"text": "HELLO"}"#, "p2");
+}
+
+/// Miri-friendly version — uses small ASCII character classes instead of Unicode categories.
+#[test]
+fn test_fa_shell_cache_clearing_miri_friendly() {
+    use crate::regexp::clear_fa_shell_cache;
+
+    let mut q = Quamina::new();
+
+    q.add_pattern("p1", r#"{"text": [{"regex": "[A-Z]+"}]}"#)
+        .expect("Failed to add pattern 1");
+    assert_has_match!(q, r#"{"text": "HELLO"}"#, "p1");
+
+    clear_fa_shell_cache();
+
+    q.add_pattern("p2", r#"{"text": [{"regex": "[a-z]+"}]}"#)
         .expect("Failed to add pattern 2");
 
     assert_has_match!(q, r#"{"text": "HELLO"}"#, "p1");
