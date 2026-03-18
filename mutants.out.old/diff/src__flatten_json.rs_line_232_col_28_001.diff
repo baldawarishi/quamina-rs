@@ -1,0 +1,21 @@
+--- src/flatten_json.rs
++++ replace += with *= in FlattenContext<'a, '_>::flatten_impl
+@@ -224,17 +224,17 @@
+             let ch = self.ch();
+             if ch == b'{' {
+                 match self.read_object(tree) {
+                     Ok(()) => {}
+                     Err(FlattenError::EarlyStop) => return Ok(()),
+                     Err(FlattenError::Error(e)) => return Err(e),
+                 }
+                 // Eat trailing whitespace
+-                self.index += 1;
++                self.index *= /* ~ changed by cargo-mutants ~ */ 1;
+                 while self.index < self.event.len() {
+                     let ch = self.event[self.index];
+                     if !is_whitespace(ch) {
+                         return Err(self.error(&format!(
+                             "garbage char '{}' after top-level object",
+                             ch as char
+                         )));
+                     }

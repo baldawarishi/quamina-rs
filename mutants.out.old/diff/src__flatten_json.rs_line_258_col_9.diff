@@ -1,0 +1,223 @@
+--- src/flatten_json.rs
++++ replace FlattenContext<'a, '_>::read_object -> Result<(), FlattenError> with Ok(())
+@@ -250,219 +250,17 @@
+                 return Err(self.error("not a JSON object"));
+             }
+         }
+     }
+ 
+     /// Read a JSON object, recursing into nested objects as needed.
+     fn read_object(&mut self, tree: &SegmentsTree) -> Result<(), FlattenError> {
+         // index points at {
+-        self.step()?;
+-
+-        let mut fields_count = tree.fields_count();
+-        let mut nodes_count = tree.nodes_count();
+-
+-        // Snapshot array trail for object member fields
+-        let array_trail: ArrayTrailVec = if self.skipping == 0 {
+-            self.array_trail.clone()
+-        } else {
+-            ArrayTrailVec::new()
+-        };
+-
+-        // These are written in ObjectState::InObject (when we read a `"key"`) and
+-        // consumed later in ObjectState::MemberValue (when we parse the value).
+-        // Rust can't prove the state-machine ordering, so we must initialize them
+-        // here — but the initial values are never actually read.
+-        #[allow(unused_assignments)]
+-        let mut member_name: MemberName<'a> = MemberName::Borrowed(&[]);
+-        #[allow(unused_assignments)]
+-        let mut member_is_used = false;
+-        let mut member_entry: Option<&SegmentEntry> = None;
+-        let mut state = ObjectState::InObject;
+-
+-        loop {
+-            // Early termination: all needed fields found
+-            if nodes_count == 0 && fields_count == 0 {
+-                if tree.is_root() {
+-                    return Err(FlattenError::EarlyStop);
+-                } else {
+-                    return self.leave_object();
+-                }
+-            }
+-
+-            let ch = self.ch();
+-
+-            match state {
+-                ObjectState::InObject => {
+-                    if is_whitespace(ch) {
+-                        // skip
+-                    } else if ch == b'"' {
+-                        member_name = self.read_member_name()?;
+-                        // Single fused lookup replaces separate is_segment_used + get + path_arc_for_segment
+-                        member_entry = if self.skipping == 0 {
+-                            tree.lookup(member_name.as_bytes())
+-                        } else {
+-                            None
+-                        };
+-                        member_is_used = member_entry.is_some();
+-                        state = ObjectState::SeekingColon;
+-                    } else if ch == b'}' {
+-                        return Ok(());
+-                    } else {
+-                        return Err(FlattenError::Error(self.error(&format!(
+-                            "illegal character '{}' in JSON object",
+-                            ch as char
+-                        ))));
+-                    }
+-                }
+-
+-                ObjectState::SeekingColon => {
+-                    if is_whitespace(ch) {
+-                        // skip
+-                    } else if ch == b':' {
+-                        state = ObjectState::MemberValue;
+-                    } else {
+-                        return Err(FlattenError::Error(self.error(&format!(
+-                            "illegal character '{}' while looking for colon",
+-                            ch as char
+-                        ))));
+-                    }
+-                }
+-
+-                ObjectState::MemberValue => {
+-                    // Skip whitespace before value
+-                    let mut ch = ch;
+-                    while is_whitespace(ch) {
+-                        self.step()?;
+-                        ch = self.ch();
+-                    }
+-
+-                    let mut val: Option<FieldValue<'a>> = None;
+-                    let mut is_number = false;
+-                    let mut is_leaf = false;
+-
+-                    match ch {
+-                        b'"' => {
+-                            if self.skipping > 0 || !member_is_used {
+-                                self.skip_string_value()?;
+-                            } else {
+-                                val = Some(self.read_string_value()?);
+-                            }
+-                            is_leaf = true;
+-                        }
+-                        b't' => {
+-                            self.read_literal(b"true")?;
+-                            if self.skipping == 0 && member_is_used {
+-                                val = Some(FieldValue::Borrowed(b"true"));
+-                            }
+-                            is_leaf = true;
+-                        }
+-                        b'f' => {
+-                            self.read_literal(b"false")?;
+-                            if self.skipping == 0 && member_is_used {
+-                                val = Some(FieldValue::Borrowed(b"false"));
+-                            }
+-                            is_leaf = true;
+-                        }
+-                        b'n' => {
+-                            self.read_literal(b"null")?;
+-                            if self.skipping == 0 && member_is_used {
+-                                val = Some(FieldValue::Borrowed(b"null"));
+-                            }
+-                            is_leaf = true;
+-                        }
+-                        b'-' | b'0'..=b'9' => {
+-                            let num_val = self.read_number()?;
+-                            if self.skipping == 0 && member_is_used {
+-                                val = Some(num_val);
+-                                is_number = true;
+-                            }
+-                            is_leaf = true;
+-                        }
+-                        b'[' => {
+-                            if !member_is_used {
+-                                self.skipping += 1;
+-                            }
+-
+-                            if self.skipping > 0 {
+-                                self.skip_block(b'[', b']')?;
+-                            } else {
+-                                let array_tree =
+-                                    member_entry.and_then(|e| e.node()).unwrap_or(tree);
+-                                let path = member_entry.and_then(|e| e.field()).cloned();
+-                                self.read_array(path, array_tree)?;
+-                            }
+-
+-                            if !member_is_used {
+-                                self.skipping -= 1;
+-                            }
+-                        }
+-                        b'{' => {
+-                            if !member_is_used {
+-                                self.skipping += 1;
+-                            }
+-
+-                            if self.skipping > 0 {
+-                                self.skip_block(b'{', b'}')?;
+-                            } else if let Some(child_tree) = member_entry.and_then(|e| e.node()) {
+-                                nodes_count = nodes_count.saturating_sub(1);
+-                                self.read_object(child_tree)?;
+-                            } else {
+-                                // No child tree - skip the block
+-                                self.skip_block(b'{', b'}')?;
+-                            }
+-
+-                            if !member_is_used {
+-                                self.skipping -= 1;
+-                            }
+-                        }
+-                        _ => {
+-                            return Err(FlattenError::Error(self.error(&format!(
+-                                "illegal character '{}' after field name",
+-                                ch as char
+-                            ))));
+-                        }
+-                    }
+-
+-                    if is_leaf {
+-                        if let Some(v) = val {
+-                            if member_is_used {
+-                                if let Some(path) = member_entry.and_then(|e| e.field()).cloned() {
+-                                    self.push_field(Field {
+-                                        path,
+-                                        val: v,
+-                                        array_trail: array_trail.clone(),
+-                                        is_number,
+-                                    });
+-                                    fields_count = fields_count.saturating_sub(1);
+-                                }
+-                            }
+-                        }
+-                    }
+-
+-                    state = ObjectState::AfterValue;
+-                }
+-
+-                ObjectState::AfterValue => {
+-                    if is_whitespace(ch) {
+-                        // skip
+-                    } else if ch == b',' {
+-                        state = ObjectState::InObject;
+-                    } else if ch == b'}' {
+-                        return Ok(());
+-                    } else {
+-                        return Err(FlattenError::Error(
+-                            self.error(&format!("illegal character '{}' in object", ch as char)),
+-                        ));
+-                    }
+-                }
+-            }
+-
+-            self.step()?;
+-        }
++        Ok(()) /* ~ changed by cargo-mutants ~ */
+     }
+ 
+     /// Read a JSON array, recursing into elements as needed.
+     fn read_array(
+         &mut self,
+         path: Option<PathArc>,
+         tree: &SegmentsTree,
+     ) -> Result<(), FlattenError> {

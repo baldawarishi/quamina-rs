@@ -1,0 +1,22 @@
+--- src/flatten_json.rs
++++ replace FlattenJsonState::reset with ()
+@@ -140,18 +140,17 @@
+             fields: Vec::with_capacity(32),
+         }
+     }
+ 
+     /// Reset internal state for reuse.
+     /// Like Go's reset(), this clears the fields slice but keeps capacity.
+     #[inline]
+     fn reset(&mut self) {
+-        self.array_trail.clear();
+-        self.fields.clear();
++        () /* ~ changed by cargo-mutants ~ */
+     }
+ 
+     /// Flatten an event using this reusable state.
+     ///
+     /// Returns a mutable slice of fields that can be sorted in place.
+     /// The slice borrows from both self and the event, preventing reuse
+     /// until the caller is done with the fields.
+     ///

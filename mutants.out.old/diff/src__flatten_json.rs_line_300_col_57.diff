@@ -1,0 +1,21 @@
+--- src/flatten_json.rs
++++ replace == with != in FlattenContext<'a, '_>::read_object
+@@ -292,17 +292,17 @@
+ 
+             match state {
+                 ObjectState::InObject => {
+                     if is_whitespace(ch) {
+                         // skip
+                     } else if ch == b'"' {
+                         member_name = self.read_member_name()?;
+                         // Single fused lookup replaces separate is_segment_used + get + path_arc_for_segment
+-                        member_entry = if self.skipping == 0 {
++                        member_entry = if self.skipping != /* ~ changed by cargo-mutants ~ */ 0 {
+                             tree.lookup(member_name.as_bytes())
+                         } else {
+                             None
+                         };
+                         member_is_used = member_entry.is_some();
+                         state = ObjectState::SeekingColon;
+                     } else if ch == b'}' {
+                         return Ok(());

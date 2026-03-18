@@ -1,0 +1,21 @@
+--- src/flatten_json.rs
++++ replace Field<'_>::path_str -> &str with ""
+@@ -49,17 +49,17 @@
+     /// Returns the path as a string slice.
+     ///
+     /// # Safety
+     /// This uses unsafe conversion because JSON field names are guaranteed
+     /// to be valid UTF-8 by the JSON specification.
+     #[inline]
+     pub fn path_str(&self) -> &str {
+         // SAFETY: JSON field names are valid UTF-8 per JSON spec (RFC 8259).
+-        unsafe { std::str::from_utf8_unchecked(&self.path) }
++        "" /* ~ changed by cargo-mutants ~ */
+     }
+ 
+     /// Returns the value as raw bytes, preserving surrounding quotes for strings.
+     ///
+     /// String values retain their quotes (e.g., `"hello"`) so that the automaton
+     /// can distinguish strings from numbers with identical digit content.
+     /// This mirrors Go's design where quotes act as an implicit type tag.
+     #[inline]

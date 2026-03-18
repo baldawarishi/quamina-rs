@@ -1,1 +1,2 @@
-src/json.rs:70:9: replace CidrPattern::parse -> Option<Self> with Some(Default::default())
+src/flatten_json.rs:73:9: replace Field<'_>::array_trail_slice -> &[ArrayPos] with Vec::leak(vec![Default::default()])
+src/flatten_json.rs:165:9: replace FlattenJsonState::flatten -> Result<&mut[Field<'a>], QuaminaError> with Ok(Vec::leak(vec![Default::default()]))

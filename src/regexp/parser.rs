@@ -2149,6 +2149,102 @@ mod tests {
     }
 
     // ========================================================================
+    // Quantifier type detection (catches mutations in is_singleton, is_qm, etc.)
+    // ========================================================================
+
+    #[test]
+    fn test_quantifier_detection() {
+        // Test is_singleton (catches line 88: == changed to !=, or return false)
+        // Parse "a" (singleton)
+        let tree = parse_regexp("a").unwrap();
+        assert_eq!(tree.len(), 1);
+        assert_eq!(tree[0].len(), 1);
+        let qa = &tree[0][0];
+        assert!(
+            qa.is_singleton(),
+            "single char without quantifier should be singleton"
+        );
+        assert!(!qa.is_qm(), "singleton should not be optional");
+        assert!(!qa.is_plus(), "singleton should not be plus");
+        assert!(!qa.is_star(), "singleton should not be star");
+
+        // Parse "a?" (optional, catches is_qm)
+        let tree = parse_regexp("a?").unwrap();
+        let qa = &tree[0][0];
+        assert!(!qa.is_singleton(), "optional should not be singleton");
+        assert!(qa.is_qm(), "a? should be optional");
+        assert!(!qa.is_plus(), "a? should not be plus");
+        assert!(!qa.is_star(), "a? should not be star");
+
+        // Parse "a+" (one or more, catches is_plus)
+        let tree = parse_regexp("a+").unwrap();
+        let qa = &tree[0][0];
+        assert!(!qa.is_singleton(), "a+ should not be singleton");
+        assert!(!qa.is_qm(), "a+ should not be optional");
+        assert!(qa.is_plus(), "a+ should be plus");
+        assert!(!qa.is_star(), "a+ should not be star");
+
+        // Parse "a*" (zero or more, catches is_star)
+        let tree = parse_regexp("a*").unwrap();
+        let qa = &tree[0][0];
+        assert!(!qa.is_singleton(), "a* should not be singleton");
+        assert!(!qa.is_qm(), "a* should not be optional");
+        assert!(!qa.is_plus(), "a* should not be plus");
+        assert!(qa.is_star(), "a* should be star");
+    }
+
+    // ========================================================================
+    // Lookaround type detection (catches mutations in is_negative/is_lookbehind)
+    // ========================================================================
+
+    #[test]
+    fn test_lookaround_type_classification() {
+        // Test LookaroundType methods directly
+        // Line 132: is_negative - should detect NegativeLookahead and NegativeLookbehind
+        // Line 137: is_lookbehind - should detect PositiveLookbehind and NegativeLookbehind
+
+        let pos_lookahead = LookaroundType::PositiveLookahead;
+        assert!(
+            !pos_lookahead.is_negative(),
+            "positive lookahead should not be negative"
+        );
+        assert!(
+            !pos_lookahead.is_lookbehind(),
+            "lookahead should not be lookbehind"
+        );
+
+        let neg_lookahead = LookaroundType::NegativeLookahead;
+        assert!(
+            neg_lookahead.is_negative(),
+            "negative lookahead should be negative"
+        );
+        assert!(
+            !neg_lookahead.is_lookbehind(),
+            "lookahead should not be lookbehind"
+        );
+
+        let pos_lookbehind = LookaroundType::PositiveLookbehind;
+        assert!(
+            !pos_lookbehind.is_negative(),
+            "positive lookbehind should not be negative"
+        );
+        assert!(
+            pos_lookbehind.is_lookbehind(),
+            "positive lookbehind should be lookbehind"
+        );
+
+        let neg_lookbehind = LookaroundType::NegativeLookbehind;
+        assert!(
+            neg_lookbehind.is_negative(),
+            "negative lookbehind should be negative"
+        );
+        assert!(
+            neg_lookbehind.is_lookbehind(),
+            "negative lookbehind should be lookbehind"
+        );
+    }
+
+    // ========================================================================
     // Word boundary (~b/~B) expansion
     // ========================================================================
 

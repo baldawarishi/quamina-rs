@@ -1,0 +1,21 @@
+--- src/flatten_json.rs
++++ replace && with || in FlattenContext<'a, '_>::read_object
+@@ -275,17 +275,17 @@
+         let mut member_name: MemberName<'a> = MemberName::Borrowed(&[]);
+         #[allow(unused_assignments)]
+         let mut member_is_used = false;
+         let mut member_entry: Option<&SegmentEntry> = None;
+         let mut state = ObjectState::InObject;
+ 
+         loop {
+             // Early termination: all needed fields found
+-            if nodes_count == 0 && fields_count == 0 {
++            if nodes_count == 0 || /* ~ changed by cargo-mutants ~ */ fields_count == 0 {
+                 if tree.is_root() {
+                     return Err(FlattenError::EarlyStop);
+                 } else {
+                     return self.leave_object();
+                 }
+             }
+ 
+             let ch = self.ch();

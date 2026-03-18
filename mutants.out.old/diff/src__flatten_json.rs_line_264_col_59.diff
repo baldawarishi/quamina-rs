@@ -1,0 +1,21 @@
+--- src/flatten_json.rs
++++ replace == with != in FlattenContext<'a, '_>::read_object
+@@ -256,17 +256,17 @@
+     fn read_object(&mut self, tree: &SegmentsTree) -> Result<(), FlattenError> {
+         // index points at {
+         self.step()?;
+ 
+         let mut fields_count = tree.fields_count();
+         let mut nodes_count = tree.nodes_count();
+ 
+         // Snapshot array trail for object member fields
+-        let array_trail: ArrayTrailVec = if self.skipping == 0 {
++        let array_trail: ArrayTrailVec = if self.skipping != /* ~ changed by cargo-mutants ~ */ 0 {
+             self.array_trail.clone()
+         } else {
+             ArrayTrailVec::new()
+         };
+ 
+         // These are written in ObjectState::InObject (when we read a `"key"`) and
+         // consumed later in ObjectState::MemberValue (when we parse the value).
+         // Rust can't prove the state-machine ordering, so we must initialize them

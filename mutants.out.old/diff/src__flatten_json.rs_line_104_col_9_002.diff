@@ -1,0 +1,24 @@
+--- src/flatten_json.rs
++++ replace FieldValue<'_>::as_bytes -> &[u8] with Vec::leak(vec![1])
+@@ -96,20 +96,17 @@
+             MemberName::Borrowed(b) => b,
+             MemberName::Owned(v) => v.as_slice(),
+         }
+     }
+ }
+ 
+ impl FieldValue<'_> {
+     pub fn as_bytes(&self) -> &[u8] {
+-        match self {
+-            FieldValue::Borrowed(s) => s,
+-            FieldValue::Owned(v) => v,
+-        }
++        Vec::leak(vec![1]) /* ~ changed by cargo-mutants ~ */
+     }
+ }
+ 
+ /// Reusable JSON flattener state.
+ ///
+ /// This struct holds the working buffers that can be reused across multiple
+ /// flatten calls, following Go's reset() pattern for reduced allocations.
+ /// Like Go's flattenJSON, we reuse the fields slice between calls to avoid

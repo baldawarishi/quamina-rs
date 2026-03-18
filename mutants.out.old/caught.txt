@@ -1,29 +1,30 @@
-src/json.rs:70:9: replace CidrPattern::parse -> Option<Self> with None
-src/json.rs:75:27: replace > with == in CidrPattern::parse
-src/json.rs:75:27: replace > with < in CidrPattern::parse
-src/json.rs:75:27: replace > with >= in CidrPattern::parse
-src/json.rs:79:38: replace == with != in CidrPattern::parse
-src/json.rs:82:23: replace << with >> in CidrPattern::parse
-src/json.rs:82:17: delete ! in CidrPattern::parse
-src/json.rs:82:30: replace - with + in CidrPattern::parse
-src/json.rs:82:30: replace - with / in CidrPattern::parse
-src/json.rs:84:57: replace & with | in CidrPattern::parse
-src/json.rs:84:57: replace & with ^ in CidrPattern::parse
-src/json.rs:93:27: replace > with == in CidrPattern::parse
-src/json.rs:93:27: replace > with < in CidrPattern::parse
-src/json.rs:93:27: replace > with >= in CidrPattern::parse
-src/json.rs:109:9: replace CidrPattern::parse_ipv4 -> Option<[u8; 4]> with None
-src/json.rs:109:9: replace CidrPattern::parse_ipv4 -> Option<[u8; 4]> with Some([0; 4])
-src/json.rs:109:9: replace CidrPattern::parse_ipv4 -> Option<[u8; 4]> with Some([1; 4])
-src/json.rs:110:24: replace != with == in CidrPattern::parse_ipv4
-src/json.rs:122:9: replace CidrPattern::parse_ipv6 -> Option<[u8; 16]> with None
-src/json.rs:122:9: replace CidrPattern::parse_ipv6 -> Option<[u8; 16]> with Some([0; 16])
-src/json.rs:122:9: replace CidrPattern::parse_ipv6 -> Option<[u8; 16]> with Some([1; 16])
-src/json.rs:127:28: replace > with == in CidrPattern::parse_ipv6
-src/json.rs:127:28: replace > with >= in CidrPattern::parse_ipv6
-src/json.rs:136:55: replace && with || in CidrPattern::parse_ipv6
-src/json.rs:136:51: replace > with == in CidrPattern::parse_ipv6
-src/json.rs:136:51: replace > with < in CidrPattern::parse_ipv6
-src/json.rs:136:58: delete ! in CidrPattern::parse_ipv6
-src/json.rs:142:41: replace > with < in CidrPattern::parse_ipv6
-src/json.rs:142:27: replace + with - in CidrPattern::parse_ipv6
+src/flatten_json.rs:57:9: replace Field<'_>::path_str -> &str with ""
+src/flatten_json.rs:57:9: replace Field<'_>::path_str -> &str with "xyzzy"
+src/flatten_json.rs:67:9: replace Field<'_>::value_bytes -> &[u8] with Vec::leak(Vec::new())
+src/flatten_json.rs:67:9: replace Field<'_>::value_bytes -> &[u8] with Vec::leak(vec![0])
+src/flatten_json.rs:67:9: replace Field<'_>::value_bytes -> &[u8] with Vec::leak(vec![1])
+src/flatten_json.rs:73:9: replace Field<'_>::array_trail_slice -> &[ArrayPos] with Vec::leak(Vec::new())
+src/flatten_json.rs:95:9: replace MemberName<'_>::as_bytes -> &[u8] with Vec::leak(Vec::new())
+src/flatten_json.rs:95:9: replace MemberName<'_>::as_bytes -> &[u8] with Vec::leak(vec![0])
+src/flatten_json.rs:95:9: replace MemberName<'_>::as_bytes -> &[u8] with Vec::leak(vec![1])
+src/flatten_json.rs:104:9: replace FieldValue<'_>::as_bytes -> &[u8] with Vec::leak(Vec::new())
+src/flatten_json.rs:104:9: replace FieldValue<'_>::as_bytes -> &[u8] with Vec::leak(vec![0])
+src/flatten_json.rs:104:9: replace FieldValue<'_>::as_bytes -> &[u8] with Vec::leak(vec![1])
+src/flatten_json.rs:165:9: replace FlattenJsonState::flatten -> Result<&mut[Field<'a>], QuaminaError> with Ok(Vec::leak(Vec::new()))
+src/flatten_json.rs:211:9: replace FlattenContext<'a, '_>::push_field with ()
+src/flatten_json.rs:218:9: replace FlattenContext<'a, '_>::flatten_impl -> Result<(), QuaminaError> with Ok(())
+src/flatten_json.rs:225:19: replace == with != in FlattenContext<'a, '_>::flatten_impl
+src/flatten_json.rs:232:28: replace += with -= in FlattenContext<'a, '_>::flatten_impl
+src/flatten_json.rs:232:28: replace += with *= in FlattenContext<'a, '_>::flatten_impl
+src/flatten_json.rs:233:34: replace < with == in FlattenContext<'a, '_>::flatten_impl
+src/flatten_json.rs:233:34: replace < with <= in FlattenContext<'a, '_>::flatten_impl
+src/flatten_json.rs:258:9: replace FlattenContext<'a, '_>::read_object -> Result<(), FlattenError> with Ok(())
+src/flatten_json.rs:264:59: replace == with != in FlattenContext<'a, '_>::read_object
+src/flatten_json.rs:283:33: replace && with || in FlattenContext<'a, '_>::read_object
+src/flatten_json.rs:283:28: replace == with != in FlattenContext<'a, '_>::read_object
+src/flatten_json.rs:283:49: replace == with != in FlattenContext<'a, '_>::read_object
+src/flatten_json.rs:297:34: replace == with != in FlattenContext<'a, '_>::read_object
+src/flatten_json.rs:300:57: replace == with != in FlattenContext<'a, '_>::read_object
+src/flatten_json.rs:307:34: replace == with != in FlattenContext<'a, '_>::read_object
+src/flatten_json.rs:320:34: replace == with != in FlattenContext<'a, '_>::read_object
+src/flatten_json.rs:343:25: delete match arm b'"' in FlattenContext<'a, '_>::read_object

@@ -1,0 +1,55 @@
+--- src/flatten_json.rs
++++ replace FlattenContext<'a, '_>::flatten_impl -> Result<(), QuaminaError> with Ok(())
+@@ -210,51 +210,17 @@
+         // receive a slice with the correct 'a lifetime.
+         let static_field: Field<'static> = unsafe { std::mem::transmute(field) };
+         self.fields.push(static_field);
+     }
+ }
+ 
+ impl<'a> FlattenContext<'a, '_> {
+     fn flatten_impl(&mut self, tree: &SegmentsTree) -> Result<(), QuaminaError> {
+-        if self.event.is_empty() {
+-            return Err(QuaminaError::InvalidJson("empty event".into()));
+-        }
+-
+-        // Find the opening brace
+-        loop {
+-            let ch = self.ch();
+-            if ch == b'{' {
+-                match self.read_object(tree) {
+-                    Ok(()) => {}
+-                    Err(FlattenError::EarlyStop) => return Ok(()),
+-                    Err(FlattenError::Error(e)) => return Err(e),
+-                }
+-                // Eat trailing whitespace
+-                self.index += 1;
+-                while self.index < self.event.len() {
+-                    let ch = self.event[self.index];
+-                    if !is_whitespace(ch) {
+-                        return Err(self.error(&format!(
+-                            "garbage char '{}' after top-level object",
+-                            ch as char
+-                        )));
+-                    }
+-                    self.index += 1;
+-                }
+-                return Ok(());
+-            } else if is_whitespace(ch) {
+-                self.index += 1;
+-                if self.index >= self.event.len() {
+-                    return Err(self.error("unexpected end of event"));
+-                }
+-            } else {
+-                return Err(self.error("not a JSON object"));
+-            }
+-        }
++        Ok(()) /* ~ changed by cargo-mutants ~ */
+     }
+ 
+     /// Read a JSON object, recursing into nested objects as needed.
+     fn read_object(&mut self, tree: &SegmentsTree) -> Result<(), FlattenError> {
+         // index points at {
+         self.step()?;
+ 
+         let mut fields_count = tree.fields_count();

@@ -1,0 +1,21 @@
+--- src/flatten_json.rs
++++ replace Field<'_>::value_bytes -> &[u8] with Vec::leak(Vec::new())
+@@ -59,17 +59,17 @@
+ 
+     /// Returns the value as raw bytes, preserving surrounding quotes for strings.
+     ///
+     /// String values retain their quotes (e.g., `"hello"`) so that the automaton
+     /// can distinguish strings from numbers with identical digit content.
+     /// This mirrors Go's design where quotes act as an implicit type tag.
+     #[inline]
+     pub fn value_bytes(&self) -> &[u8] {
+-        self.val.as_bytes()
++        Vec::leak(Vec::new()) /* ~ changed by cargo-mutants ~ */
+     }
+ 
+     /// Returns the array trail as a slice.
+     #[inline]
+     pub fn array_trail_slice(&self) -> &[ArrayPos] {
+         &self.array_trail
+     }
+ }

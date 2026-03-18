@@ -1,0 +1,21 @@
+--- src/flatten_json.rs
++++ replace == with != in FlattenContext<'a, '_>::flatten_impl
+@@ -217,17 +217,17 @@
+     fn flatten_impl(&mut self, tree: &SegmentsTree) -> Result<(), QuaminaError> {
+         if self.event.is_empty() {
+             return Err(QuaminaError::InvalidJson("empty event".into()));
+         }
+ 
+         // Find the opening brace
+         loop {
+             let ch = self.ch();
+-            if ch == b'{' {
++            if ch != /* ~ changed by cargo-mutants ~ */ b'{' {
+                 match self.read_object(tree) {
+                     Ok(()) => {}
+                     Err(FlattenError::EarlyStop) => return Ok(()),
+                     Err(FlattenError::Error(e)) => return Err(e),
+                 }
+                 // Eat trailing whitespace
+                 self.index += 1;
+                 while self.index < self.event.len() {

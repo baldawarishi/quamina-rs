@@ -1,0 +1,21 @@
+--- src/flatten_json.rs
++++ replace == with != in FlattenContext<'a, '_>::read_object
+@@ -312,17 +312,17 @@
+                             ch as char
+                         ))));
+                     }
+                 }
+ 
+                 ObjectState::SeekingColon => {
+                     if is_whitespace(ch) {
+                         // skip
+-                    } else if ch == b':' {
++                    } else if ch != /* ~ changed by cargo-mutants ~ */ b':' {
+                         state = ObjectState::MemberValue;
+                     } else {
+                         return Err(FlattenError::Error(self.error(&format!(
+                             "illegal character '{}' while looking for colon",
+                             ch as char
+                         ))));
+                     }
+                 }
