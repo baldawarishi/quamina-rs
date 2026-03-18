@@ -1886,14 +1886,4 @@ mod tests {
             "arena should have states after adding a prefix pattern; got {stats:?}"
         );
     }
-
-    // NOTE: line 244 `if self.has_numbers && is_number` — the && → || mutation is
-    // semantically equivalent. The guard skips an unnecessary float parse, but
-    // regardless of whether Q-number conversion happens, the numeric range NFA
-    // accepts all raw ASCII/UTF-8 bytes because Q-number first bytes are very
-    // small (e.g. 1 for 10.0), and the "greater than" FA treats any first byte
-    // > bound[0] as a match. This is a known limitation of numeric range patterns
-    // (they produce false positives on string values). See also:
-    // test_numeric_pattern_should_not_match_string_event (exact numeric works
-    // correctly because NumericExact stores both raw and Q-number representations).
 }

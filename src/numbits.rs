@@ -25,13 +25,19 @@
 //! - Negative numbers compare less than positive numbers
 //! - Numbers within the same sign compare in the correct order
 
-/// Maximum bytes needed for base-128 encoding of a 64-bit value.
-pub(crate) const MAX_BYTES_IN_ENCODING: usize = 10;
+/// Tag byte prepended to all Q-number sequences to create namespace separation
+/// from raw ASCII/UTF-8 bytes. This prevents numeric range FAs from matching
+/// string values — `0x80` never appears as the first byte of a JSON string value
+/// (strings start with `"` = 34), while all Q-number content bytes are in 0-127.
+pub(crate) const Q_NUMBER_PREFIX: u8 = 0x80;
+
+/// Maximum bytes needed for base-128 encoding of a 64-bit value, plus prefix tag.
+pub(crate) const MAX_BYTES_IN_ENCODING: usize = 11;
 
 /// Stack-allocated Q-number representation for zero-allocation numeric matching.
 ///
-/// This type holds a Q-number in a fixed 10-byte stack buffer (the maximum size
-/// for base-128 encoded 64-bit values), avoiding heap allocation during the
+/// This type holds a Q-number in a fixed 11-byte stack buffer (prefix tag + up to
+/// 10 bytes of base-128 encoded 64-bit value), avoiding heap allocation during the
 /// matching hot path.
 ///
 /// Created via [`q_num_stack`]. Use [`as_slice`](Self::as_slice) to get the
@@ -62,14 +68,18 @@ impl QNumberStack {
     }
 }
 
-/// Convert numbits to a stack-allocated Q-number.
+/// Convert numbits to a stack-allocated Q-number with prefix tag.
 pub(crate) fn to_q_number_stack(nb: u64) -> QNumberStack {
     let mut nb = nb;
     let mut bytes = [0u8; MAX_BYTES_IN_ENCODING];
 
+    // First byte is always the prefix tag
+    bytes[0] = Q_NUMBER_PREFIX;
+
     // Count trailing zero septets (same algorithm as to_q_number)
     let mut trailing_zeroes = 0usize;
-    let mut index = MAX_BYTES_IN_ENCODING - 1;
+    // Content bytes start at index 1 (after prefix), max 10 content bytes
+    let mut index = MAX_BYTES_IN_ENCODING - 1; // 10
 
     loop {
         if nb & 0x7f != 0 {
@@ -77,23 +87,25 @@ pub(crate) fn to_q_number_stack(nb: u64) -> QNumberStack {
         }
         trailing_zeroes += 1;
         nb >>= 7;
-        if index == 0 {
+        if index <= 1 {
             break;
         }
         index -= 1;
     }
 
-    let len = MAX_BYTES_IN_ENCODING - trailing_zeroes;
+    // Content length (excluding prefix)
+    let content_len = (MAX_BYTES_IN_ENCODING - 1) - trailing_zeroes;
 
-    // Fill bytes from right to left
-    for i in (0..len).rev() {
+    // Fill content bytes from right to left (starting at index 1)
+    for i in (1..=content_len).rev() {
         bytes[i] = (nb & 0x7f) as u8;
         nb >>= 7;
     }
 
+    // Total length = 1 (prefix) + content_len
     QNumberStack {
         bytes,
-        len: len as u8,
+        len: (1 + content_len) as u8,
     }
 }
 
@@ -142,7 +154,8 @@ pub(crate) fn to_q_number(nb: u64) -> Vec<u8> {
     // Note that index could go to 0 if the numbits value was 0,
     // but that value represents NaN and can't appear in JSON.
     let mut trailing_zeroes = 0usize;
-    let mut index = MAX_BYTES_IN_ENCODING - 1;
+    let max_content_bytes = MAX_BYTES_IN_ENCODING - 1; // 10 content bytes
+    let mut index = max_content_bytes - 1;
 
     loop {
         if nb & 0x7f != 0 {
@@ -157,10 +170,12 @@ pub(crate) fn to_q_number(nb: u64) -> Vec<u8> {
     }
 
     // Now fill in the byte encoding for the digits up to the last non-zero
-    let len = MAX_BYTES_IN_ENCODING - trailing_zeroes;
-    let mut result = vec![0u8; len];
+    let content_len = max_content_bytes - trailing_zeroes;
+    // Total: 1 prefix byte + content bytes
+    let mut result = vec![0u8; 1 + content_len];
+    result[0] = Q_NUMBER_PREFIX;
 
-    for i in (0..len).rev() {
+    for i in (1..=content_len).rev() {
         result[i] = (nb & 0x7f) as u8;
         nb >>= 7;
     }
@@ -511,11 +526,12 @@ mod tests {
     fn test_encoding_with_zero_numbits() {
         // nb=0 corresponds to NaN (can't appear in JSON), but exercising
         // the encoding boundary verifies the trailing-zero-skip loop guard.
+        // With the Q_NUMBER_PREFIX, even zero numbits produces the prefix byte.
         let vec_result = to_q_number(0);
-        assert!(vec_result.is_empty());
+        assert_eq!(vec_result, vec![Q_NUMBER_PREFIX]);
 
         let stack_result = to_q_number_stack(0);
-        assert!(stack_result.is_empty());
-        assert_eq!(stack_result.len(), 0);
+        assert_eq!(stack_result.len(), 1);
+        assert_eq!(stack_result.as_slice(), &[Q_NUMBER_PREFIX]);
     }
 }
