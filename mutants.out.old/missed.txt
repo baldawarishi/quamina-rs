@@ -1,8 +1,0 @@
-src/regexp/nfa.rs:216:18: replace == with != in make_one_arena_branch_fa
-src/regexp/nfa.rs:509:16: delete ! in instantiate_shell
-src/regexp/nfa.rs:550:5: replace clear_fa_shell_cache with ()
-src/regexp/nfa.rs:625:37: replace && with || in add_arena_rune_pair_tree_entry
-src/regexp/nfa.rs:625:20: replace <= with > in add_arena_rune_pair_tree_entry
-src/regexp/nfa.rs:625:52: replace >= with < in add_arena_rune_pair_tree_entry
-src/regexp/nfa.rs:626:24: replace < with == in add_arena_rune_pair_tree_entry
-src/regexp/nfa.rs:626:24: replace < with > in add_arena_rune_pair_tree_entry

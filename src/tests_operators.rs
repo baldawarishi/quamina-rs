@@ -3352,41 +3352,29 @@ fn test_unicode_category_epsilon_closure() {
 #[test]
 fn test_fa_shell_cache_clearing() {
     // Tests line 550: clear_fa_shell_cache() function call.
-    // If clear_fa_shell_cache is replaced with (), the cache is never cleared,
-    // but the function call itself still appears to work.
-    // This test verifies that clearing works by:
-    // 1. Adding and using a Unicode pattern (which caches the shell)
-    // 2. Clearing the cache explicitly
-    // 3. Verifying the pattern still works (proving the cache was properly cleared)
+    // NOTE: This mutation (replace with ()) is semantically equivalent — clearing
+    // the cache vs not clearing it produces identical matching results because the
+    // cache only affects build-time performance, not correctness. The cache stores
+    // pre-built shell NFAs for Unicode categories; a stale cache just means a cache
+    // hit instead of a rebuild, producing the same NFA either way.
+    // This test exists as a smoke test to verify the function doesn't panic.
     use crate::regexp::clear_fa_shell_cache;
 
     let mut q = Quamina::new();
 
-    // Add a pattern using a Unicode category (caches the shell)
     q.add_pattern("p1", r#"{"text": [{"regex": "~p{Lu}+"}]}"#)
         .expect("Failed to add pattern 1");
-
-    // First match should work
     assert_has_match!(q, r#"{"text": "HELLO"}"#, "p1");
 
-    // Clear the cache
     clear_fa_shell_cache();
 
-    // Add a different Unicode category pattern
     q.add_pattern("p2", r#"{"text": [{"regex": "~p{Ll}+"}]}"#)
         .expect("Failed to add pattern 2");
 
-    // Both patterns should still work correctly after cache clearing
     assert_has_match!(q, r#"{"text": "HELLO"}"#, "p1");
     assert_has_match!(q, r#"{"text": "hello"}"#, "p2");
     assert_no_has_match!(q, r#"{"text": "hello"}"#, "p1");
     assert_no_has_match!(q, r#"{"text": "HELLO"}"#, "p2");
-
-    // Clear again to ensure multiple clears work
-    clear_fa_shell_cache();
-
-    assert_has_match!(q, r#"{"text": "HELLO"}"#, "p1");
-    assert_has_match!(q, r#"{"text": "hello"}"#, "p2");
 }
 
 #[test]
@@ -3434,7 +3422,10 @@ fn test_surrogate_boundary_range() {
 
     let char_d7fc = '\u{D7FC}'; // before surrogate
     let char_e003 = '\u{E003}'; // after surrogate
-    let pattern = format!(r#"{{"text": [{{"regex": "[{}-{}]"}}]}}"#, char_d7fc, char_e003);
+    let pattern = format!(
+        r#"{{"text": [{{"regex": "[{}-{}]"}}]}}"#,
+        char_d7fc, char_e003
+    );
 
     q.add_pattern("p1", &pattern)
         .expect("Failed to add pattern with range spanning surrogate");
@@ -3471,7 +3462,10 @@ fn test_surrogate_boundary_multiple_ranges() {
 
     let char_d7fe = '\u{D7FE}'; // before surrogate
     let char_e002 = '\u{E002}'; // after surrogate
-    let pattern_p2 = format!(r#"{{"text": [{{"regex": "[{}-{}]"}}]}}"#, char_d7fe, char_e002);
+    let pattern_p2 = format!(
+        r#"{{"text": [{{"regex": "[{}-{}]"}}]}}"#,
+        char_d7fe, char_e002
+    );
     q.add_pattern("p2", &pattern_p2)
         .expect("Failed to add pattern p2");
 

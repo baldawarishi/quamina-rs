@@ -1,5 +1,0 @@
-src/automaton/mutable_matcher.rs:1235:36: replace + with * in CoreMatcher<X>::try_to_match
-src/automaton/mutable_matcher.rs:1343:36: replace + with - in CoreMatcher<X>::try_to_match_ref
-src/automaton/mutable_matcher.rs:1343:36: replace + with * in CoreMatcher<X>::try_to_match_ref
-src/automaton/mutable_matcher.rs:1437:36: replace + with - in CoreMatcher<X>::try_to_match_direct
-src/automaton/mutable_matcher.rs:1437:36: replace + with * in CoreMatcher<X>::try_to_match_direct
