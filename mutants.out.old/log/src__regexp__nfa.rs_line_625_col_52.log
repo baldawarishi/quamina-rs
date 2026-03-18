@@ -1,0 +1,1206 @@
+
+*** src/regexp/nfa.rs:625:52: replace >= with < in add_arena_rune_pair_tree_entry
+
+*** mutation diff:
+--- src/regexp/nfa.rs
++++ replace >= with < in add_arena_rune_pair_tree_entry
+@@ -617,17 +617,17 @@
+ 
+         // Skip boundaries that are below current position
+         if boundary < current {
+             continue;
+         }
+ 
+         let segment_end = hi_u32.min(boundary);
+ 
+-        if current <= SURROGATE_END && segment_end >= SURROGATE_START {
++        if current <= SURROGATE_END && segment_end < /* ~ changed by cargo-mutants ~ */ SURROGATE_START {
+             if current < SURROGATE_START {
+                 let pre_end = (SURROGATE_START - 1).min(segment_end);
+                 if let (Some(start), Some(end)) = (char::from_u32(current), char::from_u32(pre_end))
+                 {
+                     add_arena_utf8_range_to_tree(root, start, end, dest);
+                 }
+             }
+             if segment_end > SURROGATE_END {
+
+
+*** /Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo test --no-run --profile=mutants --verbose --package=quamina@0.4.3
+       Fresh cfg-if v1.0.4
+       Fresh unicode-ident v1.0.22
+       Fresh memchr v2.7.6
+       Fresh shlex v1.3.0
+       Fresh find-msvc-tools v0.1.9
+       Fresh autocfg v1.5.0
+       Fresh proc-macro2 v1.0.105
+       Fresh cc v1.2.55
+       Fresh smallvec v1.15.1
+       Fresh simd-adler32 v0.3.8
+       Fresh quote v1.0.43
+       Fresh libc v0.2.180
+       Fresh serde_core v1.0.228
+       Fresh crossbeam-utils v0.8.21
+       Fresh zmij v1.0.15
+       Fresh scopeguard v1.2.0
+       Fresh either v1.15.0
+       Fresh itoa v1.0.17
+       Fresh adler2 v2.0.1
+       Fresh syn v2.0.114
+       Fresh crossbeam-epoch v0.9.18
+       Fresh miniz_oxide v0.8.9
+       Fresh parking_lot_core v0.9.12
+       Fresh serde_json v1.0.149
+       Fresh lock_api v0.4.14
+       Fresh aho-corasick v1.1.4
+       Fresh ciborium-io v0.2.2
+       Fresh rand_core v0.10.0
+       Fresh gimli v0.32.3
+       Fresh plotters-backend v0.3.7
+       Fresh clap_lex v0.7.7
+       Fresh zerocopy-derive v0.8.33
+       Fresh serde_derive v1.0.228
+       Fresh crossbeam-deque v0.8.6
+       Fresh anstyle v1.0.13
+       Fresh regex-syntax v0.8.8
+       Fresh rustversion v1.0.22
+       Fresh addr2line v0.25.1
+       Fresh plotters-svg v0.3.7
+       Fresh parking_lot v0.12.5
+       Fresh object v0.37.3
+       Fresh num-traits v0.2.19
+       Fresh itertools v0.13.0
+       Fresh serde v1.0.228
+       Fresh zerocopy v0.8.33
+       Fresh rayon-core v1.13.0
+       Fresh regex-automata v0.4.13
+       Fresh clap_builder v4.5.54
+       Fresh cast v0.3.0
+       Fresh same-file v1.0.6
+       Fresh rustc-demangle v0.1.27
+       Fresh plotters v0.3.7
+       Fresh arc-swap v1.8.0
+       Fresh crc32fast v1.5.0
+       Fresh alloca v0.4.0
+       Fresh chacha20 v0.10.0
+       Fresh half v2.7.1
+       Fresh backtrace v0.3.76
+       Fresh criterion-plot v0.8.1
+       Fresh rayon v1.11.0
+       Fresh getrandom v0.4.1
+       Fresh regex v1.12.2
+       Fresh walkdir v2.5.0
+       Fresh clap v4.5.54
+       Fresh tinytemplate v1.2.1
+       Fresh page_size v0.6.0
+       Fresh rustc-hash v2.1.1
+       Fresh lazy_static v1.5.0
+       Fresh oorandom v11.1.5
+       Fresh anes v0.1.6
+       Fresh ciborium-ll v0.2.2
+       Fresh rustc-hash v1.1.0
+       Fresh thousands v0.2.0
+       Fresh fast-float2 v0.2.3
+       Fresh mintex v0.1.4
+       Fresh cargo-husky v1.5.0
+       Fresh rand v0.10.0
+       Fresh flate2 v1.1.8
+       Fresh ciborium v0.2.2
+       Fresh dhat v0.3.3
+       Dirty quamina v0.4.3 (/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp): the file `src/regexp/nfa.rs` has changed (1773797795.234017260s, 1m 2s after last build at 1773797733.558049354s)
+   Compiling quamina v0.4.3 (/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp)
+       Fresh criterion v0.8.1
+     Running `/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/rustc --crate-name quamina --edition=2021 src/lib.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --emit=dep-info,link -C embed-bitcode=no '--warn=clippy::perf' '--warn=clippy::use_self' '--warn=clippy::unused_peekable' --warn=unsafe_code --warn=unexpected_cfgs '--warn=clippy::undocumented_unsafe_blocks' '--warn=clippy::transmute_ptr_to_ptr' '--warn=clippy::redundant_clone' '--warn=clippy::or_fun_call' '--warn=clippy::equatable_if_let' '--warn=clippy::derive_partial_eq_without_eq' '--warn=clippy::branches_sharing_code' --check-cfg 'cfg(kani)' --test --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values("dhat-heap"))' -C metadata=8daadff97ac78112 -C extra-filename=-137b7d067facf300 --out-dir /private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps -C incremental=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/incremental -C strip=debuginfo -L dependency=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps --extern arc_swap=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libarc_swap-8dc94c7baf7d6503.rlib --extern cargo_husky=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libcargo_husky-959d622cb0e854bd.rlib --extern criterion=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libcriterion-5d01252276bfc921.rlib --extern dhat=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libdhat-be327f7d283e6040.rlib --extern fast_float2=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libfast_float2-ab4bcc5370fb9d9d.rlib --extern flate2=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libflate2-770fd3ea371cf479.rlib --extern memchr=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libmemchr-fad7cfa0ce919f3e.rlib --extern parking_lot=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libparking_lot-ea040230acb2cfe8.rlib --extern rand=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/librand-d62286a2584f1923.rlib --extern regex=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libregex-143ef4a17e2e5f75.rlib --extern rustc_hash=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/librustc_hash-475025c22853c846.rlib --extern smallvec=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libsmallvec-aef4c19c0cf1c118.rlib -L native=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/build/alloca-02cacc78a7329cb4/out`
+     Running `/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/rustc --crate-name quamina --edition=2021 src/lib.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --crate-type lib --emit=dep-info,metadata,link -C embed-bitcode=no '--warn=clippy::perf' '--warn=clippy::use_self' '--warn=clippy::unused_peekable' --warn=unsafe_code --warn=unexpected_cfgs '--warn=clippy::undocumented_unsafe_blocks' '--warn=clippy::transmute_ptr_to_ptr' '--warn=clippy::redundant_clone' '--warn=clippy::or_fun_call' '--warn=clippy::equatable_if_let' '--warn=clippy::derive_partial_eq_without_eq' '--warn=clippy::branches_sharing_code' --check-cfg 'cfg(kani)' --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values("dhat-heap"))' -C metadata=7632b1bb87c843c6 -C extra-filename=-28509fa74a3a2eed --out-dir /private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps -C incremental=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/incremental -C strip=debuginfo -L dependency=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps --extern arc_swap=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libarc_swap-8dc94c7baf7d6503.rmeta --extern fast_float2=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libfast_float2-ab4bcc5370fb9d9d.rmeta --extern memchr=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libmemchr-fad7cfa0ce919f3e.rmeta --extern parking_lot=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libparking_lot-ea040230acb2cfe8.rmeta --extern rustc_hash=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/librustc_hash-475025c22853c846.rmeta --extern smallvec=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libsmallvec-aef4c19c0cf1c118.rmeta`
+     Running `/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/rustc --crate-name profile_citylots --edition=2021 examples/profile_citylots.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --crate-type bin --emit=dep-info,link -C embed-bitcode=no '--warn=clippy::perf' '--warn=clippy::use_self' '--warn=clippy::unused_peekable' --warn=unsafe_code --warn=unexpected_cfgs '--warn=clippy::undocumented_unsafe_blocks' '--warn=clippy::transmute_ptr_to_ptr' '--warn=clippy::redundant_clone' '--warn=clippy::or_fun_call' '--warn=clippy::equatable_if_let' '--warn=clippy::derive_partial_eq_without_eq' '--warn=clippy::branches_sharing_code' --check-cfg 'cfg(kani)' --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values("dhat-heap"))' -C metadata=981009bbc3295b3e -C extra-filename=-86163ab00eefc0b6 --out-dir /private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/examples -C incremental=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/incremental -C strip=debuginfo -L dependency=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps --extern arc_swap=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libarc_swap-8dc94c7baf7d6503.rlib --extern cargo_husky=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libcargo_husky-959d622cb0e854bd.rlib --extern criterion=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libcriterion-5d01252276bfc921.rlib --extern dhat=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libdhat-be327f7d283e6040.rlib --extern fast_float2=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libfast_float2-ab4bcc5370fb9d9d.rlib --extern flate2=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libflate2-770fd3ea371cf479.rlib --extern memchr=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libmemchr-fad7cfa0ce919f3e.rlib --extern parking_lot=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libparking_lot-ea040230acb2cfe8.rlib --extern quamina=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libquamina-28509fa74a3a2eed.rlib --extern rand=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/librand-d62286a2584f1923.rlib --extern regex=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libregex-143ef4a17e2e5f75.rlib --extern rustc_hash=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/librustc_hash-475025c22853c846.rlib --extern smallvec=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libsmallvec-aef4c19c0cf1c118.rlib -L native=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/build/alloca-02cacc78a7329cb4/out`
+     Running `/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/rustc --crate-name smoke --edition=2021 examples/smoke.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --crate-type bin --emit=dep-info,link -C embed-bitcode=no '--warn=clippy::perf' '--warn=clippy::use_self' '--warn=clippy::unused_peekable' --warn=unsafe_code --warn=unexpected_cfgs '--warn=clippy::undocumented_unsafe_blocks' '--warn=clippy::transmute_ptr_to_ptr' '--warn=clippy::redundant_clone' '--warn=clippy::or_fun_call' '--warn=clippy::equatable_if_let' '--warn=clippy::derive_partial_eq_without_eq' '--warn=clippy::branches_sharing_code' --check-cfg 'cfg(kani)' --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values("dhat-heap"))' -C metadata=9e01bfaade60c5a3 -C extra-filename=-4836a85ebcf42562 --out-dir /private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/examples -C incremental=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/incremental -C strip=debuginfo -L dependency=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps --extern arc_swap=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libarc_swap-8dc94c7baf7d6503.rlib --extern cargo_husky=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libcargo_husky-959d622cb0e854bd.rlib --extern criterion=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libcriterion-5d01252276bfc921.rlib --extern dhat=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libdhat-be327f7d283e6040.rlib --extern fast_float2=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libfast_float2-ab4bcc5370fb9d9d.rlib --extern flate2=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libflate2-770fd3ea371cf479.rlib --extern memchr=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libmemchr-fad7cfa0ce919f3e.rlib --extern parking_lot=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libparking_lot-ea040230acb2cfe8.rlib --extern quamina=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libquamina-28509fa74a3a2eed.rlib --extern rand=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/librand-d62286a2584f1923.rlib --extern regex=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libregex-143ef4a17e2e5f75.rlib --extern rustc_hash=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/librustc_hash-475025c22853c846.rlib --extern smallvec=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libsmallvec-aef4c19c0cf1c118.rlib -L native=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/build/alloca-02cacc78a7329cb4/out`
+     Running `/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/rustc --crate-name profile_pathological --edition=2021 examples/profile_pathological.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --crate-type bin --emit=dep-info,link -C embed-bitcode=no '--warn=clippy::perf' '--warn=clippy::use_self' '--warn=clippy::unused_peekable' --warn=unsafe_code --warn=unexpected_cfgs '--warn=clippy::undocumented_unsafe_blocks' '--warn=clippy::transmute_ptr_to_ptr' '--warn=clippy::redundant_clone' '--warn=clippy::or_fun_call' '--warn=clippy::equatable_if_let' '--warn=clippy::derive_partial_eq_without_eq' '--warn=clippy::branches_sharing_code' --check-cfg 'cfg(kani)' --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values("dhat-heap"))' -C metadata=4ab4091f48300c18 -C extra-filename=-6843d868e4b50205 --out-dir /private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/examples -C incremental=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/incremental -C strip=debuginfo -L dependency=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps --extern arc_swap=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libarc_swap-8dc94c7baf7d6503.rlib --extern cargo_husky=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libcargo_husky-959d622cb0e854bd.rlib --extern criterion=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libcriterion-5d01252276bfc921.rlib --extern dhat=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libdhat-be327f7d283e6040.rlib --extern fast_float2=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libfast_float2-ab4bcc5370fb9d9d.rlib --extern flate2=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libflate2-770fd3ea371cf479.rlib --extern memchr=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libmemchr-fad7cfa0ce919f3e.rlib --extern parking_lot=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libparking_lot-ea040230acb2cfe8.rlib --extern quamina=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libquamina-28509fa74a3a2eed.rlib --extern rand=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/librand-d62286a2584f1923.rlib --extern regex=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libregex-143ef4a17e2e5f75.rlib --extern rustc_hash=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/librustc_hash-475025c22853c846.rlib --extern smallvec=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libsmallvec-aef4c19c0cf1c118.rlib -L native=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/build/alloca-02cacc78a7329cb4/out`
+     Running `/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/rustc --crate-name profile_shellstyle --edition=2021 examples/profile_shellstyle.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --crate-type bin --emit=dep-info,link -C embed-bitcode=no '--warn=clippy::perf' '--warn=clippy::use_self' '--warn=clippy::unused_peekable' --warn=unsafe_code --warn=unexpected_cfgs '--warn=clippy::undocumented_unsafe_blocks' '--warn=clippy::transmute_ptr_to_ptr' '--warn=clippy::redundant_clone' '--warn=clippy::or_fun_call' '--warn=clippy::equatable_if_let' '--warn=clippy::derive_partial_eq_without_eq' '--warn=clippy::branches_sharing_code' --check-cfg 'cfg(kani)' --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values("dhat-heap"))' -C metadata=b090ced4cf867fae -C extra-filename=-f05994167a64dd15 --out-dir /private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/examples -C incremental=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/incremental -C strip=debuginfo -L dependency=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps --extern arc_swap=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libarc_swap-8dc94c7baf7d6503.rlib --extern cargo_husky=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libcargo_husky-959d622cb0e854bd.rlib --extern criterion=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libcriterion-5d01252276bfc921.rlib --extern dhat=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libdhat-be327f7d283e6040.rlib --extern fast_float2=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libfast_float2-ab4bcc5370fb9d9d.rlib --extern flate2=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libflate2-770fd3ea371cf479.rlib --extern memchr=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libmemchr-fad7cfa0ce919f3e.rlib --extern parking_lot=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libparking_lot-ea040230acb2cfe8.rlib --extern quamina=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libquamina-28509fa74a3a2eed.rlib --extern rand=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/librand-d62286a2584f1923.rlib --extern regex=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libregex-143ef4a17e2e5f75.rlib --extern rustc_hash=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/librustc_hash-475025c22853c846.rlib --extern smallvec=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libsmallvec-aef4c19c0cf1c118.rlib -L native=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/build/alloca-02cacc78a7329cb4/out`
+    Finished `mutants` profile [unoptimized] target(s) in 0.91s
+  Executable `/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/quamina-137b7d067facf300`
+
+*** result: Success
+
+*** /Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/cargo test --profile=mutants --verbose --package=quamina@0.4.3 --all-targets
+       Fresh cfg-if v1.0.4
+       Fresh unicode-ident v1.0.22
+       Fresh memchr v2.7.6
+       Fresh shlex v1.3.0
+       Fresh autocfg v1.5.0
+       Fresh find-msvc-tools v0.1.9
+       Fresh cc v1.2.55
+       Fresh itoa v1.0.17
+       Fresh simd-adler32 v0.3.8
+       Fresh proc-macro2 v1.0.105
+       Fresh libc v0.2.180
+       Fresh serde_core v1.0.228
+       Fresh crossbeam-utils v0.8.21
+       Fresh zmij v1.0.15
+       Fresh adler2 v2.0.1
+       Fresh smallvec v1.15.1
+       Fresh either v1.15.0
+       Fresh scopeguard v1.2.0
+       Fresh aho-corasick v1.1.4
+       Fresh quote v1.0.43
+       Fresh crossbeam-epoch v0.9.18
+       Fresh serde_json v1.0.149
+       Fresh miniz_oxide v0.8.9
+       Fresh lock_api v0.4.14
+       Fresh parking_lot_core v0.9.12
+       Fresh regex-syntax v0.8.8
+       Fresh anstyle v1.0.13
+       Fresh gimli v0.32.3
+       Fresh clap_lex v0.7.7
+       Fresh ciborium-io v0.2.2
+       Fresh plotters-backend v0.3.7
+       Fresh syn v2.0.114
+       Fresh crossbeam-deque v0.8.6
+       Fresh rand_core v0.10.0
+       Fresh plotters-svg v0.3.7
+       Fresh addr2line v0.25.1
+       Fresh clap_builder v4.5.54
+       Fresh parking_lot v0.12.5
+       Fresh rustversion v1.0.22
+       Fresh regex-automata v0.4.13
+       Fresh itertools v0.13.0
+       Fresh num-traits v0.2.19
+       Fresh object v0.37.3
+       Fresh serde_derive v1.0.228
+       Fresh zerocopy-derive v0.8.33
+       Fresh rayon-core v1.13.0
+       Fresh same-file v1.0.6
+       Fresh cast v0.3.0
+       Fresh rustc-demangle v0.1.27
+       Fresh chacha20 v0.10.0
+       Fresh getrandom v0.4.1
+       Fresh clap v4.5.54
+       Fresh plotters v0.3.7
+       Fresh alloca v0.4.0
+       Fresh regex v1.12.2
+       Fresh arc-swap v1.8.0
+       Fresh zerocopy v0.8.33
+       Fresh serde v1.0.228
+       Fresh backtrace v0.3.76
+       Fresh walkdir v2.5.0
+       Fresh rayon v1.11.0
+       Fresh criterion-plot v0.8.1
+       Fresh crc32fast v1.5.0
+       Fresh page_size v0.6.0
+       Fresh fast-float2 v0.2.3
+       Fresh thousands v0.2.0
+       Fresh lazy_static v1.5.0
+       Fresh rustc-hash v1.1.0
+       Fresh oorandom v11.1.5
+       Fresh anes v0.1.6
+       Fresh half v2.7.1
+       Fresh tinytemplate v1.2.1
+       Fresh rustc-hash v2.1.1
+       Fresh mintex v0.1.4
+       Fresh cargo-husky v1.5.0
+       Fresh flate2 v1.1.8
+       Fresh rand v0.10.0
+       Fresh ciborium-ll v0.2.2
+       Fresh dhat v0.3.3
+       Fresh ciborium v0.2.2
+       Fresh criterion v0.8.1
+       Dirty quamina v0.4.3 (/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp): the dependency quamina was rebuilt (1773797795.562622332s, 1m 1s after last build at 1773797734.652309938s)
+   Compiling quamina v0.4.3 (/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp)
+     Running `/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/rustc --crate-name profile_citylots --edition=2021 examples/profile_citylots.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --emit=dep-info,link -C embed-bitcode=no '--warn=clippy::perf' '--warn=clippy::use_self' '--warn=clippy::unused_peekable' --warn=unsafe_code --warn=unexpected_cfgs '--warn=clippy::undocumented_unsafe_blocks' '--warn=clippy::transmute_ptr_to_ptr' '--warn=clippy::redundant_clone' '--warn=clippy::or_fun_call' '--warn=clippy::equatable_if_let' '--warn=clippy::derive_partial_eq_without_eq' '--warn=clippy::branches_sharing_code' --check-cfg 'cfg(kani)' --test --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values("dhat-heap"))' -C metadata=9379508d92a0fd03 -C extra-filename=-f551dbd7e79bed79 --out-dir /private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/examples -C incremental=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/incremental -C strip=debuginfo -L dependency=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps --extern arc_swap=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libarc_swap-8dc94c7baf7d6503.rlib --extern cargo_husky=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libcargo_husky-959d622cb0e854bd.rlib --extern criterion=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libcriterion-5d01252276bfc921.rlib --extern dhat=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libdhat-be327f7d283e6040.rlib --extern fast_float2=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libfast_float2-ab4bcc5370fb9d9d.rlib --extern flate2=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libflate2-770fd3ea371cf479.rlib --extern memchr=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libmemchr-fad7cfa0ce919f3e.rlib --extern parking_lot=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libparking_lot-ea040230acb2cfe8.rlib --extern quamina=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libquamina-28509fa74a3a2eed.rlib --extern rand=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/librand-d62286a2584f1923.rlib --extern regex=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libregex-143ef4a17e2e5f75.rlib --extern rustc_hash=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/librustc_hash-475025c22853c846.rlib --extern smallvec=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libsmallvec-aef4c19c0cf1c118.rlib -L native=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/build/alloca-02cacc78a7329cb4/out`
+     Running `/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/rustc --crate-name matching --edition=2021 benches/matching.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --emit=dep-info,link -C embed-bitcode=no '--warn=clippy::perf' '--warn=clippy::use_self' '--warn=clippy::unused_peekable' --warn=unsafe_code --warn=unexpected_cfgs '--warn=clippy::undocumented_unsafe_blocks' '--warn=clippy::transmute_ptr_to_ptr' '--warn=clippy::redundant_clone' '--warn=clippy::or_fun_call' '--warn=clippy::equatable_if_let' '--warn=clippy::derive_partial_eq_without_eq' '--warn=clippy::branches_sharing_code' --check-cfg 'cfg(kani)' --cfg test --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values("dhat-heap"))' -C metadata=36a5dd4bf24a2904 -C extra-filename=-55f5e7b21be2df53 --out-dir /private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps -C incremental=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/incremental -C strip=debuginfo -L dependency=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps --extern arc_swap=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libarc_swap-8dc94c7baf7d6503.rlib --extern cargo_husky=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libcargo_husky-959d622cb0e854bd.rlib --extern criterion=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libcriterion-5d01252276bfc921.rlib --extern dhat=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libdhat-be327f7d283e6040.rlib --extern fast_float2=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libfast_float2-ab4bcc5370fb9d9d.rlib --extern flate2=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libflate2-770fd3ea371cf479.rlib --extern memchr=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libmemchr-fad7cfa0ce919f3e.rlib --extern parking_lot=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libparking_lot-ea040230acb2cfe8.rlib --extern quamina=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libquamina-28509fa74a3a2eed.rlib --extern rand=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/librand-d62286a2584f1923.rlib --extern regex=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libregex-143ef4a17e2e5f75.rlib --extern rustc_hash=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/librustc_hash-475025c22853c846.rlib --extern smallvec=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libsmallvec-aef4c19c0cf1c118.rlib -L native=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/build/alloca-02cacc78a7329cb4/out`
+     Running `/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/rustc --crate-name profile_shellstyle --edition=2021 examples/profile_shellstyle.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --emit=dep-info,link -C embed-bitcode=no '--warn=clippy::perf' '--warn=clippy::use_self' '--warn=clippy::unused_peekable' --warn=unsafe_code --warn=unexpected_cfgs '--warn=clippy::undocumented_unsafe_blocks' '--warn=clippy::transmute_ptr_to_ptr' '--warn=clippy::redundant_clone' '--warn=clippy::or_fun_call' '--warn=clippy::equatable_if_let' '--warn=clippy::derive_partial_eq_without_eq' '--warn=clippy::branches_sharing_code' --check-cfg 'cfg(kani)' --test --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values("dhat-heap"))' -C metadata=e4f3c5f0c26b0914 -C extra-filename=-6aaf8d9505430e71 --out-dir /private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/examples -C incremental=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/incremental -C strip=debuginfo -L dependency=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps --extern arc_swap=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libarc_swap-8dc94c7baf7d6503.rlib --extern cargo_husky=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libcargo_husky-959d622cb0e854bd.rlib --extern criterion=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libcriterion-5d01252276bfc921.rlib --extern dhat=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libdhat-be327f7d283e6040.rlib --extern fast_float2=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libfast_float2-ab4bcc5370fb9d9d.rlib --extern flate2=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libflate2-770fd3ea371cf479.rlib --extern memchr=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libmemchr-fad7cfa0ce919f3e.rlib --extern parking_lot=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libparking_lot-ea040230acb2cfe8.rlib --extern quamina=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libquamina-28509fa74a3a2eed.rlib --extern rand=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/librand-d62286a2584f1923.rlib --extern regex=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libregex-143ef4a17e2e5f75.rlib --extern rustc_hash=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/librustc_hash-475025c22853c846.rlib --extern smallvec=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libsmallvec-aef4c19c0cf1c118.rlib -L native=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/build/alloca-02cacc78a7329cb4/out`
+     Running `/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/rustc --crate-name memory --edition=2021 benches/memory.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --emit=dep-info,link -C embed-bitcode=no '--warn=clippy::perf' '--warn=clippy::use_self' '--warn=clippy::unused_peekable' --warn=unsafe_code --warn=unexpected_cfgs '--warn=clippy::undocumented_unsafe_blocks' '--warn=clippy::transmute_ptr_to_ptr' '--warn=clippy::redundant_clone' '--warn=clippy::or_fun_call' '--warn=clippy::equatable_if_let' '--warn=clippy::derive_partial_eq_without_eq' '--warn=clippy::branches_sharing_code' --check-cfg 'cfg(kani)' --cfg test --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values("dhat-heap"))' -C metadata=e43666ab1d726ea7 -C extra-filename=-94c7cd016dd302fd --out-dir /private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps -C incremental=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/incremental -C strip=debuginfo -L dependency=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps --extern arc_swap=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libarc_swap-8dc94c7baf7d6503.rlib --extern cargo_husky=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libcargo_husky-959d622cb0e854bd.rlib --extern criterion=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libcriterion-5d01252276bfc921.rlib --extern dhat=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libdhat-be327f7d283e6040.rlib --extern fast_float2=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libfast_float2-ab4bcc5370fb9d9d.rlib --extern flate2=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libflate2-770fd3ea371cf479.rlib --extern memchr=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libmemchr-fad7cfa0ce919f3e.rlib --extern parking_lot=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libparking_lot-ea040230acb2cfe8.rlib --extern quamina=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libquamina-28509fa74a3a2eed.rlib --extern rand=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/librand-d62286a2584f1923.rlib --extern regex=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libregex-143ef4a17e2e5f75.rlib --extern rustc_hash=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/librustc_hash-475025c22853c846.rlib --extern smallvec=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libsmallvec-aef4c19c0cf1c118.rlib -L native=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/build/alloca-02cacc78a7329cb4/out`
+     Running `/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/rustc --crate-name profile_pathological --edition=2021 examples/profile_pathological.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --emit=dep-info,link -C embed-bitcode=no '--warn=clippy::perf' '--warn=clippy::use_self' '--warn=clippy::unused_peekable' --warn=unsafe_code --warn=unexpected_cfgs '--warn=clippy::undocumented_unsafe_blocks' '--warn=clippy::transmute_ptr_to_ptr' '--warn=clippy::redundant_clone' '--warn=clippy::or_fun_call' '--warn=clippy::equatable_if_let' '--warn=clippy::derive_partial_eq_without_eq' '--warn=clippy::branches_sharing_code' --check-cfg 'cfg(kani)' --test --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values("dhat-heap"))' -C metadata=593a33a3a5e44193 -C extra-filename=-dd244cd3e6984c6e --out-dir /private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/examples -C incremental=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/incremental -C strip=debuginfo -L dependency=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps --extern arc_swap=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libarc_swap-8dc94c7baf7d6503.rlib --extern cargo_husky=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libcargo_husky-959d622cb0e854bd.rlib --extern criterion=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libcriterion-5d01252276bfc921.rlib --extern dhat=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libdhat-be327f7d283e6040.rlib --extern fast_float2=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libfast_float2-ab4bcc5370fb9d9d.rlib --extern flate2=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libflate2-770fd3ea371cf479.rlib --extern memchr=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libmemchr-fad7cfa0ce919f3e.rlib --extern parking_lot=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libparking_lot-ea040230acb2cfe8.rlib --extern quamina=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libquamina-28509fa74a3a2eed.rlib --extern rand=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/librand-d62286a2584f1923.rlib --extern regex=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libregex-143ef4a17e2e5f75.rlib --extern rustc_hash=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/librustc_hash-475025c22853c846.rlib --extern smallvec=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libsmallvec-aef4c19c0cf1c118.rlib -L native=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/build/alloca-02cacc78a7329cb4/out`
+     Running `/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/rustc --crate-name smoke --edition=2021 examples/smoke.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --emit=dep-info,link -C embed-bitcode=no '--warn=clippy::perf' '--warn=clippy::use_self' '--warn=clippy::unused_peekable' --warn=unsafe_code --warn=unexpected_cfgs '--warn=clippy::undocumented_unsafe_blocks' '--warn=clippy::transmute_ptr_to_ptr' '--warn=clippy::redundant_clone' '--warn=clippy::or_fun_call' '--warn=clippy::equatable_if_let' '--warn=clippy::derive_partial_eq_without_eq' '--warn=clippy::branches_sharing_code' --check-cfg 'cfg(kani)' --test --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values("dhat-heap"))' -C metadata=0024f46443f80b14 -C extra-filename=-b622ae32677953bb --out-dir /private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/examples -C incremental=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/incremental -C strip=debuginfo -L dependency=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps --extern arc_swap=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libarc_swap-8dc94c7baf7d6503.rlib --extern cargo_husky=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libcargo_husky-959d622cb0e854bd.rlib --extern criterion=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libcriterion-5d01252276bfc921.rlib --extern dhat=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libdhat-be327f7d283e6040.rlib --extern fast_float2=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libfast_float2-ab4bcc5370fb9d9d.rlib --extern flate2=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libflate2-770fd3ea371cf479.rlib --extern memchr=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libmemchr-fad7cfa0ce919f3e.rlib --extern parking_lot=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libparking_lot-ea040230acb2cfe8.rlib --extern quamina=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libquamina-28509fa74a3a2eed.rlib --extern rand=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/librand-d62286a2584f1923.rlib --extern regex=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libregex-143ef4a17e2e5f75.rlib --extern rustc_hash=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/librustc_hash-475025c22853c846.rlib --extern smallvec=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libsmallvec-aef4c19c0cf1c118.rlib -L native=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/build/alloca-02cacc78a7329cb4/out`
+     Running `/Users/rishibaldawa/.rustup/toolchains/stable-aarch64-apple-darwin/bin/rustc --crate-name bulk_10k --edition=2021 benches/bulk_10k.rs --error-format=json --json=diagnostic-rendered-ansi,artifacts,future-incompat --emit=dep-info,link -C embed-bitcode=no '--warn=clippy::perf' '--warn=clippy::use_self' '--warn=clippy::unused_peekable' --warn=unsafe_code --warn=unexpected_cfgs '--warn=clippy::undocumented_unsafe_blocks' '--warn=clippy::transmute_ptr_to_ptr' '--warn=clippy::redundant_clone' '--warn=clippy::or_fun_call' '--warn=clippy::equatable_if_let' '--warn=clippy::derive_partial_eq_without_eq' '--warn=clippy::branches_sharing_code' --check-cfg 'cfg(kani)' --cfg test --check-cfg 'cfg(docsrs,test)' --check-cfg 'cfg(feature, values("dhat-heap"))' -C metadata=9f5b1c8138038d52 -C extra-filename=-c55937e16f51c58a --out-dir /private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps -C incremental=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/incremental -C strip=debuginfo -L dependency=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps --extern arc_swap=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libarc_swap-8dc94c7baf7d6503.rlib --extern cargo_husky=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libcargo_husky-959d622cb0e854bd.rlib --extern criterion=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libcriterion-5d01252276bfc921.rlib --extern dhat=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libdhat-be327f7d283e6040.rlib --extern fast_float2=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libfast_float2-ab4bcc5370fb9d9d.rlib --extern flate2=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libflate2-770fd3ea371cf479.rlib --extern memchr=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libmemchr-fad7cfa0ce919f3e.rlib --extern parking_lot=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libparking_lot-ea040230acb2cfe8.rlib --extern quamina=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libquamina-28509fa74a3a2eed.rlib --extern rand=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/librand-d62286a2584f1923.rlib --extern regex=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libregex-143ef4a17e2e5f75.rlib --extern rustc_hash=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/librustc_hash-475025c22853c846.rlib --extern smallvec=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/libsmallvec-aef4c19c0cf1c118.rlib -L native=/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/build/alloca-02cacc78a7329cb4/out`
+    Finished `mutants` profile [unoptimized] target(s) in 0.61s
+     Running `/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/quamina-137b7d067facf300`
+
+running 655 tests
+test automaton::arena::merge_tests::test_merge_empty_arenas ... ok
+test automaton::arena::merge_tests::test_merge_one_empty_arena ... ok
+test automaton::arena::anything_but_arena_tests::test_anything_but_arena_fa_empty_excluded ... ok
+test automaton::arena::cidr_arena_tests::test_cidr_arena_fa_ipv4_exact ... ok
+test automaton::arena::cidr_arena_tests::test_cidr_arena_fa_ipv4_range ... ok
+test automaton::arena::anything_but_arena_tests::test_anything_but_arena_fa_common_prefix ... ok
+test automaton::arena::cidr_arena_tests::test_cidr_arena_fa_ipv6_basic ... ok
+test automaton::arena::anything_but_arena_tests::test_anything_but_arena_fa_single_value ... ok
+test automaton::arena::anything_but_arena_tests::test_anything_but_arena_fa_multiple_values ... ok
+test automaton::arena::merge_tests::test_merge_multi_byte_sequences ... ok
+test automaton::arena::anything_but_arena_tests::test_anything_but_arena_fa_merge ... ok
+test automaton::arena::merge_tests::test_merge_overlapping_transitions ... ok
+test automaton::arena::merge_tests::test_merge_preserves_field_transitions ... ok
+test automaton::arena::cidr_arena_tests::test_cidr_arena_fa_merge ... ok
+test automaton::arena::merge_tests::test_merge_multiple_arenas_associative ... ok
+test automaton::arena::merge_tests::test_merge_single_transition ... ok
+test automaton::arena::monocase_arena_tests::test_monocase_arena_fa_basic_ascii ... ok
+test automaton::arena::monocase_arena_tests::test_monocase_arena_fa_empty ... ok
+test automaton::arena::monocase_arena_tests::test_monocase_arena_fa_greek_sigma ... ok
+test automaton::arena::monocase_arena_tests::test_monocase_arena_fa_no_case_chars ... ok
+test automaton::arena::monocase_arena_tests::test_monocase_arena_fa_mixed_ascii ... ok
+test automaton::arena::monocase_arena_tests::test_monocase_arena_fa_single_char ... ok
+test automaton::arena::monocase_arena_tests::test_monocase_arena_fa_three_chars ... ok
+test automaton::arena::monocase_arena_tests::test_monocase_arena_fa_two_chars ... ok
+test automaton::arena::monocase_arena_tests::test_monocase_arena_fa_merge ... ok
+test automaton::arena::nfa_merge_tests::test_merge_arena_nfas_empty_cases ... ok
+test automaton::arena::nfa_merge_tests::test_flatten_epsilon_targets_on_repeated_merge ... ok
+test automaton::arena::nfa_merge_tests::test_merge_arena_both_have_spinouts ... ok
+test automaton::arena::nfa_merge_tests::test_merge_arena_with_epsilons ... ok
+test automaton::arena::nfa_merge_tests::test_merge_arena_shellstyle_patterns ... ok
+test automaton::arena::numeric_arena_tests::test_numeric_arena_fa_float_values ... ok
+test automaton::arena::numeric_arena_tests::test_numeric_arena_fa_edge_cases ... ok
+test automaton::arena::nfa_merge_tests::test_merge_arena_preserves_cycles ... ok
+test automaton::arena::numeric_arena_tests::test_numeric_greater_arena_fa_basic ... ok
+test automaton::arena::numeric_arena_tests::test_numeric_greater_arena_fa_exclusive ... ok
+test automaton::arena::nfa_merge_tests::test_merge_arena_with_spinout ... ok
+test automaton::arena::numeric_arena_tests::test_numeric_less_arena_fa_basic ... ok
+test automaton::arena::numeric_arena_tests::test_numeric_less_arena_fa_exclusive ... ok
+test automaton::arena::numeric_arena_tests::test_numeric_range_arena_fa_exclusive_bounds ... ok
+test automaton::arena::numeric_arena_tests::test_numeric_range_arena_fa_two_sided ... ok
+test automaton::arena::prefix_arena_tests::test_prefix_arena_fa_basic ... ok
+test automaton::arena::prefix_arena_tests::test_prefix_arena_fa_empty_prefix ... ok
+test automaton::arena::prefix_arena_tests::test_prefix_arena_fa_single_char ... ok
+test automaton::arena::prefix_arena_tests::test_prefix_arena_fa_utf8 ... ok
+test automaton::arena::numeric_arena_tests::test_numeric_arena_fa_merge ... ok
+test automaton::arena::prefix_arena_tests::test_prefix_arena_fa_merge ... ok
+test automaton::arena::shellstyle_arena_tests::test_shellstyle_arena_fa_double_wildcard ... ok
+test automaton::arena::shellstyle_arena_tests::test_shellstyle_arena_fa_eight_star ... ok
+test automaton::arena::shellstyle_arena_tests::test_shellstyle_arena_fa_foo_bar_multi_star ... ok
+test automaton::arena::shellstyle_arena_tests::test_shellstyle_arena_fa_infix_wildcard ... ok
+test automaton::arena::shellstyle_arena_tests::test_shellstyle_arena_fa_only_wildcard ... ok
+test automaton::arena::shellstyle_arena_tests::test_shellstyle_arena_fa_five_star ... ok
+test automaton::arena::shellstyle_arena_tests::test_shellstyle_arena_fa_no_wildcard ... ok
+test automaton::arena::shellstyle_arena_tests::test_shellstyle_arena_fa_prefix_wildcard ... ok
+test automaton::arena::shellstyle_arena_tests::test_shellstyle_arena_fa_merge ... ok
+test automaton::arena::string_arena_tests::test_string_arena_fa_basic ... ok
+test automaton::arena::string_arena_tests::test_string_arena_fa_empty_string ... ok
+test automaton::arena::shellstyle_arena_tests::test_shellstyle_arena_fa_suffix_wildcard ... ok
+test automaton::arena::string_arena_tests::test_string_arena_fa_single_char ... ok
+test automaton::arena::tests::test_arena_alloc ... ok
+test automaton::arena::string_arena_tests::test_string_arena_fa_utf8 ... ok
+test automaton::arena::tests::test_arena_cyclic_reference ... ok
+test automaton::arena::string_arena_tests::test_string_arena_fa_merge ... ok
+test automaton::arena::tests::test_arena_small_table_pack ... ok
+test automaton::arena::cidr_arena_tests::test_cidr_arena_fa_ipv4_24 ... ok
+test automaton::arena::tests::test_arena_state_count_vs_chain ... ok
+test automaton::arena::tests::test_arena_stats_empty ... ok
+test automaton::arena::tests::test_arena_stats_basic ... ok
+test automaton::arena::tests::test_ascii_fast_path_acceleration ... ok
+test automaton::arena::tests::test_state_id_none ... ok
+test automaton::arena::numeric_arena_tests::test_numeric_arena_fa_ordering_preserved ... ok
+test automaton::arena::tests::test_traverse_arena_nfa_simple ... ok
+test automaton::arena::tests::test_dfa_lookup_matches_smalltable_dstep ... ok
+test automaton::arena::tests::test_nested_quantifier_dedup ... ok
+test automaton::arena::tests::test_try_accelerate_arena ... ok
+test automaton::arena::tests::test_traverse_arena_nfa_plus_cyclic ... ok
+test automaton::arena::tests::test_traverse_arena_nfa_star_cyclic ... ok
+test automaton::arena::wildcard_arena_tests::test_wildcard_arena_fa_basic ... ok
+test automaton::arena::wildcard_arena_tests::test_wildcard_arena_fa_escape_backslash ... ok
+test automaton::arena::wildcard_arena_tests::test_wildcard_arena_fa_escape_star ... ok
+test automaton::arena::wildcard_arena_tests::test_wildcard_arena_fa_escape_with_wildcard ... ok
+test automaton::arena::wildcard_arena_tests::test_wildcard_arena_fa_no_escape ... ok
+test automaton::arena::wildcard_arena_tests::test_wildcard_arena_fa_star_at_end_with_escape ... ok
+test automaton::arena::string_arena_tests::test_string_arena_fa_merge_common_prefix ... ok
+test automaton::arena::wildcard_arena_tests::test_wildcard_arena_fa_merge ... ok
+test automaton::mutable_matcher::tests::test_add_numeric_has_numbers_flag ... ok
+test automaton::mutable_matcher::tests::test_add_numeric_transition ... ok
+test automaton::mutable_matcher::tests::test_add_prefix_transition ... ok
+test automaton::mutable_matcher::tests::test_add_string_transition_basic ... ok
+test automaton::mutable_matcher::tests::test_add_string_transition_singleton_opt ... ok
+test automaton::mutable_matcher::tests::test_add_string_transitions_bulk ... ok
+test automaton::mutable_matcher::tests::test_add_prefix_multiple_patterns ... ok
+test automaton::mutable_matcher::tests::test_add_suffix_multiple_patterns ... ok
+test automaton::mutable_matcher::tests::test_add_suffix_transition ... ok
+test automaton::mutable_matcher::tests::test_arena_migration_anything_but ... ok
+test automaton::mutable_matcher::tests::test_add_wildcard_transition ... ok
+test automaton::mutable_matcher::tests::test_arena_migration_monocase ... ok
+test automaton::mutable_matcher::tests::test_arena_migration_numeric_range ... ok
+test automaton::mutable_matcher::tests::test_arena_migration_prefix ... ok
+test automaton::mutable_matcher::tests::test_arena_migration_string_single ... ok
+test automaton::mutable_matcher::tests::test_arena_migration_string_multiple ... ok
+test automaton::mutable_matcher::tests::test_budget_enforcement_via_matching ... ok
+test automaton::mutable_matcher::tests::test_arena_migration_shellstyle ... ok
+test automaton::mutable_matcher::tests::test_check_budget_via_patterns ... ok
+test automaton::mutable_matcher::tests::test_arena_migration_wildcard_escape ... ok
+test automaton::mutable_matcher::tests::test_core_matcher_array_trail_conflict ... ok
+test automaton::mutable_matcher::tests::test_check_budget_boundary_condition ... ok
+test automaton::mutable_matcher::tests::test_core_matcher_direct_array_trail_conflict ... ok
+test automaton::mutable_matcher::tests::test_core_matcher_direct_exists_false ... ok
+test automaton::mutable_matcher::tests::test_core_matcher_direct_multi_field ... ok
+test automaton::mutable_matcher::tests::test_arena_migration_mixed_patterns ... ok
+test automaton::mutable_matcher::tests::test_arena_migration_core_matcher_all_types ... ok
+test automaton::mutable_matcher::tests::test_core_matcher_exists_true_no_self_match_direct ... ok
+test automaton::mutable_matcher::tests::test_core_matcher_exists_true_no_self_match_owned ... ok
+test automaton::mutable_matcher::tests::test_core_matcher_exists_true_no_self_match_ref ... ok
+test automaton::mutable_matcher::tests::test_core_matcher_multi_field_owned ... ok
+test automaton::mutable_matcher::tests::test_core_matcher_no_self_match_direct ... ok
+test automaton::mutable_matcher::tests::test_core_matcher_no_self_match_owned ... ok
+test automaton::mutable_matcher::tests::test_core_matcher_no_self_match_ref ... ok
+test automaton::mutable_matcher::tests::test_core_matcher_ref_array_trail_conflict ... ok
+test automaton::mutable_matcher::tests::test_core_matcher_ref_exists_false ... ok
+test automaton::mutable_matcher::tests::test_core_matcher_direct_with_arena_regexp ... ok
+test automaton::mutable_matcher::tests::test_core_matcher_ref_multi_field ... ok
+test automaton::mutable_matcher::tests::test_match_set_dedup ... ok
+test automaton::mutable_matcher::tests::test_core_matcher_with_arena_regexp ... ok
+test automaton::mutable_matcher::tests::test_take_singleton_idempotent ... ok
+test automaton::mutable_matcher::tests::test_quote_wrap_via_shellstyle ... ok
+test automaton::mutable_matcher::tests::test_quote_wrap_via_wildcard ... ok
+test automaton::sparse_set::tests::test_sparse_set_basic ... ok
+test automaton::mutable_matcher::tests::test_value_matcher_regexp_without_plus ... ok
+test automaton::sparse_set::tests::test_sparse_set_clear ... ok
+test automaton::sparse_set::tests::test_sparse_set_insertion_order ... ok
+test automaton::sparse_set::tests::test_sparse_set_resize ... ok
+test automaton::mutable_matcher::tests::test_merge_into_main_arena_via_patterns ... ok
+test automaton::mutable_matcher::tests::test_value_matcher_regexp_with_plus ... ok
+test automaton::tests::test_arena_small_table_step ... ok
+test automaton::tests::test_arena_nfa_bufs_clear_observable_through_matching ... ok
+test automaton::tests::test_arena_small_table_with_mappings ... ok
+test automaton::mutable_matcher::tests::test_singleton_to_arena_transition ... ok
+test automaton::tests::test_core_matcher_exists_false ... ok
+test automaton::tests::test_automaton_value_matcher_shellstyle_single ... ok
+test automaton::tests::test_automaton_value_matcher_mixed ... ok
+test automaton::tests::test_core_matcher_exists_true ... ok
+test automaton::tests::test_automaton_value_matcher_prefix ... ok
+test automaton::tests::test_core_matcher_multi_field_and ... ok
+test automaton::tests::test_automaton_value_matcher_shellstyle_multiple ... ok
+test automaton::tests::test_core_matcher_multi_field_partial_no_match ... ok
+test automaton::tests::test_automaton_value_matcher_string ... ok
+test automaton::tests::test_core_matcher_single_field_exact ... ok
+test automaton::tests::test_core_matcher_multiple_patterns ... ok
+test automaton::tests::test_core_matcher_single_field_no_match ... ok
+test automaton::tests::test_field_matcher_with_match_id_stores_id ... ok
+test automaton::tests::test_core_matcher_or_within_field ... ok
+test automaton::tests::test_field_matcher_with_match_id_vs_default ... ok
+test automaton::tests::test_nfa_buffers_clear ... ok
+test automaton::tests::test_sparse_set_capacity_returns_correct_value ... ok
+test automaton::tests::test_sparse_set_clear_is_effective ... ok
+test automaton::tests::test_sparse_set_contains_after_multiple_inserts ... ok
+test automaton::tests::test_sparse_set_contains_correctness ... ok
+test automaton::tests::test_sparse_set_contains_cross_check ... ok
+test automaton::tests::test_sparse_set_contains_rejects_uninserted_id ... ok
+test automaton::mutable_matcher::tests::test_arena_migration_cidr_v4 ... ok
+test automaton::tests::test_sparse_set_contains_single_element ... ok
+test automaton::tests::test_sparse_set_fill_to_capacity ... ok
+test automaton::tests::test_sparse_set_insert_after_clear_correctness ... ok
+test automaton::tests::test_sparse_set_insert_increments_len ... ok
+test automaton::tests::test_sparse_set_insert_return_value ... ok
+test automaton::tests::test_sparse_set_no_stale_entries_after_clear ... ok
+test automaton::tests::test_sparse_set_non_zero_ids_only ... ok
+test automaton::tests::test_thread_safe_core_matcher_exists_false ... ok
+test automaton::tests::test_thread_safe_core_matcher_exists_true ... ok
+test automaton::tests::test_thread_safe_core_matcher_no_match ... ok
+test automaton::tests::test_thread_safe_core_matcher_send_sync ... ok
+test automaton::tests::test_thread_safe_core_matcher_single_field ... ok
+test automaton::thread_safe::tests::test_add_pattern_exists_true ... ok
+test automaton::mutable_matcher::tests::test_merge_into_main_arena_boundary ... ok
+test automaton::thread_safe::tests::test_add_pattern_max_states_limit ... ok
+test automaton::tests::test_thread_safe_core_matcher_multiple_patterns ... ok
+test automaton::thread_safe::tests::test_arena_stats_non_zero ... ok
+test automaton::thread_safe::tests::test_matches_for_fields_array_trail_conflict ... ok
+test automaton::thread_safe::tests::test_matches_for_fields_ref_exists_false ... ok
+test automaton::thread_safe::tests::test_automaton_value_matcher_prefix_match ... ok
+test automaton::thread_safe::tests::test_matches_for_fields_ref_exists_false_with_value ... ok
+test automaton::thread_safe::tests::test_automaton_value_matcher_multi_count ... ok
+test automaton::thread_safe::tests::test_thread_safe_core_matcher_basic ... ok
+test automaton::thread_safe::tests::test_automaton_value_matcher_string_match ... ok
+test automaton::thread_safe::tests::test_tsm_exists_false_direct ... ok
+test automaton::thread_safe::tests::test_tsm_exists_true_no_self_match_direct ... ok
+test automaton::thread_safe::tests::test_tsm_exists_true_no_self_match_owned ... ok
+test automaton::thread_safe::tests::test_automaton_value_matcher_shellstyle_match ... ok
+test automaton::thread_safe::tests::test_tsm_exists_true_no_self_match_ref ... ok
+test automaton::thread_safe::tests::test_tsm_multi_field_direct ... ok
+test automaton::thread_safe::tests::test_tsm_multi_field_owned ... ok
+test automaton::thread_safe::tests::test_tsm_multi_field_ref ... ok
+test automaton::thread_safe::tests::test_tsm_no_self_match_direct ... ok
+test automaton::thread_safe::tests::test_tsm_no_self_match_owned ... ok
+test automaton::thread_safe::tests::transitions_size_must_stay_compact ... ok
+test automaton::thread_safe::tests::test_tsm_no_self_match_ref ... ok
+test case_folding::tests::test_ascii_case_folding ... ok
+test case_folding::tests::test_case_folding_bidirectional ... ok
+test case_folding::tests::test_old_hungarian_case_folding ... ok
+test case_folding::tests::test_unicode_case_folding ... ok
+test flatten_json::tests::test_array_simple ... ok
+test flatten_json::tests::test_early_termination ... ok
+test flatten_json::tests::test_empty_object ... ok
+test flatten_json::tests::test_error_invalid_json_structure ... ok
+test flatten_json::tests::test_error_invalid_nested_object ... ok
+test flatten_json::tests::test_error_invalid_value ... ok
+test flatten_json::tests::test_error_skipping_never_ending_string ... ok
+test flatten_json::tests::test_error_truncated_array ... ok
+test flatten_json::tests::test_error_truncated_object ... ok
+test flatten_json::tests::test_error_truncated_string ... ok
+test flatten_json::tests::test_escape_sequences ... ok
+test flatten_json::tests::test_nested_object ... ok
+test flatten_json::tests::test_number_value ... ok
+test flatten_json::tests::test_simple_object ... ok
+test flatten_json::tests::test_skip_array ... ok
+test flatten_json::tests::test_skip_nested_object ... ok
+test flatten_json::tests::test_skips_unused_fields ... ok
+test flatten_json::tests::test_state_reuse ... ok
+test flatten_json::tests::test_trailing_garbage_after_close_brace ... ok
+test flatten_json::tests::test_unicode_escape ... ok
+test flatten_json::tests::test_whitespace_before_opening_brace ... ok
+test flattener::tests::test_owned_field ... ok
+test flattener::tests::test_segments_tree_tracker_impl ... ok
+test numbits::tests::test_bad_numbers ... ok
+test numbits::tests::test_byte_variants ... ok
+test numbits::tests::test_encoding_with_zero_numbits ... ok
+test numbits::tests::test_float_variants ... ok
+test numbits::tests::test_numbits_ordering_property ... ok
+test numbits::tests::test_q_number_length ... ok
+test numbits::tests::test_ordering_random_miri_friendly ... ok
+test numbits::tests::test_q_number_stack_is_empty_synthetic ... ok
+test numbits::tests::test_q_number_stack_len_matches_slice ... ok
+test numbits::tests::test_q_number_stack_length ... ok
+test numbits::tests::test_q_number_variants_equivalence ... ok
+test numbits::tests::test_wildly_varying_numbers_are_comparable ... ok
+test numbits::tests::test_q_number_variants_random ... ok
+test numbits::tests::test_zero_handling ... ok
+test regexp::parser::tests::test_detect_ascii_negated_bytes_mixed ... ok
+test regexp::parser::tests::test_detect_ascii_negated_bytes_multiple_chars ... ok
+test regexp::parser::tests::test_detect_ascii_negated_bytes_non_ascii ... ok
+test regexp::parser::tests::test_detect_ascii_negated_bytes_range ... ok
+test regexp::parser::tests::test_detect_ascii_negated_bytes_single_char ... ok
+test regexp::parser::tests::test_detect_ascii_negated_bytes_too_many ... ok
+test regexp::parser::tests::test_lookaround_type_classification ... ok
+test regexp::parser::tests::test_parse_negated_char_class_stores_ascii_bytes ... ok
+test regexp::parser::tests::test_parse_negated_quote_class ... ok
+test regexp::parser::tests::test_parse_negated_slash_class ... ok
+test regexp::parser::tests::test_parse_negated_unicode_class_no_ascii_bytes ... ok
+test regexp::parser::tests::test_parse_non_negated_class_no_ascii_bytes ... ok
+test regexp::parser::tests::test_quantifier_detection ... ok
+test regexp::parser::tests::test_wb_dot_star_expansion ... ok
+test regexp::parser::tests::test_wb_impossible_boundary_empty_tree ... ok
+test regexp::parser::tests::test_wb_parse_boundary_marker ... ok
+test regexp::parser::tests::test_wb_middle_boundary_expansion ... ok
+test regexp::tests::test_arena_nfa_plus_simple ... ok
+test regexp::tests::test_backreferences_not_supported ... ok
+test regexp::tests::test_arena_nfa_email_pattern ... ok
+test regexp::tests::test_invert_rune_range ... ok
+test regexp::tests::test_clear_fa_shell_cache_works ... ok
+test regexp::tests::test_lookaround_atom_properties ... ok
+test regexp::tests::test_multi_char_escapes_in_class ... ok
+test regexp::tests::test_multi_char_escapes_parse ... ok
+test regexp::tests::test_multi_char_escape_with_quantifier ... ok
+test regexp::tests::test_multi_char_escapes_nfa ... ok
+test regexp::tests::test_nfa_empty_pattern ... ok
+test regexp::tests::test_nfa_plus_quantifier ... ok
+test regexp::tests::test_nfa_positive_class_miri_friendly ... ok
+test regexp::tests::test_nfa_range_bounded ... ok
+test regexp::tests::test_nfa_range_exact ... ok
+test regexp::tests::test_nfa_range_with_class ... ok
+test regexp::tests::test_arena_nfa_star_plus_miri_friendly ... ok
+test regexp::tests::test_nfa_range_zero_min ... ok
+test regexp::tests::test_nfa_simple_singleton ... ok
+test regexp::tests::test_parse_alternation ... ok
+test regexp::tests::test_nfa_star_quantifier ... ok
+test regexp::tests::test_parse_char_class ... ok
+test regexp::tests::test_parse_char_class_subtraction ... ok
+test regexp::tests::test_parse_char_class_subtraction_alternation ... ok
+test regexp::tests::test_parse_char_class_subtraction_depth_limit ... ok
+test regexp::tests::test_parse_char_class_subtraction_negated_inner ... ok
+test regexp::tests::test_parse_char_class_subtraction_negated_subtract ... ok
+test regexp::tests::test_parse_char_class_subtraction_nested ... ok
+test regexp::tests::test_parse_char_class_subtraction_no_overlap ... ok
+test regexp::tests::test_parse_char_class_subtraction_single_chars_before_bracket ... ok
+test regexp::tests::test_parse_char_class_subtraction_single_result ... ok
+test regexp::tests::test_parse_char_class_subtraction_with_negated_outer ... ok
+test regexp::tests::test_parse_char_range ... ok
+test regexp::tests::test_parse_dot ... ok
+test regexp::tests::test_parse_empty ... ok
+test regexp::tests::test_parse_group ... ok
+test regexp::tests::test_parse_invalid_unclosed_bracket ... ok
+test regexp::tests::test_parse_lazy_quantifiers ... ok
+test regexp::tests::test_parse_lookaround_supported ... ok
+test regexp::tests::test_parse_negated_class ... ok
+test regexp::tests::test_parse_nested_lookaround_rejected ... ok
+test regexp::tests::test_parse_non_capturing_group ... ok
+test regexp::tests::test_parse_non_capturing_nested ... ok
+test regexp::tests::test_parse_optional ... ok
+test regexp::tests::test_parse_plus ... ok
+test regexp::tests::test_parse_range_quantifier ... ok
+test regexp::tests::test_parse_simple ... ok
+test regexp::tests::test_parse_star ... ok
+test regexp::tests::test_parse_unsupported_group_extension ... ok
+test regexp::tests::test_parse_variable_length_lookbehind_rejected ... ok
+test regexp::tests::test_range_quantifier_equivalence_plus ... ok
+test regexp::tests::test_range_quantifier_equivalence_miri_friendly ... ok
+test regexp::tests::test_range_quantifier_equivalence_question ... ok
+test regexp::tests::test_range_quantifier_exact_zero ... ok
+test regexp::tests::test_range_quantifier_equivalence_star ... ok
+test regexp::tests::test_range_quantifier_exact_one ... ok
+test regexp::tests::test_range_quantifier_parse_errors ... ok
+test regexp::tests::test_regexp_has_plus_star_returns_false ... ok
+test regexp::tests::test_range_quantifier_larger_values ... ok
+test regexp::tests::test_range_quantifier_with_group ... ok
+test regexp::tests::test_range_quantifier_with_dot ... ok
+test regexp::tests::test_shell_caching_cache_key ... ok
+test regexp::tests::test_shell_caching_xml_escape_cache_keys ... ok
+test regexp::tests::test_simplify_rune_range ... ok
+test regexp::tests::test_shell_instantiation_with_epsilons ... ok
+test regexp::tests::test_subtract_rune_range_complete_overlap ... ok
+test regexp::tests::test_subtract_rune_range_basic ... ok
+test regexp::tests::test_star_matches_empty_miri_friendly ... ok
+test regexp::tests::test_subtract_rune_range_empty_subtract ... ok
+test regexp::tests::test_star_matches_empty ... ok
+test regexp::tests::test_subtract_rune_range_multiple_holes ... ok
+test regexp::tests::test_subtract_rune_range_no_overlap ... ok
+test regexp::tests::test_subtract_rune_range_prefix_removal ... ok
+test regexp::tests::test_subtract_rune_range_suffix_removal ... ok
+test regexp::tests::test_toxic_stack_arena ... ok
+test segments_tree::tests::test_both_field_and_node ... ok
+test regexp::tests::test_zero_quantifier ... ok
+test segments_tree::tests::test_duplicate_add ... ok
+test segments_tree::tests::test_is_root ... ok
+test segments_tree::tests::test_multiple_paths ... ok
+test segments_tree::tests::test_nested_path ... ok
+test segments_tree::tests::test_node_then_field ... ok
+test segments_tree::tests::test_path_arc_for_segment ... ok
+test segments_tree::tests::test_single_field ... ok
+test tests_core::test_and_across_fields ... ok
+test tests_core::test_arena_budget_enforced_on_repeated_exact_strings ... ok
+test tests_core::test_arena_budget_custom ... ok
+test tests_core::test_arena_budget_exceeded ... ok
+test tests_core::test_arena_error_includes_bytes ... ok
+test tests_core::test_array_cross_element_matching ... ok
+test tests_core::test_arena_budget_sufficient ... ok
+test tests_core::test_array_cross_element_comprehensive ... ok
+test tests_core::test_array_element_matching ... ok
+test tests_core::test_bad_event_error_handling ... ok
+test tests_core::test_auto_rebuild_disabled_miri_friendly ... ok
+test tests_core::test_bad_pattern_error_handling ... ok
+test tests_core::test_boolean_match ... ok
+test tests_core::test_builder_basic ... ok
+test tests_core::test_builder_default ... ok
+test tests_core::test_builder_combined_options ... ok
+test numbits::tests::test_ordering_random ... ok
+test tests_core::test_builder_with_auto_rebuild ... ok
+test tests_core::test_builder_generic_type ... ok
+test tests_core::test_builder_with_arena_byte_budget_is_applied ... ok
+test tests_core::test_builder_with_auto_rebuild_is_applied ... ok
+test tests_core::test_builder_with_flattener_blocks_second_call ... ok
+test tests_core::test_builder_with_flattener_is_used ... ok
+test tests_core::test_builder_with_invalid_media_type ... ok
+test tests_core::test_builder_with_max_fields_per_pattern_is_applied ... ok
+test tests_core::test_builder_with_max_pattern_depth_is_applied ... ok
+test tests_core::test_builder_with_media_type_json ... ok
+test tests_core::test_builder_with_media_type_sets_validated_flag ... ok
+test tests_core::test_builder_with_max_states_per_pattern_is_applied ... ok
+test tests_core::test_condition_cost_ordering ... ok
+test tests_core::test_clone_preserves_arena_budget ... ok
+test tests_core::test_clone_for_snapshot ... ok
+test tests_core::test_contains_pattern_basic ... ok
+test tests_core::test_auto_rebuild_disabled ... ok
+test tests_core::test_contains_pattern_after_delete ... ok
+test tests_core::test_custom_flattener_basic ... ok
+test tests_core::test_custom_flattener_clone ... ok
+test tests_core::test_count_matches ... ok
+test tests_core::test_deeply_nested ... ok
+test tests_core::test_custom_flattener_with_numbers ... ok
+test tests_core::test_custom_flattener_no_match ... ok
+test tests_core::test_delete_already_deleted_pattern_is_noop ... ok
+test tests_core::test_delete_multi_pattern_id_removes_all ... ok
+test tests_core::test_delete_nonexistent_pattern_is_noop ... ok
+test tests_core::test_depth_error_includes_path ... ok
+test tests_core::test_empty_matcher_returns_no_matches ... ok
+test tests_core::test_delete_patterns ... ok
+test tests_core::test_errors_return_pattern_too_complex_variant ... ok
+test tests_core::test_exact_match ... ok
+test tests_core::test_exists_false ... ok
+test tests_core::test_exists_true ... ok
+test tests_core::test_field_count_error_includes_count ... ok
+test tests_core::test_exists_with_empty_array ... ok
+test tests_core::test_flatten_only_returns_field_count ... ok
+test tests_core::test_flatten_only_single_field ... ok
+test tests_core::test_flatten_only_untracked_fields_ignored ... ok
+test tests_core::test_field_name_ordering_with_exists ... ok
+test tests_core::test_default_limits_allow_normal_patterns_miri_friendly ... ok
+test tests_core::test_has_matches ... ok
+test tests_core::test_idempotent_add_and_delete ... ok
+test tests_core::test_invalid_json_events ... ok
+test tests_core::test_invalid_pattern_handling ... ok
+test tests_core::test_json_flattener_through_trait ... ok
+test tests_core::test_list_pattern_ids_basic ... ok
+test tests_core::test_invalid_pattern_validation ... ok
+test tests_core::test_list_pattern_ids_excludes_deleted ... ok
+test tests_core::test_matcher_correct_after_rejected_pattern ... ok
+test tests_core::test_mixed_string_and_number_patterns_same_digits ... ok
+test tests_core::test_multi_condition_pattern_fields ... ok
+test tests_core::test_nested_object_pattern ... ok
+test tests_core::test_mixed_number_and_string_in_same_value_array ... ok
+test tests_core::test_multiple_patterns_same_id ... ok
+test tests_core::test_no_match ... ok
+test tests_core::test_numbits_boundary_values ... ok
+test tests_core::test_null_match ... ok
+test tests_core::test_numeric_match ... ok
+test tests_core::test_numeric_pattern_should_not_match_string_event ... ok
+test tests_core::test_numeric_variant_matching ... ok
+test tests_core::test_pattern_count_and_clear ... ok
+test tests_core::test_or_within_field ... ok
+test tests_core::test_pattern_depth_custom_limit ... ok
+test tests_core::test_pattern_depth_at_limit ... ok
+test tests_core::test_pattern_depth_exceeds_limit ... ok
+test tests_core::test_pattern_depth_shallow_ok ... ok
+test tests_core::test_pattern_fields_at_limit_miri_friendly ... ok
+test tests_core::test_pattern_fields_custom_limit ... ok
+test tests_core::test_pattern_fields_exceeds_limit ... ok
+test tests_core::test_numbits_to_qnumber_utf8 ... ok
+test tests_core::test_pruner_stats_clone ... ok
+test tests_core::test_pruner_stats ... ok
+test tests_core::test_pruner_stats_clone_preserves_values ... ok
+test tests_core::test_pruner_stats_unit_add_and_read ... ok
+test tests_core::test_rebuild_after_delete ... ok
+test tests_core::test_rebuild_zero_filtered_denominator ... ok
+test tests_core::test_send_sync ... ok
+test tests_core::test_pattern_fields_at_limit ... ok
+test tests_core::test_same_pattern_id_multiple_value_types ... ok
+test tests_core::test_should_rebuild_boundary ... ok
+test tests_core::test_should_rebuild_boundary_cases ... ok
+test tests_core::test_default_limits_allow_normal_patterns ... ok
+test tests_core::test_string_number_type_distinction ... ok
+test tests_core::test_state_limit_default_allows_normal_patterns ... ok
+test tests_core::test_with_flattener_cannot_be_set_twice ... ok
+test tests_core::test_with_flattener_conflicts_with_media_type ... ok
+test tests_core::test_should_rebuild_threshold ... ok
+test tests_core::test_state_limit_exceeded ... ok
+test tests_core::test_zero_states_panics - should panic ... ok
+test tests_core::test_zero_budget_panics - should panic ... ok
+test tests_core::test_zero_depth_panics - should panic ... ok
+test tests_core::test_zero_fields_panics - should panic ... ok
+test tests_operators::test_anything_but ... ok
+test tests_operators::test_anything_but_numeric ... ok
+test tests_operators::test_anything_but_numeric_array ... ok
+test tests_operators::test_anything_but_numeric_float ... ok
+test tests_operators::test_anything_but_numeric_single ... ok
+test tests_operators::test_anything_but_prefix_relationship ... ok
+test tests_operators::test_anything_but_validation ... ok
+test tests_operators::test_anything_but_single_string ... ok
+test tests_operators::test_anything_but_with_exact_match ... ok
+test tests_operators::test_anything_but_with_overlapping_exclusions ... ok
+test tests_operators::test_cidr_invalid_patterns ... ok
+test tests_operators::test_anything_but_with_shellstyle ... ok
+test tests_operators::test_cidr_ipv4_prefix_mask_boundary ... ok
+test tests_core::test_arena_stats_workloads ... ok
+test tests_operators::test_cidr_ipv6_basic ... ok
+test tests_operators::test_cidr_ipv4_basic ... ok
+test tests_operators::test_cidr_ipv6_double_colon_variations ... ok
+test tests_operators::test_cidr_ipv6_group_limit ... ok
+test tests_operators::test_cidr_ipv6_invalid_formats ... ok
+test tests_operators::test_cidr_ipv6_shorthand ... ok
+test regexp::tests::test_shell_cache_instantiate_epsilon_remap ... ok
+test regexp::tests::test_shell_caching_independent_categories ... ok
+test tests_operators::test_empty_regex_matches_empty_string ... ok
+test regexp::tests::test_shell_caching_nfa_correctness ... ok
+test tests_operators::test_equals_ignore_case ... ok
+test tests_operators::test_cidr_ipv4_prefix_various_lengths ... ok
+test tests_operators::test_equals_ignore_case_length_boundaries ... ok
+test tests_operators::test_equals_ignore_case_unicode ... ok
+test tests_operators::test_equals_ignore_case_multiple_patterns ... ok
+test tests_operators::test_equals_ignore_case_with_exact_match ... ok
+test tests_operators::test_json_all_escape_sequences ... ok
+test tests_operators::test_json_escape_sequences ... ok
+test tests_operators::test_exists_false_ordering ... ok
+test tests_operators::test_exact_added_before_lookahead_on_same_field ... ok
+test tests_operators::test_lookahead_with_exact_on_same_field ... ok
+test tests_operators::test_lookaround_buffer_reuse_no_stale_state_miri_friendly ... ok
+test tests_operators::test_lookaround_multiple_conditions_no_cross_contamination_miri_friendly ... ok
+test tests_operators::test_lookaround_pattern_add_to_quamina ... ok
+test tests_operators::test_lookaround_pattern_parsing ... ok
+test tests_operators::test_lookaround_primary_match ... ok
+test tests_operators::test_lookaround_rejected_patterns ... ok
+test tests_operators::test_lookaround_transformation ... ok
+test tests_operators::test_lookbehind_match ... ok
+test tests_operators::test_lookaround_buffer_reuse_no_stale_state ... ok
+test tests_operators::test_lookaround_multiple_conditions_no_cross_contamination ... ok
+test tests_operators::test_negative_lookahead_match ... ok
+test tests_operators::test_multiple_overlapping_shellstyle_patterns ... ok
+test tests_operators::test_multiple_shellstyle_same_field ... ok
+test tests_operators::test_cidr_non_ip_values ... ok
+test tests_operators::test_anything_but_wordle_words ... ok
+test tests_operators::test_negative_lookbehind_match ... ok
+test tests_operators::test_numeric_equals ... ok
+test tests_operators::test_numeric_greater_than ... ok
+test tests_operators::test_cidr_miri_lightweight ... ok
+test tests_operators::test_numeric_range ... ok
+test tests_operators::test_numeric_scientific_notation ... ok
+test tests_operators::test_nwb_start_nonword ... ok
+test tests_operators::test_nwb_start_word_err ... ok
+test tests_operators::test_nested_transmap_safety_miri_friendly ... ok
+test tests_operators::test_nwb_underscore_is_word_char ... ok
+test tests_operators::test_nwb_word_to_nonword_err ... ok
+test tests_operators::test_nested_transmap_safety ... ok
+test tests_operators::test_nwb_word_to_word ... ok
+test tests_operators::test_prefix_match ... ok
+test tests_operators::test_overlapping_exact_match_patterns ... ok
+test tests_operators::test_positive_lookahead_match ... ok
+test tests_operators::test_regex_character_class ... ok
+test tests_operators::test_regex_alternation ... ok
+test tests_operators::test_cidr_with_other_matchers ... ok
+test tests_operators::test_regex_match ... ok
+test tests_operators::test_regexp_samples_exist ... ok
+test tests_operators::test_overlapping_shellstyle_nesting_miri_friendly ... ok
+test tests_operators::test_regex_with_escape ... ok
+test tests_operators::test_regex_various_patterns ... ok
+test tests_operators::test_overlapping_shellstyle_nesting ... ok
+test tests_operators::test_regexp_simple_optional ... ok
+test tests_operators::test_shellstyle_contains_negative ... ok
+test tests_operators::test_shellstyle_complex_wildcards ... ok
+test tests_operators::test_shellstyle_contains ... ok
+test tests_operators::test_shellstyle_double_wildcard ... ok
+test tests_operators::test_shellstyle_infix ... ok
+test tests_operators::test_shellstyle_duplicate_pattern ... ok
+test tests_operators::test_shellstyle_multiple_wildcards ... ok
+test tests_operators::test_shellstyle_long_case ... ok
+test tests_operators::test_shellstyle_prefix ... ok
+test tests_operators::test_shellstyle_double_wildcard_variations ... ok
+test tests_operators::test_shellstyle_prefix_negative ... ok
+test tests_operators::test_shellstyle_ruler_negative_cases ... ok
+test tests_operators::test_shellstyle_suffix_negative ... ok
+test tests_operators::test_shellstyle_repeated_sequences ... ok
+test tests_operators::test_shellstyle_subset_overlap_same_field ... ok
+test tests_operators::test_shellstyle_suffix ... ok
+test tests_operators::test_shellstyle_suffix_with_space ... ok
+test tests_operators::test_shellstyle_suffix_merged_bug ... ok
+test tests_operators::test_suffix ... ok
+test tests_operators::test_unicode_escape_emoji ... ok
+test tests_operators::test_shellstyle_zero_length_prefix ... ok
+test tests_operators::test_singleton_hit_and_multi_condition_hit_same_value ... ok
+test tests_operators::test_unicode_escape_in_event ... ok
+test tests_operators::test_wb_end_word_char ... ok
+test tests_operators::test_wb_digit_to_space ... ok
+test tests_operators::test_wb_end_non_word_char ... ok
+test tests_operators::test_three_level_nesting_miri_friendly ... ok
+test tests_operators::test_wb_middle_nonword_to_word ... ok
+test tests_operators::test_wb_middle_word_to_word_err ... ok
+test tests_operators::test_wb_middle_word_to_nonword ... ok
+test tests_operators::test_wb_optional_quantifier ... ok
+test tests_operators::test_wb_plus_quantifier ... ok
+test tests_operators::test_wb_range_quantifier ... ok
+test tests_operators::test_wb_start_non_word_char ... ok
+test tests_operators::test_wb_start_word_char ... ok
+test tests_operators::test_wb_underscore_is_word_char ... ok
+test tests_operators::test_wb_utf8_nonword_to_word ... ok
+test tests_operators::test_wb_utf8_multibyte ... ok
+test tests_operators::test_wb_utf8_emoji_boundary ... ok
+test tests_operators::test_three_level_nesting ... ok
+test tests_operators::test_wb_whole_word_at_start ... ok
+test tests_operators::test_wb_whole_word_match ... ok
+test tests_operators::test_wb_whole_word_at_end ... ok
+test tests_operators::test_wb_whole_word_no_match ... ok
+test tests_operators::test_wildcard_contains ... ok
+test tests_operators::test_wb_with_char_class ... ok
+test tests_operators::test_wb_with_dot ... ok
+test tests_operators::test_wb_whole_word_only ... ok
+test tests_operators::test_wildcard_escape_backslash ... ok
+test tests_operators::test_wildcard_escape_backslash_star ... ok
+test tests_operators::test_wildcard_escape_backslash_wildcard ... ok
+test tests_operators::test_wildcard_comprehensive ... ok
+test tests_operators::test_wildcard_escape_star ... ok
+test tests_operators::test_wildcard_invalid_escape_sequences ... ok
+test tests_operators::test_wildcard_invalid_patterns ... ok
+test tests_operators::test_wildcard_matches_empty_string ... ok
+test tests_operators::test_wildcard_escape_sequences_comprehensive ... ok
+test tests_operators::test_regexp_end2end ... ok
+test tests_operators::test_wildcard_multi_patterns_basic ... ok
+test tests_operators::test_wildcard_multi_patterns_complex1 ... ok
+test tests_operators::test_wildcard_multi_patterns_double_exact ... ok
+test tests_operators::test_wildcard_multi_patterns_complex2 ... ok
+test tests_operators::test_wildcard_multi_patterns_double_exact2 ... ok
+test tests_operators::test_wildcard_multi_patterns_overlap1 ... ok
+test tests_operators::test_wildcard_multi_patterns_infix_exact2 ... ok
+test tests_operators::test_wildcard_multi_patterns_overlap2 ... ok
+test tests_operators::test_wildcard_multi_patterns_infix_exact ... ok
+test tests_operators::test_wildcard_multi_patterns_prefix_exact ... ok
+test tests_operators::test_wildcard_multi_patterns_prefix_pair ... ok
+test tests_operators::test_wildcard_multi_patterns_prefix_suffix ... ok
+test tests_operators::test_wildcard_multi_patterns_infix_pair ... ok
+test tests_operators::test_wildcard_multi_patterns_suffix_double2 ... ok
+test tests_operators::test_wildcard_multi_patterns_prefix_suffix2 ... ok
+test tests_operators::test_wildcard_multi_patterns_suffix_double ... ok
+test tests_operators::test_wildcard_multi_patterns_suffix_exact ... ok
+test tests_operators::test_wildcard_multi_patterns_suffix_infix ... ok
+test tests_operators::test_wildcard_multi_patterns_suffix_exact2 ... ok
+test tests_operators::test_wildcard_multi_patterns_suffix_infix2 ... ok
+test tests_operators::test_wildcard_syntax_errors ... ok
+test tests_operators::test_wildcard_multi_patterns_zero_expansion ... ok
+test tests_operators::test_wildcard_prefix ... ok
+test tests_operators::test_wildcard_suffix ... ok
+test tests_stress::test_arc_field_matcher_sharing ... ok
+test tests_operators::test_wildcard_unicode_strings ... ok
+test tests_operators::test_wildcard_multi_patterns_suffix_pair ... ok
+test tests_stress::test_break_500_limit ... ignored
+test tests_stress::test_arc_concurrent_read_write ... ok
+test tests_stress::test_arc_snapshot_isolation ... ok
+test tests_stress::test_concurrent_miri_friendly ... ok
+test tests_stress::test_bulk_add_correctness ... ok
+test tests_stress::test_exercise_matching_miri_friendly ... ok
+test tests_stress::test_arc_pattern_lifecycle ... ok
+test tests_stress::test_invalid_utf8_dot_rejection ... ok
+test tests_stress::test_concurrent_citylots_stress ... ok
+test tests_stress::test_json_escape_all_eight ... ok
+test tests_stress::test_memory_cleanup_miri_friendly ... ok
+test tests_stress::test_numbits_ordering_through_range ... ok
+test tests_stress::test_numbits_through_numeric_matching ... ok
+test tests_stress::test_multiple_patterns_same_id_comprehensive ... ok
+test tests_stress::test_multiple_shellstyle_citylots_patterns ... ok
+test tests_stress::test_pathological_correctness_miri_friendly ... ok
+test tests_stress::test_stress_citylots2_operators ... ok
+test tests_stress::test_arc_memory_cleanup ... ok
+test tests_stress::test_pathological_correctness ... ok
+test tests_stress::test_unicode_escape_mixed_codepoints ... ok
+test tests_stress::test_unicode_escape_multiple_emojis ... ok
+test tests_stress::test_unicode_escape_standard_escapes ... ok
+test tests_stress::test_exercise_matching_comprehensive ... ok
+test tests_stress::test_unicode_field_names ... ok
+test tests_stress::test_unicode_member_names ... ok
+test tests_operators::test_cidr_ipv4_various_prefixes ... ok
+test tests_stress::test_unicode_field_names_surrogate_pairs ... ok
+test unicode_categories::tests::test_ascii_in_ll ... ok
+test tests_stress::test_utf16_surrogate_pairs ... ok
+test unicode_categories::tests::test_ascii_in_lu ... ok
+test unicode_categories::tests::test_block_lookup ... ok
+test unicode_categories::tests::test_category_lookup ... ok
+test unicode_categories::tests::test_digit_in_nd ... ok
+test regexp::tests::test_negated_unicode_char_no_ascii_fast_path ... ok
+test regexp::tests::test_negated_single_char_ascii_fast_path ... ok
+test regexp::tests::test_negated_class_nfa ... ok
+test regexp::tests::test_shell_caching_negated_independent ... ok
+test regexp::tests::test_negated_category_star_edge_cases ... ok
+test regexp::tests::test_xml_escapes_nfa ... ok
+test tests_stress::test_pattern_insertion_scales_linearly ... ok
+test tests_stress::test_stress_fuzz_strings ... ok
+test tests_stress::test_stress_fuzz_numbers ... ok
+test tests_operators::test_regexp_validity ... ok
+test tests_stress::test_concurrent_update_during_matching ... ok
+
+test result: ok. 654 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 7.23s
+
+     Running `/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/bulk_10k-c55937e16f51c58a`
+Gnuplot not found, using plotters backend
+Testing bulk_10000x1
+Success
+
+     Running `/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/matching-55f5e7b21be2df53`
+Gnuplot not found, using plotters backend
+Testing exact_match
+Success
+
+Testing 100_patterns
+Success
+
+Testing nested_match
+Success
+
+Testing regex_match
+Success
+
+Testing 100_patterns_no_match
+Success
+
+Testing has_matches_early_exit
+Success
+
+Testing 100_diverse_patterns_1_match
+Success
+
+Testing 100_diverse_patterns_no_match
+Success
+
+Testing flatten_context_fields
+Success
+
+Testing flatten_direct_context_fields
+Success
+
+Testing flatten_sort_context_fields
+Success
+
+Testing flatten_middle_nested
+Success
+
+Testing flatten_last_field
+Success
+
+Testing status_context_fields
+Success
+
+Testing match_only_context_fields
+Success
+
+Testing status_middle_nested
+Success
+
+Testing status_last_field
+Success
+
+Testing status_all_three_patterns
+Success
+
+Testing shellstyle_26_patterns
+Success
+
+Testing shellstyle_multi_match
+Success
+
+Testing 100_prefix_patterns
+Success
+
+Testing anything_but_match
+Success
+
+Testing multi_field_and_3_fields
+Success
+
+Testing numeric_range_single
+Success
+
+Testing numeric_range_two_sided
+Success
+
+Testing numeric_range_10_patterns
+Success
+
+Testing number_matching
+Success
+
+Testing regexp_plus_short
+Success
+
+Testing regexp_plus_long
+Success
+
+Testing regexp_star_empty
+Success
+
+Testing regexp_star_long
+Success
+
+Testing regexp_complex
+Success
+
+Testing regexp_dot_star
+Success
+
+Testing regexp_negated_short
+Success
+
+Testing regexp_negated_long
+Success
+
+Testing regexp_negated_1k
+Success
+
+Testing unicode_category_letter
+Success
+
+Testing unicode_category_compile
+Success
+
+Testing negated_char_class
+Success
+
+Testing unicode_categories_combined
+Success
+
+Testing arena_nfa_100chars
+Success
+
+Testing arena_nfa_5chars
+Success
+
+  arena: states=152, tables=85 (avg_ceil=4.5, max_ceil=6), epsilons=151 (max=18), field_trans=18, closures=152/152 (avg=2.2, max=31), ft_ptrs=18, dfa_lookup=152, ~177KB
+Testing pathological_epsilon
+Success
+
+Testing citylots
+Success
+
+Testing citylots_core
+Success
+
+Testing array_heavy_100_elements
+Success
+
+Testing deep_nesting_with_arrays
+Success
+
+Testing accel_suffix_10k_chars
+Success
+
+Testing accel_suffix_1k_chars
+Success
+
+Testing accel_suffix_short
+Success
+
+Testing number_matching_10k
+Success
+
+Testing exists_false
+Success
+
+Testing bulk_100x10
+Success
+
+Testing bulk_1000x10
+Success
+
+Testing bulk_100x100
+Success
+
+Testing bulk_100x10_multifield
+Success
+
+Testing 10k_patterns_1_match
+Success
+
+Testing 10k_patterns_no_match
+Success
+
+Testing 10k_diverse_patterns_1_match
+Success
+
+Testing 10k_mixed_exact_match
+Success
+
+Testing 10k_mixed_prefix_match
+Success
+
+Testing 10k_mixed_numeric_match
+Success
+
+  arena: states=8828, tables=7001 (avg_ceil=3.3, max_ceil=6), epsilons=3824 (max=1000), field_trans=1000, closures=8828/8828 (avg=1.4, max=1001), ft_ptrs=1000, dfa_lookup=8828, ~10215KB
+Testing shellstyle_build_time_1000
+Success
+
+     Running `/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/deps/memory-94c7cd016dd302fd`
+WARNING: dhat-heap feature not enabled!
+Run with: cargo bench --bench memory --features dhat-heap
+
+===========================================
+  quamina-rs Memory Profile Report
+===========================================
+
+=== Pattern Add: 100 simple patterns ===
+  Total bytes allocated: 0
+  Max bytes live (peak): 0
+  Total allocations:     0
+  Max blocks live:       0
+
+=== Pattern Add: 100 × 10 multivalue ===
+  Total bytes allocated: 0
+  Max bytes live (peak): 0
+  Total allocations:     0
+  Max blocks live:       0
+
+=== Pattern Add: 10 regex patterns ===
+  Total bytes allocated: 0
+  Max bytes live (peak): 0
+  Total allocations:     0
+  Max blocks live:       0
+
+=== Pattern Add: Unicode ~p{L} ===
+  Total bytes allocated: 0
+  Max bytes live (peak): 0
+  Total allocations:     0
+  Max blocks live:       0
+
+=== Pattern Add: Negated [^abc] ===
+  Total bytes allocated: 0
+  Max bytes live (peak): 0
+  Total allocations:     0
+  Max blocks live:       0
+
+=== Pattern Add: 100 numeric ranges ===
+  Total bytes allocated: 0
+  Max bytes live (peak): 0
+  Total allocations:     0
+  Max blocks live:       0
+
+=== Steady State: 1000 patterns loaded ===
+  Total bytes allocated: 0
+  Max bytes live (peak): 0
+  Total allocations:     0
+  Max blocks live:       0
+
+=== Matching: 1000 events × 100 patterns ===
+  Total bytes allocated: 0
+  Max bytes live (peak): 0
+  Total allocations:     0
+  Max blocks live:       0
+
+=== Matching: 100 large JSON events ===
+  Total bytes allocated: 0
+  Max bytes live (peak): 0
+  Total allocations:     0
+  Max blocks live:       0
+
+=== Matching: 1000 events no match ===
+  Total bytes allocated: 0
+  Max bytes live (peak): 0
+  Total allocations:     0
+  Max blocks live:       0
+
+=== Matching: CityLots 100 events (Go: 968 B/op) ===
+  Total bytes allocated: 0
+  Max bytes live (peak): 0
+  Total allocations:     0
+  Max blocks live:       0
+
+=== Matching: Number 100 events (Go: 1908 B/op) ===
+  Total bytes allocated: 0
+  Max bytes live (peak): 0
+  Total allocations:     0
+  Max blocks live:       0
+
+=== Matching: Shellstyle 100 events ===
+  Total bytes allocated: 0
+  Max bytes live (peak): 0
+  Total allocations:     0
+  Max blocks live:       0
+
+===========================================
+  Summary (peak memory per operation)
+===========================================
+  pattern_add_100_simple                            0 bytes peak
+  pattern_add_100x10_multivalue                     0 bytes peak
+  pattern_add_10_regex                              0 bytes peak
+  pattern_add_unicode_category_L                    0 bytes peak
+  pattern_add_negated_char_class                    0 bytes peak
+  pattern_add_100_numeric_range                     0 bytes peak
+  steady_state_1000_patterns                        0 bytes peak
+  matching_1000_events_100_patterns                 0 bytes peak
+  matching_100_large_json_events                    0 bytes peak
+  matching_1000_events_no_match                     0 bytes peak
+  citylots_matching_100_events                      0 bytes peak
+  number_matching_100_events                        0 bytes peak
+  shellstyle_matching_100_events                    0 bytes peak
+
+===========================================
+Tip: Use --json for machine-readable output
+Compare with Go: go test -bench=. -benchmem
+===========================================
+     Running `/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/examples/profile_citylots-f551dbd7e79bed79`
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running `/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/examples/profile_pathological-dd244cd3e6984c6e`
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running `/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/examples/profile_shellstyle-6aaf8d9505430e71`
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running `/private/var/folders/zq/scmzs54x2md07_wwgys92v840000gn/T/cargo-mutants-quamina-rs-Avttih.tmp/target/mutants/examples/smoke-b622ae32677953bb`
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+*** result: Success

@@ -1,0 +1,61 @@
+--- src/regexp/nfa.rs
++++ replace instantiate_shell -> StateId with Default::default()
+@@ -474,57 +474,17 @@
+         root: root_id.index() as u32,
+     }
+ }
+ 
+ /// Instantiate a cached shell into a real arena, replacing the placeholder
+ /// (local index 0) with `next` and allocating fresh states for all others.
+ fn instantiate_shell(shell: &CachedShell, arena: &mut StateArena, next: StateId) -> StateId {
+     // Build local-to-real ID mapping
+-    let mut id_map: Vec<StateId> = Vec::with_capacity(shell.tables.len());
+-    // Local index 0 (placeholder) maps to the real next state
+-    id_map.push(next);
+-    // Allocate real states for all other locals
+-    for _ in 1..shell.tables.len() {
+-        id_map.push(arena.alloc());
+-    }
+-
+-    // Clone each non-placeholder table, remapping all StateId references
+-    for (local_idx, src_table) in shell.tables.iter().enumerate() {
+-        if local_idx == 0 {
+-            // Placeholder — don't write into the real `next` state
+-            continue;
+-        }
+-
+-        let real_id = id_map[local_idx];
+-        let mut table = src_table.clone();
+-
+-        // Remap steps
+-        for step in table.steps.iter_mut() {
+-            if !step.is_none() {
+-                *step = id_map[step.index()];
+-            }
+-        }
+-
+-        // Remap epsilons
+-        for eps in table.epsilons.iter_mut() {
+-            if !eps.is_none() {
+-                *eps = id_map[eps.index()];
+-            }
+-        }
+-
+-        // Remap default
+-        if !table.default.is_none() {
+-            table.default = id_map[table.default.index()];
+-        }
+-
+-        arena[real_id].table = table;
+-    }
+-
+-    id_map[shell.root as usize]
++    Default::default() /* ~ changed by cargo-mutants ~ */
+ }
+ 
+ /// Build a rune range FA using the shell cache when a cache key is available.
+ ///
+ /// On cache hit, instantiates from the cached shell. On miss, builds the shell,
+ /// caches it, then instantiates.
+ fn make_cached_rune_range_fa(
+     cache_key: &str,

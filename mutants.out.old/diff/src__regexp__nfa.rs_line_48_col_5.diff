@@ -1,0 +1,34 @@
+--- src/regexp/nfa.rs
++++ replace regexp_has_plus_star -> bool with true
+@@ -40,30 +40,17 @@
+ fn rune_to_utf8(r: char) -> Vec<u8> {
+     let mut buf = [0u8; 4];
+     let s = r.encode_utf8(&mut buf);
+     s.as_bytes().to_vec()
+ }
+ 
+ /// Check if a regexp tree has any `+` or `*` quantifiers that would benefit from arena-based NFA.
+ pub fn regexp_has_plus_star(root: &RegexpRoot) -> bool {
+-    for branch in root {
+-        for qa in branch {
+-            if qa.is_plus() || qa.is_star() {
+-                return true;
+-            }
+-            // Recursively check subtrees (parenthesized groups)
+-            if let Some(ref subtree) = qa.subtree {
+-                if regexp_has_plus_star(subtree) {
+-                    return true;
+-                }
+-            }
+-        }
+-    }
+-    false
++    true /* ~ changed by cargo-mutants ~ */
+ }
+ 
+ // ============================================================================
+ // Arena-based NFA Building
+ // ============================================================================
+ 
+ /// Build an arena-based regexp NFA from a parsed tree.
+ ///

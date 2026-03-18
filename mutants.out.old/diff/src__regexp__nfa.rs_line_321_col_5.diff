@@ -1,0 +1,103 @@
+--- src/regexp/nfa.rs
++++ replace make_utf8_char_fa -> StateId with Default::default()
+@@ -313,99 +313,17 @@
+ /// exclude specific bytes (e.g., word chars for `~W`).
+ #[allow(clippy::type_complexity)]
+ fn make_utf8_char_fa(
+     arena: &mut StateArena,
+     dest: StateId,
+     ascii_filter: Option<&dyn Fn(&mut [StateId; BYTE_CEILING])>,
+ ) -> StateId {
+     // Continuation byte states for multi-byte UTF-8 sequences
+-    let s_last = arena.alloc_with_table({
+-        let mut table = ArenaSmallTable::new();
+-        let mut unpacked = [StateId::NONE; BYTE_CEILING];
+-        unpacked[0x80..0xC0].fill(dest);
+-        table.pack(&unpacked);
+-        table
+-    });
+-
+-    let s_last_inter = arena.alloc_with_table({
+-        let mut table = ArenaSmallTable::new();
+-        let mut unpacked = [StateId::NONE; BYTE_CEILING];
+-        unpacked[0x80..0xC0].fill(s_last);
+-        table.pack(&unpacked);
+-        table
+-    });
+-
+-    let s_first_inter = arena.alloc_with_table({
+-        let mut table = ArenaSmallTable::new();
+-        let mut unpacked = [StateId::NONE; BYTE_CEILING];
+-        unpacked[0x80..0xC0].fill(s_last_inter);
+-        table.pack(&unpacked);
+-        table
+-    });
+-
+-    // Lead byte handler states for restricted continuation ranges
+-    let target_e0 = arena.alloc_with_table({
+-        let mut table = ArenaSmallTable::new();
+-        let mut unpacked = [StateId::NONE; BYTE_CEILING];
+-        unpacked[0xA0..0xC0].fill(s_last);
+-        table.pack(&unpacked);
+-        table
+-    });
+-
+-    let target_ed = arena.alloc_with_table({
+-        let mut table = ArenaSmallTable::new();
+-        let mut unpacked = [StateId::NONE; BYTE_CEILING];
+-        unpacked[0x80..0xA0].fill(s_last);
+-        table.pack(&unpacked);
+-        table
+-    });
+-
+-    let target_f0 = arena.alloc_with_table({
+-        let mut table = ArenaSmallTable::new();
+-        let mut unpacked = [StateId::NONE; BYTE_CEILING];
+-        unpacked[0x90..0xC0].fill(s_last_inter);
+-        table.pack(&unpacked);
+-        table
+-    });
+-
+-    let target_f4 = arena.alloc_with_table({
+-        let mut table = ArenaSmallTable::new();
+-        let mut unpacked = [StateId::NONE; BYTE_CEILING];
+-        unpacked[0x80..0x90].fill(s_last_inter);
+-        table.pack(&unpacked);
+-        table
+-    });
+-
+-    // Main state
+-    arena.alloc_with_table({
+-        let mut unpacked = [StateId::NONE; BYTE_CEILING];
+-
+-        // ASCII (0x00-0x7F) -> dest
+-        unpacked[..0x80].fill(dest);
+-
+-        // Apply optional ASCII filter (e.g., exclude word chars)
+-        if let Some(filter) = ascii_filter {
+-            filter(&mut unpacked);
+-        }
+-
+-        // Multi-byte lead bytes
+-        unpacked[0xC2..0xE0].fill(s_last);
+-        unpacked[0xE0] = target_e0;
+-        unpacked[0xE1..0xED].fill(s_last_inter);
+-        unpacked[0xED] = target_ed;
+-        unpacked[0xEE..0xF0].fill(s_last_inter);
+-        unpacked[0xF0] = target_f0;
+-        unpacked[0xF1..0xF4].fill(s_first_inter);
+-        unpacked[0xF4] = target_f4;
+-
+-        let mut table = ArenaSmallTable::new();
+-        table.pack(&unpacked);
+-        table
+-    })
++    Default::default() /* ~ changed by cargo-mutants ~ */
+ }
+ 
+ /// Build arena FA for a dot (any character).
+ fn make_arena_dot_fa(arena: &mut StateArena, dest: StateId) -> StateId {
+     make_utf8_char_fa(arena, dest, None)
+ }
+ 
+ /// Build arena FA for a non-word character (`~W`).

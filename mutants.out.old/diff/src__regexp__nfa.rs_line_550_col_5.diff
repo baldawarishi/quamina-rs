@@ -1,0 +1,23 @@
+--- src/regexp/nfa.rs
++++ replace clear_fa_shell_cache with ()
+@@ -542,19 +542,17 @@
+         let result = instantiate_shell(&shell, arena, next);
+         cache.insert(cache_key.to_string(), shell);
+         result
+     })
+ }
+ 
+ /// Clear the FA shell cache. Useful for testing to ensure isolation between tests.
+ pub fn clear_fa_shell_cache() {
+-    FA_SHELL_CACHE.with(|cache| {
+-        cache.borrow_mut().clear();
+-    });
++    () /* ~ changed by cargo-mutants ~ */
+ }
+ 
+ // ============================================================================
+ // Rune Range to NFA (Arena version)
+ // ============================================================================
+ 
+ /// Arena version of the rune tree entry
+ struct ArenaRuneTreeEntry {

@@ -1,0 +1,62 @@
+--- src/regexp/nfa.rs
++++ replace add_arena_rune_pair_tree_entry with ()
+@@ -599,58 +599,17 @@
+         add_arena_rune_pair_tree_entry(&mut root, pair.lo, pair.hi, next);
+     }
+ 
+     arena_nfa_from_rune_tree(arena, &root)
+ }
+ 
+ /// Add a range of runes [lo, hi] to the arena tree without iterating through each code point.
+ fn add_arena_rune_pair_tree_entry(root: &mut ArenaRuneTreeNode, lo: char, hi: char, dest: StateId) {
+-    let lo_u32 = lo as u32;
+-    let hi_u32 = hi as u32;
+-
+-    let boundaries = [UTF8_1BYTE_MAX, UTF8_2BYTE_MAX, UTF8_3BYTE_MAX, u32::MAX];
+-
+-    let mut current = lo_u32;
+-    for &boundary in &boundaries {
+-        if current > hi_u32 {
+-            break;
+-        }
+-
+-        // Skip boundaries that are below current position
+-        if boundary < current {
+-            continue;
+-        }
+-
+-        let segment_end = hi_u32.min(boundary);
+-
+-        if current <= SURROGATE_END && segment_end >= SURROGATE_START {
+-            if current < SURROGATE_START {
+-                let pre_end = (SURROGATE_START - 1).min(segment_end);
+-                if let (Some(start), Some(end)) = (char::from_u32(current), char::from_u32(pre_end))
+-                {
+-                    add_arena_utf8_range_to_tree(root, start, end, dest);
+-                }
+-            }
+-            if segment_end > SURROGATE_END {
+-                let post_start = (SURROGATE_END + 1).max(current);
+-                if let (Some(start), Some(end)) =
+-                    (char::from_u32(post_start), char::from_u32(segment_end))
+-                {
+-                    add_arena_utf8_range_to_tree(root, start, end, dest);
+-                }
+-            }
+-        } else if let (Some(start), Some(end)) =
+-            (char::from_u32(current), char::from_u32(segment_end))
+-        {
+-            add_arena_utf8_range_to_tree(root, start, end, dest);
+-        }
+-
+-        current = segment_end + 1;
+-    }
++    () /* ~ changed by cargo-mutants ~ */
+ }
+ 
+ fn add_arena_utf8_range_to_tree(root: &mut ArenaRuneTreeNode, lo: char, hi: char, dest: StateId) {
+     let lo_bytes = rune_to_utf8(lo);
+     let hi_bytes = rune_to_utf8(hi);
+ 
+     debug_assert_eq!(lo_bytes.len(), hi_bytes.len());
+ 

@@ -1,0 +1,21 @@
+--- src/regexp/nfa.rs
++++ replace == with != in make_arena_atom_fa
+@@ -291,17 +291,17 @@
+ /// Build arena FA for a single atom.
+ fn make_arena_atom_fa(qa: &QuantifiedAtom, arena: &mut StateArena, next: StateId) -> StateId {
+     if qa.is_dot {
+         make_arena_dot_fa(arena, next)
+     } else if let Some(ref subtree) = qa.subtree {
+         make_arena_nfa_from_branches(subtree, arena, next)
+     } else if let Some(ref cache_key) = qa.cache_key {
+         // Use compact non-word char FA for word boundary expansion
+-        if cache_key == "wb_W" {
++        if cache_key != /* ~ changed by cargo-mutants ~ */ "wb_W" {
+             return make_nonword_char_fa(arena, next);
+         }
+         make_cached_rune_range_fa(cache_key, &qa.runes, arena, next)
+     } else {
+         make_arena_rune_range_fa(&qa.runes, arena, next)
+     }
+ }
+ 

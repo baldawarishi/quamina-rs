@@ -1,0 +1,21 @@
+--- src/regexp/nfa.rs
++++ replace < with == in add_arena_rune_pair_tree_entry
+@@ -611,17 +611,17 @@
+ 
+     let mut current = lo_u32;
+     for &boundary in &boundaries {
+         if current > hi_u32 {
+             break;
+         }
+ 
+         // Skip boundaries that are below current position
+-        if boundary < current {
++        if boundary == /* ~ changed by cargo-mutants ~ */ current {
+             continue;
+         }
+ 
+         let segment_end = hi_u32.min(boundary);
+ 
+         if current <= SURROGATE_END && segment_end >= SURROGATE_START {
+             if current < SURROGATE_START {
+                 let pre_end = (SURROGATE_START - 1).min(segment_end);

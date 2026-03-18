@@ -1,0 +1,21 @@
+--- src/regexp/nfa.rs
++++ replace arena_nfa_from_rune_tree -> StateId with Default::default()
+@@ -564,17 +564,17 @@
+ 
+ type ArenaRuneTreeNode = Vec<Option<ArenaRuneTreeEntry>>;
+ 
+ fn new_arena_rune_tree_node() -> ArenaRuneTreeNode {
+     (0..BYTE_CEILING).map(|_| None).collect()
+ }
+ 
+ fn arena_nfa_from_rune_tree(arena: &mut StateArena, root: &ArenaRuneTreeNode) -> StateId {
+-    arena_table_from_rune_tree_node(arena, root)
++    Default::default() /* ~ changed by cargo-mutants ~ */
+ }
+ 
+ fn arena_table_from_rune_tree_node(arena: &mut StateArena, node: &ArenaRuneTreeNode) -> StateId {
+     let mut unpacked: [StateId; BYTE_CEILING] = [StateId::NONE; BYTE_CEILING];
+ 
+     for (b, entry_opt) in node.iter().enumerate() {
+         if let Some(entry) = entry_opt {
+             if let Some(next) = entry.next {

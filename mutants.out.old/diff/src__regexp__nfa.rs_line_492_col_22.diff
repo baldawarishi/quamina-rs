@@ -1,0 +1,21 @@
+--- src/regexp/nfa.rs
++++ replace == with != in instantiate_shell
+@@ -484,17 +484,17 @@
+     id_map.push(next);
+     // Allocate real states for all other locals
+     for _ in 1..shell.tables.len() {
+         id_map.push(arena.alloc());
+     }
+ 
+     // Clone each non-placeholder table, remapping all StateId references
+     for (local_idx, src_table) in shell.tables.iter().enumerate() {
+-        if local_idx == 0 {
++        if local_idx != /* ~ changed by cargo-mutants ~ */ 0 {
+             // Placeholder — don't write into the real `next` state
+             continue;
+         }
+ 
+         let real_id = id_map[local_idx];
+         let mut table = src_table.clone();
+ 
+         // Remap steps

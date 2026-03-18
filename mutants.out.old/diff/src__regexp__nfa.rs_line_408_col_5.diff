@@ -1,0 +1,21 @@
+--- src/regexp/nfa.rs
++++ replace make_arena_dot_fa -> StateId with Default::default()
+@@ -400,17 +400,17 @@
+         let mut table = ArenaSmallTable::new();
+         table.pack(&unpacked);
+         table
+     })
+ }
+ 
+ /// Build arena FA for a dot (any character).
+ fn make_arena_dot_fa(arena: &mut StateArena, dest: StateId) -> StateId {
+-    make_utf8_char_fa(arena, dest, None)
++    Default::default() /* ~ changed by cargo-mutants ~ */
+ }
+ 
+ /// Build arena FA for a non-word character (`~W`).
+ ///
+ /// Like dot but excludes word char bytes (a-z, A-Z, 0-9, _) from ASCII transitions.
+ /// Multi-byte UTF-8 sequences are all non-word chars (word chars are ASCII-only).
+ pub(crate) fn make_nonword_char_fa(arena: &mut StateArena, dest: StateId) -> StateId {
+     make_utf8_char_fa(

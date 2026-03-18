@@ -1,0 +1,65 @@
+--- src/regexp/nfa.rs
++++ replace make_one_arena_branch_fa -> StateId with Default::default()
+@@ -185,61 +185,17 @@
+ }
+ 
+ /// Build arena NFA for one branch (sequence of atoms).
+ fn make_one_arena_branch_fa(
+     branch: &RegexpBranch,
+     arena: &mut StateArena,
+     next_step: StateId,
+ ) -> StateId {
+-    let mut current_next = next_step;
+-
+-    // Process atoms back to front
+-    for qa in branch.iter().rev() {
+-        let original_next = current_next;
+-
+-        if qa.is_plus() || qa.is_star() {
+-            // Arena-based cyclic NFA for + and *
+-            current_next = create_arena_plus_star_loop(qa, arena, original_next, qa.is_star());
+-        } else if qa.is_qm() {
+-            // Optional: build atom FA with epsilon to skip
+-            let atom_state = make_arena_atom_fa(qa, arena, current_next);
+-            arena[atom_state].table.epsilons.push(original_next);
+-            current_next = atom_state;
+-        } else if qa.is_singleton() {
+-            // No quantifier - simple FA
+-            current_next = make_arena_atom_fa(qa, arena, current_next);
+-        } else {
+-            // General {n,m} quantifier
+-            let n = qa.quant_min as usize;
+-            let m = qa.quant_max as usize;
+-
+-            // Special case: {0,0} means match zero times - pure epsilon transition
+-            if n == 0 && m == 0 {
+-                let epsilon_state = arena.alloc();
+-                arena[epsilon_state].table.epsilons.push(current_next);
+-                current_next = epsilon_state;
+-                continue;
+-            }
+-
+-            // First, build the optional part (m-n copies, each with epsilon skip)
+-            for _ in n..m {
+-                let atom_state = make_arena_atom_fa(qa, arena, current_next);
+-                arena[atom_state].table.epsilons.push(current_next);
+-                current_next = atom_state;
+-            }
+-
+-            // Then, build the required part (n copies, no epsilon skip)
+-            for _ in 0..n {
+-                current_next = make_arena_atom_fa(qa, arena, current_next);
+-            }
+-        }
+-    }
+-
+-    current_next
++    Default::default() /* ~ changed by cargo-mutants ~ */
+ }
+ 
+ /// Create a cyclic arena NFA structure for + and * quantifiers.
+ ///
+ /// Structure for [abc]+:
+ /// - start --(abc)--> loopback --epsilon--> start (cycle!)
+ ///   --epsilon--> exit
+ ///

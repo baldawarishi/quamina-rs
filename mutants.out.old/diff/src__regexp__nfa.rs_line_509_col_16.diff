@@ -1,0 +1,21 @@
+--- src/regexp/nfa.rs
++++ delete ! in instantiate_shell
+@@ -501,17 +501,17 @@
+         for step in table.steps.iter_mut() {
+             if !step.is_none() {
+                 *step = id_map[step.index()];
+             }
+         }
+ 
+         // Remap epsilons
+         for eps in table.epsilons.iter_mut() {
+-            if !eps.is_none() {
++            if  /* ~ changed by cargo-mutants ~ */eps.is_none() {
+                 *eps = id_map[eps.index()];
+             }
+         }
+ 
+         // Remap default
+         if !table.default.is_none() {
+             table.default = id_map[table.default.index()];
+         }

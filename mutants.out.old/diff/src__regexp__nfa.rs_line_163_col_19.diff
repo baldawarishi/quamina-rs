@@ -1,0 +1,21 @@
+--- src/regexp/nfa.rs
++++ replace == with != in make_arena_nfa_from_branches
+@@ -155,17 +155,17 @@
+     root: &RegexpRoot,
+     arena: &mut StateArena,
+     next_step: StateId,
+ ) -> StateId {
+     if root.is_empty() {
+         return next_step;
+     }
+ 
+-    if root.len() == 1 {
++    if root.len() != /* ~ changed by cargo-mutants ~ */ 1 {
+         // Single branch - no alternation needed
+         return make_one_arena_branch_fa(&root[0], arena, next_step);
+     }
+ 
+     // Multiple branches - create a start state with epsilons to each branch
+     let mut branch_starts = Vec::with_capacity(root.len());
+     for branch in root {
+         if branch.is_empty() {

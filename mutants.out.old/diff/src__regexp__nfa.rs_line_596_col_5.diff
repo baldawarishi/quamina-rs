@@ -1,0 +1,27 @@
+--- src/regexp/nfa.rs
++++ replace make_arena_rune_range_fa -> StateId with Default::default()
+@@ -588,23 +588,17 @@
+ 
+     let mut table = ArenaSmallTable::new();
+     table.pack(&unpacked);
+     arena.alloc_with_table(table)
+ }
+ 
+ /// Build arena NFA for a rune range.
+ fn make_arena_rune_range_fa(rr: &RuneRange, arena: &mut StateArena, next: StateId) -> StateId {
+-    let mut root = new_arena_rune_tree_node();
+-
+-    for pair in rr {
+-        add_arena_rune_pair_tree_entry(&mut root, pair.lo, pair.hi, next);
+-    }
+-
+-    arena_nfa_from_rune_tree(arena, &root)
++    Default::default() /* ~ changed by cargo-mutants ~ */
+ }
+ 
+ /// Add a range of runes [lo, hi] to the arena tree without iterating through each code point.
+ fn add_arena_rune_pair_tree_entry(root: &mut ArenaRuneTreeNode, lo: char, hi: char, dest: StateId) {
+     let lo_u32 = lo as u32;
+     let hi_u32 = hi as u32;
+ 
+     let boundaries = [UTF8_1BYTE_MAX, UTF8_2BYTE_MAX, UTF8_3BYTE_MAX, u32::MAX];

@@ -1,0 +1,31 @@
+--- src/regexp/nfa.rs
++++ replace make_cached_rune_range_fa -> StateId with Default::default()
+@@ -527,27 +527,17 @@
+ /// On cache hit, instantiates from the cached shell. On miss, builds the shell,
+ /// caches it, then instantiates.
+ fn make_cached_rune_range_fa(
+     cache_key: &str,
+     rr: &RuneRange,
+     arena: &mut StateArena,
+     next: StateId,
+ ) -> StateId {
+-    FA_SHELL_CACHE.with(|cache| {
+-        let mut cache = cache.borrow_mut();
+-        if let Some(shell) = cache.get(cache_key) {
+-            return instantiate_shell(shell, arena, next);
+-        }
+-
+-        let shell = build_shell(rr);
+-        let result = instantiate_shell(&shell, arena, next);
+-        cache.insert(cache_key.to_string(), shell);
+-        result
+-    })
++    Default::default() /* ~ changed by cargo-mutants ~ */
+ }
+ 
+ /// Clear the FA shell cache. Useful for testing to ensure isolation between tests.
+ pub fn clear_fa_shell_cache() {
+     FA_SHELL_CACHE.with(|cache| {
+         cache.borrow_mut().clear();
+     });
+ }

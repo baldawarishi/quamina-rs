@@ -1,0 +1,54 @@
+--- src/regexp/nfa.rs
++++ replace create_arena_plus_star_loop -> StateId with Default::default()
+@@ -247,50 +247,17 @@
+ /// - Same as above, plus start has epsilon to exit (can match zero times)
+ fn create_arena_plus_star_loop(
+     qa: &QuantifiedAtom,
+     arena: &mut StateArena,
+     exit_state: StateId,
+     is_star: bool,
+ ) -> StateId {
+     // Loopback state - will have epsilons to exit and back to start
+-    let loopback = arena.alloc();
+-
+-    // Start state - matches the atom, transitions to loopback
+-    let start = make_arena_atom_fa(qa, arena, loopback);
+-
+-    // Set up loopback's epsilons: to exit AND back to start (CYCLE!)
+-    arena[loopback].table.epsilons = smallvec![exit_state, start];
+-
+-    // For *, add epsilon from start to exit (can skip entirely)
+-    if is_star {
+-        arena[start].table.epsilons.push(exit_state);
+-    }
+-
+-    // Compute acceleration for the loop.
+-    // Only ASCII-only negated patterns can be accelerated.
+-    // Unicode patterns have too many exit bytes (68+) for memchr to help.
+-    let accel = qa.ascii_negated_bytes.as_ref().map(|bytes| {
+-        // ASCII-only negated pattern: use the negated bytes as exit bytes directly
+-        let mut accel = crate::automaton::AccelInfo {
+-            exit_bytes: [0; 3],
+-            len: bytes.len() as u8,
+-        };
+-        for (i, &b) in bytes.iter().enumerate() {
+-            accel.exit_bytes[i] = b;
+-        }
+-        accel
+-    });
+-
+-    if let Some(accel) = accel {
+-        arena[start].table.accel = Some(accel.clone());
+-        arena[loopback].table.accel = Some(accel);
+-    }
+-
+-    start
++    Default::default() /* ~ changed by cargo-mutants ~ */
+ }
+ 
+ /// Build arena FA for a single atom.
+ fn make_arena_atom_fa(qa: &QuantifiedAtom, arena: &mut StateArena, next: StateId) -> StateId {
+     if qa.is_dot {
+         make_arena_dot_fa(arena, next)
+     } else if let Some(ref subtree) = qa.subtree {
+         make_arena_nfa_from_branches(subtree, arena, next)
