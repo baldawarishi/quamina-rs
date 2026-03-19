@@ -2846,3 +2846,357 @@ fn test_arena_stats_workloads() {
         }
     }
 }
+
+// ============================================================================
+// Mutation coverage: LookaroundCondition methods & byte length computation
+// ============================================================================
+
+#[test]
+fn test_lookaround_condition_is_negative_true() {
+    use crate::json::LookaroundCondition;
+    use crate::regexp::parse_regexp;
+
+    let pat = parse_regexp("x").unwrap();
+
+    // NegativeLookahead must be negative
+    let neg_la = LookaroundCondition::NegativeLookahead(pat.clone());
+    assert!(neg_la.is_negative());
+
+    // NegativeLookbehind must be negative
+    let neg_lb = LookaroundCondition::NegativeLookbehind {
+        pattern: pat.clone(),
+        byte_length: 1,
+    };
+    assert!(neg_lb.is_negative());
+
+    // Positive variants must NOT be negative
+    let pos_la = LookaroundCondition::PositiveLookahead(pat.clone());
+    assert!(!pos_la.is_negative());
+
+    let pos_lb = LookaroundCondition::PositiveLookbehind {
+        pattern: pat,
+        byte_length: 1,
+    };
+    assert!(!pos_lb.is_negative());
+}
+
+#[test]
+fn test_lookaround_condition_is_lookbehind_true() {
+    use crate::json::LookaroundCondition;
+    use crate::regexp::parse_regexp;
+
+    let pat = parse_regexp("x").unwrap();
+
+    // Lookbehind variants must return true
+    let pos_lb = LookaroundCondition::PositiveLookbehind {
+        pattern: pat.clone(),
+        byte_length: 1,
+    };
+    assert!(pos_lb.is_lookbehind());
+
+    let neg_lb = LookaroundCondition::NegativeLookbehind {
+        pattern: pat.clone(),
+        byte_length: 1,
+    };
+    assert!(neg_lb.is_lookbehind());
+
+    // Lookahead variants must return false
+    let pos_la = LookaroundCondition::PositiveLookahead(pat.clone());
+    assert!(!pos_la.is_lookbehind());
+
+    let neg_la = LookaroundCondition::NegativeLookahead(pat);
+    assert!(!neg_la.is_lookbehind());
+}
+
+#[test]
+fn test_transform_lookaround_lookbehind_byte_length() {
+    // Tests compute_lookbehind_byte_length and compute_branch_byte_length
+    // via transform_lookaround_pattern with lookbehind patterns.
+    use crate::json::transform_lookaround_pattern;
+    use crate::json::LookaroundCondition;
+    use crate::regexp::parse_regexp;
+
+    // (?<=abc)d — lookbehind "abc" has 3 ASCII chars = 3 bytes
+    let tree = parse_regexp("(?<=abc)d").unwrap();
+    let mc = transform_lookaround_pattern(&tree).unwrap();
+    assert_eq!(mc.conditions.len(), 1);
+    match &mc.conditions[0] {
+        LookaroundCondition::PositiveLookbehind { byte_length, .. } => {
+            assert_eq!(*byte_length, 3, "abc = 3 bytes");
+        }
+        other => panic!("Expected PositiveLookbehind, got {:?}", other),
+    }
+
+    // (?<!xy)z — lookbehind "xy" has 2 bytes
+    let tree = parse_regexp("(?<!xy)z").unwrap();
+    let mc = transform_lookaround_pattern(&tree).unwrap();
+    assert_eq!(mc.conditions.len(), 1);
+    match &mc.conditions[0] {
+        LookaroundCondition::NegativeLookbehind { byte_length, .. } => {
+            assert_eq!(*byte_length, 2, "xy = 2 bytes");
+        }
+        other => panic!("Expected NegativeLookbehind, got {:?}", other),
+    }
+}
+
+#[test]
+fn test_transform_lookbehind_single_char_class() {
+    // Tests compute_branch_byte_length with rune ranges (the !atom.runes.is_empty() path)
+    // and the atom_len * count multiplication.
+    use crate::json::transform_lookaround_pattern;
+    use crate::json::LookaroundCondition;
+    use crate::regexp::parse_regexp;
+
+    // (?<=[a-z])X — single char class, each char is 1 byte, count=1 → 1 byte
+    let tree = parse_regexp("(?<=[a-z])X").unwrap();
+    let mc = transform_lookaround_pattern(&tree).unwrap();
+    match &mc.conditions[0] {
+        LookaroundCondition::PositiveLookbehind { byte_length, .. } => {
+            assert_eq!(*byte_length, 1, "[a-z] = 1 byte per char");
+        }
+        other => panic!("Expected PositiveLookbehind, got {:?}", other),
+    }
+
+    // (?<=[a-z]{3})X — char class repeated 3 times → 3 bytes
+    // This exercises atom_len * count where count > 1
+    let tree = parse_regexp("(?<=[a-z]{3})X").unwrap();
+    let mc = transform_lookaround_pattern(&tree).unwrap();
+    match &mc.conditions[0] {
+        LookaroundCondition::PositiveLookbehind { byte_length, .. } => {
+            assert_eq!(*byte_length, 3, "[a-z]{{3}} = 3 bytes");
+        }
+        other => panic!("Expected PositiveLookbehind, got {:?}", other),
+    }
+}
+
+#[test]
+fn test_transform_lookbehind_dot_byte_length() {
+    // Tests the is_dot branch: dot → 4 bytes (conservative UTF-8 max)
+    use crate::json::transform_lookaround_pattern;
+    use crate::json::LookaroundCondition;
+    use crate::regexp::parse_regexp;
+
+    // (?<=.)X — dot = 4 bytes (worst-case UTF-8)
+    let tree = parse_regexp("(?<=.)X").unwrap();
+    let mc = transform_lookaround_pattern(&tree).unwrap();
+    match &mc.conditions[0] {
+        LookaroundCondition::PositiveLookbehind { byte_length, .. } => {
+            assert_eq!(*byte_length, 4, ". = 4 bytes (UTF-8 max)");
+        }
+        other => panic!("Expected PositiveLookbehind, got {:?}", other),
+    }
+}
+
+#[test]
+fn test_transform_lookaround_no_lookarounds_error() {
+    // Exercising the error path of transform_lookaround_pattern
+    use crate::json::transform_lookaround_pattern;
+    use crate::regexp::parse_regexp;
+
+    let tree = parse_regexp("abc").unwrap();
+    let err = transform_lookaround_pattern(&tree).unwrap_err();
+    assert!(err.contains("no lookarounds"), "Got: {err}");
+}
+
+#[test]
+fn test_transform_lookbehind_alternation_same_length() {
+    // Tests compute_lookbehind_byte_length with multi-branch (alternation) lookbehind.
+    // (?<=ab|cd)x — two branches, both 2 bytes → Ok(2)
+    // Catches line 436 (!= → ==): mutant would Err on equal-length branches.
+    use crate::json::transform_lookaround_pattern;
+    use crate::json::LookaroundCondition;
+    use crate::regexp::parse_regexp;
+
+    let tree = parse_regexp("(?<=ab|cd)x").unwrap();
+    let mc = transform_lookaround_pattern(&tree).unwrap();
+    assert_eq!(mc.conditions.len(), 1);
+    match &mc.conditions[0] {
+        LookaroundCondition::PositiveLookbehind { byte_length, .. } => {
+            assert_eq!(*byte_length, 2, "ab|cd both = 2 bytes");
+        }
+        other => panic!("Expected PositiveLookbehind, got {:?}", other),
+    }
+}
+
+#[test]
+fn test_transform_lookaround_alternation_rejected() {
+    // tree.len() != 1 path — top-level alternation
+    use crate::json::transform_lookaround_pattern;
+    use crate::regexp::parse_regexp;
+
+    let tree = parse_regexp("a(?=b)|c(?=d)").unwrap();
+    let err = transform_lookaround_pattern(&tree).unwrap_err();
+    assert!(err.contains("alternation"), "Got: {err}");
+}
+
+// ============================================================================
+// parse_numeric_comparison / value_to_string / validate_wildcard mutation tests
+// ============================================================================
+
+#[test]
+fn test_numeric_comparison_missing_value_after_operator() {
+    // Array with only an operator and no following value — should error.
+    // Catches mutation: replace + with * in parse_numeric_comparison (i+1 vs i*1 at i=0)
+    let mut q = Quamina::<&str>::new();
+    let result = q.add_pattern("bad", r#"{"x": [{"numeric": [">"]}]}"#);
+    assert!(result.is_err(), "Single-element numeric array should fail");
+}
+
+#[test]
+fn test_numeric_comparison_all_operators() {
+    // Test each comparison operator individually
+    let mut q = Quamina::<&str>::new();
+    q.add_pattern("gt", r#"{"x": [{"numeric": [">", 10]}]}"#)
+        .unwrap();
+    q.add_pattern("gte", r#"{"x": [{"numeric": [">=", 10]}]}"#)
+        .unwrap();
+    q.add_pattern("lt", r#"{"x": [{"numeric": ["<", 10]}]}"#)
+        .unwrap();
+    q.add_pattern("lte", r#"{"x": [{"numeric": ["<=", 10]}]}"#)
+        .unwrap();
+    q.add_pattern("eq", r#"{"x": [{"numeric": ["=", 10]}]}"#)
+        .unwrap();
+
+    // x=10 should match >=, <=, =
+    let m = q.matches_for_event(br#"{"x": 10}"#).unwrap();
+    assert!(m.contains(&"gte"), "10 should match >= 10");
+    assert!(m.contains(&"lte"), "10 should match <= 10");
+    assert!(m.contains(&"eq"), "10 should match = 10");
+    assert!(!m.contains(&"gt"), "10 should NOT match > 10");
+    assert!(!m.contains(&"lt"), "10 should NOT match < 10");
+
+    // x=11 should match >, >=
+    let m = q.matches_for_event(br#"{"x": 11}"#).unwrap();
+    assert!(m.contains(&"gt"), "11 should match > 10");
+    assert!(m.contains(&"gte"), "11 should match >= 10");
+    assert!(!m.contains(&"lt"), "11 should NOT match < 10");
+    assert!(!m.contains(&"lte"), "11 should NOT match <= 10");
+    assert!(!m.contains(&"eq"), "11 should NOT match = 10");
+
+    // x=9 should match <, <=
+    let m = q.matches_for_event(br#"{"x": 9}"#).unwrap();
+    assert!(m.contains(&"lt"), "9 should match < 10");
+    assert!(m.contains(&"lte"), "9 should match <= 10");
+    assert!(!m.contains(&"gt"), "9 should NOT match > 10");
+    assert!(!m.contains(&"gte"), "9 should NOT match >= 10");
+}
+
+#[test]
+fn test_numeric_comparison_range() {
+    // Combined range: > 5 AND <= 100
+    let mut q = Quamina::<&str>::new();
+    q.add_pattern("range", r#"{"x": [{"numeric": [">", 5, "<=", 100]}]}"#)
+        .unwrap();
+
+    assert_matches!(q, r#"{"x": 50}"#, vec!["range"]);
+    assert_matches!(q, r#"{"x": 100}"#, vec!["range"]);
+    assert_matches!(q, r#"{"x": 6}"#, vec!["range"]);
+    assert_no_match!(q, r#"{"x": 5}"#); // not strictly > 5
+    assert_no_match!(q, r#"{"x": 101}"#); // exceeds upper bound
+    assert_no_match!(q, r#"{"x": 4}"#); // below lower bound
+}
+
+#[test]
+fn test_numeric_comparison_invalid_patterns() {
+    let mut q = Quamina::<&str>::new();
+
+    // Unknown operator
+    assert!(q
+        .add_pattern("bad", r#"{"x": [{"numeric": ["!=", 5]}]}"#)
+        .is_err());
+
+    // Non-number value after operator
+    assert!(q
+        .add_pattern("bad", r#"{"x": [{"numeric": [">", "five"]}]}"#)
+        .is_err());
+
+    // Non-string in operator position (number where operator expected)
+    assert!(q
+        .add_pattern("bad", r#"{"x": [{"numeric": [5, 10]}]}"#)
+        .is_err());
+}
+
+#[test]
+fn test_value_to_string_types() {
+    // Test that different JSON value types in patterns are correctly converted.
+    // String values are quote-wrapped, others are not.
+    let q = q!(
+        "str" => r#"{"x": ["hello"]}"#,
+        "num" => r#"{"x": [42]}"#,
+        "bool_t" => r#"{"x": [true]}"#,
+        "bool_f" => r#"{"x": [false]}"#,
+        "null_v" => r#"{"x": [null]}"#
+    );
+
+    assert_matches!(q, r#"{"x": "hello"}"#, vec!["str"]);
+    assert_matches!(q, r#"{"x": 42}"#, vec!["num"]);
+    assert_matches!(q, r#"{"x": true}"#, vec!["bool_t"]);
+    assert_matches!(q, r#"{"x": false}"#, vec!["bool_f"]);
+    assert_matches!(q, r#"{"x": null}"#, vec!["null_v"]);
+
+    // Cross-type: string "true" should NOT match boolean true
+    assert_no_match!(q, r#"{"x": "true"}"#);
+    // Cross-type: string "null" should NOT match null
+    assert_no_match!(q, r#"{"x": "null"}"#);
+    // Cross-type: string "42" should NOT match number 42
+    assert_no_match!(q, r#"{"x": "42"}"#);
+}
+
+#[test]
+fn test_validate_wildcard_escapes() {
+    let mut q = Quamina::<&str>::new();
+
+    // Valid escaped star
+    assert!(q
+        .add_pattern("esc", r#"{"x": [{"wildcard": "a\\*b"}]}"#)
+        .is_ok());
+
+    // Trailing backslash — invalid
+    assert!(q
+        .add_pattern("bad", r#"{"x": [{"wildcard": "a\\"}]}"#)
+        .is_err());
+
+    // Invalid escape character (not * or \)
+    assert!(q
+        .add_pattern("bad2", r#"{"x": [{"wildcard": "a\\nb"}]}"#)
+        .is_err());
+
+    // Adjacent ** in wildcard — invalid
+    assert!(q
+        .add_pattern("bad3", r#"{"x": [{"wildcard": "a**b"}]}"#)
+        .is_err());
+}
+
+// Mutation coverage: json.rs parse_value guard, parse_number scientific notation
+#[test]
+fn test_parse_value_rejects_invalid_value_start() {
+    // `.5` is not valid JSON (numbers must start with digit or `-`).
+    // Catches mutation: line 887 guard `c == '-' || c.is_ascii_digit()` → `true`
+    // (with mutation, `.5` is parsed via parse_number as "0.5" and pattern succeeds)
+    let mut q = crate::Quamina::new();
+    assert!(q
+        .add_pattern("bad", r#"{"x": [{"numeric": [">", .5]}]}"#)
+        .is_err());
+}
+
+#[test]
+fn test_numeric_pattern_with_scientific_notation() {
+    // Catches mutations in parse_number scientific notation handling (lines 1060, 1062)
+    let mut q = crate::Quamina::new();
+
+    // Pattern using scientific notation: 1e2 = 100
+    q.add_pattern("sci", r#"{"x": [{"numeric": [">=", 1e2, "<=", 1e2]}]}"#)
+        .unwrap();
+    assert_matches!(q, r#"{"x": 100}"#, vec!["sci"]);
+    assert_no_match!(q, r#"{"x": 99}"#);
+
+    // Pattern with explicit + sign in exponent: 1e+2 = 100
+    q.add_pattern("plus", r#"{"x": [{"numeric": [">=", 1e+2, "<=", 1e+2]}]}"#)
+        .unwrap();
+    assert_matches!(q, r#"{"x": 100}"#, vec!["sci", "plus"]);
+
+    // Pattern with - sign in exponent: 1e-1 = 0.1
+    q.add_pattern("neg", r#"{"y": [{"numeric": [">=", 1e-1, "<=", 1e-1]}]}"#)
+        .unwrap();
+    assert_matches!(q, r#"{"y": 0.1}"#, vec!["neg"]);
+}
