@@ -149,9 +149,7 @@ fn test_nested_object_pattern() {
     assert_no_match!(q, r#"{"user": {"role": "guest"}}"#);
 }
 
-// Coverage: test_nested_object_pattern exercises 2-level nesting under Miri.
 #[test]
-#[cfg_attr(miri, ignore)]
 fn test_deeply_nested() {
     let q = q!("p1" => r#"{"a": {"b": {"c": ["value"]}}}"#);
     assert_matches!(q, r#"{"a": {"b": {"c": "value"}}}"#, vec!["p1"]);
@@ -1113,8 +1111,6 @@ fn test_invalid_pattern_validation() {
 }
 
 #[test]
-// Coverage: test_numbits_boundary_values_miri_friendly exercises key boundaries under Miri.
-#[cfg_attr(miri, ignore)]
 fn test_numbits_boundary_values() {
     // Test float64 boundary values for numeric matching
     use crate::numbits::{numbits_from_f64, q_num_from_f64, to_q_number};
@@ -1209,25 +1205,6 @@ fn test_numbits_boundary_values() {
         let q2 = to_q_number(nb);
         assert_eq!(q1, q2, "Q-number should match via both paths for {}", val);
     }
-}
-
-#[test]
-#[cfg(miri)]
-fn test_numbits_boundary_values_miri_friendly() {
-    use crate::numbits::{numbits_from_f64, q_num_from_f64};
-
-    // Key ordering: -MAX < 0 < MIN_POSITIVE < MAX
-    let nb_neg = numbits_from_f64(-f64::MAX);
-    let nb_zero = numbits_from_f64(0.0);
-    let nb_min = numbits_from_f64(f64::MIN_POSITIVE);
-    let nb_max = numbits_from_f64(f64::MAX);
-    assert!(nb_neg < nb_zero);
-    assert!(nb_zero < nb_min);
-    assert!(nb_min < nb_max);
-
-    // Q-number prefix byte present
-    let q = q_num_from_f64(1.0);
-    assert_eq!(q[0], crate::numbits::Q_NUMBER_PREFIX);
 }
 
 #[test]
