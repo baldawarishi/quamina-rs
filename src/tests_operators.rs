@@ -1147,7 +1147,10 @@ fn test_wb_with_char_class() {
     assert_has_match!(q, r#"{"name": "5 "}"#, "test");
 }
 
+// Coverage: simpler test_wb_* tests exercise word boundary logic under Miri;
+// `.` expands to 256 transitions making this too slow for Miri.
 #[test]
+#[cfg_attr(miri, ignore)]
 fn test_wb_with_dot() {
     let q = q!("test" => r#"{"name": [{"regexp": ".~b."}]}"#);
     assert_has_match!(q, r#"{"name": "a "}"#, "test");

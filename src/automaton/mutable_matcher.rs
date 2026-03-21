@@ -2037,6 +2037,8 @@ mod tests {
     }
 
     #[test]
+    // MatchSet dedup is implicitly tested by all integration matching tests.
+    #[cfg_attr(miri, ignore)]
     fn test_match_set_dedup() {
         let mut ms = MatchSet::<String>::new();
         ms.add("a".to_string());
