@@ -1224,11 +1224,7 @@ mod tests {
 
     #[test]
     fn test_trailing_garbage_after_close_brace() {
-        // Test to catch mutations at lines 233-241 (boundary checks and index updates)
-        // Mutations: line 233 replace < with >, line 235 delete !
-        // line 241 replace += with -= or *=, line 246 replace >= with <
-        // Use a tree looking for a non-existent field so we parse the whole object
-        // without early termination
+        // Use a non-existent field to force full parse without early termination.
         let tree = make_tree(&["nonexistent"]);
         let mut state = FlattenJsonState::new();
 
@@ -1246,7 +1242,7 @@ mod tests {
             "Valid JSON with single trailing space should succeed"
         );
 
-        // Invalid: garbage character after close brace (catches line 235 delete !)
+        // Invalid: garbage character after close brace
         let result = state.flatten(br#"{"status": "ok"}x"#, &tree);
         assert!(
             result.is_err(),
@@ -1267,8 +1263,6 @@ x"#,
 
     #[test]
     fn test_whitespace_before_opening_brace() {
-        // Test to catch mutations at line 245 (index += 1 during whitespace skip)
-        // Also tests the >= check at line 246
         let tree = make_tree(&["x"]);
         let mut state = FlattenJsonState::new();
 
@@ -1283,7 +1277,7 @@ x"#,
             "Mixed whitespace before open brace should work"
         );
 
-        // Invalid: EOF during whitespace skip (catches >= mutation to <)
+        // Invalid: EOF during whitespace skip
         let result = state.flatten(b"   ", &tree);
         assert!(
             result.is_err(),
@@ -1400,6 +1394,240 @@ x"#,
             "Should reject invalid nested object: {}",
             bad
         );
+    }
+
+    #[test]
+    fn test_array_with_booleans_and_null() {
+        let event = br#"{"items": [true, false, null, 42]}"#;
+        let tree = make_tree(&["items"]);
+        let mut state = FlattenJsonState::new();
+        let fields = state.flatten(event, &tree).unwrap();
+
+        assert_eq!(fields.len(), 4);
+        assert_eq!(fields[0].val.as_bytes(), b"true");
+        assert_eq!(fields[1].val.as_bytes(), b"false");
+        assert_eq!(fields[2].val.as_bytes(), b"null");
+        assert_eq!(fields[3].val.as_bytes(), b"42");
+    }
+
+    #[test]
+    fn test_array_with_nested_objects_and_arrays() {
+        // Nested objects in arrays should get proper array position tracking.
+        let event = br#"{"data": [{"id": 1}, {"id": 2}]}"#;
+        let tree = make_tree(&["data", "data\nid"]);
+        let mut state = FlattenJsonState::new();
+        let fields = state.flatten(event, &tree).unwrap();
+
+        assert_eq!(fields.len(), 2);
+        assert_eq!(fields[0].val.as_bytes(), b"1");
+        assert_eq!(fields[1].val.as_bytes(), b"2");
+        // Array positions must differ
+        assert_ne!(fields[0].array_trail[0].pos, fields[1].array_trail[0].pos);
+
+        // Nested arrays: [[1, 2], [3, 4]]
+        // Values from different inner arrays must have distinct outer array positions
+        let event2 = br#"{"matrix": [[1, 2], [3, 4]]}"#;
+        let tree2 = make_tree(&["matrix"]);
+        let mut state2 = FlattenJsonState::new();
+        let fields2 = state2.flatten(event2, &tree2).unwrap();
+        assert_eq!(fields2.len(), 4);
+        // Values 1,2 should share one outer array pos; values 3,4 a different one
+        assert_eq!(fields2[0].array_trail[0].pos, fields2[1].array_trail[0].pos);
+        assert_eq!(fields2[2].array_trail[0].pos, fields2[3].array_trail[0].pos);
+        assert_ne!(fields2[0].array_trail[0].pos, fields2[2].array_trail[0].pos);
+        // All values should have exactly 2 levels of array trail
+        for f in fields2.iter() {
+            assert_eq!(
+                f.array_trail.len(),
+                2,
+                "nested array should produce 2-level trail"
+            );
+        }
+
+        // Empty array followed by non-empty: empty [] must clean up its trail entry.
+        let event3 = br#"{"items": [[], [1, 2]]}"#;
+        let tree3 = make_tree(&["items"]);
+        let mut state3 = FlattenJsonState::new();
+        let fields3 = state3.flatten(event3, &tree3).unwrap();
+        assert_eq!(fields3.len(), 2);
+        // Values should have exactly 2 levels (outer + inner), not 3
+        for f in fields3.iter() {
+            assert_eq!(
+                f.array_trail.len(),
+                2,
+                "empty array must not leave stale trail entry"
+            );
+        }
+    }
+
+    #[test]
+    fn test_skip_strings_containing_brackets() {
+        // Strings containing } or ] must be properly skipped, not treated as delimiters.
+        let event = br#"{"skip": {"key": "val}ue"}, "keep": "ok"}"#;
+        let tree = make_tree(&["keep"]);
+        let mut state = FlattenJsonState::new();
+        let fields = state.flatten(event, &tree).unwrap();
+        assert_eq!(fields.len(), 1);
+        assert_eq!(fields[0].val.as_bytes(), br#""ok""#);
+
+        // String with ] inside a skipped array
+        let event2 = br#"{"skip": ["a]b", "c]d"], "keep": "yes"}"#;
+        let fields2 = state.flatten(event2, &tree).unwrap();
+        assert_eq!(fields2.len(), 1);
+        assert_eq!(fields2[0].val.as_bytes(), br#""yes""#);
+
+        // String with { and [ inside a skipped block
+        let event3 = br#"{"skip": {"k": "v{a[l"}, "keep": "go"}"#;
+        let fields3 = state.flatten(event3, &tree).unwrap();
+        assert_eq!(fields3.len(), 1);
+        assert_eq!(fields3[0].val.as_bytes(), br#""go""#);
+    }
+
+    #[test]
+    fn test_leave_object_skips_strings_with_braces() {
+        // When early termination exits a nested object, remaining strings with }
+        // must be properly skipped. A second outer field prevents double early-termination.
+        let event = br#"{"outer": {"wanted": "got", "leftover": "has}brace"}, "after": "ok"}"#;
+        let tree = make_tree(&["outer\nwanted", "after"]);
+        let mut state = FlattenJsonState::new();
+        let fields = state.flatten(event, &tree).unwrap();
+        assert_eq!(fields.len(), 2);
+        assert_eq!(fields[0].val.as_bytes(), br#""got""#);
+        assert_eq!(fields[1].val.as_bytes(), br#""ok""#);
+
+        // Also with nested object inside the leftover
+        let event2 = br#"{"outer": {"wanted": "ok", "extra": {"deep": "val}ue"}}, "after": "yes"}"#;
+        let tree2 = make_tree(&["outer\nwanted", "after"]);
+        let fields2 = state.flatten(event2, &tree2).unwrap();
+        assert_eq!(fields2.len(), 2);
+        assert_eq!(fields2[0].val.as_bytes(), br#""ok""#);
+        assert_eq!(fields2[1].val.as_bytes(), br#""yes""#);
+    }
+
+    #[test]
+    fn test_skip_string_with_escaped_quote() {
+        // A skipped string with \" must not end the string at the escaped quote.
+        let event = br#"{"skip": "has \" quote", "keep": "ok"}"#;
+        let tree = make_tree(&["keep"]);
+        let mut state = FlattenJsonState::new();
+        let fields = state.flatten(event, &tree).unwrap();
+        assert_eq!(fields.len(), 1);
+        assert_eq!(fields[0].val.as_bytes(), br#""ok""#);
+
+        // Also test escaped backslash before quote: \\" means actual \ then end-of-string
+        let event2 = br#"{"skip": "end\\", "keep": "yes"}"#;
+        let fields2 = state.flatten(event2, &tree).unwrap();
+        assert_eq!(fields2.len(), 1);
+        assert_eq!(fields2[0].val.as_bytes(), br#""yes""#);
+
+        // Other escape sequences in skipped strings must not confuse the skip logic.
+        let event3 = br#"{"skip": "a\tb", "keep": "z"}"#;
+        let fields3 = state.flatten(event3, &tree).unwrap();
+        assert_eq!(fields3.len(), 1);
+        assert_eq!(fields3[0].val.as_bytes(), br#""z""#);
+
+        let event4 = br#"{"skip": "test\n", "keep": "w"}"#;
+        let fields4 = state.flatten(event4, &tree).unwrap();
+        assert_eq!(fields4.len(), 1);
+        assert_eq!(fields4[0].val.as_bytes(), br#""w""#);
+    }
+
+    #[test]
+    fn test_member_name_escape_sequences() {
+        // Each JSON escape sequence in a member name must be correctly decoded.
+        let mut state = FlattenJsonState::new();
+
+        // \t in member name
+        let tree_t = make_tree(&["key\twith\ttab"]);
+        let event_t = br#"{"key\twith\ttab": "val_t"}"#;
+        let fields = state.flatten(event_t, &tree_t).unwrap();
+        assert_eq!(fields.len(), 1, "\\t escape in member name");
+        assert_eq!(fields[0].val.as_bytes(), br#""val_t""#);
+
+        // \r in member name (can't test \n since it's the path separator)
+        let tree_r = make_tree(&["key\rwith\rreturn"]);
+        let event_r = br#"{"key\rwith\rreturn": "val_r"}"#;
+        let fields = state.flatten(event_r, &tree_r).unwrap();
+        assert_eq!(fields.len(), 1, "\\r escape in member name");
+
+        // \b (backspace) in member name
+        let tree_b = make_tree(&["key\x08val"]);
+        let event_b = br#"{"key\bval": "val_b"}"#;
+        let fields = state.flatten(event_b, &tree_b).unwrap();
+        assert_eq!(fields.len(), 1, "\\b escape in member name");
+
+        // \f (form feed) in member name
+        let tree_f = make_tree(&["key\x0cval"]);
+        let event_f = br#"{"key\fval": "val_f"}"#;
+        let fields = state.flatten(event_f, &tree_f).unwrap();
+        assert_eq!(fields.len(), 1, "\\f escape in member name");
+
+        // \/ (forward slash) in member name
+        let tree_slash = make_tree(&["key/val"]);
+        let event_slash = br#"{"key\/val": "val_slash"}"#;
+        let fields = state.flatten(event_slash, &tree_slash).unwrap();
+        assert_eq!(fields.len(), 1, "\\/ escape in member name");
+
+        // \\ (backslash) in member name
+        let tree_bs = make_tree(&["key\\val"]);
+        let event_bs = br#"{"key\\val": "val_bs"}"#;
+        let fields = state.flatten(event_bs, &tree_bs).unwrap();
+        assert_eq!(fields.len(), 1, "\\\\ escape in member name");
+
+        // \" (quote) in member name
+        let tree_q = make_tree(&["key\"val"]);
+        let event_q = br#"{"key\"val": "val_q"}"#;
+        let fields = state.flatten(event_q, &tree_q).unwrap();
+        assert_eq!(fields.len(), 1, "\\\" escape in member name");
+
+        // \n conflicts with the path separator, so just verify parsing succeeds.
+        let tree_after = make_tree(&["after"]);
+        let event_n = br#"{"key\nval": 1, "after": "found"}"#;
+        let fields = state.flatten(event_n, &tree_after).unwrap();
+        assert_eq!(fields.len(), 1, "\\n escape in member name must parse");
+        assert_eq!(fields[0].val.as_bytes(), br#""found""#);
+    }
+
+    #[test]
+    fn test_unicode_escape_uppercase_hex() {
+        // Unicode escapes with uppercase hex digits (A-F) must work.
+        let tree = make_tree(&["ch"]);
+        let mut state = FlattenJsonState::new();
+
+        // \u00AB uses uppercase A and B
+        let event = br#"{"ch": "\u00AB"}"#;
+        let fields = state.flatten(event, &tree).unwrap();
+        assert_eq!(fields.len(), 1);
+        // U+00AB is «, encoded as UTF-8: 0xC2 0xAB
+        assert_eq!(fields[0].val.as_bytes(), &[b'"', 0xC2, 0xAB, b'"']);
+
+        // Also test in a member name
+        let tree2 = make_tree(&["\u{00FF}key"]);
+        let event2 = br#"{"\u00FFkey": "found"}"#;
+        let fields2 = state.flatten(event2, &tree2).unwrap();
+        assert_eq!(
+            fields2.len(),
+            1,
+            "Uppercase hex in member name unicode escape"
+        );
+    }
+
+    #[test]
+    fn test_number_with_exponent_sign() {
+        let tree = make_tree(&["val"]);
+        let mut state = FlattenJsonState::new();
+
+        let event_plus = br#"{"val": 1e+2}"#;
+        let fields = state.flatten(event_plus, &tree).unwrap();
+        assert_eq!(fields.len(), 1);
+        assert_eq!(fields[0].val.as_bytes(), b"1e+2");
+        assert!(fields[0].is_number);
+
+        let event_minus = br#"{"val": 3.14e-10}"#;
+        let fields = state.flatten(event_minus, &tree).unwrap();
+        assert_eq!(fields.len(), 1);
+        assert_eq!(fields[0].val.as_bytes(), b"3.14e-10");
+        assert!(fields[0].is_number);
     }
 
     #[test]
