@@ -1,0 +1,49 @@
+name: mutation-testing
+
+on:
+  workflow_dispatch:
+
+jobs:
+  mutants:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5, 6, 7]
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-mutants
+
+      - name: Run mutation testing (shard ${{ matrix.shard }}/8)
+        run: cargo mutants --no-shuffle -vV --in-place --timeout 120 -j 4 --shard ${{ matrix.shard }}/8
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "## Mutation results (shard ${{ matrix.shard }}/8)" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          for f in caught missed timeout unviable; do
+            count=$(wc -l < "mutants.out/${f}.txt" 2>/dev/null || echo 0)
+            echo "- **${f}**: ${count}" >> "$GITHUB_STEP_SUMMARY"
+          done
+          if [ -s mutants.out/missed.txt ]; then
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "### Missed mutants" >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            cat mutants.out/missed.txt >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mutants-shard-${{ matrix.shard }}
+          path: mutants.out/
+          retention-days: 30
