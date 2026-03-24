@@ -14,8 +14,8 @@
 use std::collections::HashMap;
 use std::hash::Hash;
 use std::rc::Rc;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
@@ -23,9 +23,9 @@ use arc_swap::ArcSwap;
 use parking_lot::Mutex;
 
 use super::arena::{
-    make_prefix_arena_fa, make_shellstyle_arena_fa, make_string_arena_fa, merge_arena_nfas,
-    traverse_arena_dfa, traverse_arena_dfa_backward, traverse_arena_nfa, ArenaNfaBuffers,
-    ArenaStats, StateArena, StateId,
+    ArenaNfaBuffers, ArenaStats, StateArena, StateId, make_prefix_arena_fa,
+    make_shellstyle_arena_fa, make_string_arena_fa, merge_arena_nfas, traverse_arena_dfa,
+    traverse_arena_dfa_backward, traverse_arena_nfa,
 };
 use super::mutable_matcher::{
     EventField, EventFieldRef, MultiConditionNfa, MutableFieldMatcher, MutableValueMatcher,
@@ -213,15 +213,15 @@ impl<X: Clone + Eq + Hash> FrozenValueMatcher<X> {
     ) -> Transitions<Arc<FrozenFieldMatcher<X>>> {
         // Singleton fast path: when no multi-condition NFAs coexist with singleton,
         // we can short-circuit without touching transition_map.
-        if self.multi_condition_nfas.is_empty() {
-            if let Some(ref singleton_val) = self.singleton_match {
-                if singleton_val == value {
-                    if let Some(ref trans) = self.singleton_transition {
-                        return Transitions::One(trans.clone());
-                    }
-                }
-                return Transitions::Empty;
+        if self.multi_condition_nfas.is_empty()
+            && let Some(ref singleton_val) = self.singleton_match
+        {
+            if singleton_val == value
+                && let Some(ref trans) = self.singleton_transition
+            {
+                return Transitions::One(trans.clone());
             }
+            return Transitions::Empty;
         }
 
         let mut result = Transitions::Empty;
@@ -229,10 +229,10 @@ impl<X: Clone + Eq + Hash> FrozenValueMatcher<X> {
         // Check singleton match (when multi-condition NFAs coexist with singleton,
         // we couldn't use the fast path above)
         let has_singleton = if let Some(ref singleton_val) = self.singleton_match {
-            if singleton_val == value {
-                if let Some(ref trans) = self.singleton_transition {
-                    result.push(trans.clone());
-                }
+            if singleton_val == value
+                && let Some(ref trans) = self.singleton_transition
+            {
+                result.push(trans.clone());
             }
             true
         } else {
@@ -1105,12 +1105,11 @@ impl<X: Clone + Eq + std::hash::Hash> AutomatonValueMatcher<X> {
             // is borrowed immutably for this entire scope (via &self.arena), so the
             // pointed-to FieldMatcher is guaranteed to be alive and immutable.
             let fm = unsafe { &*(ptr as *const FieldMatcher) };
-            if let Some(match_id) = fm.match_id {
-                if seen_ids.insert(match_id) {
-                    if let Some(x) = self.pattern_map.get(&match_id) {
-                        matches.push(x.clone());
-                    }
-                }
+            if let Some(match_id) = fm.match_id
+                && seen_ids.insert(match_id)
+                && let Some(x) = self.pattern_map.get(&match_id)
+            {
+                matches.push(x.clone());
             }
         }
 

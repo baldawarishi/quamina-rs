@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 Style inspired by [ripgrep's CHANGELOG](https://github.com/BurntSushi/ripgrep/blob/master/CHANGELOG.md).
 
+## [0.5.0] — 2026-03-23
+
+### Changed
+- Upgrade to Rust edition 2024: `let` chains, stricter `unsafe_op_in_unsafe_fn`, implicit binding modes
+- Rename `gen` variable to `generation` (reserved keyword in edition 2024)
+- Synced Go upstream through PR #510 (853e760)
+
 ## [0.4.4] — 2026-03-18
 
 ### Fixed

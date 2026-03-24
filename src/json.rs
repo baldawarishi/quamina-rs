@@ -1,11 +1,11 @@
 //! Minimal JSON parser for flattening events and patterns
 
+use crate::QuaminaError;
 use crate::regexp::{
-    collect_lookarounds, expand_word_boundaries, has_top_level_lookaround, has_word_boundary,
-    parse_regexp, LookaroundType, RegexpBranch, RegexpRoot,
+    LookaroundType, RegexpBranch, RegexpRoot, collect_lookarounds, expand_word_boundaries,
+    has_top_level_lookaround, has_word_boundary, parse_regexp,
 };
 use crate::segments_tree::SEGMENT_SEPARATOR;
-use crate::QuaminaError;
 use std::collections::HashMap;
 
 /// Represents a field's position within an array in the event.
@@ -538,7 +538,7 @@ fn extract_pattern_fields(
                 return Err(QuaminaError::InvalidPattern(format!(
                     "pattern field '{}' must be array or object",
                     path
-                )))
+                )));
             }
         }
     }
@@ -707,7 +707,7 @@ fn value_to_matcher(value: &Value) -> Result<Matcher, QuaminaError> {
                                                 return Err(QuaminaError::InvalidPattern(format!(
                                                     "word boundary expansion failed: {}",
                                                     e
-                                                )))
+                                                )));
                                             }
                                         }
                                     } else {
@@ -722,7 +722,7 @@ fn value_to_matcher(value: &Value) -> Result<Matcher, QuaminaError> {
                                                 return Err(QuaminaError::InvalidPattern(format!(
                                                     "lookaround transformation failed: {}",
                                                     e
-                                                )))
+                                                )));
                                             }
                                         }
                                     }

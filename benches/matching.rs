@@ -4,17 +4,17 @@
 
 use std::hint::black_box;
 
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, criterion_group, criterion_main};
 use flate2::read::GzDecoder;
+use quamina::Quamina;
 use quamina::automaton::arena::{
-    traverse_arena_nfa, ArenaNfaBuffers, ArenaSmallTable, StateArena, StateId,
-    ARENA_VALUE_TERMINATOR,
+    ARENA_VALUE_TERMINATOR, ArenaNfaBuffers, ArenaSmallTable, StateArena, StateId,
+    traverse_arena_nfa,
 };
 use quamina::automaton::{EventField, FieldMatcher, ThreadSafeCoreMatcher};
 use quamina::flatten_json::FlattenJsonState;
 use quamina::json::Matcher;
 use quamina::segments_tree::SegmentsTree;
-use quamina::Quamina;
 use std::io::{BufRead, BufReader};
 use std::sync::Arc;
 
@@ -1388,18 +1388,21 @@ fn bench_state_acceleration(c: &mut Criterion) {
     let event_short = r#"{"value": "AAAAAX"}"#;
 
     // Verify matches
-    assert!(!q
-        .matches_for_event(event_long.as_bytes())
-        .unwrap()
-        .is_empty());
-    assert!(!q
-        .matches_for_event(event_medium.as_bytes())
-        .unwrap()
-        .is_empty());
-    assert!(!q
-        .matches_for_event(event_short.as_bytes())
-        .unwrap()
-        .is_empty());
+    assert!(
+        !q.matches_for_event(event_long.as_bytes())
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        !q.matches_for_event(event_medium.as_bytes())
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        !q.matches_for_event(event_short.as_bytes())
+            .unwrap()
+            .is_empty()
+    );
 
     c.bench_function("accel_suffix_10k_chars", |b| {
         b.iter(|| {

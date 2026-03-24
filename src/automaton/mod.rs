@@ -21,7 +21,7 @@ pub(crate) mod sparse_set;
 mod thread_safe;
 
 // Re-export from small_table
-pub use small_table::{AccelInfo, FieldMatcher, NfaBuffers, BYTE_CEILING, VALUE_TERMINATOR};
+pub use small_table::{AccelInfo, BYTE_CEILING, FieldMatcher, NfaBuffers, VALUE_TERMINATOR};
 
 // Re-export from mutable_matcher
 pub use mutable_matcher::{

@@ -19,9 +19,9 @@ mod parser;
 // Re-export public API
 pub use nfa::{clear_fa_shell_cache, make_regexp_nfa_arena, regexp_has_plus_star};
 pub use parser::{
-    collect_lookarounds, expand_word_boundaries, has_top_level_lookaround, has_word_boundary,
-    parse_regexp, LookaroundType, QuantifiedAtom, RegexpBranch, RegexpError, RegexpRoot, RunePair,
-    RuneRange, REGEXP_QUANTIFIER_MAX, RUNE_MAX,
+    LookaroundType, QuantifiedAtom, REGEXP_QUANTIFIER_MAX, RUNE_MAX, RegexpBranch, RegexpError,
+    RegexpRoot, RunePair, RuneRange, collect_lookarounds, expand_word_boundaries,
+    has_top_level_lookaround, has_word_boundary, parse_regexp,
 };
 
 // Crate-internal items are accessible via their original modules:
@@ -320,7 +320,7 @@ mod tests {
     #[test]
     fn test_nfa_empty_pattern() {
         use crate::automaton::arena::{
-            traverse_arena_nfa, ArenaNfaBuffers, ARENA_VALUE_TERMINATOR,
+            ARENA_VALUE_TERMINATOR, ArenaNfaBuffers, traverse_arena_nfa,
         };
 
         // Test that empty regexp NFA matches ONLY empty string
@@ -353,7 +353,7 @@ mod tests {
     #[test]
     fn test_nfa_simple_singleton() {
         use crate::automaton::arena::{
-            traverse_arena_nfa, ArenaNfaBuffers, ARENA_VALUE_TERMINATOR,
+            ARENA_VALUE_TERMINATOR, ArenaNfaBuffers, traverse_arena_nfa,
         };
 
         // First verify basic non-quantified matching works
@@ -379,7 +379,7 @@ mod tests {
     #[cfg_attr(miri, ignore)]
     fn test_nfa_plus_quantifier() {
         use crate::automaton::arena::{
-            traverse_arena_nfa, ArenaNfaBuffers, ARENA_VALUE_TERMINATOR,
+            ARENA_VALUE_TERMINATOR, ArenaNfaBuffers, traverse_arena_nfa,
         };
 
         // Test that [abc]+ matches one or more of a, b, c
@@ -441,7 +441,7 @@ mod tests {
     #[cfg_attr(miri, ignore)]
     fn test_nfa_star_quantifier() {
         use crate::automaton::arena::{
-            traverse_arena_nfa, ArenaNfaBuffers, ARENA_VALUE_TERMINATOR,
+            ARENA_VALUE_TERMINATOR, ArenaNfaBuffers, traverse_arena_nfa,
         };
 
         // Test that [abc]* matches zero or more of a, b, c
@@ -515,7 +515,7 @@ mod tests {
     #[test]
     fn test_nfa_range_exact() {
         use crate::automaton::arena::{
-            traverse_arena_nfa, ArenaNfaBuffers, ARENA_VALUE_TERMINATOR,
+            ARENA_VALUE_TERMINATOR, ArenaNfaBuffers, traverse_arena_nfa,
         };
 
         // Test a{3} - exactly 3 'a's (I-Regexp semantics: {n} means exactly n)
@@ -562,7 +562,7 @@ mod tests {
     #[test]
     fn test_nfa_range_bounded() {
         use crate::automaton::arena::{
-            traverse_arena_nfa, ArenaNfaBuffers, ARENA_VALUE_TERMINATOR,
+            ARENA_VALUE_TERMINATOR, ArenaNfaBuffers, traverse_arena_nfa,
         };
 
         // Test a{2,4} - between 2 and 4 'a's
@@ -640,7 +640,7 @@ mod tests {
     #[test]
     fn test_nfa_range_with_class() {
         use crate::automaton::arena::{
-            traverse_arena_nfa, ArenaNfaBuffers, ARENA_VALUE_TERMINATOR,
+            ARENA_VALUE_TERMINATOR, ArenaNfaBuffers, traverse_arena_nfa,
         };
 
         // Test [abc]{2,3}
@@ -698,7 +698,7 @@ mod tests {
     #[test]
     fn test_nfa_range_zero_min() {
         use crate::automaton::arena::{
-            traverse_arena_nfa, ArenaNfaBuffers, ARENA_VALUE_TERMINATOR,
+            ARENA_VALUE_TERMINATOR, ArenaNfaBuffers, traverse_arena_nfa,
         };
 
         // Test a{0,2} - between 0 and 2 'a's
@@ -860,7 +860,7 @@ mod tests {
     #[test]
     fn test_toxic_stack_arena() {
         use crate::automaton::arena::{
-            traverse_arena_nfa, ArenaNfaBuffers, ARENA_VALUE_TERMINATOR,
+            ARENA_VALUE_TERMINATOR, ArenaNfaBuffers, traverse_arena_nfa,
         };
 
         // Port of Go's TestToxicStack using arena-based NFA
@@ -897,7 +897,7 @@ mod tests {
     #[test]
     fn test_nfa_positive_class_miri_friendly() {
         use crate::automaton::arena::{
-            traverse_arena_nfa, ArenaNfaBuffers, ARENA_VALUE_TERMINATOR,
+            ARENA_VALUE_TERMINATOR, ArenaNfaBuffers, traverse_arena_nfa,
         };
 
         // Test various positive character class patterns
@@ -958,7 +958,7 @@ mod tests {
     #[cfg_attr(miri, ignore)]
     fn test_negated_class_nfa() {
         use crate::automaton::arena::{
-            traverse_arena_nfa, ArenaNfaBuffers, ARENA_VALUE_TERMINATOR,
+            ARENA_VALUE_TERMINATOR, ArenaNfaBuffers, traverse_arena_nfa,
         };
 
         // Test [^abc] - matches any character except a, b, c
@@ -1002,7 +1002,7 @@ mod tests {
     #[cfg_attr(miri, ignore)]
     fn test_star_matches_empty() {
         use crate::automaton::arena::{
-            traverse_arena_nfa, ArenaNfaBuffers, ARENA_VALUE_TERMINATOR,
+            ARENA_VALUE_TERMINATOR, ArenaNfaBuffers, traverse_arena_nfa,
         };
 
         // Patterns with * should match empty string
@@ -1033,7 +1033,7 @@ mod tests {
     #[cfg_attr(miri, ignore)]
     fn test_star_matches_empty_miri_friendly() {
         use crate::automaton::arena::{
-            traverse_arena_nfa, ArenaNfaBuffers, ARENA_VALUE_TERMINATOR,
+            ARENA_VALUE_TERMINATOR, ArenaNfaBuffers, traverse_arena_nfa,
         };
 
         let root = parse_regexp("[a-z]*").unwrap();
@@ -1054,7 +1054,7 @@ mod tests {
     #[test]
     fn test_arena_nfa_email_pattern() {
         use crate::automaton::arena::{
-            traverse_arena_nfa, ArenaNfaBuffers, ARENA_VALUE_TERMINATOR,
+            ARENA_VALUE_TERMINATOR, ArenaNfaBuffers, traverse_arena_nfa,
         };
 
         // Test the pattern from the failing test
@@ -1092,7 +1092,7 @@ mod tests {
     #[test]
     fn test_arena_nfa_plus_simple() {
         use crate::automaton::arena::{
-            traverse_arena_nfa, ArenaNfaBuffers, ARENA_VALUE_TERMINATOR,
+            ARENA_VALUE_TERMINATOR, ArenaNfaBuffers, traverse_arena_nfa,
         };
 
         // Test simple [a-z]+ pattern with arena
@@ -1124,7 +1124,7 @@ mod tests {
     #[test]
     fn test_arena_nfa_star_plus_miri_friendly() {
         use crate::automaton::arena::{
-            traverse_arena_nfa, ArenaNfaBuffers, ARENA_VALUE_TERMINATOR,
+            ARENA_VALUE_TERMINATOR, ArenaNfaBuffers, traverse_arena_nfa,
         };
 
         // Helper to test if a pattern matches a string
@@ -1191,7 +1191,7 @@ mod tests {
     #[test]
     #[cfg_attr(miri, ignore)]
     fn test_negated_category_star_edge_cases() {
-        use crate::automaton::arena::{traverse_arena_nfa, ArenaNfaBuffers};
+        use crate::automaton::arena::{ArenaNfaBuffers, traverse_arena_nfa};
 
         // Helper to test if a pattern matches a string
         fn matches(pattern: &str, input: &str) -> bool {
@@ -1296,7 +1296,7 @@ mod tests {
     #[test]
     #[cfg_attr(miri, ignore)] // Arena NFA construction for negated classes too slow under miri
     fn test_negated_single_char_ascii_fast_path() {
-        use crate::automaton::arena::{traverse_arena_nfa, ArenaNfaBuffers};
+        use crate::automaton::arena::{ArenaNfaBuffers, traverse_arena_nfa};
 
         // Pattern [^x]+ - ASCII-only negated, so WILL have acceleration
         let pattern = "[^x]+";
@@ -1404,7 +1404,7 @@ mod tests {
     #[test]
     fn test_range_quantifier_equivalence_question() {
         use crate::automaton::arena::{
-            traverse_arena_nfa, ArenaNfaBuffers, ARENA_VALUE_TERMINATOR,
+            ARENA_VALUE_TERMINATOR, ArenaNfaBuffers, traverse_arena_nfa,
         };
 
         // a{0,1} should be equivalent to a?
@@ -1462,7 +1462,7 @@ mod tests {
     #[cfg_attr(miri, ignore)]
     fn test_range_quantifier_equivalence_plus() {
         use crate::automaton::arena::{
-            traverse_arena_nfa, ArenaNfaBuffers, ARENA_VALUE_TERMINATOR,
+            ARENA_VALUE_TERMINATOR, ArenaNfaBuffers, traverse_arena_nfa,
         };
 
         // a{1,} should be equivalent to a+ (but capped at REGEXP_QUANTIFIER_MAX)
@@ -1525,7 +1525,7 @@ mod tests {
     #[cfg_attr(miri, ignore)]
     fn test_range_quantifier_equivalence_star() {
         use crate::automaton::arena::{
-            traverse_arena_nfa, ArenaNfaBuffers, ARENA_VALUE_TERMINATOR,
+            ARENA_VALUE_TERMINATOR, ArenaNfaBuffers, traverse_arena_nfa,
         };
 
         // a{0,} should be equivalent to a* (but capped at REGEXP_QUANTIFIER_MAX)
@@ -1584,7 +1584,7 @@ mod tests {
     #[cfg_attr(miri, ignore)]
     fn test_range_quantifier_equivalence_miri_friendly() {
         use crate::automaton::arena::{
-            traverse_arena_nfa, ArenaNfaBuffers, ARENA_VALUE_TERMINATOR,
+            ARENA_VALUE_TERMINATOR, ArenaNfaBuffers, traverse_arena_nfa,
         };
 
         let mut bufs = ArenaNfaBuffers::new();
@@ -1655,7 +1655,7 @@ mod tests {
     #[test]
     fn test_range_quantifier_exact_one() {
         use crate::automaton::arena::{
-            traverse_arena_nfa, ArenaNfaBuffers, ARENA_VALUE_TERMINATOR,
+            ARENA_VALUE_TERMINATOR, ArenaNfaBuffers, traverse_arena_nfa,
         };
 
         // a{1} means exactly 1 'a' (I-Regexp semantics: {n} means exactly n)
@@ -1693,7 +1693,7 @@ mod tests {
     #[test]
     fn test_range_quantifier_exact_zero() {
         use crate::automaton::arena::{
-            traverse_arena_nfa, ArenaNfaBuffers, ARENA_VALUE_TERMINATOR,
+            ARENA_VALUE_TERMINATOR, ArenaNfaBuffers, traverse_arena_nfa,
         };
 
         // a{0,0} should only match empty string
@@ -1731,7 +1731,7 @@ mod tests {
     #[test]
     fn test_range_quantifier_with_dot() {
         use crate::automaton::arena::{
-            traverse_arena_nfa, ArenaNfaBuffers, ARENA_VALUE_TERMINATOR,
+            ARENA_VALUE_TERMINATOR, ArenaNfaBuffers, traverse_arena_nfa,
         };
 
         // .{2,4} - any 2-4 characters
@@ -1793,7 +1793,7 @@ mod tests {
     #[test]
     fn test_range_quantifier_with_group() {
         use crate::automaton::arena::{
-            traverse_arena_nfa, ArenaNfaBuffers, ARENA_VALUE_TERMINATOR,
+            ARENA_VALUE_TERMINATOR, ArenaNfaBuffers, traverse_arena_nfa,
         };
 
         // (ab){2,3} - "ab" repeated 2-3 times
@@ -1867,7 +1867,7 @@ mod tests {
     #[test]
     fn test_range_quantifier_larger_values() {
         use crate::automaton::arena::{
-            traverse_arena_nfa, ArenaNfaBuffers, ARENA_VALUE_TERMINATOR,
+            ARENA_VALUE_TERMINATOR, ArenaNfaBuffers, traverse_arena_nfa,
         };
 
         // a{5,10} - between 5 and 10 'a's
@@ -1969,7 +1969,7 @@ mod tests {
     #[cfg_attr(miri, ignore)]
     fn test_xml_escapes_nfa() {
         use crate::automaton::arena::{
-            traverse_arena_nfa, ArenaNfaBuffers, ARENA_VALUE_TERMINATOR,
+            ARENA_VALUE_TERMINATOR, ArenaNfaBuffers, traverse_arena_nfa,
         };
 
         // Test ~i matches initial name chars
@@ -2086,7 +2086,7 @@ mod tests {
     #[test]
     fn test_multi_char_escapes_nfa() {
         use crate::automaton::arena::{
-            traverse_arena_nfa, ArenaNfaBuffers, ARENA_VALUE_TERMINATOR,
+            ARENA_VALUE_TERMINATOR, ArenaNfaBuffers, traverse_arena_nfa,
         };
 
         // Test ~d matches digits
@@ -2218,7 +2218,7 @@ mod tests {
     #[cfg_attr(miri, ignore)]
     fn test_multi_char_escape_with_quantifier() {
         use crate::automaton::arena::{
-            traverse_arena_nfa, ArenaNfaBuffers, ARENA_VALUE_TERMINATOR,
+            ARENA_VALUE_TERMINATOR, ArenaNfaBuffers, traverse_arena_nfa,
         };
 
         // Test ~d+ matches one or more digits
@@ -2270,7 +2270,7 @@ mod tests {
     #[cfg(miri)]
     fn test_multi_char_escape_quantifier_miri_minimal() {
         use crate::automaton::arena::{
-            traverse_arena_nfa, ArenaNfaBuffers, ARENA_VALUE_TERMINATOR,
+            ARENA_VALUE_TERMINATOR, ArenaNfaBuffers, traverse_arena_nfa,
         };
 
         // ~d{1} = exactly one digit — exercises escape expansion + range quantifier path
@@ -2365,7 +2365,7 @@ mod tests {
     #[cfg_attr(miri, ignore)]
     fn test_shell_caching_nfa_correctness() {
         use crate::automaton::arena::{
-            traverse_arena_nfa, ArenaNfaBuffers, ARENA_VALUE_TERMINATOR,
+            ARENA_VALUE_TERMINATOR, ArenaNfaBuffers, traverse_arena_nfa,
         };
 
         // Test that cached patterns produce correct results
@@ -2425,7 +2425,7 @@ mod tests {
     #[cfg_attr(miri, ignore)]
     fn test_shell_caching_independent_categories() {
         use crate::automaton::arena::{
-            traverse_arena_nfa, ArenaNfaBuffers, ARENA_VALUE_TERMINATOR,
+            ARENA_VALUE_TERMINATOR, ArenaNfaBuffers, traverse_arena_nfa,
         };
 
         clear_fa_shell_cache();
@@ -2486,7 +2486,7 @@ mod tests {
     #[cfg_attr(miri, ignore)]
     fn test_shell_caching_negated_independent() {
         use crate::automaton::arena::{
-            traverse_arena_nfa, ArenaNfaBuffers, ARENA_VALUE_TERMINATOR,
+            ARENA_VALUE_TERMINATOR, ArenaNfaBuffers, traverse_arena_nfa,
         };
 
         clear_fa_shell_cache();
@@ -2861,7 +2861,7 @@ mod tests {
     #[test]
     fn test_zero_quantifier() {
         use crate::automaton::arena::{
-            traverse_arena_nfa, ArenaNfaBuffers, ARENA_VALUE_TERMINATOR,
+            ARENA_VALUE_TERMINATOR, ArenaNfaBuffers, traverse_arena_nfa,
         };
 
         // {0,0} means match zero times — the atom is skipped entirely.
@@ -2894,7 +2894,7 @@ mod tests {
     #[cfg_attr(miri, ignore)]
     fn test_clear_fa_shell_cache_works() {
         use crate::automaton::arena::{
-            traverse_arena_nfa, ArenaNfaBuffers, ARENA_VALUE_TERMINATOR,
+            ARENA_VALUE_TERMINATOR, ArenaNfaBuffers, traverse_arena_nfa,
         };
 
         // Build an NFA with a character range to populate the shell cache
@@ -2930,7 +2930,7 @@ mod tests {
     #[cfg_attr(miri, ignore)]
     fn test_shell_instantiation_with_epsilons() {
         use crate::automaton::arena::{
-            traverse_arena_nfa, ArenaNfaBuffers, ARENA_VALUE_TERMINATOR,
+            ARENA_VALUE_TERMINATOR, ArenaNfaBuffers, traverse_arena_nfa,
         };
 
         // Clear cache to ensure fresh shell building
@@ -2993,7 +2993,7 @@ mod tests {
     #[cfg_attr(miri, ignore)]
     fn test_shell_cache_instantiate_epsilon_remap() {
         use crate::automaton::arena::{
-            traverse_arena_nfa, ArenaNfaBuffers, ARENA_VALUE_TERMINATOR,
+            ARENA_VALUE_TERMINATOR, ArenaNfaBuffers, traverse_arena_nfa,
         };
 
         clear_fa_shell_cache();

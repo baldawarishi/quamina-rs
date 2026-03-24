@@ -77,14 +77,20 @@ pub static REGEXP_SAMPLES: &[RegexpSample] = &[
     // Sample 10
     RegexpSample {
         regex: "ab+c",
-        matches: &["abc", "abbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbc"],
+        matches: &[
+            "abc",
+            "abbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbc",
+        ],
         nomatches: &["ac", "bbbc", "abbb", ""],
         valid: true,
     },
     // Sample 11
     RegexpSample {
         regex: "abc+",
-        matches: &["abc", "abccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"],
+        matches: &[
+            "abc",
+            "abccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        ],
         nomatches: &["a", "ab", "abcd"],
         valid: true,
     },
@@ -98,7 +104,11 @@ pub static REGEXP_SAMPLES: &[RegexpSample] = &[
     // Sample 13
     RegexpSample {
         regex: "abc*",
-        matches: &["abc", "ab", "abccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"],
+        matches: &[
+            "abc",
+            "ab",
+            "abccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        ],
         nomatches: &["a", "abcd", "abbc", ""],
         valid: true,
     },
@@ -182,8 +192,16 @@ pub static REGEXP_SAMPLES: &[RegexpSample] = &[
     // Sample 25
     RegexpSample {
         regex: "(a{2})*",
-        matches: &["", "aa", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"],
-        nomatches: &["a", "aaa", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"],
+        matches: &[
+            "",
+            "aa",
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        ],
+        nomatches: &[
+            "a",
+            "aaa",
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        ],
         valid: true,
     },
     // Sample 26
@@ -224,7 +242,11 @@ pub static REGEXP_SAMPLES: &[RegexpSample] = &[
     // Sample 31
     RegexpSample {
         regex: "(ab){2,}",
-        matches: &["abab", "ababab", "ababababababababababababababababababababababababababababababababab"],
+        matches: &[
+            "abab",
+            "ababab",
+            "ababababababababababababababababababababababababababababababababab",
+        ],
         nomatches: &["ab", "ababa", "ababaa", "ababababa", "abab abab", ""],
         valid: true,
     },
@@ -259,7 +281,14 @@ pub static REGEXP_SAMPLES: &[RegexpSample] = &[
     // Sample 36
     RegexpSample {
         regex: "(((((boy)|(girl))[0-1][x-z]{2})?)|(man|woman)[0-1]?[y|n])*",
-        matches: &["", "boy0xx", "woman1y", "girl1xymany", "boy0xxwoman1ygirl1xymany", "boy0xxwoman1ygirl1xymanyboy0xxwoman1ygirl1xymany"],
+        matches: &[
+            "",
+            "boy0xx",
+            "woman1y",
+            "girl1xymany",
+            "boy0xxwoman1ygirl1xymany",
+            "boy0xxwoman1ygirl1xymanyboy0xxwoman1ygirl1xymany",
+        ],
         nomatches: &["boy0xxwoman1ygirl1xyman", "boyxx"],
         valid: true,
     },
@@ -904,28 +933,47 @@ pub static REGEXP_SAMPLES: &[RegexpSample] = &[
     RegexpSample {
         regex: "~n~~~r~|~t~.~-~^~?~*~+~{~}~(~)~[~]",
         matches: &[""],
-        nomatches: &["\n~\r|\t.-^?*+{}()[", "~\r|\t.-^?*+{}()[]", "\n~\r|\t-^?*+{}()[]"],
+        nomatches: &[
+            "\n~\r|\t.-^?*+{}()[",
+            "~\r|\t.-^?*+{}()[]",
+            "\n~\r|\t-^?*+{}()[]",
+        ],
         valid: true,
     },
     // Sample 129
     RegexpSample {
         regex: "~n~na~n~nb~n~n",
         matches: &[""],
-        nomatches: &["\n\na\n\nb\n", "\na\n\nb\n\n", "\n\na\n\n\n\n", "\n\na\n\r\nb\n\n"],
+        nomatches: &[
+            "\n\na\n\nb\n",
+            "\na\n\nb\n\n",
+            "\n\na\n\n\n\n",
+            "\n\na\n\r\nb\n\n",
+        ],
         valid: true,
     },
     // Sample 130
     RegexpSample {
         regex: "~r~ra~r~rb~r~r",
         matches: &["\r\ra\r\rb\r\r"],
-        nomatches: &["\r\ra\r\rb\r", "\ra\r\rb\r\r", "\r\ra\r\r\r\r", "\r\ra\r\n\rb\r\r"],
+        nomatches: &[
+            "\r\ra\r\rb\r",
+            "\ra\r\rb\r\r",
+            "\r\ra\r\r\r\r",
+            "\r\ra\r\n\rb\r\r",
+        ],
         valid: true,
     },
     // Sample 131
     RegexpSample {
         regex: "~t~ta~t~tb~t~t",
         matches: &[""],
-        nomatches: &["\t\ta\t\tb\t", "\ta\t\tb\t\t", "\t\ta\t\t\t\t", "\t\ta\t\t\tb\t\t"],
+        nomatches: &[
+            "\t\ta\t\tb\t",
+            "\ta\t\tb\t\t",
+            "\t\ta\t\t\t\t",
+            "\t\ta\t\t\tb\t\t",
+        ],
         valid: true,
     },
     // Sample 132
@@ -3669,7 +3717,15 @@ pub static REGEXP_SAMPLES: &[RegexpSample] = &[
     RegexpSample {
         regex: "P~p{Nd}{4}Y~p{Nd}{2}M",
         matches: &["P1111Y12M"],
-        nomatches: &["P111Y12M", "P1111Y1M", "P11111Y12M", "P1111Y", "P12M", "P11111Y00M", "P11111Y13M"],
+        nomatches: &[
+            "P111Y12M",
+            "P1111Y1M",
+            "P11111Y12M",
+            "P1111Y",
+            "P12M",
+            "P11111Y00M",
+            "P11111Y13M",
+        ],
         valid: true,
     },
     // Sample 524
@@ -4656,14 +4712,22 @@ pub static REGEXP_SAMPLES: &[RegexpSample] = &[
     RegexpSample {
         regex: "(([0-9])|([a-z])|([A-Z]))*",
         matches: &[""],
-        nomatches: &["{hello 1234567890 world}", "{HELLO 1234567890 world}", "{1234567890 hello  world}"],
+        nomatches: &[
+            "{hello 1234567890 world}",
+            "{HELLO 1234567890 world}",
+            "{1234567890 hello  world}",
+        ],
         valid: true,
     },
     // Sample 665
     RegexpSample {
         regex: "(([0-9])|([a-z])|([A-Z]))+",
         matches: &[""],
-        nomatches: &["{hello 1234567890 world}", "{HELLO 1234567890 world}", "{1234567890 hello world}"],
+        nomatches: &[
+            "{hello 1234567890 world}",
+            "{HELLO 1234567890 world}",
+            "{1234567890 hello world}",
+        ],
         valid: true,
     },
     // Sample 666

@@ -8,11 +8,11 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use smallvec::{smallvec, SmallVec};
+use smallvec::{SmallVec, smallvec};
 
 use crate::automaton::{
-    arena::{ArenaSmallTable, StateArena, StateId, ARENA_VALUE_TERMINATOR},
-    FieldMatcher, BYTE_CEILING,
+    BYTE_CEILING, FieldMatcher,
+    arena::{ARENA_VALUE_TERMINATOR, ArenaSmallTable, StateArena, StateId},
 };
 
 use super::parser::{QuantifiedAtom, RegexpBranch, RegexpRoot, RuneRange};
@@ -51,10 +51,10 @@ pub fn regexp_has_plus_star(root: &RegexpRoot) -> bool {
                 return true;
             }
             // Recursively check subtrees (parenthesized groups)
-            if let Some(ref subtree) = qa.subtree {
-                if regexp_has_plus_star(subtree) {
-                    return true;
-                }
+            if let Some(ref subtree) = qa.subtree
+                && regexp_has_plus_star(subtree)
+            {
+                return true;
             }
         }
     }

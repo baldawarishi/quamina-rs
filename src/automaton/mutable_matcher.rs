@@ -11,12 +11,12 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use super::arena::{
-    insert_string_into_arena, insert_suffix_into_arena, make_anything_but_arena_fa,
-    make_cidr_arena_fa, make_monocase_arena_fa, make_numeric_greater_arena_fa,
-    make_numeric_less_arena_fa, make_numeric_range_arena_fa, make_prefix_arena_fa,
-    make_shellstyle_arena_fa, make_string_arena_fa, make_suffix_dfa, make_wildcard_arena_fa,
-    merge_arena_nfas, traverse_arena_dfa, traverse_arena_dfa_backward, traverse_arena_nfa,
-    ArenaNfaBuffers, StateArena, StateId,
+    ArenaNfaBuffers, StateArena, StateId, insert_string_into_arena, insert_suffix_into_arena,
+    make_anything_but_arena_fa, make_cidr_arena_fa, make_monocase_arena_fa,
+    make_numeric_greater_arena_fa, make_numeric_less_arena_fa, make_numeric_range_arena_fa,
+    make_prefix_arena_fa, make_shellstyle_arena_fa, make_string_arena_fa, make_suffix_dfa,
+    make_wildcard_arena_fa, merge_arena_nfas, traverse_arena_dfa, traverse_arena_dfa_backward,
+    traverse_arena_nfa,
 };
 use super::small_table::{FieldMatcher, NfaBuffers};
 use crate::regexp::make_regexp_nfa_arena;
@@ -427,15 +427,15 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
                 self.add_anything_but_numeric_transition(excluded)
             }
             Matcher::EqualsIgnoreCase(s) => self.add_monocase_transition(&quote_wrap(s.as_bytes())),
-            Matcher::ParsedRegexp(ref tree) => self.add_regexp_transition(tree),
-            Matcher::MultiCondition(ref mc) => self.add_multi_condition_transition(mc),
+            Matcher::ParsedRegexp(tree) => self.add_regexp_transition(tree),
+            Matcher::MultiCondition(mc) => self.add_multi_condition_transition(mc),
             Matcher::Suffix(s) => self.add_suffix_transition(s),
             Matcher::Numeric(cmp) => {
                 // Numeric ranges use Q-number ordering in the automaton
                 self.has_numbers.set(true);
                 self.add_numeric_range_transition(cmp)
             }
-            Matcher::Cidr(ref cidr) => self.add_cidr_transition(cidr),
+            Matcher::Cidr(cidr) => self.add_cidr_transition(cidr),
             // Catch-all for any future matcher types
             _ => Ok(Rc::new(MutableFieldMatcher::new())),
         }
@@ -503,10 +503,10 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
         }
 
         // Check if singleton matches
-        if let Some(ref existing) = *singleton {
-            if existing == val {
-                return Ok(singleton_trans.as_ref().unwrap().clone());
-            }
+        if let Some(ref existing) = *singleton
+            && existing == val
+        {
+            return Ok(singleton_trans.as_ref().unwrap().clone());
         }
         drop(singleton);
         drop(singleton_trans);
@@ -607,10 +607,10 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
     ) -> Result<Rc<MutableFieldMatcher<X>>, crate::QuaminaError> {
         // If there's a pending singleton, fold it into main_arena first
         // so transition_on doesn't short-circuit past suffix_arena
-        if self.singleton_match.borrow().is_some() {
-            if let Some((singleton_arena, singleton_start)) = self.take_singleton_as_arena() {
-                self.merge_into_main_arena(singleton_arena, singleton_start)?;
-            }
+        if self.singleton_match.borrow().is_some()
+            && let Some((singleton_arena, singleton_start)) = self.take_singleton_as_arena()
+        {
+            self.merge_into_main_arena(singleton_arena, singleton_start)?;
         }
 
         let next_fm = Rc::new(MutableFieldMatcher::new());
@@ -885,15 +885,15 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
     ) -> Vec<Rc<MutableFieldMatcher<X>>> {
         // Singleton fast path: when no multi-condition NFAs coexist with singleton,
         // we can short-circuit without touching transition_map.
-        if self.multi_condition_nfas.borrow().is_empty() {
-            if let Some(ref singleton_val) = *self.singleton_match.borrow() {
-                if singleton_val == value {
-                    if let Some(ref trans) = *self.singleton_transition.borrow() {
-                        return vec![trans.clone()];
-                    }
-                }
-                return vec![];
+        if self.multi_condition_nfas.borrow().is_empty()
+            && let Some(ref singleton_val) = *self.singleton_match.borrow()
+        {
+            if singleton_val == value
+                && let Some(ref trans) = *self.singleton_transition.borrow()
+            {
+                return vec![trans.clone()];
             }
+            return vec![];
         }
 
         let transition_map = self.transition_map.borrow();
@@ -902,10 +902,10 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
         // Check singleton match (when multi-condition NFAs coexist with singleton,
         // we couldn't use the fast path above)
         let has_singleton = if let Some(ref singleton_val) = *self.singleton_match.borrow() {
-            if singleton_val == value {
-                if let Some(ref trans) = *self.singleton_transition.borrow() {
-                    result.push(trans.clone());
-                }
+            if singleton_val == value
+                && let Some(ref trans) = *self.singleton_transition.borrow()
+            {
+                result.push(trans.clone());
             }
             true
         } else {
@@ -2216,9 +2216,10 @@ mod tests {
                 is_number: false,
             },
         ];
-        assert!(cm
-            .matches_for_fields_ref(&conflicting, &mut bufs)
-            .is_empty());
+        assert!(
+            cm.matches_for_fields_ref(&conflicting, &mut bufs)
+                .is_empty()
+        );
 
         // Compatible → match
         let compatible = vec![
@@ -2326,9 +2327,10 @@ mod tests {
                 is_number: false,
             },
         ];
-        assert!(cm
-            .matches_for_fields_direct(&conflicting, &mut bufs)
-            .is_empty());
+        assert!(
+            cm.matches_for_fields_direct(&conflicting, &mut bufs)
+                .is_empty()
+        );
 
         // Compatible → match
         let compatible = vec![

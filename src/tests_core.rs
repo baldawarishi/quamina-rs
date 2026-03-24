@@ -588,9 +588,10 @@ fn test_has_matches() {
     let q = q!("p1" => r#"{"status": ["active"]}"#);
 
     assert!(q.has_matches(r#"{"status": "active"}"#.as_bytes()).unwrap());
-    assert!(!q
-        .has_matches(r#"{"status": "inactive"}"#.as_bytes())
-        .unwrap());
+    assert!(
+        !q.has_matches(r#"{"status": "inactive"}"#.as_bytes())
+            .unwrap()
+    );
 }
 
 #[test]
@@ -676,25 +677,25 @@ fn test_invalid_pattern_handling() {
     let mut q = Quamina::new();
 
     // Empty pattern
-    assert!(q.add_pattern("p1", "").is_err());
+    assert_add_err!(q, "p1", "");
 
     // Non-object at top level
-    assert!(q.add_pattern("p2", "33").is_err());
-    assert!(q.add_pattern("p3", "[1,2]").is_err());
+    assert_add_err!(q, "p2", "33");
+    assert_add_err!(q, "p3", "[1,2]");
 
     // Malformed JSON
-    assert!(q.add_pattern("p4", "{").is_err());
-    assert!(q.add_pattern("p5", r#"{"foo": }"#).is_err());
+    assert_add_err!(q, "p4", "{");
+    assert_add_err!(q, "p5", r#"{"foo": }"#);
 
     // Pattern field must be array or nested object
-    assert!(q.add_pattern("p6", r#"{"foo": "string"}"#).is_err());
-    assert!(q.add_pattern("p7", r#"{"foo": 123}"#).is_err());
-    assert!(q.add_pattern("p8", r#"{"foo": true}"#).is_err());
+    assert_add_err!(q, "p6", r#"{"foo": "string"}"#);
+    assert_add_err!(q, "p7", r#"{"foo": 123}"#);
+    assert_add_err!(q, "p8", r#"{"foo": true}"#);
 
     // Valid patterns should work
-    assert!(q.add_pattern("valid1", r#"{"x": [1]}"#).is_ok());
-    assert!(q.add_pattern("valid2", r#"{"x": ["string"]}"#).is_ok());
-    assert!(q.add_pattern("valid3", r#"{"x": {"y": [1]}}"#).is_ok());
+    assert_add_ok!(q, "valid1", r#"{"x": [1]}"#);
+    assert_add_ok!(q, "valid2", r#"{"x": ["string"]}"#);
+    assert_add_ok!(q, "valid3", r#"{"x": {"y": [1]}}"#);
 }
 
 #[test]
@@ -703,14 +704,10 @@ fn test_bad_pattern_error_handling() {
 
     // Go quamina returns errors for these patterns (anything_but_test.go:134)
     // Empty anything-but
-    assert!(q
-        .add_pattern("p1", r#"{"x": [{"anything-but": []}]}"#)
-        .is_err());
+    assert_add_err!(q, "p1", r#"{"x": [{"anything-but": []}]}"#);
 
     // Mixed types in anything-but
-    assert!(q
-        .add_pattern("p2", r#"{"x": [{"anything-but": ["a", 1]}]}"#)
-        .is_err());
+    assert_add_err!(q, "p2", r#"{"x": [{"anything-but": ["a", 1]}]}"#);
 }
 
 #[test]
@@ -2061,38 +2058,18 @@ fn test_default_limits_allow_normal_patterns() {
     // All operator types should work under default limits
     let mut q = Quamina::new();
 
-    assert!(q.add_pattern("exact", r#"{"x": ["hello"]}"#).is_ok());
-    assert!(q.add_pattern("num", r#"{"x": [42]}"#).is_ok());
-    assert!(q
-        .add_pattern("prefix", r#"{"x": [{"prefix": "he"}]}"#)
-        .is_ok());
-    assert!(q
-        .add_pattern("suffix", r#"{"x": [{"suffix": "lo"}]}"#)
-        .is_ok());
-    assert!(q
-        .add_pattern("shell", r#"{"x": [{"shellstyle": "h*o"}]}"#)
-        .is_ok());
-    assert!(q
-        .add_pattern("wild", r#"{"x": [{"wildcard": "h*o"}]}"#)
-        .is_ok());
-    assert!(q
-        .add_pattern("ab", r#"{"x": [{"anything-but": ["no"]}]}"#)
-        .is_ok());
-    assert!(q
-        .add_pattern("eic", r#"{"x": [{"equals-ignore-case": "HELLO"}]}"#)
-        .is_ok());
-    assert!(q
-        .add_pattern("re", r#"{"x": [{"regex": "[a-z]+"}]}"#)
-        .is_ok());
-    assert!(q
-        .add_pattern("numr", r#"{"x": [{"numeric": [">=", 1, "<", 100]}]}"#)
-        .is_ok());
-    assert!(q
-        .add_pattern("cidr", r#"{"x": [{"cidr": "10.0.0.0/8"}]}"#)
-        .is_ok());
-    assert!(q
-        .add_pattern("exists", r#"{"x": [{"exists": true}]}"#)
-        .is_ok());
+    assert_add_ok!(q, "exact", r#"{"x": ["hello"]}"#);
+    assert_add_ok!(q, "num", r#"{"x": [42]}"#);
+    assert_add_ok!(q, "prefix", r#"{"x": [{"prefix": "he"}]}"#);
+    assert_add_ok!(q, "suffix", r#"{"x": [{"suffix": "lo"}]}"#);
+    assert_add_ok!(q, "shell", r#"{"x": [{"shellstyle": "h*o"}]}"#);
+    assert_add_ok!(q, "wild", r#"{"x": [{"wildcard": "h*o"}]}"#);
+    assert_add_ok!(q, "ab", r#"{"x": [{"anything-but": ["no"]}]}"#);
+    assert_add_ok!(q, "eic", r#"{"x": [{"equals-ignore-case": "HELLO"}]}"#);
+    assert_add_ok!(q, "re", r#"{"x": [{"regex": "[a-z]+"}]}"#);
+    assert_add_ok!(q, "numr", r#"{"x": [{"numeric": [">=", 1, "<", 100]}]}"#);
+    assert_add_ok!(q, "cidr", r#"{"x": [{"cidr": "10.0.0.0/8"}]}"#);
+    assert_add_ok!(q, "exists", r#"{"x": [{"exists": true}]}"#);
 }
 
 /// Miri-friendly variant of test_default_limits_allow_normal_patterns.
@@ -2103,32 +2080,16 @@ fn test_default_limits_allow_normal_patterns() {
 fn test_default_limits_allow_normal_patterns_miri_friendly() {
     let mut q = Quamina::new();
 
-    assert!(q.add_pattern("exact", r#"{"x": ["hello"]}"#).is_ok());
-    assert!(q.add_pattern("num", r#"{"x": [42]}"#).is_ok());
-    assert!(q
-        .add_pattern("prefix", r#"{"x": [{"prefix": "he"}]}"#)
-        .is_ok());
-    assert!(q
-        .add_pattern("suffix", r#"{"x": [{"suffix": "lo"}]}"#)
-        .is_ok());
-    assert!(q
-        .add_pattern("shell", r#"{"x": [{"shellstyle": "h*o"}]}"#)
-        .is_ok());
-    assert!(q
-        .add_pattern("wild", r#"{"x": [{"wildcard": "h*o"}]}"#)
-        .is_ok());
-    assert!(q
-        .add_pattern("ab", r#"{"x": [{"anything-but": ["no"]}]}"#)
-        .is_ok());
-    assert!(q
-        .add_pattern("eic", r#"{"x": [{"equals-ignore-case": "HELLO"}]}"#)
-        .is_ok());
-    assert!(q
-        .add_pattern("numr", r#"{"x": [{"numeric": [">=", 1, "<", 100]}]}"#)
-        .is_ok());
-    assert!(q
-        .add_pattern("exists", r#"{"x": [{"exists": true}]}"#)
-        .is_ok());
+    assert_add_ok!(q, "exact", r#"{"x": ["hello"]}"#);
+    assert_add_ok!(q, "num", r#"{"x": [42]}"#);
+    assert_add_ok!(q, "prefix", r#"{"x": [{"prefix": "he"}]}"#);
+    assert_add_ok!(q, "suffix", r#"{"x": [{"suffix": "lo"}]}"#);
+    assert_add_ok!(q, "shell", r#"{"x": [{"shellstyle": "h*o"}]}"#);
+    assert_add_ok!(q, "wild", r#"{"x": [{"wildcard": "h*o"}]}"#);
+    assert_add_ok!(q, "ab", r#"{"x": [{"anything-but": ["no"]}]}"#);
+    assert_add_ok!(q, "eic", r#"{"x": [{"equals-ignore-case": "HELLO"}]}"#);
+    assert_add_ok!(q, "numr", r#"{"x": [{"numeric": [">=", 1, "<", 100]}]}"#);
+    assert_add_ok!(q, "exists", r#"{"x": [{"exists": true}]}"#);
 }
 
 /// Patterns with many distinct values on the same field must be rejected
@@ -2304,14 +2265,10 @@ fn test_state_limit_default_allows_normal_patterns() {
     let mut q = Quamina::new();
 
     // Mixed exact + prefix on one field
-    assert!(q
-        .add_pattern("p1", r#"{"status": ["active", {"prefix": "pend"}]}"#)
-        .is_ok());
+    assert_add_ok!(q, "p1", r#"{"status": ["active", {"prefix": "pend"}]}"#);
 
     // Multiple fields with single matchers (no multiplication)
-    assert!(q
-        .add_pattern("p2", r#"{"a": ["1"], "b": ["2"], "c": ["3"]}"#)
-        .is_ok());
+    assert_add_ok!(q, "p2", r#"{"a": ["1"], "b": ["2"], "c": ["3"]}"#);
 
     // Verify matching still works
     let matches = q
@@ -2912,8 +2869,8 @@ fn test_lookaround_condition_is_lookbehind_true() {
 fn test_transform_lookaround_lookbehind_byte_length() {
     // Tests compute_lookbehind_byte_length and compute_branch_byte_length
     // via transform_lookaround_pattern with lookbehind patterns.
-    use crate::json::transform_lookaround_pattern;
     use crate::json::LookaroundCondition;
+    use crate::json::transform_lookaround_pattern;
     use crate::regexp::parse_regexp;
 
     // (?<=abc)d — lookbehind "abc" has 3 ASCII chars = 3 bytes
@@ -2943,8 +2900,8 @@ fn test_transform_lookaround_lookbehind_byte_length() {
 fn test_transform_lookbehind_single_char_class() {
     // Tests compute_branch_byte_length with rune ranges (the !atom.runes.is_empty() path)
     // and the atom_len * count multiplication.
-    use crate::json::transform_lookaround_pattern;
     use crate::json::LookaroundCondition;
+    use crate::json::transform_lookaround_pattern;
     use crate::regexp::parse_regexp;
 
     // (?<=[a-z])X — single char class, each char is 1 byte, count=1 → 1 byte
@@ -2972,8 +2929,8 @@ fn test_transform_lookbehind_single_char_class() {
 #[test]
 fn test_transform_lookbehind_dot_byte_length() {
     // Tests the is_dot branch: dot → 4 bytes (conservative UTF-8 max)
-    use crate::json::transform_lookaround_pattern;
     use crate::json::LookaroundCondition;
+    use crate::json::transform_lookaround_pattern;
     use crate::regexp::parse_regexp;
 
     // (?<=.)X — dot = 4 bytes (worst-case UTF-8)
@@ -3003,8 +2960,8 @@ fn test_transform_lookbehind_alternation_same_length() {
     // Tests compute_lookbehind_byte_length with multi-branch (alternation) lookbehind.
     // (?<=ab|cd)x — two branches, both 2 bytes → Ok(2)
     // Catches line 436 (!= → ==): mutant would Err on equal-length branches.
-    use crate::json::transform_lookaround_pattern;
     use crate::json::LookaroundCondition;
+    use crate::json::transform_lookaround_pattern;
     use crate::regexp::parse_regexp;
 
     let tree = parse_regexp("(?<=ab|cd)x").unwrap();
@@ -3101,19 +3058,13 @@ fn test_numeric_comparison_invalid_patterns() {
     let mut q = Quamina::<&str>::new();
 
     // Unknown operator
-    assert!(q
-        .add_pattern("bad", r#"{"x": [{"numeric": ["!=", 5]}]}"#)
-        .is_err());
+    assert_add_err!(q, "bad", r#"{"x": [{"numeric": ["!=", 5]}]}"#);
 
     // Non-number value after operator
-    assert!(q
-        .add_pattern("bad", r#"{"x": [{"numeric": [">", "five"]}]}"#)
-        .is_err());
+    assert_add_err!(q, "bad", r#"{"x": [{"numeric": [">", "five"]}]}"#);
 
     // Non-string in operator position (number where operator expected)
-    assert!(q
-        .add_pattern("bad", r#"{"x": [{"numeric": [5, 10]}]}"#)
-        .is_err());
+    assert_add_err!(q, "bad", r#"{"x": [{"numeric": [5, 10]}]}"#);
 }
 
 #[test]
@@ -3147,24 +3098,16 @@ fn test_validate_wildcard_escapes() {
     let mut q = Quamina::<&str>::new();
 
     // Valid escaped star
-    assert!(q
-        .add_pattern("esc", r#"{"x": [{"wildcard": "a\\*b"}]}"#)
-        .is_ok());
+    assert_add_ok!(q, "esc", r#"{"x": [{"wildcard": "a\\*b"}]}"#);
 
     // Trailing backslash — invalid
-    assert!(q
-        .add_pattern("bad", r#"{"x": [{"wildcard": "a\\"}]}"#)
-        .is_err());
+    assert_add_err!(q, "bad", r#"{"x": [{"wildcard": "a\\"}]}"#);
 
     // Invalid escape character (not * or \)
-    assert!(q
-        .add_pattern("bad2", r#"{"x": [{"wildcard": "a\\nb"}]}"#)
-        .is_err());
+    assert_add_err!(q, "bad2", r#"{"x": [{"wildcard": "a\\nb"}]}"#);
 
     // Adjacent ** in wildcard — invalid
-    assert!(q
-        .add_pattern("bad3", r#"{"x": [{"wildcard": "a**b"}]}"#)
-        .is_err());
+    assert_add_err!(q, "bad3", r#"{"x": [{"wildcard": "a**b"}]}"#);
 }
 
 // Mutation coverage: json.rs parse_value guard, parse_number scientific notation
@@ -3174,9 +3117,7 @@ fn test_parse_value_rejects_invalid_value_start() {
     // Catches mutation: line 887 guard `c == '-' || c.is_ascii_digit()` → `true`
     // (with mutation, `.5` is parsed via parse_number as "0.5" and pattern succeeds)
     let mut q = crate::Quamina::new();
-    assert!(q
-        .add_pattern("bad", r#"{"x": [{"numeric": [">", .5]}]}"#)
-        .is_err());
+    assert_add_err!(q, "bad", r#"{"x": [{"numeric": [">", .5]}]}"#);
 }
 
 #[test]

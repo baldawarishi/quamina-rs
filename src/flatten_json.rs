@@ -13,8 +13,8 @@
 //! - `transmute`: Lifetime extension for borrowed fields (verified by Miri)
 #![allow(unsafe_code)]
 
-use crate::segments_tree::{SegmentEntry, SegmentsTree};
 use crate::QuaminaError;
+use crate::segments_tree::{SegmentEntry, SegmentsTree};
 use smallvec::SmallVec;
 use std::sync::Arc;
 
@@ -422,20 +422,18 @@ impl<'a> FlattenContext<'a, '_> {
                         }
                     }
 
-                    if is_leaf {
-                        if let Some(v) = val {
-                            if member_is_used {
-                                if let Some(path) = member_entry.and_then(|e| e.field()).cloned() {
-                                    self.push_field(Field {
-                                        path,
-                                        val: v,
-                                        array_trail: array_trail.clone(),
-                                        is_number,
-                                    });
-                                    fields_count = fields_count.saturating_sub(1);
-                                }
-                            }
-                        }
+                    if is_leaf
+                        && let Some(v) = val
+                        && member_is_used
+                        && let Some(path) = member_entry.and_then(|e| e.field()).cloned()
+                    {
+                        self.push_field(Field {
+                            path,
+                            val: v,
+                            array_trail: array_trail.clone(),
+                            is_number,
+                        });
+                        fields_count = fields_count.saturating_sub(1);
                     }
 
                     state = ObjectState::AfterValue;
@@ -540,19 +538,18 @@ impl<'a> FlattenContext<'a, '_> {
                         }
                     }
 
-                    if is_leaf {
-                        if let Some(v) = val {
-                            if self.skipping == 0 {
-                                self.step_array_element();
-                                if let Some(ref p) = path {
-                                    self.push_field(Field {
-                                        path: p.clone(),
-                                        val: v,
-                                        array_trail: self.array_trail.clone(),
-                                        is_number,
-                                    });
-                                }
-                            }
+                    if is_leaf
+                        && let Some(v) = val
+                        && self.skipping == 0
+                    {
+                        self.step_array_element();
+                        if let Some(ref p) = path {
+                            self.push_field(Field {
+                                path: p.clone(),
+                                val: v,
+                                array_trail: self.array_trail.clone(),
+                                is_number,
+                            });
                         }
                     }
 
@@ -873,7 +870,7 @@ impl<'a> FlattenContext<'a, '_> {
                 _ => {
                     return Err(FlattenError::Error(
                         self.error("invalid hex digit in unicode escape"),
-                    ))
+                    ));
                 }
             };
             value = value * 16 + digit as u32;
