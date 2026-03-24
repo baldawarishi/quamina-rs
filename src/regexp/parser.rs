@@ -306,10 +306,10 @@ fn has_nested_lookaround(tree: &RegexpRoot) -> bool {
         for atom in branch {
             if atom.lookaround.is_some() {
                 // This atom IS a lookaround. Check if its subtree contains another lookaround.
-                if let Some(subtree) = &atom.subtree {
-                    if tree_has_lookaround(subtree) {
-                        return true;
-                    }
+                if let Some(subtree) = &atom.subtree
+                    && tree_has_lookaround(subtree)
+                {
+                    return true;
                 }
             }
         }
@@ -324,10 +324,10 @@ fn tree_has_lookaround(tree: &RegexpRoot) -> bool {
             if atom.lookaround.is_some() {
                 return true;
             }
-            if let Some(subtree) = &atom.subtree {
-                if tree_has_lookaround(subtree) {
-                    return true;
-                }
+            if let Some(subtree) = &atom.subtree
+                && tree_has_lookaround(subtree)
+            {
+                return true;
             }
         }
     }
@@ -345,18 +345,14 @@ fn validate_lookarounds(tree: &RegexpRoot) -> Result<(), String> {
     // Check for variable-length lookbehind
     for branch in tree {
         for atom in branch {
-            if let Some(la_type) = &atom.lookaround {
-                if la_type.is_lookbehind() {
-                    if let Some(subtree) = &atom.subtree {
-                        if has_variable_length_pattern(subtree) {
-                            return Err(
-                                "variable-length lookbehind not yet supported: `(?<=a+)`; \
+            if let Some(la_type) = &atom.lookaround
+                && la_type.is_lookbehind()
+                && let Some(subtree) = &atom.subtree
+                && has_variable_length_pattern(subtree)
+            {
+                return Err("variable-length lookbehind not yet supported: `(?<=a+)`; \
                                  use fixed-length like `(?<=aaa)`"
-                                    .into(),
-                            );
-                        }
-                    }
-                }
+                    .into());
             }
         }
     }
@@ -440,10 +436,10 @@ pub fn collect_lookarounds(tree: &RegexpRoot) -> Vec<(usize, usize, LookaroundTy
     let mut result = Vec::new();
     for (branch_idx, branch) in tree.iter().enumerate() {
         for (atom_idx, atom) in branch.iter().enumerate() {
-            if let Some(la_type) = atom.lookaround {
-                if let Some(subtree) = &atom.subtree {
-                    result.push((branch_idx, atom_idx, la_type, subtree.clone()));
-                }
+            if let Some(la_type) = atom.lookaround
+                && let Some(subtree) = &atom.subtree
+            {
+                result.push((branch_idx, atom_idx, la_type, subtree.clone()));
             }
         }
     }
@@ -663,13 +659,14 @@ fn expand_wb_at_start(suffix: &[QuantifiedAtom], is_boundary: bool, out: &mut Ve
 
     // SplitOrAbsent: the first suffix atom matched 0 chars, so the boundary
     // falls at value start. Constrain the next real atom instead.
-    if matches!(constrained, ConstrainedAtom::SplitOrAbsent(..)) && suffix.len() > 1 {
-        if let Some(c2) = constrain_atom_at_boundary(&suffix[1], required_class, false) {
-            for atoms in expand_constrained(&c2, false) {
-                let mut branch = atoms;
-                branch.extend_from_slice(&suffix[2..]);
-                out.push(branch);
-            }
+    if matches!(constrained, ConstrainedAtom::SplitOrAbsent(..))
+        && suffix.len() > 1
+        && let Some(c2) = constrain_atom_at_boundary(&suffix[1], required_class, false)
+    {
+        for atoms in expand_constrained(&c2, false) {
+            let mut branch = atoms;
+            branch.extend_from_slice(&suffix[2..]);
+            out.push(branch);
         }
     }
 }
@@ -736,7 +733,7 @@ fn expand_wb_in_middle(
         let cl = constrain_atom_at_boundary(&prefix[last_idx], last_class, true);
         let cf = constrain_atom_at_boundary(&suffix[0], first_class, false);
 
-        let (Some(ref cl), Some(ref cf)) = (&cl, &cf) else {
+        let (Some(cl), Some(cf)) = (&cl, &cf) else {
             continue;
         };
 
@@ -868,13 +865,13 @@ pub fn parse_regexp(re: &str) -> Result<RegexpRoot, RegexpError> {
     let tree = std::mem::take(&mut parse.tree);
 
     // Validate lookaround constructs (nested, variable-length lookbehind)
-    if parse.found_features.contains(&RegexpFeature::Lookaround) {
-        if let Err(msg) = validate_lookarounds(&tree) {
-            return Err(RegexpError {
-                message: msg,
-                offset: 0,
-            });
-        }
+    if parse.found_features.contains(&RegexpFeature::Lookaround)
+        && let Err(msg) = validate_lookarounds(&tree)
+    {
+        return Err(RegexpError {
+            message: msg,
+            offset: 0,
+        });
     }
 
     let unimplemented = parse.found_unimplemented();
@@ -1325,13 +1322,13 @@ fn read_atom(parse: &mut RegexpParse) -> Result<QuantifiedAtom, RegexpError> {
             }
 
             // Backreferences (~1 through ~9) are not supported
-            if let Some(digit) = next.to_digit(10) {
-                if (1..=9).contains(&digit) {
-                    return Err(RegexpError {
-                        message: format!("backreferences (~{}) are not supported", digit),
-                        offset: parse.last_index,
-                    });
-                }
+            if let Some(digit) = next.to_digit(10)
+                && (1..=9).contains(&digit)
+            {
+                return Err(RegexpError {
+                    message: format!("backreferences (~{}) are not supported", digit),
+                    offset: parse.last_index,
+                });
             }
 
             Err(RegexpError {
@@ -1642,10 +1639,10 @@ pub(crate) fn subtract_rune_range(base: RuneRange, subtract: RuneRange) -> RuneR
             let sub_hi = subtract[si].hi as u32;
 
             // Add the gap before this subtract range (if any)
-            if lo < sub_lo {
-                if let (Some(r_lo), Some(r_hi)) = (char::from_u32(lo), char::from_u32(sub_lo - 1)) {
-                    result.push(RunePair { lo: r_lo, hi: r_hi });
-                }
+            if lo < sub_lo
+                && let (Some(r_lo), Some(r_hi)) = (char::from_u32(lo), char::from_u32(sub_lo - 1))
+            {
+                result.push(RunePair { lo: r_lo, hi: r_hi });
             }
 
             // Advance past the subtracted portion
@@ -1654,10 +1651,10 @@ pub(crate) fn subtract_rune_range(base: RuneRange, subtract: RuneRange) -> RuneR
         }
 
         // Add remaining portion of base range after all subtract ranges
-        if lo <= hi {
-            if let (Some(r_lo), Some(r_hi)) = (char::from_u32(lo), char::from_u32(hi)) {
-                result.push(RunePair { lo: r_lo, hi: r_hi });
-            }
+        if lo <= hi
+            && let (Some(r_lo), Some(r_hi)) = (char::from_u32(lo), char::from_u32(hi))
+        {
+            result.push(RunePair { lo: r_lo, hi: r_hi });
         }
     }
 
@@ -1707,21 +1704,19 @@ fn add_gap_range(inverted: &mut Vec<RunePair>, start: u32, end: u32) {
             inverted.push(RunePair { lo, hi });
         }
         // Part after surrogates (if any)
-        if end > SURROGATE_END_CP {
-            if let (Some(lo), Some(hi)) =
+        if end > SURROGATE_END_CP
+            && let (Some(lo), Some(hi)) =
                 (char::from_u32(SURROGATE_END_CP + 1), char::from_u32(end))
-            {
-                inverted.push(RunePair { lo, hi });
-            }
+        {
+            inverted.push(RunePair { lo, hi });
         }
     } else if (SURROGATE_START_CP..=SURROGATE_END_CP).contains(&start) {
         // Starts in surrogate range, only add part after
-        if end > SURROGATE_END_CP {
-            if let (Some(lo), Some(hi)) =
+        if end > SURROGATE_END_CP
+            && let (Some(lo), Some(hi)) =
                 (char::from_u32(SURROGATE_END_CP + 1), char::from_u32(end))
-            {
-                inverted.push(RunePair { lo, hi });
-            }
+        {
+            inverted.push(RunePair { lo, hi });
         }
     } else {
         // Normal range (not touching surrogates)
@@ -1814,7 +1809,7 @@ fn read_category(parse: &mut RegexpParse) -> Result<(RuneRange, Option<String>),
             return Err(RegexpError {
                 message: "empty category name".into(),
                 offset: parse.last_index,
-            })
+            });
         }
     };
 

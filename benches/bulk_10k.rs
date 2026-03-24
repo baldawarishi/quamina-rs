@@ -3,7 +3,7 @@
 //! This is split out from matching.rs because a single iteration takes ~28s,
 //! making it too slow for CI. Run locally with: cargo bench --bench bulk_10k
 
-use criterion::{criterion_group, criterion_main, Criterion};
+use criterion::{Criterion, criterion_group, criterion_main};
 use quamina::Quamina;
 
 /// Benchmark for adding 10,000 patterns (single value each).

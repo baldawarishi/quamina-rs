@@ -29,7 +29,7 @@ mod case_fold_proofs {
 
 #[cfg(kani)]
 mod numbits_proofs {
-    use crate::numbits::{numbits_from_f64, to_q_number_stack, MAX_BYTES_IN_ENCODING};
+    use crate::numbits::{MAX_BYTES_IN_ENCODING, numbits_from_f64, to_q_number_stack};
 
     /// Prove: to_q_number_stack never exceeds MAX_BYTES_IN_ENCODING (10) for any u64.
     ///

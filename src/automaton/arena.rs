@@ -24,9 +24,9 @@
 use std::sync::Arc;
 
 use rustc_hash::{FxHashMap, FxHashSet};
-use smallvec::{smallvec, SmallVec};
+use smallvec::{SmallVec, smallvec};
 
-use super::small_table::{AccelInfo, FieldMatcher, BYTE_CEILING};
+use super::small_table::{AccelInfo, BYTE_CEILING, FieldMatcher};
 use super::sparse_set::SparseSet;
 
 /// A state identifier - just an index into the arena.
@@ -386,7 +386,8 @@ impl StateArena {
     #[inline(always)]
     #[allow(unsafe_code)]
     unsafe fn state_unchecked(&self, id: StateId) -> &ArenaFaState {
-        self.states.get_unchecked(id.index())
+        // SAFETY: caller guarantees `id` is a valid index from `alloc()` on this arena
+        unsafe { self.states.get_unchecked(id.index()) }
     }
 
     /// Get the epsilon closure for a state as a slice.
@@ -850,11 +851,11 @@ pub fn traverse_arena_nfa(
         if i < len && bufs.current_states.len() == 1 {
             let state_id = bufs.current_states[0];
             let state = &arena[state_id];
-            if let Some(skip) = try_accelerate_arena(&state.table, &val[i..]) {
-                if skip > 0 {
-                    i += skip;
-                    continue;
-                }
+            if let Some(skip) = try_accelerate_arena(&state.table, &val[i..])
+                && skip > 0
+            {
+                i += skip;
+                continue;
             }
         }
 
@@ -942,12 +943,12 @@ pub fn traverse_arena_nfa(
         // Dedup in-place using a generation counter when growth is detected.
         if next_states.len() > 64 {
             *step_gen += 1;
-            let gen = *step_gen;
+            let generation = *step_gen;
             let mut j = 0;
             for i_ns in 0..next_states.len() {
                 let state = next_states[i_ns];
-                if seen_states.get(&state).copied() != Some(gen) {
-                    seen_states.insert(state, gen);
+                if seen_states.get(&state).copied() != Some(generation) {
+                    seen_states.insert(state, generation);
                     next_states[j] = state;
                     j += 1;
                 }
@@ -2788,16 +2789,16 @@ fn build_fa_from_segments(
 
                 // Look ahead: if next segment is a literal, create escape with
                 // direct byte exit on the literal's first byte
-                if let Some(ShellstyleSegment::Literal(next_bytes)) = segments.get(seg_idx + 1) {
-                    if !next_bytes.is_empty() {
-                        let spin_escape = arena.alloc();
-                        arena[spin_escape].table.epsilons.push(spinner);
-                        arena[spinner]
-                            .table
-                            .set_transition(next_bytes[0], spin_escape);
-                        state = spin_escape;
-                        skip_first_literal_byte = true;
-                    }
+                if let Some(ShellstyleSegment::Literal(next_bytes)) = segments.get(seg_idx + 1)
+                    && !next_bytes.is_empty()
+                {
+                    let spin_escape = arena.alloc();
+                    arena[spin_escape].table.epsilons.push(spinner);
+                    arena[spinner]
+                        .table
+                        .set_transition(next_bytes[0], spin_escape);
+                    state = spin_escape;
+                    skip_first_literal_byte = true;
                 }
 
                 // If wildcard is last or followed by another wildcard,
@@ -2893,7 +2894,7 @@ fn parse_wildcard_segments(pattern: &[u8]) -> Vec<ShellstyleSegment> {
             // Escape sequence - consume the escaped character
             let escaped = pattern[i + 1];
             // Start or extend literal segment with escaped character
-            if let Some(ShellstyleSegment::Literal(ref mut bytes)) = segments.last_mut() {
+            if let Some(ShellstyleSegment::Literal(bytes)) = segments.last_mut() {
                 bytes.push(escaped);
             } else {
                 segments.push(ShellstyleSegment::Literal(vec![escaped]));
@@ -2901,7 +2902,7 @@ fn parse_wildcard_segments(pattern: &[u8]) -> Vec<ShellstyleSegment> {
             i += 2;
         } else {
             // Regular character - add to literal segment
-            if let Some(ShellstyleSegment::Literal(ref mut bytes)) = segments.last_mut() {
+            if let Some(ShellstyleSegment::Literal(bytes)) = segments.last_mut() {
                 bytes.push(pattern[i]);
             } else {
                 segments.push(ShellstyleSegment::Literal(vec![pattern[i]]));

@@ -945,8 +945,8 @@ fn test_concurrent_update_during_matching() {
     use flate2::read::GzDecoder;
     use std::fs::File;
     use std::io::{BufRead, BufReader};
-    use std::sync::mpsc;
     use std::sync::Arc;
+    use std::sync::mpsc;
     use std::thread;
 
     const UPDATE_INTERVAL: usize = 250;

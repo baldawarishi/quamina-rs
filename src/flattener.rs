@@ -27,9 +27,9 @@
 //! }
 //! ```
 
+use crate::QuaminaError;
 use crate::flatten_json::{ArrayPos, FlattenJsonState};
 use crate::segments_tree::SegmentsTree;
-use crate::QuaminaError;
 use std::any::Any;
 
 /// A flattened field with owned data.

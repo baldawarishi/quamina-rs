@@ -1052,9 +1052,10 @@ fn test_wb_middle_nonword_to_word() {
 fn test_wb_middle_word_to_word_err() {
     // 'o' and 'w' are both word chars → ~b impossible → error at pattern addition
     let mut q = Quamina::new();
-    assert!(q
-        .add_pattern("test", r#"{"name": [{"regexp": "hello~bworld"}]}"#)
-        .is_err());
+    assert!(
+        q.add_pattern("test", r#"{"name": [{"regexp": "hello~bworld"}]}"#)
+            .is_err()
+    );
 }
 
 #[test]
@@ -1067,9 +1068,10 @@ fn test_nwb_word_to_word() {
 fn test_nwb_word_to_nonword_err() {
     // 'o' is word, ' ' is non-word → ~B impossible → error
     let mut q = Quamina::new();
-    assert!(q
-        .add_pattern("test", r#"{"name": [{"regexp": "hello~B world"}]}"#)
-        .is_err());
+    assert!(
+        q.add_pattern("test", r#"{"name": [{"regexp": "hello~B world"}]}"#)
+            .is_err()
+    );
 }
 
 #[test]
@@ -1083,9 +1085,10 @@ fn test_nwb_start_nonword() {
 fn test_nwb_start_word_err() {
     // ~B at start: `"` is non-word, 'h' is word → different → impossible → error
     let mut q = Quamina::new();
-    assert!(q
-        .add_pattern("test", r#"{"name": [{"regexp": "~Bhello"}]}"#)
-        .is_err());
+    assert!(
+        q.add_pattern("test", r#"{"name": [{"regexp": "~Bhello"}]}"#)
+            .is_err()
+    );
 }
 
 #[test]
@@ -1122,9 +1125,10 @@ fn test_wb_whole_word_only() {
 fn test_wb_underscore_is_word_char() {
     // '_' is a word char, so no boundary between 'a' and '_' → error
     let mut q = Quamina::new();
-    assert!(q
-        .add_pattern("test", r#"{"name": [{"regexp": "a~b_"}]}"#)
-        .is_err());
+    assert!(
+        q.add_pattern("test", r#"{"name": [{"regexp": "a~b_"}]}"#)
+            .is_err()
+    );
 }
 
 #[test]
@@ -2615,7 +2619,7 @@ fn test_regexp_samples_exist() {
 #[test]
 #[cfg_attr(miri, ignore)]
 fn test_regexp_validity() {
-    use crate::automaton::arena::{traverse_arena_nfa, ArenaNfaBuffers, ARENA_VALUE_TERMINATOR};
+    use crate::automaton::arena::{ARENA_VALUE_TERMINATOR, ArenaNfaBuffers, traverse_arena_nfa};
     use crate::regexp::{make_regexp_nfa_arena, parse_regexp};
     use crate::regexp_samples::REGEXP_SAMPLES;
     use std::sync::Arc;
@@ -2765,7 +2769,7 @@ fn test_regexp_validity() {
 #[test]
 #[cfg(miri)]
 fn test_regexp_validity_miri_minimal() {
-    use crate::automaton::arena::{traverse_arena_nfa, ArenaNfaBuffers, ARENA_VALUE_TERMINATOR};
+    use crate::automaton::arena::{ARENA_VALUE_TERMINATOR, ArenaNfaBuffers, traverse_arena_nfa};
     use crate::regexp::{make_regexp_nfa_arena, parse_regexp};
     use std::sync::Arc;
 
@@ -2780,10 +2784,11 @@ fn test_regexp_validity_miri_minimal() {
         &[b'"', b'a', b'"', ARENA_VALUE_TERMINATOR],
         &mut bufs,
     );
-    assert!(bufs
-        .transitions
-        .iter()
-        .any(|&m| m == Arc::as_ptr(&fm) as usize));
+    assert!(
+        bufs.transitions
+            .iter()
+            .any(|&m| m == Arc::as_ptr(&fm) as usize)
+    );
     bufs.clear();
     traverse_arena_nfa(
         &arena,
@@ -2791,10 +2796,12 @@ fn test_regexp_validity_miri_minimal() {
         &[b'"', b'x', b'"', ARENA_VALUE_TERMINATOR],
         &mut bufs,
     );
-    assert!(!bufs
-        .transitions
-        .iter()
-        .any(|&m| m == Arc::as_ptr(&fm) as usize));
+    assert!(
+        !bufs
+            .transitions
+            .iter()
+            .any(|&m| m == Arc::as_ptr(&fm) as usize)
+    );
 
     let root = parse_regexp("a(h|i)z").unwrap();
     let (arena, start, fm) = make_regexp_nfa_arena(root);
@@ -2805,10 +2812,11 @@ fn test_regexp_validity_miri_minimal() {
         &[b'"', b'a', b'h', b'z', b'"', ARENA_VALUE_TERMINATOR],
         &mut bufs,
     );
-    assert!(bufs
-        .transitions
-        .iter()
-        .any(|&m| m == Arc::as_ptr(&fm) as usize));
+    assert!(
+        bufs.transitions
+            .iter()
+            .any(|&m| m == Arc::as_ptr(&fm) as usize)
+    );
 
     let root = parse_regexp("[a-c]").unwrap();
     let (arena, start, fm) = make_regexp_nfa_arena(root);
@@ -2819,10 +2827,11 @@ fn test_regexp_validity_miri_minimal() {
         &[b'"', b'b', b'"', ARENA_VALUE_TERMINATOR],
         &mut bufs,
     );
-    assert!(bufs
-        .transitions
-        .iter()
-        .any(|&m| m == Arc::as_ptr(&fm) as usize));
+    assert!(
+        bufs.transitions
+            .iter()
+            .any(|&m| m == Arc::as_ptr(&fm) as usize)
+    );
     bufs.clear();
     traverse_arena_nfa(
         &arena,
@@ -2830,10 +2839,12 @@ fn test_regexp_validity_miri_minimal() {
         &[b'"', b'z', b'"', ARENA_VALUE_TERMINATOR],
         &mut bufs,
     );
-    assert!(!bufs
-        .transitions
-        .iter()
-        .any(|&m| m == Arc::as_ptr(&fm) as usize));
+    assert!(
+        !bufs
+            .transitions
+            .iter()
+            .any(|&m| m == Arc::as_ptr(&fm) as usize)
+    );
 
     let root = parse_regexp("a.b").unwrap();
     let (arena, start, fm) = make_regexp_nfa_arena(root);
@@ -2844,10 +2855,11 @@ fn test_regexp_validity_miri_minimal() {
         &[b'"', b'a', b'x', b'b', b'"', ARENA_VALUE_TERMINATOR],
         &mut bufs,
     );
-    assert!(bufs
-        .transitions
-        .iter()
-        .any(|&m| m == Arc::as_ptr(&fm) as usize));
+    assert!(
+        bufs.transitions
+            .iter()
+            .any(|&m| m == Arc::as_ptr(&fm) as usize)
+    );
 }
 
 /// Miri-only: exercises regexp end-to-end through Quamina
