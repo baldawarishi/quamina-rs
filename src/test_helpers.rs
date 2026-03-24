@@ -125,6 +125,32 @@ macro_rules! assert_match_count {
     }};
 }
 
+/// Assert that `add_pattern` succeeds or fails, keeping test lines compact.
+///
+/// ```ignore
+/// assert_add_ok!(q, "p1", r#"{"x": [1]}"#);
+/// assert_add_err!(q, "p1", "not valid json");
+/// ```
+macro_rules! assert_add_ok {
+    ($q:expr, $name:expr, $pattern:expr) => {
+        assert!(
+            $q.add_pattern($name, $pattern).is_ok(),
+            "add_pattern({}, ...) should succeed",
+            $name
+        );
+    };
+}
+
+macro_rules! assert_add_err {
+    ($q:expr, $name:expr, $pattern:expr) => {
+        assert!(
+            $q.add_pattern($name, $pattern).is_err(),
+            "add_pattern({}, ...) should fail",
+            $name
+        );
+    };
+}
+
 /// Helper for wildcard pattern tests — tests a single pattern against match/no-match lists.
 pub(crate) fn exercise_wildcard(pattern: &str, should_match: &[&str], should_not_match: &[&str]) {
     let mut q = crate::Quamina::new();

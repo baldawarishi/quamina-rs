@@ -1052,10 +1052,7 @@ fn test_wb_middle_nonword_to_word() {
 fn test_wb_middle_word_to_word_err() {
     // 'o' and 'w' are both word chars → ~b impossible → error at pattern addition
     let mut q = Quamina::new();
-    assert!(
-        q.add_pattern("test", r#"{"name": [{"regexp": "hello~bworld"}]}"#)
-            .is_err()
-    );
+    assert_add_err!(q, "test", r#"{"name": [{"regexp": "hello~bworld"}]}"#);
 }
 
 #[test]
@@ -1068,10 +1065,7 @@ fn test_nwb_word_to_word() {
 fn test_nwb_word_to_nonword_err() {
     // 'o' is word, ' ' is non-word → ~B impossible → error
     let mut q = Quamina::new();
-    assert!(
-        q.add_pattern("test", r#"{"name": [{"regexp": "hello~B world"}]}"#)
-            .is_err()
-    );
+    assert_add_err!(q, "test", r#"{"name": [{"regexp": "hello~B world"}]}"#);
 }
 
 #[test]
@@ -1085,10 +1079,7 @@ fn test_nwb_start_nonword() {
 fn test_nwb_start_word_err() {
     // ~B at start: `"` is non-word, 'h' is word → different → impossible → error
     let mut q = Quamina::new();
-    assert!(
-        q.add_pattern("test", r#"{"name": [{"regexp": "~Bhello"}]}"#)
-            .is_err()
-    );
+    assert_add_err!(q, "test", r#"{"name": [{"regexp": "~Bhello"}]}"#);
 }
 
 #[test]
@@ -1125,10 +1116,7 @@ fn test_wb_whole_word_only() {
 fn test_wb_underscore_is_word_char() {
     // '_' is a word char, so no boundary between 'a' and '_' → error
     let mut q = Quamina::new();
-    assert!(
-        q.add_pattern("test", r#"{"name": [{"regexp": "a~b_"}]}"#)
-            .is_err()
-    );
+    assert_add_err!(q, "test", r#"{"name": [{"regexp": "a~b_"}]}"#);
 }
 
 #[test]
