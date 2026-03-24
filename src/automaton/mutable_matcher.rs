@@ -6,9 +6,11 @@
 //! - `CoreMatcher`: Single-threaded core matcher that builds and matches patterns
 
 use std::cell::{Cell, RefCell};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::rc::Rc;
 use std::sync::Arc;
+
+use rustc_hash::FxHashMap;
 
 use super::arena::{
     ArenaNfaBuffers, StateArena, StateId, insert_string_into_arena, insert_suffix_into_arena,
@@ -105,22 +107,22 @@ fn build_lookbehind_combined_pattern(
 #[derive(Default)]
 pub struct MutableFieldMatcher<X: Clone + Eq + std::hash::Hash> {
     /// Map from field paths to value matchers
-    pub transitions: RefCell<HashMap<String, Rc<MutableValueMatcher<X>>>>,
+    pub transitions: RefCell<FxHashMap<String, Rc<MutableValueMatcher<X>>>>,
     /// Pattern identifiers that match when arriving at this state
     pub matches: RefCell<Vec<X>>,
     /// exists:true patterns - map from field path to next field matcher
-    pub exists_true: RefCell<HashMap<String, Rc<Self>>>,
+    pub exists_true: RefCell<FxHashMap<String, Rc<Self>>>,
     /// exists:false patterns - map from field path to next field matcher
-    pub exists_false: RefCell<HashMap<String, Rc<Self>>>,
+    pub exists_false: RefCell<FxHashMap<String, Rc<Self>>>,
 }
 
 impl<X: Clone + Eq + std::hash::Hash> MutableFieldMatcher<X> {
     pub fn new() -> Self {
         Self {
-            transitions: RefCell::new(HashMap::new()),
+            transitions: RefCell::new(FxHashMap::default()),
             matches: RefCell::new(Vec::new()),
-            exists_true: RefCell::new(HashMap::new()),
-            exists_false: RefCell::new(HashMap::new()),
+            exists_true: RefCell::new(FxHashMap::default()),
+            exists_false: RefCell::new(FxHashMap::default()),
         }
     }
 
@@ -214,7 +216,7 @@ pub struct MutableValueMatcher<X: Clone + Eq + std::hash::Hash> {
     pub(crate) has_numbers: Cell<bool>,
     /// Mapping from `Arc<FieldMatcher>` to `Rc<MutableFieldMatcher<X>>`
     /// This bridges the automaton's field transitions to our mutable field matchers
-    pub(crate) transition_map: RefCell<HashMap<*const FieldMatcher, Rc<MutableFieldMatcher<X>>>>,
+    pub(crate) transition_map: RefCell<FxHashMap<*const FieldMatcher, Rc<MutableFieldMatcher<X>>>>,
     /// Multi-condition NFAs for lookaround patterns
     /// NOTE: Kept separate from main_arena for lookaround verification
     pub(crate) multi_condition_nfas: RefCell<Vec<MultiConditionNfa>>,
@@ -244,7 +246,7 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
             singleton_match: RefCell::new(None),
             singleton_transition: RefCell::new(None),
             has_numbers: Cell::new(false),
-            transition_map: RefCell::new(HashMap::new()),
+            transition_map: RefCell::new(FxHashMap::default()),
             multi_condition_nfas: RefCell::new(Vec::new()),
             arena_bufs: RefCell::new(ArenaNfaBuffers::new()),
             main_arena: RefCell::new(None),
@@ -259,7 +261,7 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
             singleton_match: RefCell::new(None),
             singleton_transition: RefCell::new(None),
             has_numbers: Cell::new(false),
-            transition_map: RefCell::new(HashMap::new()),
+            transition_map: RefCell::new(FxHashMap::default()),
             multi_condition_nfas: RefCell::new(Vec::new()),
             arena_bufs: RefCell::new(ArenaNfaBuffers::new()),
             main_arena: RefCell::new(None),

@@ -1132,8 +1132,6 @@ pub fn merge_arena_dfas(
     arena2: &StateArena,
     start2: StateId,
 ) -> (StateArena, StateId) {
-    use std::collections::HashMap;
-
     // Handle empty cases
     if start1.is_none() && start2.is_none() {
         return (StateArena::new(), StateId::NONE);
@@ -1152,7 +1150,7 @@ pub fn merge_arena_dfas(
     // Memoization: (state1_id, state2_id) -> merged_state_id in new arena
     // Use i32 to handle StateId::NONE as -1
     type MemoKey = (i32, i32);
-    let mut memo: HashMap<MemoKey, StateId> = HashMap::new();
+    let mut memo: FxHashMap<MemoKey, StateId> = FxHashMap::default();
     let mut new_arena = StateArena::new();
 
     let start =
@@ -1164,14 +1162,12 @@ pub fn merge_arena_dfas(
 
 /// Clone a subset of an arena starting from a given state.
 fn clone_arena_subset(arena: &StateArena, start: StateId) -> (StateArena, StateId) {
-    use std::collections::HashMap;
-
     if start.is_none() {
         return (StateArena::new(), StateId::NONE);
     }
 
     let mut new_arena = StateArena::new();
-    let mut id_map: HashMap<u32, StateId> = HashMap::new();
+    let mut id_map: FxHashMap<u32, StateId> = FxHashMap::default();
 
     clone_state_recursive(arena, start, &mut new_arena, &mut id_map);
 
@@ -1185,7 +1181,7 @@ fn clone_state_recursive(
     arena: &StateArena,
     state_id: StateId,
     new_arena: &mut StateArena,
-    id_map: &mut std::collections::HashMap<u32, StateId>,
+    id_map: &mut FxHashMap<u32, StateId>,
 ) -> StateId {
     if state_id.is_none() {
         return StateId::NONE;
@@ -1244,7 +1240,7 @@ fn merge_arena_states_recursive(
     arena2: &StateArena,
     state2: StateId,
     new_arena: &mut StateArena,
-    memo: &mut std::collections::HashMap<(i32, i32), StateId>,
+    memo: &mut FxHashMap<(i32, i32), StateId>,
 ) -> StateId {
     // Convert to memo key (using -1 for NONE)
     let key1 = if state1.is_none() {
@@ -1311,7 +1307,7 @@ fn remap_table_recursive(
     table: &ArenaSmallTable,
     _other_arena: &StateArena,
     new_arena: &mut StateArena,
-    memo: &mut std::collections::HashMap<(i32, i32), StateId>,
+    memo: &mut FxHashMap<(i32, i32), StateId>,
     is_arena1: bool,
 ) -> ArenaSmallTable {
     let mut new_table = ArenaSmallTable {
@@ -1410,7 +1406,7 @@ fn merge_arena_tables(
     arena2: &StateArena,
     table2: &ArenaSmallTable,
     new_arena: &mut StateArena,
-    memo: &mut std::collections::HashMap<(i32, i32), StateId>,
+    memo: &mut FxHashMap<(i32, i32), StateId>,
 ) -> ArenaSmallTable {
     // Unpack both tables to 256-element arrays for simplicity
     let mut unpacked1 = [StateId::NONE; BYTE_CEILING];
@@ -1494,8 +1490,6 @@ pub fn merge_arena_nfas(
     arena2: &StateArena,
     start2: StateId,
 ) -> (StateArena, StateId) {
-    use std::collections::HashMap;
-
     // Handle empty cases
     if start1.is_none() && start2.is_none() {
         return (StateArena::new(), StateId::NONE);
@@ -1511,7 +1505,7 @@ pub fn merge_arena_nfas(
 
     // Memoization: (state1_id, state2_id) -> merged_state_id in new arena
     type MemoKey = (i32, i32);
-    let mut memo: HashMap<MemoKey, StateId> = HashMap::new();
+    let mut memo: FxHashMap<MemoKey, StateId> = FxHashMap::default();
     let mut new_arena = StateArena::new();
 
     let start =
@@ -1591,7 +1585,7 @@ fn merge_arena_nfa_states_recursive(
     arena2: &StateArena,
     state2: StateId,
     new_arena: &mut StateArena,
-    memo: &mut std::collections::HashMap<(i32, i32), StateId>,
+    memo: &mut FxHashMap<(i32, i32), StateId>,
 ) -> StateId {
     // Convert to memo key (using -1 for NONE)
     let key1 = if state1.is_none() {
@@ -1861,10 +1855,8 @@ fn merge_arena_nfa_states_recursive(
     // Flatten epsilon targets to prevent deep nesting from repeated merges.
     // (Mirrors Go PR #486: flattenEpsilonTargets)
     if s1_has_epsilons || s2_has_epsilons {
-        let mut clone_map1: std::collections::HashMap<u32, StateId> =
-            std::collections::HashMap::new();
-        let mut clone_map2: std::collections::HashMap<u32, StateId> =
-            std::collections::HashMap::new();
+        let mut clone_map1: FxHashMap<u32, StateId> = FxHashMap::default();
+        let mut clone_map2: FxHashMap<u32, StateId> = FxHashMap::default();
         let cloned1 = clone_state_into_arena(arena1, state1, new_arena, &mut clone_map1);
         let cloned2 = clone_state_into_arena(arena2, state2, new_arena, &mut clone_map2);
 
@@ -1903,7 +1895,7 @@ fn clone_state_into_arena(
     source_arena: &StateArena,
     state_id: StateId,
     target_arena: &mut StateArena,
-    id_map: &mut std::collections::HashMap<u32, StateId>,
+    id_map: &mut FxHashMap<u32, StateId>,
 ) -> StateId {
     if state_id.is_none() {
         return StateId::NONE;
@@ -1962,7 +1954,7 @@ fn remap_nfa_table_recursive(
     table: &ArenaSmallTable,
     _other_arena: &StateArena,
     new_arena: &mut StateArena,
-    memo: &mut std::collections::HashMap<(i32, i32), StateId>,
+    memo: &mut FxHashMap<(i32, i32), StateId>,
     is_arena1: bool,
 ) -> ArenaSmallTable {
     let mut new_table = ArenaSmallTable {
@@ -2061,7 +2053,7 @@ fn merge_nfa_tables_bytewise(
     arena2: &StateArena,
     table2: &ArenaSmallTable,
     new_arena: &mut StateArena,
-    memo: &mut std::collections::HashMap<(i32, i32), StateId>,
+    memo: &mut FxHashMap<(i32, i32), StateId>,
 ) -> ArenaSmallTable {
     // Unpack both tables to 256-element arrays
     let mut unpacked1 = [StateId::NONE; BYTE_CEILING];
@@ -2952,10 +2944,10 @@ fn build_anything_but_step(
     success: StateId,
     arena: &mut StateArena,
 ) -> StateId {
-    use std::collections::{HashMap, HashSet};
+    use std::collections::HashSet;
 
     // Group values by the byte at current index
-    let mut vals_with_bytes_remaining: HashMap<u8, Vec<&Vec<u8>>> = HashMap::new();
+    let mut vals_with_bytes_remaining: FxHashMap<u8, Vec<&Vec<u8>>> = FxHashMap::default();
     let mut vals_ending_here: HashSet<u8> = HashSet::new();
 
     for val in vals {

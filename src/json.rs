@@ -6,7 +6,7 @@ use crate::regexp::{
     has_top_level_lookaround, has_word_boundary, parse_regexp,
 };
 use crate::segments_tree::SEGMENT_SEPARATOR;
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 /// Represents a field's position within an array in the event.
 /// Array is a unique identifier for each array in the event.
@@ -482,7 +482,7 @@ fn compute_branch_byte_length(branch: &RegexpBranch) -> Result<usize, String> {
 pub fn parse_pattern(
     json: &str,
     limits: &crate::PatternLimits,
-) -> Result<HashMap<String, Vec<Matcher>>, QuaminaError> {
+) -> Result<FxHashMap<String, Vec<Matcher>>, QuaminaError> {
     let mut parser = Parser::new(json);
     let value = parser.parse_value()?;
 
@@ -492,7 +492,7 @@ pub fn parse_pattern(
         ));
     };
 
-    let mut fields = HashMap::new();
+    let mut fields = FxHashMap::default();
     extract_pattern_fields(&obj, String::new(), &mut fields, 0, limits)?;
     Ok(fields)
 }
@@ -500,7 +500,7 @@ pub fn parse_pattern(
 fn extract_pattern_fields(
     obj: &[(String, Value)],
     prefix: String,
-    fields: &mut HashMap<String, Vec<Matcher>>,
+    fields: &mut FxHashMap<String, Vec<Matcher>>,
     depth: usize,
     limits: &crate::PatternLimits,
 ) -> Result<(), QuaminaError> {

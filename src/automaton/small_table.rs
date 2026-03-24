@@ -7,8 +7,9 @@
 //!
 //! State machines and transition tables are in the `arena` module.
 
-use std::collections::HashMap;
 use std::sync::Arc;
+
+use rustc_hash::FxHashMap;
 
 /// Maximum byte value we handle. UTF-8 bytes 0xF5-0xFF can't appear in valid strings.
 /// We use 0xF5 as a value terminator.
@@ -44,17 +45,17 @@ pub struct FieldMatcher {
     /// Using a unique ID that survives FA merging.
     pub match_id: Option<u64>,
     /// exists:true patterns - map from field path to next field matcher
-    pub exists_true: HashMap<String, Arc<Self>>,
+    pub exists_true: FxHashMap<String, Arc<Self>>,
     /// exists:false patterns - map from field path to next field matcher
-    pub exists_false: HashMap<String, Arc<Self>>,
+    pub exists_false: FxHashMap<String, Arc<Self>>,
 }
 
 impl FieldMatcher {
     pub fn new() -> Self {
         Self {
             match_id: None,
-            exists_true: HashMap::new(),
-            exists_false: HashMap::new(),
+            exists_true: FxHashMap::default(),
+            exists_false: FxHashMap::default(),
         }
     }
 
@@ -62,8 +63,8 @@ impl FieldMatcher {
     pub fn with_match_id(id: u64) -> Self {
         Self {
             match_id: Some(id),
-            exists_true: HashMap::new(),
-            exists_false: HashMap::new(),
+            exists_true: FxHashMap::default(),
+            exists_false: FxHashMap::default(),
         }
     }
 }
