@@ -6,11 +6,10 @@
 //! - `CoreMatcher`: Single-threaded core matcher that builds and matches patterns
 
 use std::cell::{Cell, RefCell};
-use std::collections::HashSet;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::arena::{
     ArenaNfaBuffers, StateArena, StateId, insert_string_into_arena, insert_suffix_into_arena,
@@ -1096,14 +1095,14 @@ fn no_array_trail_conflict(from: &[crate::json::ArrayPos], to: &[crate::json::Ar
 
 /// A set of matches (deduplicated)
 struct MatchSet<X: Clone + Eq + std::hash::Hash> {
-    seen: HashSet<X>,
+    seen: FxHashSet<X>,
     matches: Vec<X>,
 }
 
 impl<X: Clone + Eq + std::hash::Hash> MatchSet<X> {
     fn new() -> Self {
         Self {
-            seen: HashSet::new(),
+            seen: FxHashSet::default(),
             matches: Vec::new(),
         }
     }

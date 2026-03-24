@@ -2944,11 +2944,9 @@ fn build_anything_but_step(
     success: StateId,
     arena: &mut StateArena,
 ) -> StateId {
-    use std::collections::HashSet;
-
     // Group values by the byte at current index
     let mut vals_with_bytes_remaining: FxHashMap<u8, Vec<&Vec<u8>>> = FxHashMap::default();
-    let mut vals_ending_here: HashSet<u8> = HashSet::new();
+    let mut vals_ending_here: FxHashSet<u8> = FxHashSet::default();
 
     for val in vals {
         let last_index = val.len().saturating_sub(1);
@@ -2967,7 +2965,7 @@ fn build_anything_but_step(
     }
 
     // Collect all bytes that need special handling
-    let all_bytes: HashSet<u8> = vals_with_bytes_remaining
+    let all_bytes: FxHashSet<u8> = vals_with_bytes_remaining
         .keys()
         .chain(vals_ending_here.iter())
         .copied()
