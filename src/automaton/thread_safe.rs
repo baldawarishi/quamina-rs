@@ -11,7 +11,6 @@
 //! These are verified by Miri threading tests in CI.
 #![allow(unsafe_code)]
 
-use std::collections::HashMap;
 use std::hash::Hash;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -576,15 +575,15 @@ impl<X: Clone + Eq + Hash + Send + Sync> ThreadSafeCoreMatcher<X> {
     /// Freeze a MutableFieldMatcher into a FrozenFieldMatcher
     fn freeze_field_matcher(&self, mutable: &Rc<MutableFieldMatcher<X>>) -> FrozenFieldMatcher<X> {
         // Use a cache to handle cycles and sharing
-        let mut cache: HashMap<*const MutableFieldMatcher<X>, Arc<FrozenFieldMatcher<X>>> =
-            HashMap::new();
+        let mut cache: FxHashMap<*const MutableFieldMatcher<X>, Arc<FrozenFieldMatcher<X>>> =
+            FxHashMap::default();
         self.freeze_field_matcher_impl(mutable, &mut cache)
     }
 
     fn freeze_field_matcher_impl(
         &self,
         mutable: &Rc<MutableFieldMatcher<X>>,
-        cache: &mut HashMap<*const MutableFieldMatcher<X>, Arc<FrozenFieldMatcher<X>>>,
+        cache: &mut FxHashMap<*const MutableFieldMatcher<X>, Arc<FrozenFieldMatcher<X>>>,
     ) -> FrozenFieldMatcher<X> {
         let ptr = Rc::as_ptr(mutable);
 
@@ -630,7 +629,7 @@ impl<X: Clone + Eq + Hash + Send + Sync> ThreadSafeCoreMatcher<X> {
     fn freeze_value_matcher(
         &self,
         mutable: &Rc<MutableValueMatcher<X>>,
-        cache: &mut HashMap<*const MutableFieldMatcher<X>, Arc<FrozenFieldMatcher<X>>>,
+        cache: &mut FxHashMap<*const MutableFieldMatcher<X>, Arc<FrozenFieldMatcher<X>>>,
     ) -> FrozenValueMatcher<X> {
         // Handle singleton optimization
         let singleton_match = mutable.singleton_match.borrow().clone();

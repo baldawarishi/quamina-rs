@@ -23,7 +23,7 @@ use std::sync::Arc;
 #[cfg_attr(miri, ignore)]
 fn test_stress_fuzz_strings() {
     use rand::{RngExt, SeedableRng};
-    use std::collections::HashSet;
+    use rustc_hash::FxHashSet;
 
     let mut rng = rand::rngs::StdRng::seed_from_u64(12345);
     let mut q = QuaminaBuilder::new()
@@ -31,7 +31,7 @@ fn test_stress_fuzz_strings() {
         .build()
         .unwrap();
     let mut pattern_names: Vec<String> = Vec::new();
-    let mut used: HashSet<String> = HashSet::new();
+    let mut used: FxHashSet<String> = FxHashSet::default();
     let chars = b"abcdefghijklmnopqrstuvwxyz";
     let str_len = 12;
 
@@ -79,7 +79,7 @@ fn test_stress_fuzz_strings() {
 #[cfg_attr(miri, ignore)]
 fn test_stress_fuzz_numbers() {
     use rand::{RngExt, SeedableRng};
-    use std::collections::HashSet;
+    use rustc_hash::FxHashSet;
 
     let mut rng = rand::rngs::StdRng::seed_from_u64(98543);
     let mut q = QuaminaBuilder::new()
@@ -87,7 +87,7 @@ fn test_stress_fuzz_numbers() {
         .build()
         .unwrap();
     let mut pattern_names: Vec<i64> = Vec::new();
-    let mut used: HashSet<i64> = HashSet::new();
+    let mut used: FxHashSet<i64> = FxHashSet::default();
 
     // Make 10,000 random numbers
     for _ in 0..10_000 {

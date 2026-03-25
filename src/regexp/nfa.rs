@@ -5,8 +5,9 @@
 //! patterns with + or * quantifiers efficiently.
 
 use std::cell::RefCell;
-use std::collections::HashMap;
 use std::sync::Arc;
+
+use rustc_hash::FxHashMap;
 
 use smallvec::{SmallVec, smallvec};
 
@@ -449,7 +450,7 @@ struct CachedShell {
 }
 
 thread_local! {
-    static FA_SHELL_CACHE: RefCell<HashMap<String, CachedShell>> = RefCell::new(HashMap::new());
+    static FA_SHELL_CACHE: RefCell<FxHashMap<String, CachedShell>> = RefCell::new(FxHashMap::default());
 }
 
 /// Build a shell FA from rune ranges, using a placeholder destination (local index 0).

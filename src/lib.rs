@@ -34,10 +34,9 @@ use automaton::{NfaBuffers, ThreadSafeCoreMatcher};
 use flatten_json::FlattenJsonState;
 use json::Matcher;
 use parking_lot::Mutex;
-use rustc_hash::FxHashSet;
+use rustc_hash::{FxHashMap, FxHashSet};
 use segments_tree::SegmentsTree;
 use std::cell::RefCell;
-use std::collections::HashMap;
 use std::fmt;
 use std::hash::Hash;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -117,7 +116,7 @@ impl Clone for PrunerStats {
 }
 
 /// Pattern definition: field matchers
-type PatternDef = HashMap<String, Vec<Matcher>>;
+type PatternDef = FxHashMap<String, Vec<Matcher>>;
 
 /// Errors that can occur during pattern matching
 #[derive(Debug)]
@@ -453,7 +452,7 @@ impl<X: Clone + Eq + Hash + Send + Sync> QuaminaBuilder<X> {
                 self.pattern_limits.arena_byte_budget,
                 self.pattern_limits.max_states_per_pattern,
             ),
-            pattern_defs: HashMap::new(),
+            pattern_defs: FxHashMap::default(),
             deleted_patterns: FxHashSet::default(),
             segments_tree: SegmentsTree::new(),
             custom_flattener: self.custom_flattener.map(Mutex::new),
@@ -498,7 +497,7 @@ pub struct Quamina<X: Clone + Eq + Hash + Send + Sync = String> {
     /// Automaton-based matcher
     automaton: ThreadSafeCoreMatcher<X>,
     /// All pattern definitions (source of truth for cloning)
-    pattern_defs: HashMap<X, Vec<PatternDef>>,
+    pattern_defs: FxHashMap<X, Vec<PatternDef>>,
     /// Deleted patterns (filtered from automaton results since automaton doesn't support deletion)
     deleted_patterns: FxHashSet<X>,
     /// Segments tree for fast field skipping during event parsing
@@ -557,7 +556,7 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
                 limits.arena_byte_budget,
                 limits.max_states_per_pattern,
             ),
-            pattern_defs: HashMap::new(),
+            pattern_defs: FxHashMap::default(),
             deleted_patterns: FxHashSet::default(),
             segments_tree: SegmentsTree::new(),
             custom_flattener: None,
