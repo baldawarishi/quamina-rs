@@ -21,7 +21,7 @@ jobs:
           tool: cargo-mutants
 
       - name: Run mutation testing (shard ${{ matrix.shard }}/8)
-        run: cargo mutants --no-shuffle -vV --timeout 120 -j 4 --shard ${{ matrix.shard }}/8
+        run: cargo mutants --no-shuffle -vV --timeout 120 -j 2 --shard ${{ matrix.shard }}/8 --sharding round-robin
 
       - name: Summary
         if: always()
