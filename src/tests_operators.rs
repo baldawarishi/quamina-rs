@@ -3517,3 +3517,142 @@ fn test_surrogate_boundary_multiple_ranges() {
     assert_no_has_match!(q, &event_d7fe, "p1");
     assert_no_has_match!(q, r#"{"text": "m"}"#, "p2");
 }
+
+// ============================================================================
+// Merged Pattern + Arena Logic Tests
+// ============================================================================
+
+#[test]
+fn test_shellstyle_merged_prefix_and_suffix() {
+    // Two shellstyle patterns on the same field, merged NFA
+    let q = q!(
+        "star_prefix" => r#"{"x": [{"shellstyle": "abc*"}]}"#,
+        "star_suffix" => r#"{"x": [{"shellstyle": "*xyz"}]}"#
+    );
+    assert_has_match!(q, r#"{"x": "abcxyz"}"#, "star_prefix");
+    assert_has_match!(q, r#"{"x": "abcxyz"}"#, "star_suffix");
+    assert_has_match!(q, r#"{"x": "abcdef"}"#, "star_prefix");
+    assert_no_has_match!(q, r#"{"x": "abcdef"}"#, "star_suffix");
+    assert_has_match!(q, r#"{"x": "123xyz"}"#, "star_suffix");
+    assert_no_has_match!(q, r#"{"x": "123xyz"}"#, "star_prefix");
+    assert_no_match!(q, r#"{"x": "hello"}"#);
+}
+
+#[test]
+fn test_multi_field_exact_match() {
+    let q = q!("multi" => r#"{"a": ["1"], "b": ["2"], "c": ["3"]}"#);
+    assert_has_match!(q, r#"{"a": "1", "b": "2", "c": "3"}"#, "multi");
+    assert_no_match!(q, r#"{"a": "1", "b": "2"}"#);
+    assert_no_match!(q, r#"{"a": "1", "b": "2", "c": "X"}"#);
+    // Extra fields are fine
+    assert_has_match!(q, r#"{"a": "1", "b": "2", "c": "3", "d": "4"}"#, "multi");
+}
+
+#[test]
+fn test_lookbehind_positive_and_negative() {
+    let q = q!(
+        "pos_lb" => r#"{"v": [{"regexp": "(?<=pre)fix"}]}"#,
+        "neg_lb" => r#"{"v": [{"regexp": "(?<!pre)fix"}]}"#
+    );
+    // "prefix" — positive matches, negative does not
+    assert_has_match!(q, r#"{"v": "prefix"}"#, "pos_lb");
+    assert_no_has_match!(q, r#"{"v": "prefix"}"#, "neg_lb");
+    // "suffix" — negative matches, positive does not
+    assert_has_match!(q, r#"{"v": "suffix"}"#, "neg_lb");
+    assert_no_has_match!(q, r#"{"v": "suffix"}"#, "pos_lb");
+    // "fix" alone — negative matches
+    assert_has_match!(q, r#"{"v": "fix"}"#, "neg_lb");
+    assert_no_has_match!(q, r#"{"v": "fix"}"#, "pos_lb");
+}
+
+#[test]
+fn test_equals_ignore_case_all_variants() {
+    let q = q!("ic" => r#"{"name": [{"equals-ignore-case": "Hello"}]}"#);
+    assert_has_match!(q, r#"{"name": "Hello"}"#, "ic");
+    assert_has_match!(q, r#"{"name": "hello"}"#, "ic");
+    assert_has_match!(q, r#"{"name": "HELLO"}"#, "ic");
+    assert_has_match!(q, r#"{"name": "hElLo"}"#, "ic");
+    assert_no_match!(q, r#"{"name": "Hell"}"#);
+    assert_no_match!(q, r#"{"name": "Helloo"}"#);
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn test_cidr_ipv6_prefix_boundaries() {
+    // /48 — first 3 groups fixed, rest free
+    let q = q!("p48" => r#"{"ip": [{"cidr": "2001:db8:abcd::/48"}]}"#);
+    assert_has_match!(q, r#"{"ip": "2001:db8:abcd:0:0:0:0:0"}"#, "p48");
+    assert_has_match!(
+        q,
+        r#"{"ip": "2001:db8:abcd:ffff:ffff:ffff:ffff:ffff"}"#,
+        "p48"
+    );
+    assert_no_match!(q, r#"{"ip": "2001:db8:abce:0:0:0:0:0"}"#);
+
+    // /128 — exact match
+    let q128 = q!("exact" => r#"{"ip": [{"cidr": "fe80:0:0:0:0:0:0:1/128"}]}"#);
+    assert_has_match!(q128, r#"{"ip": "fe80:0:0:0:0:0:0:1"}"#, "exact");
+    assert_no_match!(q128, r#"{"ip": "fe80:0:0:0:0:0:0:2"}"#);
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn test_cidr_ipv6_wide_prefix() {
+    // /16 — first group fixed, all others wildcard
+    let q = q!("p16" => r#"{"ip": [{"cidr": "ff00::/16"}]}"#);
+    assert_has_match!(q, r#"{"ip": "ff00:0:0:0:0:0:0:0"}"#, "p16");
+    assert_has_match!(
+        q,
+        r#"{"ip": "ff00:1234:abcd:ef01:2345:6789:abcd:ef01"}"#,
+        "p16"
+    );
+    assert_no_match!(q, r#"{"ip": "ff01:0:0:0:0:0:0:0"}"#);
+}
+
+#[test]
+fn test_anything_but_mixed_lengths() {
+    // Excluded values of length 1, 2, 3
+    let q = q!("ab" => r#"{"x": [{"anything-but": ["a", "bb", "ccc"]}]}"#);
+    // Excluded
+    assert_no_has_match!(q, r#"{"x": "a"}"#, "ab");
+    assert_no_has_match!(q, r#"{"x": "bb"}"#, "ab");
+    assert_no_has_match!(q, r#"{"x": "ccc"}"#, "ab");
+    // Prefix of excluded — different string, should match
+    assert_has_match!(q, r#"{"x": "b"}"#, "ab");
+    assert_has_match!(q, r#"{"x": "cc"}"#, "ab");
+    // Extension of excluded — different string, should match
+    assert_has_match!(q, r#"{"x": "aa"}"#, "ab");
+    assert_has_match!(q, r#"{"x": "bbb"}"#, "ab");
+    assert_has_match!(q, r#"{"x": "cccc"}"#, "ab");
+    assert_has_match!(q, r#"{"x": "xyz"}"#, "ab");
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn test_shellstyle_three_pattern_merge() {
+    // Three infix shellstyle patterns on the same field
+    let q = q!(
+        "p1" => r#"{"x": [{"shellstyle": "a*b"}]}"#,
+        "p2" => r#"{"x": [{"shellstyle": "c*d"}]}"#,
+        "p3" => r#"{"x": [{"shellstyle": "e*f"}]}"#
+    );
+    assert_has_match!(q, r#"{"x": "a123b"}"#, "p1");
+    assert_has_match!(q, r#"{"x": "c456d"}"#, "p2");
+    assert_has_match!(q, r#"{"x": "e789f"}"#, "p3");
+    assert_no_has_match!(q, r#"{"x": "a123b"}"#, "p2");
+    assert_no_has_match!(q, r#"{"x": "a123b"}"#, "p3");
+    assert_no_has_match!(q, r#"{"x": "c456d"}"#, "p1");
+    assert_no_match!(q, r#"{"x": "hello"}"#);
+}
+
+#[test]
+fn test_shellstyle_multi_wildcard() {
+    // Multiple wildcards in one pattern
+    let q = q!("p1" => r#"{"x": [{"shellstyle": "a*b*c"}]}"#);
+    assert_has_match!(q, r#"{"x": "abc"}"#, "p1");
+    assert_has_match!(q, r#"{"x": "aXbYc"}"#, "p1");
+    assert_has_match!(q, r#"{"x": "aXXXbYYYc"}"#, "p1");
+    assert_no_match!(q, r#"{"x": "ab"}"#);
+    assert_no_match!(q, r#"{"x": "axb"}"#);
+    assert_no_match!(q, r#"{"x": "bac"}"#);
+}
