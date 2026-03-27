@@ -17,6 +17,9 @@ exclude_globs = [
 # Skip doctests (they test documentation, not correctness)
 additional_cargo_test_args = ["--all-targets"]
 
+# Skip kani proof harnesses — formal verification, not production code
+exclude_re = ["kani_arena_proofs::"]
+
 # Don't mutate logging/debug/panic macros — not worth testing
 skip_calls = [
   "eprintln!",

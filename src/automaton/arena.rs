@@ -4179,6 +4179,207 @@ mod tests {
 }
 
 #[cfg(test)]
+mod arena_stats_utility_tests {
+    use super::*;
+
+    #[test]
+    fn test_arena_stats_add_sums_and_maxes() {
+        let mut a = ArenaStats {
+            state_count: 10,
+            tables_with_transitions: 5,
+            total_ceiling_entries: 20,
+            max_ceilings: 4,
+            total_epsilons: 3,
+            max_epsilons: 2,
+            states_with_field_transitions: 2,
+            closure_data_len: 15,
+            states_with_closures: 8,
+            total_closure_entries: 12,
+            max_closure_len: 3,
+            ft_ptrs_len: 6,
+            dfa_lookup_states: 10,
+            estimated_bytes: 1000,
+        };
+        let b = ArenaStats {
+            state_count: 7,
+            tables_with_transitions: 3,
+            total_ceiling_entries: 10,
+            max_ceilings: 6,
+            total_epsilons: 5,
+            max_epsilons: 1,
+            states_with_field_transitions: 1,
+            closure_data_len: 9,
+            states_with_closures: 4,
+            total_closure_entries: 7,
+            max_closure_len: 5,
+            ft_ptrs_len: 2,
+            dfa_lookup_states: 7,
+            estimated_bytes: 500,
+        };
+        a.add(&b);
+
+        // Additive fields
+        assert_eq!(a.state_count, 17);
+        assert_eq!(a.tables_with_transitions, 8);
+        assert_eq!(a.total_ceiling_entries, 30);
+        assert_eq!(a.total_epsilons, 8);
+        assert_eq!(a.states_with_field_transitions, 3);
+        assert_eq!(a.closure_data_len, 24);
+        assert_eq!(a.states_with_closures, 12);
+        assert_eq!(a.total_closure_entries, 19);
+        assert_eq!(a.ft_ptrs_len, 8);
+        assert_eq!(a.dfa_lookup_states, 17);
+        assert_eq!(a.estimated_bytes, 1500);
+
+        // Max fields — should take the larger value
+        assert_eq!(a.max_ceilings, 6); // b had larger
+        assert_eq!(a.max_epsilons, 2); // a had larger
+        assert_eq!(a.max_closure_len, 5); // b had larger
+    }
+
+    #[test]
+    fn test_arena_stats_add_equal_max_values() {
+        // When both sides have equal max, result should still be that value
+        let mut a = ArenaStats {
+            max_ceilings: 4,
+            max_epsilons: 3,
+            max_closure_len: 5,
+            ..Default::default()
+        };
+        let b = ArenaStats {
+            max_ceilings: 4,
+            max_epsilons: 3,
+            max_closure_len: 5,
+            ..Default::default()
+        };
+        a.add(&b);
+        assert_eq!(a.max_ceilings, 4);
+        assert_eq!(a.max_epsilons, 3);
+        assert_eq!(a.max_closure_len, 5);
+    }
+
+    #[test]
+    fn test_estimated_byte_size() {
+        let mut arena = StateArena::new();
+        // Empty arena should have zero or minimal size
+        let empty_size = arena.estimated_byte_size();
+
+        // Add some states
+        arena.alloc();
+        arena.alloc();
+        arena.alloc();
+
+        let size_with_states = arena.estimated_byte_size();
+        // Size should increase (states capacity * per-state size)
+        assert!(size_with_states > 0);
+        // Each ArenaFaState is non-trivial, so should be at least state_count * some min
+        assert!(size_with_states >= 3 * std::mem::size_of::<ArenaFaState>());
+        // Should be larger than empty (or equal if capacity was pre-allocated)
+        assert!(size_with_states >= empty_size);
+    }
+
+    #[test]
+    fn test_debug_fmt_arena() {
+        let mut arena = StateArena::new();
+        arena.alloc();
+        arena.alloc();
+        let dbg = format!("{:?}", arena);
+        assert!(dbg.contains("states_count"));
+        assert!(dbg.contains("2")); // 2 states
+    }
+
+    #[test]
+    fn test_debug_fmt_state() {
+        let state = ArenaFaState::new();
+        let dbg = format!("{:?}", state);
+        assert!(dbg.contains("ArenaFaState"));
+        assert!(dbg.contains("field_transitions_count"));
+    }
+
+    #[test]
+    fn test_with_capacity() {
+        let mut arena = StateArena::with_capacity(10);
+        assert!(arena.is_empty());
+        assert_eq!(arena.len(), 0);
+        // Should be able to allocate states normally
+        let id = arena.alloc();
+        assert_eq!(id.index(), 0);
+        assert!(!arena.is_empty());
+        assert_eq!(arena.len(), 1);
+    }
+
+    #[test]
+    fn test_is_empty_transitions() {
+        let mut arena = StateArena::new();
+        assert!(arena.is_empty());
+        let id = arena.alloc();
+        assert!(!arena.is_empty());
+        // Verify the state is accessible
+        assert!(arena.get(id).is_some());
+    }
+
+    #[test]
+    fn test_get_mut_valid_and_invalid() {
+        let mut arena = StateArena::new();
+        let id = arena.alloc();
+
+        // Valid ID should return Some
+        assert!(arena.get_mut(id).is_some());
+        // NONE should return None
+        assert!(arena.get_mut(StateId::NONE).is_none());
+        // Out-of-range should return None
+        assert!(arena.get_mut(StateId::from_index(999)).is_none());
+    }
+
+    #[test]
+    fn test_stats_max_tracking_across_states() {
+        let mut arena = StateArena::new();
+        let s0 = arena.alloc();
+        let s1 = arena.alloc();
+        let s2 = arena.alloc();
+        let s3 = arena.alloc();
+
+        // s0: 2 ceilings (non-trivial), 0 epsilons
+        arena[s0].table.ceilings = smallvec![b'a', BYTE_CEILING as u8];
+        arena[s0].table.steps = smallvec![s1, StateId::NONE];
+
+        // s1: 3 ceilings (non-trivial), 1 epsilon
+        arena[s1].table.ceilings = smallvec![b'a', b'b', BYTE_CEILING as u8];
+        arena[s1].table.steps = smallvec![s0, s2, StateId::NONE];
+        arena[s1].table.epsilons.push(s3);
+
+        // s2: 4 ceilings (non-trivial), 2 epsilons
+        arena[s2].table.ceilings = smallvec![b'a', b'b', b'c', BYTE_CEILING as u8];
+        arena[s2].table.steps = smallvec![s0, s1, s3, StateId::NONE];
+        arena[s2].table.epsilons.push(s0);
+        arena[s2].table.epsilons.push(s1);
+
+        // s3: default table (1 ceiling = trivial), 0 epsilons
+
+        let stats = arena.stats();
+        assert_eq!(stats.state_count, 4);
+        assert_eq!(stats.tables_with_transitions, 3); // s0, s1, s2
+        assert_eq!(stats.max_ceilings, 4); // s2 has 4
+        assert_eq!(stats.total_epsilons, 3); // 0 + 1 + 2 + 0
+        assert_eq!(stats.max_epsilons, 2); // s2 has 2
+    }
+
+    #[test]
+    fn test_is_nondeterministic() {
+        let mut arena = StateArena::new();
+        let s0 = arena.alloc();
+        let s1 = arena.alloc();
+
+        // No epsilons = deterministic
+        assert!(!arena.is_nondeterministic());
+
+        // Add epsilon = nondeterministic
+        arena[s0].table.epsilons.push(s1);
+        assert!(arena.is_nondeterministic());
+    }
+}
+
+#[cfg(test)]
 #[allow(unsafe_code)]
 mod merge_tests {
     use super::*;
