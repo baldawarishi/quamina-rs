@@ -3645,6 +3645,87 @@ fn test_shellstyle_three_pattern_merge() {
     assert_no_match!(q, r#"{"x": "hello"}"#);
 }
 
+// ============================================================================
+// IPv6 CIDR Parsing + Mask Tests
+// ============================================================================
+
+#[test]
+fn test_cidr_ipv6_double_colon_must_appear_at_most_once() {
+    // Two separate :: sequences make an ambiguous address — reject it
+    let mut q = Quamina::new();
+    let result = q.add_pattern("p", r#"{"ip": [{"cidr": "1::2::3/128"}]}"#);
+    assert!(result.is_err(), "Address with two :: should be rejected");
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn test_cidr_ipv6_eight_explicit_groups_with_shorthand() {
+    // All 8 groups spelled out around a :: that expands to zero groups
+    let q = q!("p1" => r#"{"ip": [{"cidr": "1:2:3:4::5:6:7:8/128"}]}"#);
+    assert_has_match!(q, r#"{"ip": "1:2:3:4:5:6:7:8"}"#, "p1");
+    assert_no_match!(q, r#"{"ip": "1:2:3:4:5:6:7:9"}"#);
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn test_cidr_ipv6_right_side_high_bytes() {
+    // Groups after :: with non-zero high bytes exercise the right-side addressing arithmetic
+    let q = q!("p1" => r#"{"ip": [{"cidr": "::abcd:ef01/128"}]}"#);
+    assert_has_match!(q, r#"{"ip": "0:0:0:0:0:0:abcd:ef01"}"#, "p1");
+    assert_no_match!(q, r#"{"ip": "0:0:0:0:0:0:abcd:ef02"}"#);
+    assert_no_match!(q, r#"{"ip": "0:0:0:0:0:0:abce:ef01"}"#);
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn test_cidr_ipv6_non_byte_aligned_prefix() {
+    // /121 — 15 full bytes + 1 bit: only the high bit of the last byte matters
+    let q = q!("p121" => r#"{"ip": [{"cidr": "2001:db8:0:0:0:0:0:80/121"}]}"#);
+    // Last byte 0x80, high bit = 1 → match
+    assert_has_match!(q, r#"{"ip": "2001:db8:0:0:0:0:0:80"}"#, "p121");
+    // Last byte 0xFF, high bit = 1 → match
+    assert_has_match!(q, r#"{"ip": "2001:db8:0:0:0:0:0:ff"}"#, "p121");
+    // Last byte 0x00, high bit = 0 → no match
+    assert_no_match!(q, r#"{"ip": "2001:db8:0:0:0:0:0:0"}"#);
+    // Last byte 0x7F, high bit = 0 → no match
+    assert_no_match!(q, r#"{"ip": "2001:db8:0:0:0:0:0:7f"}"#);
+}
+
+// ============================================================================
+// Pattern JSON Escape Sequence Tests
+// ============================================================================
+
+#[test]
+fn test_pattern_json_backspace_and_formfeed_escapes() {
+    // \b parses to backspace (0x08), \f to form feed (0x0C) — must not collapse to 'b' or 'f'
+    let q = q!(
+        "bs" => r#"{"x": ["a\bb"]}"#,
+        "ff" => r#"{"x": ["a\fb"]}"#
+    );
+    // Events with \b and \f escapes produce the same control characters
+    assert_has_match!(q, r#"{"x": "a\bb"}"#, "bs");
+    assert_has_match!(q, r#"{"x": "a\fb"}"#, "ff");
+    // Literal 'b' and 'f' must NOT match the control-character patterns
+    assert_no_has_match!(q, r#"{"x": "abb"}"#, "bs");
+    assert_no_has_match!(q, r#"{"x": "afb"}"#, "ff");
+}
+
+#[test]
+fn test_pattern_json_unicode_escape_bmp() {
+    // \u0041 in the pattern JSON decodes to 'A'
+    let q = q!("u" => r#"{"x": ["\u0041\u0042\u0043"]}"#);
+    assert_has_match!(q, r#"{"x": "ABC"}"#, "u");
+    assert_no_match!(q, r#"{"x": "abc"}"#);
+}
+
+#[test]
+fn test_pattern_json_unicode_surrogate_pair() {
+    // \uD83D\uDE00 in the pattern JSON decodes to 😀 via UTF-16 surrogate pair
+    let q = q!("emoji" => r#"{"x": ["\uD83D\uDE00"]}"#);
+    assert_has_match!(q, r#"{"x": "😀"}"#, "emoji");
+    assert_no_match!(q, r#"{"x": "😁"}"#);
+}
+
 #[test]
 fn test_shellstyle_multi_wildcard() {
     // Multiple wildcards in one pattern
