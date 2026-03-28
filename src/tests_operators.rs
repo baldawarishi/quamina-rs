@@ -3646,7 +3646,7 @@ fn test_shellstyle_three_pattern_merge() {
 }
 
 // ============================================================================
-// IPv6 CIDR Parsing + Mask Tests (json.rs parse_ipv6, apply_ipv6_mask)
+// IPv6 CIDR Parsing + Mask Tests
 // ============================================================================
 
 #[test]
@@ -3680,7 +3680,6 @@ fn test_cidr_ipv6_right_side_high_bytes() {
 #[cfg_attr(miri, ignore)]
 fn test_cidr_ipv6_non_byte_aligned_prefix() {
     // /121 — 15 full bytes + 1 bit: only the high bit of the last byte matters
-    // full_bytes = 15, remaining_bits = 1, mask = 0x80
     let q = q!("p121" => r#"{"ip": [{"cidr": "2001:db8:0:0:0:0:0:80/121"}]}"#);
     // Last byte 0x80, high bit = 1 → match
     assert_has_match!(q, r#"{"ip": "2001:db8:0:0:0:0:0:80"}"#, "p121");
@@ -3693,7 +3692,7 @@ fn test_cidr_ipv6_non_byte_aligned_prefix() {
 }
 
 // ============================================================================
-// Pattern JSON Escape Sequence Tests (json.rs Parser::parse_string)
+// Pattern JSON Escape Sequence Tests
 // ============================================================================
 
 #[test]
@@ -3713,7 +3712,7 @@ fn test_pattern_json_backspace_and_formfeed_escapes() {
 
 #[test]
 fn test_pattern_json_unicode_escape_bmp() {
-    // \u0041 in the pattern JSON → 'A' via parse_unicode_escape
+    // \u0041 in the pattern JSON decodes to 'A'
     let q = q!("u" => r#"{"x": ["\u0041\u0042\u0043"]}"#);
     assert_has_match!(q, r#"{"x": "ABC"}"#, "u");
     assert_no_match!(q, r#"{"x": "abc"}"#);
@@ -3721,7 +3720,7 @@ fn test_pattern_json_unicode_escape_bmp() {
 
 #[test]
 fn test_pattern_json_unicode_surrogate_pair() {
-    // \uD83D\uDE00 in the pattern JSON → 😀 via surrogate pair decoding
+    // \uD83D\uDE00 in the pattern JSON decodes to 😀 via UTF-16 surrogate pair
     let q = q!("emoji" => r#"{"x": ["\uD83D\uDE00"]}"#);
     assert_has_match!(q, r#"{"x": "😀"}"#, "emoji");
     assert_no_match!(q, r#"{"x": "😁"}"#);
