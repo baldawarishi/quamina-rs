@@ -1630,7 +1630,6 @@ x"#,
     #[test]
     fn test_unicode_escape_2byte_in_name() {
         // \u00E9 = é, 2-byte UTF-8: 0xC3 0xA9
-        // Catches >> 6, | 0xC0, & 0x3F, | 0x80 in read_member_name_with_escapes
         let tree = make_tree(&["é"]);
         let mut state = FlattenJsonState::new();
         let event = br#"{"\u00E9": "yes"}"#;
@@ -1641,8 +1640,7 @@ x"#,
 
     #[test]
     fn test_unicode_escape_boundary_0080_in_name() {
-        // \u0080 is the boundary between 1-byte and 2-byte UTF-8
-        // Catches < 0x80 → <= 0x80 mutation (would wrongly encode as 1 byte)
+        // U+0080 sits at the 1-byte / 2-byte UTF-8 boundary
         let tree = make_tree(&["\u{0080}"]);
         let mut state = FlattenJsonState::new();
         let event = br#"{"\u0080": "boundary"}"#;
@@ -1653,8 +1651,7 @@ x"#,
 
     #[test]
     fn test_unicode_escape_boundary_0800_in_name() {
-        // \u0800 is the boundary between 2-byte and 3-byte UTF-8
-        // Catches < 0x800 → <= 0x800 mutation (would wrongly encode as 2 bytes)
+        // U+0800 sits at the 2-byte / 3-byte UTF-8 boundary
         let tree = make_tree(&["\u{0800}"]);
         let mut state = FlattenJsonState::new();
         let event = br#"{"\u0800": "boundary2"}"#;
@@ -1666,7 +1663,6 @@ x"#,
     #[test]
     fn test_unicode_escape_3byte_in_name() {
         // \u4E2D = 中, 3-byte UTF-8: 0xE4 0xB8 0xAD
-        // Catches >> 12, | 0xE0 in read_member_name_with_escapes
         let tree = make_tree(&["中"]);
         let mut state = FlattenJsonState::new();
         let event = br#"{"\u4E2D": "ok"}"#;
@@ -1677,8 +1673,7 @@ x"#,
 
     #[test]
     fn test_unicode_escape_surrogate_pair_in_name() {
-        // \uD83D\uDE00 = 😀, 4-byte UTF-8: 0xF0 0x9F 0x98 0x80
-        // Catches surrogate detection, - 0xD800, << 10, + 0x10000, | 0xF0, >> 18
+        // \uD83D\uDE00 = 😀, surrogate pair, 4-byte UTF-8: 0xF0 0x9F 0x98 0x80
         let tree = make_tree(&["😀"]);
         let mut state = FlattenJsonState::new();
         let event = br#"{"\uD83D\uDE00": "smile"}"#;
@@ -1689,7 +1684,7 @@ x"#,
 
     #[test]
     fn test_unicode_escape_2byte_in_value() {
-        // Same 2-byte test but in string values (read_string_with_escapes path)
+        // 2-byte unicode escape in a string value
         let tree = make_tree(&["v"]);
         let mut state = FlattenJsonState::new();
         let event = br#"{"v": "\u00E9"}"#;
@@ -1701,7 +1696,7 @@ x"#,
 
     #[test]
     fn test_unicode_escape_boundary_0080_in_value() {
-        // \u0080 boundary: 1-byte vs 2-byte UTF-8
+        // U+0080 sits at the 1-byte / 2-byte UTF-8 boundary
         let tree = make_tree(&["v"]);
         let mut state = FlattenJsonState::new();
         let event = br#"{"v": "\u0080"}"#;
@@ -1713,7 +1708,7 @@ x"#,
 
     #[test]
     fn test_unicode_escape_boundary_0800_in_value() {
-        // \u0800 boundary: 2-byte vs 3-byte UTF-8
+        // U+0800 sits at the 2-byte / 3-byte UTF-8 boundary
         let tree = make_tree(&["v"]);
         let mut state = FlattenJsonState::new();
         let event = br#"{"v": "\u0800"}"#;
@@ -1750,7 +1745,7 @@ x"#,
 
     #[test]
     fn test_skip_string_with_unicode_escape() {
-        // Unicode escapes in skipped strings must not confuse skip_string_value
+        // Unicode escapes in skipped strings must not confuse the skip logic
         let tree = make_tree(&["keep"]);
         let mut state = FlattenJsonState::new();
         let event = br#"{"skip": "\uD83D\uDE00end", "keep": "found"}"#;
