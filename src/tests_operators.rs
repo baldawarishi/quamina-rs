@@ -3737,3 +3737,31 @@ fn test_shellstyle_multi_wildcard() {
     assert_no_match!(q, r#"{"x": "axb"}"#);
     assert_no_match!(q, r#"{"x": "bac"}"#);
 }
+
+#[test]
+fn test_lookbehind_with_alternation() {
+    // (?<=ab|cd)x — lookbehind has 2 branches, both of fixed length 2.
+    // Must combine ALL lookbehind branches with the primary pattern.
+    let q = q!("p1" => r#"{"v": [{"regexp": "(?<=ab|cd)x"}]}"#);
+    // "abx" — lookbehind branch "ab" matches
+    assert_has_match!(q, r#"{"v": "abx"}"#, "p1");
+    // "cdx" — lookbehind branch "cd" matches
+    assert_has_match!(q, r#"{"v": "cdx"}"#, "p1");
+    // "efx" — neither lookbehind branch matches
+    assert_no_match!(q, r#"{"v": "efx"}"#);
+    // "abz" — lookbehind matches but primary doesn't
+    assert_no_match!(q, r#"{"v": "abz"}"#);
+}
+
+#[test]
+fn test_lookbehind_alternation_with_primary_alternation() {
+    // (?<=a|b)(x|y) — both lookbehind and primary have 2 branches.
+    // All 4 combinations must work: ax, ay, bx, by.
+    let q = q!("p1" => r#"{"v": [{"regexp": "(?<=a|b)(x|y)"}]}"#);
+    assert_has_match!(q, r#"{"v": "ax"}"#, "p1");
+    assert_has_match!(q, r#"{"v": "ay"}"#, "p1");
+    assert_has_match!(q, r#"{"v": "bx"}"#, "p1");
+    assert_has_match!(q, r#"{"v": "by"}"#, "p1");
+    assert_no_match!(q, r#"{"v": "cx"}"#);
+    assert_no_match!(q, r#"{"v": "az"}"#);
+}
