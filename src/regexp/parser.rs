@@ -2144,12 +2144,11 @@ mod tests {
     }
 
     // ========================================================================
-    // Quantifier type detection (catches mutations in is_singleton, is_qm, etc.)
+    // Quantifier type detection
     // ========================================================================
 
     #[test]
     fn test_quantifier_detection() {
-        // Test is_singleton (catches line 88: == changed to !=, or return false)
         // Parse "a" (singleton)
         let tree = parse_regexp("a").unwrap();
         assert_eq!(tree.len(), 1);
@@ -2189,14 +2188,12 @@ mod tests {
     }
 
     // ========================================================================
-    // Lookaround type detection (catches mutations in is_negative/is_lookbehind)
+    // Lookaround type detection
     // ========================================================================
 
     #[test]
     fn test_lookaround_type_classification() {
-        // Test LookaroundType methods directly
-        // Line 132: is_negative - should detect NegativeLookahead and NegativeLookbehind
-        // Line 137: is_lookbehind - should detect PositiveLookbehind and NegativeLookbehind
+        // Each variant should correctly report negative/lookbehind classification
 
         let pos_lookahead = LookaroundType::PositiveLookahead;
         assert!(
