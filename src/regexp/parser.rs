@@ -2282,4 +2282,292 @@ mod tests {
         // 2. c a t (when .* matches 0 chars, boundary at value start, c must be word)
         assert_eq!(expanded.len(), 2);
     }
+
+    // ========================================================================
+    // Lookbehind fixed-length validation
+    // ========================================================================
+
+    #[test]
+    fn test_lookbehind_same_length_alternation_accepted() {
+        // (?<=ab|cd)x — two branches, both length 2 → fixed length, should succeed
+        let result = parse_regexp("(?<=ab|cd)x");
+        assert!(
+            result.is_ok(),
+            "lookbehind with same-length alternation should parse: {:?}",
+            result.err()
+        );
+    }
+
+    #[test]
+    fn test_lookbehind_different_length_alternation_rejected() {
+        // (?<=a|cd)x — branches of length 1 and 2 → variable length, should fail
+        let result = parse_regexp("(?<=a|cd)x");
+        assert!(
+            result.is_err(),
+            "lookbehind with different-length alternation must be rejected"
+        );
+        assert!(
+            result.unwrap_err().message.contains("variable-length"),
+            "error should mention variable-length"
+        );
+    }
+
+    #[test]
+    fn test_lookbehind_star_rejected() {
+        // (?<=a*)x — star is variable length
+        let result = parse_regexp("(?<=a*)x");
+        assert!(result.is_err(), "lookbehind with star must be rejected");
+    }
+
+    #[test]
+    fn test_lookbehind_plus_rejected() {
+        // (?<=a+)x — plus is variable length
+        let result = parse_regexp("(?<=a+)x");
+        assert!(result.is_err(), "lookbehind with plus must be rejected");
+    }
+
+    #[test]
+    fn test_lookbehind_char_class_accepted() {
+        // (?<=[abc])x — character class, fixed length 1
+        let result = parse_regexp("(?<=[abc])x");
+        assert!(
+            result.is_ok(),
+            "lookbehind with char class should parse: {:?}",
+            result.err()
+        );
+    }
+
+    #[test]
+    fn test_lookbehind_single_branch_group_accepted() {
+        // (?<=(?:ab))x — single-branch group of length 2
+        let result = parse_regexp("(?<=(?:ab))x");
+        assert!(
+            result.is_ok(),
+            "lookbehind with single-branch group should parse: {:?}",
+            result.err()
+        );
+    }
+
+    #[test]
+    fn test_lookbehind_multi_branch_group_same_length() {
+        // (?<=(?:ab|cd))x — alternation inside group, both length 2
+        let result = parse_regexp("(?<=(?:ab|cd))x");
+        assert!(
+            result.is_ok(),
+            "lookbehind with same-length alternation group should parse: {:?}",
+            result.err()
+        );
+    }
+
+    #[test]
+    fn test_lookbehind_multi_branch_group_different_length() {
+        // (?<=(?:a|cd))x — alternation inside group, different lengths
+        let result = parse_regexp("(?<=(?:a|cd))x");
+        assert!(
+            result.is_err(),
+            "lookbehind with different-length alternation group must be rejected"
+        );
+    }
+
+    #[test]
+    fn test_lookbehind_quantified_group_accepted() {
+        // (?<=a{3})x — fixed quantifier {3,3}, total length 3
+        let result = parse_regexp("(?<=a{3})x");
+        assert!(
+            result.is_ok(),
+            "lookbehind with fixed quantifier should parse: {:?}",
+            result.err()
+        );
+    }
+
+    #[test]
+    fn test_lookbehind_range_quantifier_rejected() {
+        // (?<=a{2,4})x — variable range quantifier
+        let result = parse_regexp("(?<=a{2,4})x");
+        assert!(
+            result.is_err(),
+            "lookbehind with range quantifier must be rejected"
+        );
+    }
+
+    // ========================================================================
+    // Word boundary with quantified atoms (constrain_atom_at_boundary)
+    // ========================================================================
+
+    #[test]
+    fn test_wb_quantified_plus_at_end() {
+        // a+~b — plus-quantified word char at boundary end
+        // The last char of a+ must be word (trivially true for 'a'),
+        // so this splits into [a{0,MAX}, a_constrained]
+        let tree = parse_regexp("a+~b").unwrap();
+        let expanded = expand_word_boundaries(&tree).unwrap();
+        // Should produce at least one branch (a+ ends with word char,
+        // boundary before implicit " which is non-word)
+        assert!(
+            !expanded.is_empty(),
+            "a+~b should have valid expansion since 'a' is a word char"
+        );
+        // The expansion should have more atoms than the original (split quantifier)
+        assert!(
+            expanded[0].len() >= 2,
+            "quantified atom should split into base + constrained"
+        );
+    }
+
+    #[test]
+    fn test_wb_quantified_star_at_end() {
+        // x.*~b — star before boundary at end, triggers SplitOrAbsent path
+        // When .* matches 0 chars, boundary falls after 'x' (word → non-word " = valid)
+        let tree = parse_regexp("x.*~b").unwrap();
+        let expanded = expand_word_boundaries(&tree).unwrap();
+        // Should produce multiple branches:
+        // 1. x + .*{adjusted} constrained (dot split)
+        // 2. x alone (when .* is absent, 'x' is word, " is non-word → boundary)
+        assert!(
+            expanded.len() >= 2,
+            "x.*~b should produce SplitOrAbsent branches, got {}",
+            expanded.len()
+        );
+    }
+
+    #[test]
+    fn test_wb_star_at_start() {
+        // ~ba*x — star-quantified 'a' at boundary start, triggers SplitOrAbsent
+        // in expand_wb_at_start. When a* matches 0 chars, boundary falls before 'x'.
+        let tree = parse_regexp("~ba*x").unwrap();
+        let expanded = expand_word_boundaries(&tree).unwrap();
+        // Should produce branches for both: a present (constrained) and a absent (x constrained)
+        assert!(
+            expanded.len() >= 2,
+            "~ba*x should produce SplitOrAbsent branches at start, got {}",
+            expanded.len()
+        );
+    }
+
+    #[test]
+    fn test_wb_dot_at_end_constrain() {
+        // .~b — dot before boundary at end, tests is_dot field in constrained atom
+        let tree = parse_regexp(".~b").unwrap();
+        let expanded = expand_word_boundaries(&tree).unwrap();
+        // Dot intersected with word chars → should produce a branch with rune-constrained atom
+        assert!(
+            !expanded.is_empty(),
+            ".~b should expand (dot can match word chars)"
+        );
+        // The expanded atom should NOT be a dot anymore (it's constrained to word chars)
+        assert!(
+            !expanded[0][0].is_dot,
+            "constrained dot should no longer be marked as dot"
+        );
+    }
+
+    #[test]
+    fn test_wb_negated_class_at_boundary() {
+        // [^x]+~b — negated class with ascii_negated_bytes at boundary
+        let tree = parse_regexp("[^x]+~b").unwrap();
+        let expanded = expand_word_boundaries(&tree).unwrap();
+        // [^x] intersected with word chars still has valid members
+        assert!(!expanded.is_empty(), "[^x]+~b should have valid expansion");
+    }
+
+    #[test]
+    fn test_wb_count_limit_exactly_four() {
+        // Pattern with exactly 4 word boundaries (the maximum allowed)
+        let tree = parse_regexp("~ba~b ~Bc~b").unwrap();
+        let result = expand_word_boundaries(&tree);
+        assert!(
+            result.is_ok(),
+            "4 word boundaries should be accepted (max is 4)"
+        );
+    }
+
+    #[test]
+    fn test_wb_count_limit_five_rejected() {
+        // Pattern with 5 word boundaries (exceeds max of 4)
+        let tree = parse_regexp("~ba~b ~Bc~bd~b").unwrap();
+        let result = expand_word_boundaries(&tree);
+        assert!(result.is_err(), "5 word boundaries should be rejected");
+        assert!(
+            result.unwrap_err().contains("too many word boundaries"),
+            "error should mention word boundary limit"
+        );
+    }
+
+    // ========================================================================
+    // branch_fixed_length with quantifiers
+    // ========================================================================
+
+    #[test]
+    fn test_lookbehind_quantifier_vs_individual_same_length() {
+        // (?<=a{2}|bc)x — branch 1 uses quantifier {2}, branch 2 spells out two chars
+        // Both have character-count length 2. Must be accepted as equal-length.
+        let result = parse_regexp("(?<=a{2}|bc)x");
+        assert!(
+            result.is_ok(),
+            "a{{2}} and bc are both length 2: {:?}",
+            result.err()
+        );
+    }
+
+    // ========================================================================
+    // Word boundary with SplitOrAbsent fallback (expand_wb_at_end)
+    // ========================================================================
+
+    #[test]
+    fn test_wb_at_end_with_star_after_literal() {
+        // xa*~b — 'x' is a word char, 'a*' can match zero chars (SplitOrAbsent).
+        // When a* is absent, boundary falls after 'x' (word → non-word " = valid).
+        // When a* is present, its last char must be word (trivially true for 'a').
+        // The SplitOrAbsent path constrains the preceding atom ('x') as fallback.
+        let tree = parse_regexp("xa*~b").unwrap();
+        let expanded = expand_word_boundaries(&tree).unwrap();
+        // Must produce branches for both the present case (a* constrained) and
+        // the absent case (x constrained as fallback)
+        assert!(
+            expanded.len() >= 2,
+            "xa*~b needs SplitOrAbsent fallback branches, got {}",
+            expanded.len()
+        );
+    }
+
+    // ========================================================================
+    // ~B alone (non-boundary between two implicit " delimiters)
+    // ========================================================================
+
+    #[test]
+    fn test_non_boundary_alone_always_matches() {
+        // ~B alone: both sides are `"` (non-word), so they're in the same class → always a match
+        let tree = parse_regexp("~B").unwrap();
+        let expanded = expand_word_boundaries(&tree).unwrap();
+        assert!(
+            !expanded.is_empty(),
+            "~B alone should produce an empty-branch alternative (always matches)"
+        );
+    }
+
+    #[test]
+    fn test_boundary_alone_never_matches() {
+        // ~b alone: both sides are `"` (non-word), same class → boundary never holds
+        let tree = parse_regexp("~b").unwrap();
+        let expanded = expand_word_boundaries(&tree).unwrap();
+        assert!(
+            expanded.is_empty(),
+            "~b alone should produce no alternatives (impossible boundary)"
+        );
+    }
+
+    #[test]
+    fn test_wb_single_star_at_end() {
+        // .*~b — single zero-or-more atom before boundary at end.
+        // Prefix is [.*] (last_idx = 0). SplitOrAbsent path must NOT
+        // try to access prefix[-1]; the fallback is skipped when there is
+        // no preceding atom.
+        let tree = parse_regexp(".*~b").unwrap();
+        let expanded = expand_word_boundaries(&tree).unwrap();
+        // .* can match word chars, so at least one branch constrains the dot
+        assert!(
+            !expanded.is_empty(),
+            ".*~b should produce at least one branch"
+        );
+    }
 }
