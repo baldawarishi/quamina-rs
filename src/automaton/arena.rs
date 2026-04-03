@@ -4261,20 +4261,18 @@ mod arena_stats_utility_tests {
     #[test]
     fn test_estimated_byte_size() {
         let mut arena = StateArena::new();
-        // Empty arena should have zero or minimal size
         let empty_size = arena.estimated_byte_size();
 
-        // Add some states
         arena.alloc();
         arena.alloc();
         arena.alloc();
 
         let size_with_states = arena.estimated_byte_size();
-        // Size should increase (states capacity * per-state size)
-        assert!(size_with_states > 0);
-        // Each ArenaFaState is non-trivial, so should be at least state_count * some min
-        assert!(size_with_states >= 3 * std::mem::size_of::<ArenaFaState>());
-        // Should be larger than empty (or equal if capacity was pre-allocated)
+        let expected = arena.states.capacity() * std::mem::size_of::<ArenaFaState>()
+            + arena.closure_data.capacity() * std::mem::size_of::<StateId>()
+            + arena.ft_ptrs.capacity() * std::mem::size_of::<usize>()
+            + arena.dfa_lookup.capacity() * std::mem::size_of::<StateId>();
+        assert_eq!(size_with_states, expected);
         assert!(size_with_states >= empty_size);
     }
 
@@ -4301,7 +4299,8 @@ mod arena_stats_utility_tests {
         let mut arena = StateArena::with_capacity(10);
         assert!(arena.is_empty());
         assert_eq!(arena.len(), 0);
-        // Should be able to allocate states normally
+        assert!(arena.states.capacity() >= 10);
+        assert!(arena.closure_data.capacity() >= 10);
         let id = arena.alloc();
         assert_eq!(id.index(), 0);
         assert!(!arena.is_empty());

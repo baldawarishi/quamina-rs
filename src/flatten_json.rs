@@ -1759,10 +1759,59 @@ x"#,
         // Field with unicode-escaped name that isn't in the tree must be skipped
         let tree = make_tree(&["wanted"]);
         let mut state = FlattenJsonState::new();
-        let event = br#"{"\u4E2D": "skip_me", "wanted": "got_it"}"#;
+        let event = br#"{"\uD83D\uDE00": "ignored", "wanted": "yes"}"#;
         let fields = state.flatten(event, &tree).unwrap();
         assert_eq!(fields.len(), 1);
-        assert_eq!(fields[0].val.as_bytes(), br#""got_it""#);
+        assert_eq!(fields[0].val.as_bytes(), br#""yes""#);
+    }
+
+    #[test]
+    fn test_surrogate_pair_codepoint_arithmetic_in_name() {
+        // \uD83D\uDE00 = 😀; pattern uses literal UTF-8, event uses escape.
+        // Wrong (low - 0xDC00) arithmetic produces different bytes and fails the lookup.
+        let tree = make_tree(&["😀"]);
+        let mut state = FlattenJsonState::new();
+        let event = br#"{"\uD83D\uDE00": "match"}"#;
+        let fields = state.flatten(event, &tree).unwrap();
+        assert_eq!(fields.len(), 1);
+        assert_eq!(fields[0].val.as_bytes(), br#""match""#);
+    }
+
+    #[test]
+    fn test_surrogate_pair_codepoint_arithmetic_in_value() {
+        // Same arithmetic check for string values rather than field names.
+        let tree = make_tree(&["v"]);
+        let mut state = FlattenJsonState::new();
+        let event = br#"{"v": "\uD83D\uDE00"}"#;
+        let fields = state.flatten(event, &tree).unwrap();
+        assert_eq!(fields.len(), 1);
+        // 😀 = 0xF0 0x9F 0x98 0x80
+        assert_eq!(
+            fields[0].val.as_bytes(),
+            &[b'"', 0xF0, 0x9F, 0x98, 0x80, b'"']
+        );
+    }
+
+    #[test]
+    fn test_skip_array_in_nested_object() {
+        // Array under an unmatched sibling key inside a nested object must be skipped.
+        let event = br#"{"outer": {"unused_array": [1, 2, 3], "wanted": 42}}"#;
+        let tree = make_tree(&["outer\nwanted"]);
+        let mut state = FlattenJsonState::new();
+        let fields = state.flatten(event, &tree).unwrap();
+        assert_eq!(fields.len(), 1);
+        assert_eq!(fields[0].val.as_bytes(), b"42");
+    }
+
+    #[test]
+    fn test_null_in_skipped_context() {
+        // Null field under a skipped nested object must not be captured.
+        let event = br#"{"skipped_object": {"a": null}, "wanted": "ok"}"#;
+        let tree = make_tree(&["wanted"]);
+        let mut state = FlattenJsonState::new();
+        let fields = state.flatten(event, &tree).unwrap();
+        assert_eq!(fields.len(), 1);
+        assert_eq!(fields[0].val.as_bytes(), br#""ok""#);
     }
 
     #[test]
