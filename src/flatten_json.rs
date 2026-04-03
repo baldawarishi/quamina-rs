@@ -1759,10 +1759,55 @@ x"#,
         // Field with unicode-escaped name that isn't in the tree must be skipped
         let tree = make_tree(&["wanted"]);
         let mut state = FlattenJsonState::new();
-        let event = br#"{"\u4E2D": "skip_me", "wanted": "got_it"}"#;
+        let event = br#"{"\uD83D\uDE00": "ignored", "wanted": "yes"}"#;
         let fields = state.flatten(event, &tree).unwrap();
         assert_eq!(fields.len(), 1);
-        assert_eq!(fields[0].val.as_bytes(), br#""got_it""#);
+        assert_eq!(fields[0].val.as_bytes(), br#""yes""#);
+    }
+
+    #[test]
+    fn test_literal_emoji_in_pattern_vs_escape_in_event() {
+        // Pattern uses literal emoji, event uses escape.
+        // Both must decode to the same UTF-8 bytes to match.
+        // \uD83D\uDE00 = 😀
+        let tree = make_tree(&["😀"]);
+        let mut state = FlattenJsonState::new();
+        let event = br#"{"\uD83D\uDE00": "match"}"#;
+        let fields = state.flatten(event, &tree).unwrap();
+        assert_eq!(fields.len(), 1);
+        assert_eq!(fields[0].val.as_bytes(), br#""match""#);
+
+        // Value comparison too
+        let tree2 = make_tree(&["v"]);
+        let event2 = br#"{"v": "\uD83D\uDE00"}"#;
+        let fields2 = state.flatten(event2, &tree2).unwrap();
+        assert_eq!(fields2.len(), 1);
+        assert_eq!(
+            fields2[0].val.as_bytes(),
+            &[b'"', 0xF0, 0x9F, 0x98, 0x80, b'"']
+        );
+    }
+
+    #[test]
+    fn test_skip_array_in_nested_object() {
+        // Mutation at 385: if `skipping > 0` doesn't skip arrays, they bleed through.
+        let event = br#"{"outer": {"unused_array": [1, 2, 3], "wanted": 42}}"#;
+        let tree = make_tree(&["outer\nwanted"]);
+        let mut state = FlattenJsonState::new();
+        let fields = state.flatten(event, &tree).unwrap();
+        assert_eq!(fields.len(), 1);
+        assert_eq!(fields[0].val.as_bytes(), b"42");
+    }
+
+    #[test]
+    fn test_null_in_skipped_context() {
+        // Mutation at 367: if `&&` → `||`, null value in skipped object is incorrectly captured.
+        let event = br#"{"skipped_object": {"a": null}, "wanted": "ok"}"#;
+        let tree = make_tree(&["wanted"]);
+        let mut state = FlattenJsonState::new();
+        let fields = state.flatten(event, &tree).unwrap();
+        assert_eq!(fields.len(), 1);
+        assert_eq!(fields[0].val.as_bytes(), br#""ok""#);
     }
 
     #[test]
