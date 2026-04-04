@@ -3805,3 +3805,30 @@ fn test_arena_budget_rejects_over_budget() {
     }
     assert!(rejected, "Should reject patterns when arena exceeds budget");
 }
+
+/// Catch mutant: `&= → |=` in CidrPattern::apply_ipv6_mask (json.rs:193).
+/// The boundary byte must have low bits CLEARED by the mask. If `&=` becomes `|=`,
+/// low bits in the pattern address would leak into the network, causing mismatches.
+/// /121 prefix: mask byte = 0x80. Pattern "::81" has byte 0x81 (low bit set).
+/// With &=: 0x81 & 0x80 = 0x80 (correct network). With |=: 0x81 | 0x80 = 0x81 (wrong).
+#[test]
+#[cfg_attr(miri, ignore)]
+fn test_cidr_ipv6_mask_clears_low_bits() {
+    // /121: 15 full bytes + 1 bit. Mask for boundary byte = 0x80.
+    // Pattern address: ::81 → last byte = 0x81.
+    // Correct network (after &= mask): last byte = 0x81 & 0x80 = 0x80.
+    // With |= mutation: last byte = 0x81 | 0x80 = 0x81 (different network!).
+    // Pattern 2001:db8::ff/121: boundary byte = 0xFF, mask = 0x80.
+    // &= gives: 0xFF & 0x80 = 0x80 → network = 2001:db8::80/121 (correct).
+    // |= gives: 0xFF | 0x80 = 0xFF → network = 2001:db8::ff/121 (WRONG).
+    // With |= the NFA would match 0xFF..0xFF range instead of 0x80..0xFF.
+    let q = q!("p121" => r#"{"ip": [{"cidr": "2001:db8:0:0:0:0:0:ff/121"}]}"#);
+    // 0x80 should match: same /121 network (0x80..0xFF) after correct masking
+    assert_has_match!(q, r#"{"ip": "2001:db8:0:0:0:0:0:80"}"#, "p121");
+    // 0x90 should match
+    assert_has_match!(q, r#"{"ip": "2001:db8:0:0:0:0:0:90"}"#, "p121");
+    // 0x00 should NOT match (different /121 network)
+    assert_no_match!(q, r#"{"ip": "2001:db8:0:0:0:0:0:0"}"#);
+    // 0x7F should NOT match
+    assert_no_match!(q, r#"{"ip": "2001:db8:0:0:0:0:0:7f"}"#);
+}
