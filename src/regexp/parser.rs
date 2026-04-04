@@ -2567,4 +2567,68 @@ mod tests {
             ".*~b should produce at least one branch"
         );
     }
+
+    /// Catch mutant: `-` vs `/` in constrain_atom_at_boundary (parser.rs:594).
+    /// The quant_max must be reduced by 1, not divided by 1.
+    /// With quant_max=3, `-1` gives 2, `/1` gives 3 (wrong).
+    #[test]
+    fn test_constrain_atom_boundary_reduces_quantifier() {
+        // Pattern: a{2,3}~b — the word boundary splits off one 'a',
+        // so the remaining quantifier should be {1,2}, not {1,3}.
+        let tree = parse_regexp("a{2,3}~b").unwrap();
+        let expanded = expand_word_boundaries(&tree).unwrap();
+        // The expansion should succeed and produce branches
+        assert!(
+            !expanded.is_empty(),
+            "a{{2,3}}~b should produce at least one branch"
+        );
+        // Verify by checking that the branches don't contain a quantifier
+        // with max=3 (which would mean the -1 was replaced by /1)
+        for branch in &expanded {
+            for atom in branch {
+                if atom.quant_max > 1 {
+                    assert!(
+                        atom.quant_max <= 2,
+                        "After splitting off boundary char, max quantifier should be <=2, got {}",
+                        atom.quant_max
+                    );
+                }
+            }
+        }
+    }
+
+    /// Catch mutant: `+` vs `*` in invert_rune_range merge (parser.rs:1739).
+    /// Adjacent ranges [a-c] and [d-f] must merge into [a-f].
+    /// With `*` instead of `+`, they wouldn't merge (only overlapping would).
+    #[test]
+    fn test_invert_rune_range_merges_adjacent() {
+        // Two adjacent ranges: [a-c] and [d-f]
+        let rr = vec![RunePair { lo: 'a', hi: 'c' }, RunePair { lo: 'd', hi: 'f' }];
+        let inverted = invert_rune_range(rr);
+        // After inversion, [a-f] is one gap. The inverted range should NOT
+        // contain any pairs within a-f, and should have pairs covering:
+        // [\0, a-1] and [f+1, MAX]
+        for pair in &inverted {
+            // No inverted pair should start or end inside a-f
+            assert!(
+                pair.hi < 'a' || pair.lo > 'f',
+                "Inverted range should not overlap a-f: {:?}",
+                pair
+            );
+        }
+    }
+
+    /// Verify that invert_rune_range with non-adjacent ranges keeps them separate.
+    #[test]
+    fn test_invert_rune_range_non_adjacent_gap() {
+        // [a-c] and [e-f] have a gap at 'd'
+        let rr = vec![RunePair { lo: 'a', hi: 'c' }, RunePair { lo: 'e', hi: 'f' }];
+        let inverted = invert_rune_range(rr);
+        // The inverted range must include 'd' (it's in the gap)
+        let covers_d = inverted.iter().any(|p| p.lo <= 'd' && 'd' <= p.hi);
+        assert!(
+            covers_d,
+            "Inverted range must cover 'd' which is in the gap"
+        );
+    }
 }

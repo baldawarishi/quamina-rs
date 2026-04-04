@@ -4278,6 +4278,27 @@ mod arena_stats_utility_tests {
         assert!(size_with_states >= empty_size);
     }
 
+    /// Catch mutant: `+` vs `*` in estimated_byte_size (arena.rs:378).
+    /// Verify the size is the SUM of all four vector capacities, not a product.
+    #[test]
+    fn test_estimated_byte_size_is_additive() {
+        let mut arena = StateArena::new();
+        // Allocate enough states to force non-zero capacity in the states vector
+        for _ in 0..10 {
+            arena.alloc();
+        }
+        let size = arena.estimated_byte_size();
+
+        // Compute each component individually
+        let states_part = arena.states.capacity() * std::mem::size_of::<ArenaFaState>();
+        let closure_part = arena.closure_data.capacity() * std::mem::size_of::<StateId>();
+        let ft_part = arena.ft_ptrs.capacity() * std::mem::size_of::<usize>();
+        let dfa_part = arena.dfa_lookup.capacity() * std::mem::size_of::<StateId>();
+
+        // The size must be exactly the sum (catches + becoming *)
+        assert_eq!(size, states_part + closure_part + ft_part + dfa_part);
+    }
+
     #[test]
     fn test_debug_fmt_arena() {
         let mut arena = StateArena::new();

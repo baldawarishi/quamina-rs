@@ -3765,3 +3765,43 @@ fn test_lookbehind_alternation_with_primary_alternation() {
     assert_no_match!(q, r#"{"v": "cx"}"#);
     assert_no_match!(q, r#"{"v": "az"}"#);
 }
+
+// ============================================================================
+// Mutation Testing Coverage
+// ============================================================================
+
+/// Catch mutant: `< → <=` in build_anything_but_step (arena.rs:2955).
+/// With `<=`, a value's last byte gets put into vals_with_bytes_remaining
+/// AND vals_ending_here, potentially causing incorrect matching on prefix values.
+#[test]
+fn test_anything_but_single_char_values() {
+    // anything-but ["a", "b"] with single-char excluded values
+    // exercises the index == last_index boundary in build_anything_but_step
+    let q = q!("p1" => r#"{"x": [{"anything-but": ["a", "b"]}]}"#);
+    assert_no_match!(q, r#"{"x": "a"}"#, "should not match excluded 'a'");
+    assert_no_match!(q, r#"{"x": "b"}"#, "should not match excluded 'b'");
+    assert_has_match!(q, r#"{"x": "c"}"#, "p1");
+    assert_has_match!(q, r#"{"x": "ab"}"#, "p1");
+}
+
+/// Catch mutant: `> → ==` in merge_into_main_arena (mutable_matcher.rs:309).
+/// If `>` becomes `==`, exceeding the budget by more than exact equality
+/// would silently allow oversized arenas.
+#[test]
+fn test_arena_budget_rejects_over_budget() {
+    // Use a small budget that will be exceeded after enough patterns
+    let mut q = crate::QuaminaBuilder::<&str>::new()
+        .with_arena_byte_budget(4096)
+        .build()
+        .unwrap();
+
+    let mut rejected = false;
+    for i in 0..500 {
+        let pattern = format!(r#"{{"x": ["{}"]}}"#, "v".repeat(i + 1));
+        if q.add_pattern("p", &pattern).is_err() {
+            rejected = true;
+            break;
+        }
+    }
+    assert!(rejected, "Should reject patterns when arena exceeds budget");
+}
