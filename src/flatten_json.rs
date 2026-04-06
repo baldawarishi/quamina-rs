@@ -1847,4 +1847,21 @@ x"#,
         let val = fields[0].val.as_bytes();
         assert!(val.len() > 2, "value should contain the emoji");
     }
+
+    /// Catch mutant: `|| → &&` in read_object (flatten_json.rs:344).
+    /// When skipping > 0, string values must be skipped even if member_is_used.
+    /// The `||` means skip when EITHER skipping OR member unused; `&&` would
+    /// only skip when BOTH are true, incorrectly reading values while skipping.
+    #[test]
+    fn test_skip_string_in_nested_unused_object() {
+        // "a" has a nested object with "x", but we only want "b" at the top.
+        // The flattener must skip "x"'s string value while traversing "a"'s subtree.
+        let event = br#"{"a": {"x": "should_skip"}, "b": "want_this"}"#;
+        let tree = make_tree(&["b"]);
+        let mut state = FlattenJsonState::new();
+        let fields = state.flatten(event, &tree).unwrap();
+        assert_eq!(fields.len(), 1);
+        assert_eq!(fields[0].path.as_ref(), b"b");
+        assert_eq!(fields[0].val.as_bytes(), b"\"want_this\"");
+    }
 }

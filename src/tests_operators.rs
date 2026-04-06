@@ -3832,3 +3832,52 @@ fn test_cidr_ipv6_mask_clears_low_bits() {
     // 0x7F should NOT match
     assert_no_match!(q, r#"{"ip": "2001:db8:0:0:0:0:0:7f"}"#);
 }
+
+/// Catch mutant: `> → >=` in CidrPattern::parse_ipv6 (json.rs:136).
+/// With `>=`, an IPv6 without `::` would have `parts.len() == 1`, and
+/// `>= 1` is true (vs `> 1` false), causing an out-of-bounds access on parts[1].
+/// A fully-specified IPv6 address (no `::`) must parse correctly.
+#[test]
+#[cfg_attr(miri, ignore)]
+fn test_cidr_ipv6_fully_specified_no_double_colon() {
+    // 8 groups, no :: shorthand
+    let q = q!("p" => r#"{"ip": [{"cidr": "2001:0db8:0000:0000:0000:0000:0000:0001/128"}]}"#);
+    assert_has_match!(q, r#"{"ip": "2001:db8:0:0:0:0:0:1"}"#, "p");
+    assert_no_match!(q, r#"{"ip": "2001:db8:0:0:0:0:0:2"}"#);
+}
+
+/// Catch mutant: `&& → ||` in merge_arena_nfa_states_recursive (arena.rs:1649).
+/// When merging two patterns where only one has a spinout (.* wildcard),
+/// the merge must produce correct results. With `||`, both-spinout logic
+/// would be applied when only one pattern has a wildcard.
+#[test]
+#[cfg_attr(miri, ignore)]
+fn test_merge_patterns_one_wildcard_one_exact() {
+    // Pattern 1 uses wildcard (spinout), pattern 2 is exact
+    let mut q = crate::Quamina::new();
+    q.add_pattern("wild", r#"{"v": [{"regexp": "a.*b"}]}"#)
+        .unwrap();
+    q.add_pattern("exact", r#"{"v": ["hello"]}"#).unwrap();
+
+    assert_has_match!(q, r#"{"v": "aXXb"}"#, "wild");
+    assert_has_match!(q, r#"{"v": "hello"}"#, "exact");
+    assert_no_match!(q, r#"{"v": "aXX"}"#);
+    // "ab" matches wild (a.*b with empty .*)
+    assert_has_match!(q, r#"{"v": "ab"}"#, "wild");
+}
+
+/// Catch mutant: `&& → ||` and `< → <=` in add_arena_rune_pair_tree_entry
+/// (nfa.rs:626-627). These handle surrogate range skipping in Unicode.
+/// A negated character class that spans surrogate boundaries exercises this path.
+#[test]
+#[cfg_attr(miri, ignore)]
+fn test_regexp_negated_class_wide_unicode_range() {
+    // [^a] matches any character except 'a', including chars across the
+    // surrogate boundary. The NFA builder must skip U+D800..U+DFFF correctly.
+    let q = q!("p" => r#"{"v": [{"regexp": "[^a]"}]}"#);
+    assert_has_match!(q, r#"{"v": "b"}"#, "p");
+    assert_has_match!(q, r#"{"v": "Z"}"#, "p");
+    assert_no_match!(q, r#"{"v": "a"}"#);
+    // Multi-byte Unicode char should also match
+    assert_has_match!(q, r#"{"v": "中"}"#, "p");
+}
