@@ -653,12 +653,33 @@ impl<X: Clone + Eq + Hash + Send + Sync> ThreadSafeCoreMatcher<X> {
         // Copy the main_arena (unified arena for all pattern types).
         // Re-freeze table buffers to pick up any in-place modifications
         // (e.g. insert_string_into_arena) since the last precompute.
+        let mut main_arena_is_nfa = *mutable.main_arena_is_nfa.borrow();
         let main_arena = mutable
             .main_arena
             .borrow()
             .clone()
             .map(|(mut arena, start)| {
                 arena.precompute_epsilon_closures();
+
+                // Attempt NFA→DFA conversion if the arena has epsilon transitions.
+                // Uses subset construction with a state budget to prevent exponential
+                // blowup (inspired by Go quamina issue #481 / sayrer's three-tier
+                // strategy: eager DFA with budget, then NFA fallback).
+                if main_arena_is_nfa {
+                    // Budget: 8x the NFA state count, capped at 10_000 states.
+                    // This allows moderate expansion while preventing pathological
+                    // cases like 1000 shell-style patterns from exploding.
+                    let budget = (arena.len() * 8).min(10_000);
+                    if let Some((dfa_arena, dfa_start)) = arena.nfa_to_dfa(start, budget) {
+                        // Conversion succeeded within budget — use the DFA
+                        arena = dfa_arena;
+                        main_arena_is_nfa = false;
+                        arena.flatten_tables();
+                        return (arena, dfa_start);
+                    }
+                    // Budget exceeded — keep the NFA
+                }
+
                 arena.flatten_tables();
                 (arena, start)
             });
@@ -682,7 +703,7 @@ impl<X: Clone + Eq + Hash + Send + Sync> ThreadSafeCoreMatcher<X> {
             transition_map,
             multi_condition_nfas,
             main_arena,
-            main_arena_is_nfa: *mutable.main_arena_is_nfa.borrow(),
+            main_arena_is_nfa,
             suffix_arena,
         }
     }

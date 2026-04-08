@@ -729,6 +729,185 @@ impl StateArena {
     /// `tests::test_dfa_lookup_matches_smalltable_dstep` in non-Miri builds.
     #[cfg(miri)]
     fn build_dfa_lookup(&mut self) {}
+
+    /// Convert an NFA arena to a DFA arena using the subset construction algorithm.
+    ///
+    /// Each DFA state corresponds to a set of NFA states (after epsilon closure).
+    /// The algorithm explores all reachable byte transitions from each DFA state-set,
+    /// computing the epsilon closure of the resulting NFA states to form the next
+    /// DFA state.
+    ///
+    /// # Arguments
+    /// * `start` - The NFA start state
+    /// * `state_budget` - Maximum number of DFA states before aborting (prevents
+    ///   exponential blowup). If exceeded, returns `None`.
+    ///
+    /// # Returns
+    /// `Some((dfa_arena, dfa_start))` if conversion succeeded within budget,
+    /// `None` if the budget was exceeded (caller should keep using NFA).
+    ///
+    /// Inspired by Go quamina's `nfa2Dfa` (PR #76) and sayrer's three-tier
+    /// strategy from issue #481: eager DFA with low budget, then NFA fallback.
+    pub fn nfa_to_dfa(&self, start: StateId, state_budget: usize) -> Option<(Self, StateId)> {
+        if start.is_none() || self.states.is_empty() {
+            return Some((Self::new(), StateId::NONE));
+        }
+
+        // Ensure epsilon closures are precomputed
+        // (they should be, but be defensive)
+        debug_assert!(
+            !self.closure_data.is_empty(),
+            "epsilon closures must be precomputed before nfa_to_dfa"
+        );
+
+        let mut dfa_arena = Self::with_capacity(self.states.len());
+
+        // Map from sorted NFA state-set → DFA state ID.
+        // Key: sorted Vec<StateId> representing the epsilon closure of a set of NFA states.
+        let mut state_map: FxHashMap<Vec<u32>, StateId> = FxHashMap::default();
+
+        // Work queue of DFA states to process.
+        let mut worklist: Vec<StateId> = Vec::new();
+
+        // Scratch buffers (reused across iterations to avoid allocation)
+        let mut unpacked = [StateId::NONE; BYTE_CEILING];
+        // Scratch buffers for dedup
+
+        let mut closure_set: Vec<StateId> = Vec::new();
+        let mut seen = FxHashSet::default();
+
+        // Step 1: Compute the start DFA state = epsilon closure of NFA start
+        let start_closure = self.closure_of(start);
+        let start_key = Self::make_state_set_key(start_closure);
+        let dfa_start = dfa_arena.alloc();
+        state_map.insert(start_key, dfa_start);
+        worklist.push(dfa_start);
+
+        // Store the NFA state-set for each DFA state (indexed by DFA state index)
+        let mut dfa_nfa_sets: Vec<Vec<StateId>> = Vec::new();
+        dfa_nfa_sets.push(start_closure.to_vec());
+
+        // Copy field transitions from the start closure
+        Self::collect_field_transitions(self, start_closure, &mut dfa_arena[dfa_start]);
+
+        // Step 2: Process worklist
+        while let Some(dfa_state) = worklist.pop() {
+            let nfa_states = dfa_nfa_sets[dfa_state.index()].clone();
+
+            // Compute the combined transition table: for each byte, collect all
+            // reachable NFA states (union of transitions from all states in the set)
+            // then compute epsilon closure of the result.
+            //
+            // We unpack into a full BYTE_CEILING array, compute per-byte next-state-sets.
+
+            // For each byte value 0..BYTE_CEILING, compute the set of NFA states reachable
+            // Use a temporary map: byte → set of NFA state indices
+            let mut byte_to_next: Vec<Option<Vec<StateId>>> = Vec::with_capacity(BYTE_CEILING);
+            byte_to_next.resize_with(BYTE_CEILING, || None);
+
+            for &nfa_state in &nfa_states {
+                if nfa_state.is_none() {
+                    continue;
+                }
+                // Unpack this NFA state's transition table
+                unpack_arena_table(&self[nfa_state].table, &mut unpacked);
+
+                for byte in 0..BYTE_CEILING {
+                    let target = unpacked[byte];
+                    if !target.is_none() {
+                        let entry = byte_to_next[byte].get_or_insert_with(Vec::new);
+                        // Expand target through epsilon closure
+                        let target_closure = self.closure_of(target);
+                        for &tc_state in target_closure {
+                            entry.push(tc_state);
+                        }
+                    }
+                }
+            }
+
+            // Now build the DFA transition table for this state.
+            // Deduplicate and sort each byte's NFA state-set, then intern it.
+            let mut dfa_unpacked = [StateId::NONE; BYTE_CEILING];
+
+            for byte in 0..BYTE_CEILING {
+                if let Some(ref raw_next) = byte_to_next[byte] {
+                    // Deduplicate and sort
+                    seen.clear();
+                    closure_set.clear();
+                    for &s in raw_next {
+                        if seen.insert(s) {
+                            closure_set.push(s);
+                        }
+                    }
+                    closure_set.sort_unstable_by_key(|s| s.0);
+
+                    if closure_set.is_empty() {
+                        continue;
+                    }
+
+                    let key = Self::make_state_set_key(&closure_set);
+
+                    let dfa_next = if let Some(&existing) = state_map.get(&key) {
+                        existing
+                    } else {
+                        // Budget check
+                        if dfa_arena.len() >= state_budget {
+                            return None; // Budget exceeded, abort
+                        }
+
+                        let new_dfa = dfa_arena.alloc();
+                        state_map.insert(key, new_dfa);
+                        dfa_nfa_sets.push(closure_set.clone());
+
+                        // Collect field transitions for this new DFA state
+                        Self::collect_field_transitions(
+                            self,
+                            &closure_set,
+                            &mut dfa_arena[new_dfa],
+                        );
+
+                        worklist.push(new_dfa);
+                        new_dfa
+                    };
+
+                    dfa_unpacked[byte] = dfa_next;
+                }
+            }
+
+            // Pack the transition table
+            dfa_arena[dfa_state].table.pack(&dfa_unpacked);
+        }
+
+        // Precompute epsilon closures (should be trivial - all DFA states have no epsilons)
+        dfa_arena.precompute_epsilon_closures();
+
+        Some((dfa_arena, dfa_start))
+    }
+
+    /// Create a canonical key from a sorted set of NFA state IDs.
+    fn make_state_set_key(states: &[StateId]) -> Vec<u32> {
+        states.iter().map(|s| s.0).collect()
+    }
+
+    /// Collect field transitions from a set of NFA states onto a DFA state.
+    fn collect_field_transitions(
+        nfa_arena: &Self,
+        nfa_states: &[StateId],
+        dfa_state: &mut ArenaFaState,
+    ) {
+        let mut seen_ptrs: FxHashSet<usize> = FxHashSet::default();
+        for &nfa_state in nfa_states {
+            if nfa_state.is_none() {
+                continue;
+            }
+            for ft in &nfa_arena[nfa_state].field_transitions {
+                let ptr = Arc::as_ptr(ft) as usize;
+                if seen_ptrs.insert(ptr) {
+                    dfa_state.field_transitions.push(ft.clone());
+                }
+            }
+        }
+    }
 }
 
 impl std::ops::Index<StateId> for StateArena {
@@ -6875,5 +7054,201 @@ mod kani_arena_proofs {
                 "byte past last ceiling must return NONE",
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod nfa_to_dfa_tests {
+    use super::*;
+    use crate::regexp::{make_regexp_nfa_arena, parse_regexp};
+
+    /// Helper: build a regexp NFA arena from a pattern string.
+    fn build_regexp_nfa(pattern: &str) -> (StateArena, StateId) {
+        let root = parse_regexp(pattern).expect("valid regexp");
+        let (mut arena, start, _fm) = make_regexp_nfa_arena(root);
+        arena.precompute_epsilon_closures();
+        (arena, start)
+    }
+
+    /// Helper: check if a value matches in an arena (NFA path).
+    fn nfa_matches(arena: &StateArena, start: StateId, value: &[u8]) -> bool {
+        let mut bufs = ArenaNfaBuffers::with_capacity();
+        traverse_arena_nfa(arena, start, value, &mut bufs);
+        !bufs.transitions.is_empty()
+    }
+
+    /// Helper: check if a value matches in an arena (DFA path).
+    fn dfa_matches(arena: &StateArena, start: StateId, value: &[u8]) -> bool {
+        let mut transitions = Vec::new();
+        traverse_arena_dfa(arena, start, value, &mut transitions);
+        !transitions.is_empty()
+    }
+
+    #[test]
+    fn test_nfa_to_dfa_simple_plus() {
+        let (nfa, nfa_start) = build_regexp_nfa("[abc]+");
+        assert!(nfa.is_nondeterministic(), "should be NFA");
+
+        let (dfa, dfa_start) = nfa.nfa_to_dfa(nfa_start, 1000).expect("should convert");
+        assert!(!dfa.is_nondeterministic(), "should be DFA");
+
+        // Both should match the same values
+        let test_values: &[(&[u8], bool)] = &[
+            (b"\"a\"", true),
+            (b"\"abc\"", true),
+            (b"\"aaa\"", true),
+            (b"\"d\"", false),
+            (b"\"\"", false),
+        ];
+        for (val, expected) in test_values {
+            assert_eq!(
+                nfa_matches(&nfa, nfa_start, val),
+                *expected,
+                "NFA mismatch on {:?}",
+                String::from_utf8_lossy(val)
+            );
+            assert_eq!(
+                dfa_matches(&dfa, dfa_start, val),
+                *expected,
+                "DFA mismatch on {:?}",
+                String::from_utf8_lossy(val)
+            );
+        }
+    }
+
+    #[test]
+    fn test_nfa_to_dfa_star() {
+        let (nfa, nfa_start) = build_regexp_nfa("[xyz]*end");
+        assert!(nfa.is_nondeterministic());
+
+        let (dfa, dfa_start) = nfa.nfa_to_dfa(nfa_start, 1000).expect("should convert");
+        assert!(!dfa.is_nondeterministic());
+
+        let test_values: &[(&[u8], bool)] = &[
+            (b"\"end\"", true),
+            (b"\"xend\"", true),
+            (b"\"xyzend\"", true),
+            (b"\"xyxyend\"", true),
+            (b"\"en\"", false),
+            (b"\"aend\"", false),
+        ];
+        for (val, expected) in test_values {
+            assert_eq!(
+                nfa_matches(&nfa, nfa_start, val),
+                *expected,
+                "NFA mismatch on {:?}",
+                String::from_utf8_lossy(val)
+            );
+            assert_eq!(
+                dfa_matches(&dfa, dfa_start, val),
+                *expected,
+                "DFA mismatch on {:?}",
+                String::from_utf8_lossy(val)
+            );
+        }
+    }
+
+    #[test]
+    fn test_nfa_to_dfa_nested_quantifiers() {
+        let (nfa, nfa_start) = build_regexp_nfa("(([abc]?)*)+");
+        assert!(nfa.is_nondeterministic());
+
+        let (dfa, dfa_start) = nfa.nfa_to_dfa(nfa_start, 1000).expect("should convert");
+        assert!(!dfa.is_nondeterministic());
+
+        let test_values: &[(&[u8], bool)] = &[
+            (b"\"\"", true),
+            (b"\"a\"", true),
+            (b"\"abc\"", true),
+            (b"\"aabbcc\"", true),
+            (b"\"d\"", false),
+        ];
+        for (val, expected) in test_values {
+            assert_eq!(
+                nfa_matches(&nfa, nfa_start, val),
+                *expected,
+                "NFA mismatch on {:?}",
+                String::from_utf8_lossy(val)
+            );
+            assert_eq!(
+                dfa_matches(&dfa, dfa_start, val),
+                *expected,
+                "DFA mismatch on {:?}",
+                String::from_utf8_lossy(val)
+            );
+        }
+    }
+
+    #[test]
+    fn test_nfa_to_dfa_budget_exceeded() {
+        // A complex NFA with a very small budget should fail
+        let (nfa, nfa_start) = build_regexp_nfa("(([abc]?)*)+");
+        assert!(nfa.is_nondeterministic());
+
+        // Budget of 2 is too small for any real conversion
+        let result = nfa.nfa_to_dfa(nfa_start, 2);
+        assert!(result.is_none(), "should exceed budget");
+    }
+
+    #[test]
+    fn test_nfa_to_dfa_empty_arena() {
+        let arena = StateArena::new();
+        let result = arena.nfa_to_dfa(StateId::NONE, 1000);
+        assert!(result.is_some());
+        let (dfa, start) = result.unwrap();
+        assert!(start.is_none());
+        assert!(dfa.is_empty());
+    }
+
+    #[test]
+    fn test_nfa_to_dfa_alternation() {
+        // a+|b+ creates NFA with epsilon transitions for alternation
+        let (nfa, nfa_start) = build_regexp_nfa("[a]+d|[b]+d");
+        if !nfa.is_nondeterministic() {
+            return; // Skip if deterministic (no conversion needed)
+        }
+
+        let (dfa, dfa_start) = nfa.nfa_to_dfa(nfa_start, 1000).expect("should convert");
+        assert!(!dfa.is_nondeterministic());
+
+        let test_values: &[(&[u8], bool)] = &[
+            (b"\"ad\"", true),
+            (b"\"aad\"", true),
+            (b"\"bd\"", true),
+            (b"\"bbd\"", true),
+            (b"\"cd\"", false),
+            (b"\"ab\"", false),
+        ];
+        for (val, expected) in test_values {
+            assert_eq!(
+                nfa_matches(&nfa, nfa_start, val),
+                *expected,
+                "NFA mismatch on {:?}",
+                String::from_utf8_lossy(val)
+            );
+            assert_eq!(
+                dfa_matches(&dfa, dfa_start, val),
+                *expected,
+                "DFA mismatch on {:?}",
+                String::from_utf8_lossy(val)
+            );
+        }
+    }
+
+    #[test]
+    fn test_nfa_to_dfa_preserves_field_transitions() {
+        // After conversion, field transitions should be preserved
+        let (nfa, nfa_start) = build_regexp_nfa("[abc]+");
+        let (dfa, dfa_start) = nfa.nfa_to_dfa(nfa_start, 1000).expect("should convert");
+
+        // DFA should have at least one state with field transitions
+        let has_ft =
+            (0..dfa.len()).any(|i| !dfa[StateId::from_index(i)].field_transitions.is_empty());
+        assert!(has_ft, "DFA should have field transitions");
+
+        // Matching should find transitions
+        let mut transitions = Vec::new();
+        traverse_arena_dfa(&dfa, dfa_start, b"\"a\"", &mut transitions);
+        assert!(!transitions.is_empty(), "should find field transitions");
     }
 }
