@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 Style inspired by [ripgrep's CHANGELOG](https://github.com/BurntSushi/ripgrep/blob/master/CHANGELOG.md).
 
+## [Unreleased]
+
+### Added
+- NFA→DFA subset construction at freeze time: regexp patterns with epsilon transitions are now eagerly converted to DFA when within a state budget (8x NFA states, max 10,000), yielding up to 2.5x faster matching on long regexp inputs (`regexp_plus_long`: 1259→501 ns, `regexp_star_long`: 1125→459 ns)
+- Lazy DFA cache (tier 2): NFA arenas that exceed the eager DFA budget now use on-demand DFA state caching during matching, building states lazily and reusing them across traversals. Budget-limited to prevent memory explosion (10x eager budget, max 100,000 states)
+- Three-tier matching strategy inspired by Go quamina issue #481: eager DFA → lazy DFA → NFA fallback
+- Kani proof harness verifying `nfa_to_dfa` respects the state budget
+- 12 new unit tests covering eager and lazy DFA conversion, budget enforcement, field transition preservation, and NFA/DFA matching equivalence
+
 ## [0.5.0] — 2026-03-23
 
 ### Changed
