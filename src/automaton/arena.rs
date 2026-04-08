@@ -868,7 +868,61 @@ impl StateArena {
         // Precompute epsilon closures (should be trivial - all DFA states have no epsilons)
         dfa_arena.precompute_epsilon_closures();
 
+        // Reconstruct acceleration info for self-loop DFA states.
+        // NFA AccelInfo is lost during subset construction; this detects the same
+        // spinout pattern on DFA states (self-loop on most bytes, 1-3 exit bytes).
+        dfa_arena.compute_dfa_accel();
+
         Some((dfa_arena, dfa_start))
+    }
+
+    /// Detect self-loop DFA states and populate their `AccelInfo`.
+    ///
+    /// After NFA→DFA conversion, the original NFA acceleration info is lost.
+    /// This scans all states and detects "spinout" patterns: states that
+    /// self-loop on most ASCII bytes, with 1-3 distinct ASCII exit bytes.
+    /// These states can use memchr SIMD to skip ahead during traversal.
+    ///
+    /// Only ASCII bytes (0x00-0x7F) are checked. Non-ASCII bytes (multi-byte
+    /// UTF-8 lead/continuation bytes) are ignored because:
+    /// 1. Exit bytes for acceleratable patterns are always ASCII
+    /// 2. memchr for ASCII bytes never matches inside multi-byte UTF-8 sequences
+    /// 3. Complete multi-byte sequences always return to the self-loop state
+    fn compute_dfa_accel(&mut self) {
+        let mut unpacked = [StateId::NONE; BYTE_CEILING];
+
+        for state_idx in 0..self.states.len() {
+            let state_id = StateId::from_index(state_idx);
+            unpack_arena_table(&self.states[state_idx].table, &mut unpacked);
+
+            let mut has_self_loop = false;
+            let mut valid = true;
+            let mut exit_count = 0u8;
+            let mut exit_bytes = [0u8; 3];
+
+            for (byte, &target) in unpacked[..0x80].iter().enumerate() {
+                if target == state_id {
+                    has_self_loop = true;
+                } else if target.is_none() {
+                    // Dead transition on an ASCII byte — not acceleratable
+                    valid = false;
+                    break;
+                } else {
+                    // Non-self transition — exit byte
+                    if exit_count < 3 {
+                        exit_bytes[exit_count as usize] = byte as u8;
+                    }
+                    exit_count += 1;
+                }
+            }
+
+            if valid && has_self_loop && (1..=3).contains(&exit_count) {
+                self.states[state_idx].table.accel = Some(AccelInfo {
+                    exit_bytes,
+                    len: exit_count,
+                });
+            }
+        }
     }
 
     /// Create a canonical key from a sorted set of NFA state IDs.
@@ -931,6 +985,9 @@ struct LazyDfaState {
     field_transition_ptrs: Vec<usize>,
     /// Whether this state is cached (persisted in the cache) or temporary.
     cached: bool,
+    /// Acceleration info for self-loop states (exit bytes for memchr skip).
+    /// Computed lazily when a self-loop transition is first detected.
+    accel: Option<AccelInfo>,
 }
 
 /// Sentinel for "transition not yet computed".
@@ -1028,6 +1085,7 @@ impl LazyDfa {
             transitions: vec![LAZY_DFA_UNKNOWN; BYTE_CEILING],
             field_transition_ptrs,
             cached: can_cache,
+            accel: None,
         };
 
         self.states.push(state);
@@ -1091,6 +1149,47 @@ impl LazyDfa {
 
         next_idx
     }
+
+    /// Attempt to compute acceleration info for a lazy DFA state.
+    ///
+    /// Called when a self-loop is first detected during traversal. Checks if
+    /// the NFA states in this set have compatible AccelInfo (same exit bytes),
+    /// then verifies that each exit byte actually exits (doesn't self-loop).
+    fn try_compute_accel(&mut self, state_idx: u32, scratch: &mut LazyDfaScratch) {
+        let nfa_states = &self.nfa_sets[state_idx as usize];
+        let mut common_accel: Option<AccelInfo> = None;
+
+        for &nfa_state in nfa_states {
+            if nfa_state.is_none() {
+                continue;
+            }
+            if let Some(ref accel) = self.nfa_arena[nfa_state].table.accel {
+                match &common_accel {
+                    None => common_accel = Some(accel.clone()),
+                    Some(existing)
+                        if existing.len == accel.len
+                            && existing.exit_bytes[..existing.len as usize]
+                                == accel.exit_bytes[..accel.len as usize] => {}
+                    Some(_) => return, // Disagreement — no acceleration
+                }
+            }
+        }
+
+        let accel = match common_accel {
+            Some(a) => a,
+            None => return,
+        };
+
+        // Verify: each exit byte must NOT self-loop in the lazy DFA
+        for i in 0..accel.len as usize {
+            let next = self.step(state_idx, accel.exit_bytes[i], scratch);
+            if next == state_idx {
+                return; // Exit byte self-loops — AccelInfo is invalid
+            }
+        }
+
+        self.states[state_idx as usize].accel = Some(accel);
+    }
 }
 
 /// Scratch buffers for lazy DFA traversal (avoids per-step allocation).
@@ -1109,6 +1208,7 @@ struct LazyDfaScratch {
 /// * `lazy_dfa` - The lazy DFA cache (mutated to cache new states)
 /// * `val` - The value bytes to match against
 /// * `transitions` - Output: collected field matcher pointer addresses
+#[inline]
 pub fn traverse_lazy_dfa(lazy_dfa: &mut LazyDfa, val: &[u8], transitions: &mut Vec<usize>) {
     if lazy_dfa.states.is_empty() {
         return;
@@ -1116,12 +1216,24 @@ pub fn traverse_lazy_dfa(lazy_dfa: &mut LazyDfa, val: &[u8], transitions: &mut V
 
     let mut scratch = LazyDfaScratch::default();
     let mut current: u32 = 0; // Start state is always index 0
+    let len = val.len();
+    let mut i = 0;
 
     // Collect field transitions from start state
     transitions.extend_from_slice(&lazy_dfa.states[0].field_transition_ptrs);
 
-    for i in 0..=val.len() {
-        let byte = if i < val.len() {
+    while i <= len {
+        // Acceleration: for self-loop states with memchr exit bytes, skip ahead
+        if i < len
+            && let Some(ref accel) = lazy_dfa.states[current as usize].accel
+            && let Some(skip) = accel.try_accelerate(&val[i..])
+            && skip > 0
+        {
+            i += skip;
+            continue;
+        }
+
+        let byte = if i < len {
             val[i]
         } else {
             ARENA_VALUE_TERMINATOR
@@ -1131,7 +1243,14 @@ pub fn traverse_lazy_dfa(lazy_dfa: &mut LazyDfa, val: &[u8], transitions: &mut V
         if next == LAZY_DFA_DEAD {
             return;
         }
+
+        // Detect self-loop and try to compute acceleration for future bytes
+        if next == current && lazy_dfa.states[current as usize].accel.is_none() {
+            lazy_dfa.try_compute_accel(current, &mut scratch);
+        }
+
         current = next;
+        i += 1;
 
         // Collect field transitions
         transitions.extend_from_slice(&lazy_dfa.states[current as usize].field_transition_ptrs);
@@ -1195,19 +1314,7 @@ pub const ARENA_VALUE_TERMINATOR: u8 = 0xF5;
 /// are just the negated ASCII characters (not all invalid UTF-8 bytes).
 #[inline]
 fn try_accelerate_arena(table: &ArenaSmallTable, remaining: &[u8]) -> Option<usize> {
-    let accel = table.accel.as_ref()?;
-
-    match accel.len {
-        1 => memchr::memchr(accel.exit_bytes[0], remaining),
-        2 => memchr::memchr2(accel.exit_bytes[0], accel.exit_bytes[1], remaining),
-        3 => memchr::memchr3(
-            accel.exit_bytes[0],
-            accel.exit_bytes[1],
-            accel.exit_bytes[2],
-            remaining,
-        ),
-        _ => None,
-    }
+    table.accel.as_ref()?.try_accelerate(remaining)
 }
 
 /// Traverse an arena-based NFA on a value.
@@ -1425,8 +1532,10 @@ pub fn traverse_arena_dfa(
 
     let has_flat = !arena.ft_ptrs.is_empty();
     let mut current = start;
+    let len = val.len();
+    let mut i = 0;
 
-    for i in 0..=val.len() {
+    while i <= len {
         if has_flat {
             for &ptr in arena.ft_ptrs_of(current) {
                 transitions.push(ptr);
@@ -1437,7 +1546,17 @@ pub fn traverse_arena_dfa(
             }
         }
 
-        let byte = if i < val.len() {
+        // Acceleration: for self-loop states with 1-3 exit bytes, use memchr
+        // to skip directly to the next interesting byte.
+        if i < len
+            && let Some(skip) = try_accelerate_arena(&arena[current].table, &val[i..])
+            && skip > 0
+        {
+            i += skip;
+            continue;
+        }
+
+        let byte = if i < len {
             val[i]
         } else {
             ARENA_VALUE_TERMINATOR
@@ -1448,6 +1567,7 @@ pub fn traverse_arena_dfa(
             return;
         }
         current = next;
+        i += 1;
     }
 
     if has_flat {
@@ -7611,6 +7731,154 @@ mod lazy_dfa_tests {
                 lazy_dfa_matches(&mut lazy, val),
                 "NFA/lazy-DFA disagree on {:?}",
                 String::from_utf8_lossy(val),
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+mod dfa_accel_tests {
+    use super::*;
+    use crate::regexp::{make_regexp_nfa_arena, parse_regexp};
+
+    /// Verify that lazy DFA computes AccelInfo for negated char class self-loop states.
+    #[test]
+    fn test_lazy_dfa_accel_negated_char_class() {
+        let root = parse_regexp("a[^x]+x").expect("valid regexp");
+        let (mut nfa, nfa_start, _fm) = make_regexp_nfa_arena(root);
+        nfa.precompute_epsilon_closures();
+
+        // NFA→DFA exceeds budget for this Unicode-heavy NFA
+        assert!(
+            nfa.nfa_to_dfa(nfa_start, 1000).is_none(),
+            "expected budget exceeded for [^x]+ Unicode NFA"
+        );
+
+        // Lazy DFA should still work and acquire AccelInfo during traversal
+        let mut lazy = LazyDfa::new(nfa.clone(), nfa_start, 10_000);
+
+        // Build a long value: "aaa...ax" (1000 'a's + 'x')
+        let long_val: Vec<u8> = std::iter::once(b'"')
+            .chain(std::iter::once(b'a'))
+            .chain(std::iter::repeat(b'a').take(1000))
+            .chain(std::iter::once(b'x'))
+            .chain(std::iter::once(b'"'))
+            .collect();
+
+        let mut transitions = Vec::new();
+        traverse_lazy_dfa(&mut lazy, &long_val, &mut transitions);
+        assert!(
+            !transitions.is_empty(),
+            "should match: a followed by 1000 a's then x"
+        );
+
+        // After traversal, at least one state should have AccelInfo
+        let accel_count = lazy.states.iter().filter(|s| s.accel.is_some()).count();
+        assert!(
+            accel_count > 0,
+            "lazy DFA should detect AccelInfo on self-loop state"
+        );
+    }
+
+    /// Verify eager DFA computes AccelInfo for simple self-loop patterns.
+    #[test]
+    fn test_eager_dfa_accel_simple_pattern() {
+        let root = parse_regexp("[^x]+").expect("valid regexp");
+        let (mut nfa, nfa_start, _fm) = make_regexp_nfa_arena(root);
+        nfa.precompute_epsilon_closures();
+
+        if let Some((dfa, _dfa_start)) = nfa.nfa_to_dfa(nfa_start, 100_000) {
+            let accel_count = dfa
+                .states
+                .iter()
+                .filter(|s| s.table.accel.is_some())
+                .count();
+            if accel_count > 0 {
+                for state in &dfa.states {
+                    if let Some(ref accel) = state.table.accel {
+                        assert_eq!(accel.len, 1);
+                        assert_eq!(accel.exit_bytes[0], b'x');
+                    }
+                }
+            }
+        }
+    }
+
+    /// Verify lazy DFA handles skip==0 correctly (exit byte at current position).
+    #[test]
+    fn test_lazy_dfa_accel_skip_zero() {
+        let root = parse_regexp("a[^x]+x").expect("valid regexp");
+        let (mut nfa, nfa_start, _fm) = make_regexp_nfa_arena(root);
+        nfa.precompute_epsilon_closures();
+
+        let mut lazy = LazyDfa::new(nfa, nfa_start, 10_000);
+
+        // "aax" — after literal 'a', loop sees 'a' (self-loop, triggers accel),
+        // then 'x' at skip==0 → falls through to normal processing
+        let mut transitions = Vec::new();
+        traverse_lazy_dfa(&mut lazy, b"\"aax\"", &mut transitions);
+        assert!(!transitions.is_empty(), "should match 'aax'");
+
+        // "ax" — [^x]+ requires at least one non-x char, so this does NOT match
+        transitions.clear();
+        traverse_lazy_dfa(&mut lazy, b"\"ax\"", &mut transitions);
+        assert!(
+            transitions.is_empty(),
+            "'ax' should NOT match a[^x]+x — no non-x chars between a and x"
+        );
+    }
+
+    /// Verify DFA acceleration with 2 exit bytes.
+    #[test]
+    fn test_lazy_dfa_accel_multi_exit_bytes() {
+        let root = parse_regexp("a[^xy]+y").expect("valid regexp");
+        let (mut nfa, nfa_start, _fm) = make_regexp_nfa_arena(root);
+        nfa.precompute_epsilon_closures();
+
+        let mut lazy = LazyDfa::new(nfa, nfa_start, 10_000);
+
+        let long_val: Vec<u8> = std::iter::once(b'"')
+            .chain(std::iter::once(b'a'))
+            .chain(std::iter::repeat(b'a').take(500))
+            .chain(std::iter::once(b'y'))
+            .chain(std::iter::once(b'"'))
+            .collect();
+
+        let mut transitions = Vec::new();
+        traverse_lazy_dfa(&mut lazy, &long_val, &mut transitions);
+        assert!(!transitions.is_empty(), "should match 500 a's then y");
+
+        let accel_states: Vec<_> = lazy
+            .states
+            .iter()
+            .filter_map(|s| s.accel.as_ref())
+            .collect();
+        assert!(!accel_states.is_empty(), "should have accel on self-loop");
+        for accel in &accel_states {
+            assert_eq!(accel.len, 2, "expected 2 exit bytes for [^xy]+");
+        }
+    }
+
+    /// Verify eager DFA traversal actually exercises the acceleration path.
+    #[test]
+    fn test_eager_dfa_traversal_with_accel() {
+        let root = parse_regexp("[^x]+").expect("valid regexp");
+        let (mut nfa, nfa_start, _fm) = make_regexp_nfa_arena(root);
+        nfa.precompute_epsilon_closures();
+
+        if let Some((mut dfa, dfa_start)) = nfa.nfa_to_dfa(nfa_start, 100_000) {
+            dfa.flatten_tables();
+
+            let long_val: Vec<u8> = std::iter::once(b'"')
+                .chain(std::iter::repeat(b'a').take(1000))
+                .chain(std::iter::once(b'"'))
+                .collect();
+
+            let mut transitions = Vec::new();
+            traverse_arena_dfa(&dfa, dfa_start, &long_val, &mut transitions);
+            assert!(
+                !transitions.is_empty(),
+                "DFA with accel should match 1000 a's (no x = full match)"
             );
         }
     }

@@ -182,7 +182,8 @@ pub struct FrozenValueMatcher<X: Clone + Eq + Hash> {
     /// Lazy DFA cache for NFA arenas that exceeded the eager DFA budget.
     /// Tier 2 of the three-tier strategy: eager DFA → lazy DFA → NFA fallback.
     /// Protected by a Mutex since lazy DFA states are built on-demand during matching.
-    lazy_dfa: Option<Mutex<LazyDfa>>,
+    /// Boxed to keep FrozenValueMatcher small (208 bytes inline → 8 byte pointer).
+    lazy_dfa: Option<Box<Mutex<LazyDfa>>>,
     /// Separate DFA trie for suffix patterns, traversed backward (right-to-left).
     suffix_arena: Option<(StateArena, StateId)>,
 }
@@ -676,7 +677,7 @@ impl<X: Clone + Eq + Hash + Send + Sync> ThreadSafeCoreMatcher<X> {
         //   Tier 2: Lazy DFA — on-demand DFA state caching during matching
         //   Tier 3: NFA — full NFA traversal with epsilon closure expansion
         let mut main_arena_is_nfa = *mutable.main_arena_is_nfa.borrow();
-        let mut lazy_dfa: Option<Mutex<LazyDfa>> = None;
+        let mut lazy_dfa: Option<Box<Mutex<LazyDfa>>> = None;
         let main_arena = mutable
             .main_arena
             .borrow()
@@ -700,7 +701,11 @@ impl<X: Clone + Eq + Hash + Send + Sync> ThreadSafeCoreMatcher<X> {
                     // Lazy budget: 10x the eager budget (allows much larger DFA state
                     // space to be explored incrementally during matching).
                     let lazy_budget = eager_budget.saturating_mul(10).min(100_000);
-                    lazy_dfa = Some(Mutex::new(LazyDfa::new(arena.clone(), start, lazy_budget)));
+                    lazy_dfa = Some(Box::new(Mutex::new(LazyDfa::new(
+                        arena.clone(),
+                        start,
+                        lazy_budget,
+                    ))));
                 }
 
                 arena.flatten_tables();

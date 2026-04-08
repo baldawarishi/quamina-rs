@@ -34,6 +34,27 @@ pub struct AccelInfo {
     pub len: u8,
 }
 
+impl AccelInfo {
+    /// Find the next exit byte in `remaining` using SIMD-accelerated memchr.
+    ///
+    /// Returns `Some(offset)` where offset is the position of the first exit
+    /// byte, or `None` if no exit byte is found in the slice.
+    #[inline]
+    pub fn try_accelerate(&self, remaining: &[u8]) -> Option<usize> {
+        match self.len {
+            1 => memchr::memchr(self.exit_bytes[0], remaining),
+            2 => memchr::memchr2(self.exit_bytes[0], self.exit_bytes[1], remaining),
+            3 => memchr::memchr3(
+                self.exit_bytes[0],
+                self.exit_bytes[1],
+                self.exit_bytes[2],
+                remaining,
+            ),
+            _ => None,
+        }
+    }
+}
+
 /// Matches field names and dispatches to value matchers.
 ///
 /// Used as the transition target in the arena FA. When the automaton reaches

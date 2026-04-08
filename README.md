@@ -228,28 +228,28 @@ On an M3 Max:
 
 | Patterns | Match time |
 |----------|-----------|
-| 100 | 128 ns |
-| 10,000 | 114 ns |
+| 100 | 125 ns |
+| 10,000 | 108 ns |
 
 ### Event Type Benchmarks
 
 | Benchmark | Time | Description |
 |-----------|-----:|-------------|
-| citylots | 1,635 ns | 4 patterns, 206k of messy GeoJSON data |
-| early field match | 224 ns | 14KB JSON events |
-| nested field match | 5,122 ns | Nested JSON events |
+| citylots | 1,701 ns | 4 patterns, 206k of messy GeoJSON data |
+| early field match | 242 ns | 14KB JSON events |
+| nested field match | 5,281 ns | Nested JSON events |
 
 ### Pattern type benchmarks
 
 | Benchmark | Time | Description |
 |-----------|-----:|-------------|
-| exact_match | 73 ns | Single exact match |
-| nested_match | 108 ns | Nested field exact match |
-| regex_match | 66 ns | Simple regex pattern |
-| anything_but_match | 84 ns | Anything-but with 3 values |
-| numeric_range | 88 ns | Two-sided numeric (`>= 0, < 100`) |
-| 100_prefix_patterns | 133 ns | 100 prefix patterns |
-| shellstyle_26_patterns | 161 ns | 26 shellstyle patterns (A*-Z*) |
+| exact_match | 74 ns | Single exact match |
+| nested_match | 113 ns | Nested field exact match |
+| regex_match | 62 ns | Simple regex pattern |
+| anything_but_match | 82 ns | Anything-but with 3 values |
+| numeric_range | 90 ns | Two-sided numeric (`>= 0, < 100`) |
+| 100_prefix_patterns | 135 ns | 100 prefix patterns |
+| shellstyle_26_patterns | 112 ns | 26 shellstyle patterns (A*-Z*) |
 
 ### What affects performance
 
