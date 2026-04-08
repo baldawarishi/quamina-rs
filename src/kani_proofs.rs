@@ -3,9 +3,12 @@
 //! These proofs use bounded model checking to exhaustively verify properties
 //! of core data structures and algorithms. Run with: `cargo kani`
 //!
-//! ArenaSmallTable pack/dstep roundtrip is verified in
-//! src/automaton/arena.rs::kani_arena_proofs::smalltable_pack_dstep_roundtrip
-//! (bounded to 3-region tables to keep the proof tractable).
+//! Arena-specific proofs live in src/automaton/arena.rs::kani_arena_proofs
+//! (locality with the code they verify):
+//! - `smalltable_pack_dstep_roundtrip`: ArenaSmallTable pack/dstep roundtrip
+//!   (bounded to 3-region tables to keep the proof tractable)
+//! - `nfa_to_dfa_respects_budget`: NFA→DFA subset construction never exceeds
+//!   the caller-provided state budget
 
 #[cfg(kani)]
 mod case_fold_proofs {

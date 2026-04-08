@@ -753,8 +753,6 @@ impl StateArena {
             return Some((Self::new(), StateId::NONE));
         }
 
-        // Ensure epsilon closures are precomputed
-        // (they should be, but be defensive)
         debug_assert!(
             !self.closure_data.is_empty(),
             "epsilon closures must be precomputed before nfa_to_dfa"
@@ -935,13 +933,13 @@ struct LazyDfaState {
     cached: bool,
 }
 
-/// Default sentinel for "transition not yet computed".
+/// Sentinel for "transition not yet computed".
 const LAZY_DFA_UNKNOWN: u32 = u32::MAX;
 /// Sentinel for "no valid transition" (dead state).
-/// Must differ from LAZY_DFA_UNKNOWN so cached dead transitions are not re-computed.
 const LAZY_DFA_DEAD: u32 = u32::MAX - 1;
 
-#[cfg(test)]
+// Compile-time check: sentinels must be distinct so cached dead transitions
+// are not re-computed on every byte.
 const _: () = assert!(
     LAZY_DFA_UNKNOWN != LAZY_DFA_DEAD,
     "LAZY_DFA_UNKNOWN and LAZY_DFA_DEAD must be distinct sentinels"
