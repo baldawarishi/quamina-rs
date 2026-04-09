@@ -7,8 +7,10 @@
 //! - `AutomatonValueMatcher`: A working value matcher that uses automata
 //!
 //! # Safety
-//! This module contains unsafe Send/Sync implementations for frozen matchers and BuildState.
-//! These are verified by Miri threading tests in CI.
+//! This module contains unsafe Send/Sync implementations. FrozenFieldMatcher and
+//! FrozenValueMatcher need them because MultiConditionNfa contains raw pointers
+//! (*const FieldMatcher) used as identity keys. BuildState needs Send because it
+//! wraps Rc behind a Mutex. All verified by Miri threading tests in CI.
 #![allow(unsafe_code)]
 
 use std::hash::Hash;
@@ -30,6 +32,29 @@ use super::mutable_matcher::{
     EventField, EventFieldRef, MultiConditionNfa, MutableFieldMatcher, MutableValueMatcher,
 };
 use super::small_table::{FieldMatcher, NfaBuffers};
+
+// =============================================================================
+// NFA→DFA conversion budget constants
+// =============================================================================
+
+/// Multiplier for eager DFA budget relative to NFA state count.
+/// A typical NFA-to-DFA expansion is well under 8x for real-world patterns.
+const EAGER_DFA_BUDGET_MULTIPLIER: usize = 8;
+
+/// Hard cap on eager DFA states. Prevents excessive freeze-time latency for
+/// pathological patterns (e.g. deeply nested quantifiers).
+const EAGER_DFA_BUDGET_CAP: usize = 10_000;
+
+/// Multiplier for lazy DFA budget relative to the eager budget.
+/// Gives the lazy tier 10× more DFA state budget than the eager tier,
+/// covering patterns whose DFA is too large for eager but still finite.
+const LAZY_DFA_BUDGET_MULTIPLIER: usize = 10;
+
+/// Hard cap on lazy DFA cached states. Matches the eager DFA cap so that
+/// large-NFA patterns (where eager_budget already hits EAGER_DFA_BUDGET_CAP)
+/// get the same ceiling. Empirically, all real-world patterns saturate at
+/// ≤ 32 hot-path states; 10 000 is conservative headroom.
+const LAZY_DFA_BUDGET_CAP: usize = 10_000;
 
 /// Compact collection for `transition_on` results, optimized for the common cases.
 ///
@@ -127,9 +152,12 @@ pub struct FrozenFieldMatcher<X: Clone + Eq + Hash> {
     pub exists_false: FxHashMap<String, Arc<Self>>,
 }
 
-// SAFETY: FrozenFieldMatcher only contains Arc, FxHashMap, and Vec - all Send+Sync when X is.
+// SAFETY: FrozenFieldMatcher itself only contains Arc, FxHashMap, and Vec (all Send+Sync),
+// but it transitively references FrozenValueMatcher (via Arc) which contains raw pointers
+// in MultiConditionNfa. Those pointers are stable identity keys, never dereferenced across
+// threads.
 unsafe impl<X: Clone + Eq + Hash + Send + Sync> Send for FrozenFieldMatcher<X> {}
-// SAFETY: Same as Send - all fields (Arc, FxHashMap, Vec) are Send+Sync when X is.
+// SAFETY: Same reasoning as Send above.
 unsafe impl<X: Clone + Eq + Hash + Send + Sync> Sync for FrozenFieldMatcher<X> {}
 
 impl<X: Clone + Eq + Hash> FrozenFieldMatcher<X> {
@@ -161,6 +189,8 @@ impl<X: Clone + Eq + Hash> FrozenFieldMatcher<X> {
 /// Frozen (immutable) value matcher - Send + Sync
 ///
 /// This is the immutable counterpart to MutableValueMatcher.
+/// Not Clone because `lazy_dfa` contains a `Mutex<LazyDfa>`.
+/// Always accessed through `Arc<FrozenValueMatcher>`, so Clone is not needed.
 #[derive(Default)]
 pub struct FrozenValueMatcher<X: Clone + Eq + Hash> {
     /// Optimization: for single exact match, store it directly
@@ -188,10 +218,11 @@ pub struct FrozenValueMatcher<X: Clone + Eq + Hash> {
     suffix_arena: Option<(StateArena, StateId)>,
 }
 
-// SAFETY: FrozenValueMatcher contains Arc, FxHashMap, Option, Mutex, and primitives - all Send+Sync.
-// Mutex<LazyDfa> provides thread-safe interior mutability for on-demand DFA state caching.
+// SAFETY: All fields are Send+Sync when X is, except `multi_condition_nfas` which contains
+// raw pointers (*const FieldMatcher) used as stable identity keys (never dereferenced across
+// threads). Mutex<LazyDfa> provides Sync for on-demand DFA state caching.
 unsafe impl<X: Clone + Eq + Hash + Send + Sync> Send for FrozenValueMatcher<X> {}
-// SAFETY: Same as Send - all fields are Send+Sync when X is. Mutex provides Sync for LazyDfa.
+// SAFETY: Same reasoning as Send above.
 unsafe impl<X: Clone + Eq + Hash + Send + Sync> Sync for FrozenValueMatcher<X> {}
 
 impl<X: Clone + Eq + Hash> FrozenValueMatcher<X> {
@@ -687,25 +718,33 @@ impl<X: Clone + Eq + Hash + Send + Sync> ThreadSafeCoreMatcher<X> {
 
                 if main_arena_is_nfa {
                     // Tier 1: Attempt eager NFA→DFA conversion.
-                    // Budget: 8x the NFA state count, capped at 10_000 states.
-                    let eager_budget = (arena.len() * 8).min(10_000);
+                    let eager_budget =
+                        (arena.len() * EAGER_DFA_BUDGET_MULTIPLIER).min(EAGER_DFA_BUDGET_CAP);
                     if let Some((dfa_arena, dfa_start)) = arena.nfa_to_dfa(start, eager_budget) {
-                        // Conversion succeeded — use the DFA
                         arena = dfa_arena;
                         main_arena_is_nfa = false;
                         arena.flatten_tables();
                         return (arena, dfa_start);
                     }
 
-                    // Tier 2: Eager DFA budget exceeded — create a lazy DFA cache.
-                    // Lazy budget: 10x the eager budget (allows much larger DFA state
-                    // space to be explored incrementally during matching).
-                    let lazy_budget = eager_budget.saturating_mul(10).min(100_000);
-                    lazy_dfa = Some(Box::new(Mutex::new(LazyDfa::new(
-                        arena.clone(),
-                        start,
-                        lazy_budget,
-                    ))));
+                    // Tier 2: Eager DFA budget exceeded — create a lazy DFA cache,
+                    // but only when the NFA is small enough that LazyDfa::new is fast.
+                    // Each cached DFA state requires O(nfa_states) work to construct,
+                    // so for very large NFAs (e.g. [^u-z]{13} expands to ~229k states)
+                    // initialisation takes seconds with no match-time benefit over NFA.
+                    // Patterns with nfa_states ≤ EAGER_DFA_BUDGET_CAP initialise in
+                    // < 300 µs (empirically ~28 ns/state); beyond that, fall through to
+                    // Tier 3 (NFA traversal).
+                    if arena.len() <= EAGER_DFA_BUDGET_CAP {
+                        let lazy_budget = eager_budget
+                            .saturating_mul(LAZY_DFA_BUDGET_MULTIPLIER)
+                            .min(LAZY_DFA_BUDGET_CAP);
+                        lazy_dfa = Some(Box::new(Mutex::new(LazyDfa::new(
+                            arena.clone(),
+                            start,
+                            lazy_budget,
+                        ))));
+                    }
                 }
 
                 arena.flatten_tables();
