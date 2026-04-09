@@ -9,16 +9,15 @@ Style inspired by [ripgrep's CHANGELOG](https://github.com/BurntSushi/ripgrep/bl
 ## [Unreleased]
 
 ### Added
-- NFA→DFA subset construction at freeze time: regexp patterns with epsilon transitions are now eagerly converted to DFA when within a state budget (8x NFA states, max 10,000), yielding up to 2.5x faster matching on long regexp inputs (`regexp_plus_long`: 1259→501 ns, `regexp_star_long`: 1125→459 ns)
-- Lazy DFA cache (tier 2): NFA arenas that exceed the eager DFA budget now use on-demand DFA state caching during matching, building states lazily and reusing them across traversals. Budget-limited to prevent memory explosion (10x eager budget, max 100,000 states)
-- Three-tier matching strategy inspired by Go quamina issue #481: eager DFA → lazy DFA → NFA fallback
-- DFA acceleration: `compute_dfa_accel` reconstructs memchr skip info on eager DFA states after subset construction; `try_compute_accel` lazily detects acceleration on lazy DFA self-loop states during traversal
+- NFA→DFA subset construction at freeze time: regexp patterns with epsilon transitions are now eagerly converted to DFA when within a state budget (8× NFA states, max 10,000), yielding up to 2.5× faster matching on long regexp inputs (`regexp_plus_long`: 1259→501 ns, `regexp_star_long`: 1125→459 ns)
+- Two-tier matching strategy: eager DFA (subset construction at freeze time) → NFA fallback. Patterns exceeding the DFA budget fall through to full NFA traversal with epsilon closure expansion
+- DFA acceleration: `compute_dfa_accel` detects self-loop states after subset construction and attaches memchr skip info, enabling SIMD byte skipping on patterns like `[^x]+`
 - Profiling example `examples/profile_negated.rs` for negated char class acceleration analysis
 - Kani proof harness verifying `nfa_to_dfa` respects the state budget
-- 17 new unit tests covering eager and lazy DFA conversion, budget enforcement, field transition preservation, NFA/DFA matching equivalence, and DFA acceleration
+- 10 new unit tests covering NFA→DFA conversion, budget enforcement, field transition preservation, NFA/DFA matching equivalence, and DFA acceleration
 
 ### Fixed
-- Negated character class regression: `[^x]+` patterns (17K NFA states from Unicode support) exceeded eager DFA budget, falling back to lazy DFA which lacked memchr acceleration. Added SIMD-accelerated byte skipping to both eager and lazy DFA traversal paths (`regexp_negated_1k`: 3.2 µs → 652 ns)
+- Negated character class regression: `[^x]+` patterns (17K NFA states from Unicode support) exceeded the eager DFA budget. Added SIMD-accelerated byte skipping to the eager DFA traversal path via `AccelInfo::try_accelerate` (`regexp_negated_1k`: 3.2 µs → 652 ns)
 
 ## [0.5.0] — 2026-03-23
 

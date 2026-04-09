@@ -39,10 +39,6 @@ impl StateId {
     /// Special sentinel value for "no state" / null reference.
     pub const NONE: Self = Self(u32::MAX);
 
-    /// Sentinel for "dead state" — a transition that is known to lead nowhere.
-    /// Distinct from NONE (which means "not yet assigned" or "no state").
-    pub const DEAD: Self = Self(u32::MAX - 1);
-
     /// Create a `StateId` from an index.
     #[inline]
     pub fn from_index(index: usize) -> Self {
@@ -52,11 +48,6 @@ impl StateId {
     #[inline]
     pub fn is_none(self) -> bool {
         self.0 == u32::MAX
-    }
-
-    #[inline]
-    pub fn is_dead(self) -> bool {
-        self.0 == u32::MAX - 1
     }
 
     #[inline]

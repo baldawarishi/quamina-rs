@@ -249,7 +249,7 @@ On an M3 Max:
 | anything_but_match | 82 ns | Anything-but with 3 values |
 | numeric_range | 90 ns | Two-sided numeric (`>= 0, < 100`) |
 | 100_prefix_patterns | 135 ns | 100 prefix patterns |
-| shellstyle_26_patterns | 112 ns | 26 shellstyle patterns (A*-Z*) |
+| shellstyle_26_patterns | 102 ns | 26 shellstyle patterns (A*-Z*) |
 
 ### What affects performance
 
