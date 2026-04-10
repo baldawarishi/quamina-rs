@@ -7314,13 +7314,13 @@ mod dfa_accel_tests {
         );
         for state in &dfa.states {
             if let Some(ref accel) = state.table.accel {
-                // b'x' must be one of the exit bytes (the rejection byte);
-                // b'"' may also appear as an exit byte (quote delimiter).
+                // The loop state has exactly two exit bytes:
+                // - b'"' (closing quote → accept state)
+                // - b'x' (rejection → NONE)
                 let exit_slice = &accel.exit_bytes[..accel.len as usize];
-                assert!(
-                    exit_slice.contains(&b'x'),
-                    "b'x' must be an exit byte, got {exit_slice:?}"
-                );
+                assert_eq!(accel.len, 2, "expected 2 exit bytes, got {exit_slice:?}");
+                assert!(exit_slice.contains(&b'"'), "b'\"' must be an exit byte");
+                assert!(exit_slice.contains(&b'x'), "b'x' must be an exit byte");
             }
         }
     }
