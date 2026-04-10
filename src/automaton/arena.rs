@@ -866,8 +866,12 @@ impl StateArena {
     ///
     /// After NFA→DFA conversion, the original NFA acceleration info is lost.
     /// This scans all states and detects "spinout" patterns: states that
-    /// self-loop on most ASCII bytes, with 1-3 distinct ASCII exit bytes.
-    /// These states can use memchr SIMD to skip ahead during traversal.
+    /// self-loop on most ASCII bytes, with 1-3 distinct exit bytes (including
+    /// rejection bytes that lead to `StateId::NONE`). These states can use
+    /// memchr SIMD to skip ahead during traversal.
+    ///
+    /// `StateId::NONE` targets count as exit bytes: memchr skips to them, then
+    /// `dstep` returns NONE and `traverse_arena_dfa` exits early — correct behavior.
     ///
     /// Only ASCII bytes (0x00-0x7F) are checked. Non-ASCII bytes (multi-byte
     /// UTF-8 lead/continuation bytes) are ignored because:
@@ -882,19 +886,16 @@ impl StateArena {
             unpack_arena_table(&self.states[state_idx].table, &mut unpacked);
 
             let mut has_self_loop = false;
-            let mut valid = true;
             let mut exit_count = 0u8;
             let mut exit_bytes = [0u8; 3];
 
             for (byte, &target) in unpacked[..0x80].iter().enumerate() {
                 if target == state_id {
                     has_self_loop = true;
-                } else if target.is_none() {
-                    // Dead transition on an ASCII byte — not acceleratable
-                    valid = false;
-                    break;
                 } else {
-                    // Non-self transition — exit byte
+                    // Exit byte: either a real transition or a rejection (NONE).
+                    // Both are valid — memchr skips to this byte; if NONE, the
+                    // traversal exits early, which is the correct rejection behavior.
                     if exit_count < 3 {
                         exit_bytes[exit_count as usize] = byte as u8;
                     }
@@ -902,7 +903,7 @@ impl StateArena {
                 }
             }
 
-            if valid && has_self_loop && (1..=3).contains(&exit_count) {
+            if has_self_loop && (1..=3).contains(&exit_count) {
                 self.states[state_idx].table.accel = Some(AccelInfo {
                     exit_bytes,
                     len: exit_count,
@@ -7289,14 +7290,10 @@ mod dfa_accel_tests {
     use super::dfa_test_helpers::build_regexp_nfa;
     use super::*;
 
-    /// Verifies that `compute_dfa_accel` runs without error on a converted DFA
-    /// and that any accelerated states have the correct exit byte.
-    ///
-    /// Note: `[^x]+` produces `StateId::NONE` on 'x' (hard rejection), so none of
-    /// its DFA states satisfy the "all ASCII bytes lead to a real state" requirement
-    /// for acceleration. The test is therefore checking the absence of false-positive
-    /// accel entries rather than asserting accel fires. The actual accel code path
-    /// is exercised by `test_accel_traversal_miri_friendly`.
+    /// Verifies that `compute_dfa_accel` populates `AccelInfo` on the spinout
+    /// state produced by `[^x]+`. The loop state self-loops on every ASCII byte
+    /// except `b'x'` (→ NONE). After the fix, NONE counts as a valid exit byte,
+    /// so the loop state is acceleratable with exit byte `b'x'`.
     ///
     /// Skipped under Miri: `[^x]+` produces a 17K-state Unicode NFA; subset
     /// construction under interpretation would exceed the 30-minute CI budget.
@@ -7305,12 +7302,25 @@ mod dfa_accel_tests {
     fn test_eager_dfa_accel_simple_pattern() {
         let (nfa, nfa_start) = build_regexp_nfa("[^x]+");
 
-        if let Some((dfa, _dfa_start)) = nfa.nfa_to_dfa(nfa_start, 100_000) {
-            for state in &dfa.states {
-                if let Some(ref accel) = state.table.accel {
-                    assert_eq!(accel.len, 1);
-                    assert_eq!(accel.exit_bytes[0], b'x');
-                }
+        let (dfa, _dfa_start) = nfa.nfa_to_dfa(nfa_start, 100_000).expect("should convert");
+        let accel_count = dfa
+            .states
+            .iter()
+            .filter(|s| s.table.accel.is_some())
+            .count();
+        assert!(
+            accel_count > 0,
+            "loop state of [^x]+ DFA should be accelerated"
+        );
+        for state in &dfa.states {
+            if let Some(ref accel) = state.table.accel {
+                // b'x' must be one of the exit bytes (the rejection byte);
+                // b'"' may also appear as an exit byte (quote delimiter).
+                let exit_slice = &accel.exit_bytes[..accel.len as usize];
+                assert!(
+                    exit_slice.contains(&b'x'),
+                    "b'x' must be an exit byte, got {exit_slice:?}"
+                );
             }
         }
     }
