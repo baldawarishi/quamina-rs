@@ -228,28 +228,31 @@ On an M3 Max:
 
 | Patterns | Match time |
 |----------|-----------|
-| 100 | 125 ns |
-| 10,000 | 108 ns |
+| 100 | ~115 ns |
+| 10,000 | ~100 ns |
 
-### Event Type Benchmarks
+Matching time is sublinear in pattern count because all patterns share one automaton.
+
+### Event benchmarks
 
 | Benchmark | Time | Description |
 |-----------|-----:|-------------|
-| citylots | 1,701 ns | 4 patterns, 206k of messy GeoJSON data |
-| early field match | 242 ns | 14KB JSON events |
-| nested field match | 5,281 ns | Nested JSON events |
+| citylots | ~1,600 ns | 4 patterns, 206 KB of GeoJSON |
+| nested field match | ~5,100 ns | 5 KB JSON, deeply nested field |
+| early field exit | ~220 ns | 14 KB JSON, matching field near the top |
 
 ### Pattern type benchmarks
 
 | Benchmark | Time | Description |
-|-----------|-----:|-------------|
-| exact_match | 74 ns | Single exact match |
-| nested_match | 113 ns | Nested field exact match |
-| regex_match | 62 ns | Simple regex pattern |
-| anything_but_match | 82 ns | Anything-but with 3 values |
-| numeric_range | 90 ns | Two-sided numeric (`>= 0, < 100`) |
-| 100_prefix_patterns | 135 ns | 100 prefix patterns |
-| shellstyle_26_patterns | 102 ns | 26 shellstyle patterns (A*-Z*) |
+|---|---:|---|
+| exact_match | ~70 ns | Single exact match |
+| nested_match | ~103 ns | Exact match on a nested key |
+| regex_match | ~60 ns | Simple regex (eager DFA after compile) |
+| anything_but_match | ~83 ns | `anything-but` with 3 excluded values |
+| numeric_range_two_sided | ~89 ns | Two-sided range (`>= 0, < 100`) |
+| 100_prefix_patterns | ~120 ns | 100 `prefix` patterns merged into one automaton |
+| shellstyle_26_patterns | ~105 ns | 26 shellstyle patterns (A\*–Z\*) |
+| regexp_plus_long | ~340 ns | `[a-z]+` on a 100-char value |
 
 ### What affects performance
 
