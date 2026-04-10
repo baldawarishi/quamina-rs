@@ -112,16 +112,6 @@ impl PatternCase {
             PatternKind::Cidr(_) => "cidr",
         }
     }
-
-    #[allow(dead_code)]
-    fn pattern_str(&self) -> &'static str {
-        match self.kind {
-            PatternKind::Regexp(p)
-            | PatternKind::Shellstyle(p)
-            | PatternKind::Wildcard(p)
-            | PatternKind::Cidr(p) => p,
-        }
-    }
 }
 
 fn all_patterns() -> Vec<PatternCase> {

@@ -733,7 +733,7 @@ impl StateArena {
     /// Convert an NFA arena to a DFA via subset construction.
     ///
     /// Returns `None` if `state_budget` is exceeded (caller should fall back to NFA).
-    /// Inspired by Go quamina's `nfa2Dfa` and the three-tier strategy from issue #481.
+    /// Inspired by Go quamina's `nfa2Dfa` and the two-tier strategy.
     pub fn nfa_to_dfa(&self, start: StateId, state_budget: usize) -> Option<(Self, StateId)> {
         if start.is_none() || self.states.is_empty() {
             return Some((Self::new(), StateId::NONE));
@@ -7117,7 +7117,7 @@ mod kani_arena_proofs {
     }
 }
 
-/// Shared test helpers for NFA/DFA conversion and lazy DFA tests.
+/// Shared test helpers for NFA/DFA conversion tests.
 #[cfg(test)]
 mod dfa_test_helpers {
     use super::*;
