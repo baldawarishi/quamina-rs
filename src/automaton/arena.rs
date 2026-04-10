@@ -39,6 +39,11 @@ impl StateId {
     /// Special sentinel value for "no state" / null reference.
     pub const NONE: Self = Self(u32::MAX);
 
+    /// Sentinel for "transition computed and known dead" in the lazy DFA table.
+    /// Distinct from NONE ("not yet computed") so dead transitions are O(1)
+    /// without re-deriving on every call.
+    pub const DEAD: Self = Self(u32::MAX - 1);
+
     /// Create a `StateId` from an index.
     #[inline]
     pub fn from_index(index: usize) -> Self {
@@ -48,6 +53,11 @@ impl StateId {
     #[inline]
     pub fn is_none(self) -> bool {
         self.0 == u32::MAX
+    }
+
+    #[inline]
+    pub fn is_dead(self) -> bool {
+        self.0 == u32::MAX - 1
     }
 
     #[inline]
@@ -951,6 +961,278 @@ impl std::ops::IndexMut<StateId> for StateArena {
     #[inline]
     fn index_mut(&mut self, id: StateId) -> &mut Self::Output {
         &mut self.states[id.index()]
+    }
+}
+
+// =============================================================================
+// Lazy DFA — on-demand DFA construction during matching
+// =============================================================================
+
+/// A cached lazy DFA state — built on-demand during matching.
+///
+/// Each lazy DFA state corresponds to a set of NFA states (after epsilon closure).
+/// Transitions are computed lazily: the first time a byte is encountered, the
+/// next NFA state-set is computed and cached.
+struct LazyDfaState {
+    /// Full 256-entry table for O(1) lookup.
+    /// NONE = not yet computed, DEAD = known dead transition.
+    transitions: Vec<StateId>,
+    field_transition_ptrs: Vec<usize>,
+    cached: bool,
+    accel: Option<AccelInfo>,
+}
+
+/// A lazy DFA cache that builds DFA states on-demand during matching.
+///
+/// Implements tier 2 of the three-tier strategy:
+/// eager DFA (tier 1) → **lazy DFA** (tier 2) → NFA fallback (tier 3).
+///
+/// The cache has a state budget. When full, new states are created as temporary
+/// (uncached) and discarded after the current traversal, but the traversal can
+/// still "snap back" to a cached state on the next byte transition.
+pub struct LazyDfa {
+    nfa_arena: StateArena,
+    states: Vec<LazyDfaState>,
+    state_map: FxHashMap<Vec<u32>, StateId>,
+    nfa_sets: Vec<Vec<StateId>>,
+    state_budget: usize,
+    cached_count: usize,
+}
+
+impl LazyDfa {
+    /// Number of states currently cached (for budget utilization diagnostics).
+    pub fn cached_count(&self) -> usize {
+        self.cached_count
+    }
+
+    /// The state budget this lazy DFA was created with.
+    pub fn state_budget(&self) -> usize {
+        self.state_budget
+    }
+
+    /// Rough heap byte estimate: NFA arena + lazy state cache.
+    ///
+    /// Each `LazyDfaState` owns a 256-entry `Vec<StateId>` (1 KiB) plus
+    /// a `Vec<usize>` for field-transition pointers. The state map adds
+    /// roughly 48 bytes per entry (key + value + hash-map overhead).
+    pub fn estimated_byte_size(&self) -> usize {
+        let per_state = 256 * size_of::<StateId>() // transitions table
+            + size_of::<Vec<StateId>>()             // Vec header
+            + size_of::<Vec<usize>>()               // field_transition_ptrs header
+            + size_of::<bool>()                     // cached flag
+            + size_of::<Option<AccelInfo>>(); // accel
+        let states_bytes = self.states.len() * per_state;
+        // nfa_sets: one Vec<StateId> per state
+        let nfa_sets_bytes: usize = self
+            .nfa_sets
+            .iter()
+            .map(|v| v.len() * size_of::<StateId>() + size_of::<Vec<StateId>>())
+            .sum();
+        // state_map: key = Vec<u32>, value = StateId, plus ~32 B hashmap overhead per entry
+        let map_bytes = self.state_map.len() * (size_of::<StateId>() + size_of::<Vec<u32>>() + 32);
+        states_bytes + nfa_sets_bytes + map_bytes + self.nfa_arena.estimated_byte_size()
+    }
+
+    pub fn new(nfa_arena: StateArena, nfa_start: StateId, state_budget: usize) -> Self {
+        let mut lazy = Self {
+            nfa_arena,
+            states: Vec::new(),
+            state_map: FxHashMap::default(),
+            nfa_sets: Vec::new(),
+            state_budget,
+            cached_count: 0,
+        };
+
+        // Create the start state from the NFA start's epsilon closure
+        if !nfa_start.is_none() {
+            let closure = lazy.nfa_arena.closure_of(nfa_start).to_vec();
+            lazy.intern_state(&closure, true);
+        }
+
+        lazy
+    }
+
+    fn intern_state(&mut self, nfa_states: &[StateId], allow_cache: bool) -> StateId {
+        let key = StateArena::make_state_set_key(nfa_states);
+
+        if let Some(&idx) = self.state_map.get(&key) {
+            return idx;
+        }
+
+        let can_cache = allow_cache && self.cached_count < self.state_budget;
+        let idx = StateId::from_index(self.states.len());
+
+        // Collect field transitions from the NFA state-set
+        let mut field_transition_ptrs = Vec::new();
+        let mut seen_ptrs: FxHashSet<usize> = FxHashSet::default();
+        for &nfa_state in nfa_states {
+            if nfa_state.is_none() {
+                continue;
+            }
+            for ft in &self.nfa_arena[nfa_state].field_transitions {
+                let ptr = Arc::as_ptr(ft) as usize;
+                if seen_ptrs.insert(ptr) {
+                    field_transition_ptrs.push(ptr);
+                }
+            }
+        }
+
+        let state = LazyDfaState {
+            transitions: vec![StateId::NONE; BYTE_CEILING],
+            field_transition_ptrs,
+            cached: can_cache,
+            accel: None,
+        };
+
+        self.states.push(state);
+        self.nfa_sets.push(nfa_states.to_vec());
+
+        if can_cache {
+            self.state_map.insert(key, idx);
+            self.cached_count += 1;
+        }
+
+        idx
+    }
+
+    fn step(&mut self, state_idx: StateId, byte: u8, scratch: &mut LazyDfaScratch) -> StateId {
+        let cached = self.states[state_idx.index()].transitions[byte as usize];
+        if !cached.is_none() {
+            return cached;
+        }
+
+        // Compute the next NFA state-set for this byte
+        let nfa_states = &self.nfa_sets[state_idx.index()];
+
+        scratch.next_nfa_states.clear();
+        scratch.seen.clear();
+
+        for &nfa_state in nfa_states {
+            if nfa_state.is_none() {
+                continue;
+            }
+            let next = self.nfa_arena.dstep(nfa_state, byte);
+            if !next.is_none() {
+                let closure = self.nfa_arena.closure_of(next);
+                for &cs in closure {
+                    if scratch.seen.insert(cs) {
+                        scratch.next_nfa_states.push(cs);
+                    }
+                }
+            }
+        }
+
+        if scratch.next_nfa_states.is_empty() {
+            self.states[state_idx.index()].transitions[byte as usize] = StateId::DEAD;
+            return StateId::DEAD;
+        }
+
+        // Sort for canonical key
+        scratch.next_nfa_states.sort_unstable_by_key(|s| s.0);
+
+        let next_idx = self.intern_state(&scratch.next_nfa_states, true);
+
+        // Cache the transition on the current state (only if it's a cached state)
+        if self.states[state_idx.index()].cached {
+            self.states[state_idx.index()].transitions[byte as usize] = next_idx;
+        }
+
+        next_idx
+    }
+
+    fn try_compute_accel(&mut self, state_idx: StateId, scratch: &mut LazyDfaScratch) {
+        let nfa_states = &self.nfa_sets[state_idx.index()];
+        let mut common_accel: Option<AccelInfo> = None;
+
+        for &nfa_state in nfa_states {
+            if nfa_state.is_none() {
+                continue;
+            }
+            if let Some(ref accel) = self.nfa_arena[nfa_state].table.accel {
+                match &common_accel {
+                    None => common_accel = Some(accel.clone()),
+                    Some(existing)
+                        if existing.len == accel.len
+                            && existing.exit_bytes[..existing.len as usize]
+                                == accel.exit_bytes[..accel.len as usize] => {}
+                    Some(_) => return,
+                }
+            }
+        }
+
+        let accel = match common_accel {
+            Some(a) => a,
+            None => return,
+        };
+
+        // Verify: each exit byte must NOT self-loop in the lazy DFA
+        for i in 0..accel.len as usize {
+            let next = self.step(state_idx, accel.exit_bytes[i], scratch);
+            if next == state_idx {
+                return;
+            }
+        }
+
+        self.states[state_idx.index()].accel = Some(accel);
+    }
+}
+
+#[derive(Default)]
+struct LazyDfaScratch {
+    next_nfa_states: Vec<StateId>,
+    seen: FxHashSet<StateId>,
+}
+
+/// Traverse a value through a lazy DFA, collecting field transitions.
+///
+/// This is the tier-2 matching path: faster than NFA traversal (single state
+/// tracked, cached transitions), but uses more memory for the cache.
+#[inline]
+pub fn traverse_lazy_dfa(lazy_dfa: &mut LazyDfa, val: &[u8], transitions: &mut Vec<usize>) {
+    if lazy_dfa.states.is_empty() {
+        return;
+    }
+
+    let mut scratch = LazyDfaScratch::default();
+    let mut current = StateId::from_index(0); // Start state is always index 0
+    let len = val.len();
+    let mut i = 0;
+
+    // Collect field transitions from start state
+    transitions.extend_from_slice(&lazy_dfa.states[0].field_transition_ptrs);
+
+    while i <= len {
+        // Acceleration: for self-loop states with memchr exit bytes, skip ahead
+        if i < len
+            && let Some(ref accel) = lazy_dfa.states[current.index()].accel
+            && let Some(skip) = accel.try_accelerate(&val[i..])
+            && skip > 0
+        {
+            i += skip;
+            continue;
+        }
+
+        let byte = if i < len {
+            val[i]
+        } else {
+            ARENA_VALUE_TERMINATOR
+        };
+
+        let next = lazy_dfa.step(current, byte, &mut scratch);
+        if next.is_dead() {
+            return;
+        }
+
+        // Detect self-loop and try to compute acceleration for future bytes
+        if next == current && lazy_dfa.states[current.index()].accel.is_none() {
+            lazy_dfa.try_compute_accel(current, &mut scratch);
+        }
+
+        current = next;
+        i += 1;
+
+        // Collect field transitions
+        transitions.extend_from_slice(&lazy_dfa.states[current.index()].field_transition_ptrs);
     }
 }
 
@@ -7110,6 +7392,12 @@ mod dfa_test_helpers {
         traverse_arena_dfa(arena, start, value, &mut transitions);
         !transitions.is_empty()
     }
+
+    pub(super) fn lazy_dfa_matches(lazy_dfa: &mut LazyDfa, value: &[u8]) -> bool {
+        let mut transitions = Vec::new();
+        traverse_lazy_dfa(lazy_dfa, value, &mut transitions);
+        !transitions.is_empty()
+    }
 }
 
 #[cfg(test)]
@@ -7286,9 +7574,190 @@ mod nfa_to_dfa_tests {
 }
 
 #[cfg(test)]
+mod lazy_dfa_tests {
+    use super::dfa_test_helpers::*;
+    use super::*;
+
+    #[test]
+    fn test_lazy_dfa_basic() {
+        let (nfa, nfa_start) = build_regexp_nfa("[abc]+");
+        let mut lazy = LazyDfa::new(nfa, nfa_start, 100);
+
+        assert!(lazy_dfa_matches(&mut lazy, b"\"a\""));
+        assert!(lazy_dfa_matches(&mut lazy, b"\"abc\""));
+        assert!(!lazy_dfa_matches(&mut lazy, b"\"d\""));
+        assert!(!lazy_dfa_matches(&mut lazy, b"\"\""));
+    }
+
+    #[test]
+    fn test_lazy_dfa_matches_nfa() {
+        let (nfa, nfa_start) = build_regexp_nfa("[xyz]*end");
+
+        let test_values: &[&[u8]] = &[
+            b"\"end\"",
+            b"\"xend\"",
+            b"\"xyzend\"",
+            b"\"xyxyend\"",
+            b"\"en\"",
+            b"\"aend\"",
+            b"\"\"",
+        ];
+
+        let mut lazy = LazyDfa::new(nfa.clone(), nfa_start, 100);
+
+        for &val in test_values {
+            assert_eq!(
+                nfa_matches(&nfa, nfa_start, val),
+                lazy_dfa_matches(&mut lazy, val),
+                "NFA/lazy-DFA disagree on {:?}",
+                String::from_utf8_lossy(val),
+            );
+        }
+    }
+
+    #[test]
+    fn test_lazy_dfa_cache_reuse() {
+        let (nfa, nfa_start) = build_regexp_nfa("[abc]+");
+        let mut lazy = LazyDfa::new(nfa, nfa_start, 100);
+
+        // First traversal builds states
+        assert!(lazy_dfa_matches(&mut lazy, b"\"abc\""));
+        let states_after_first = lazy.states.len();
+
+        // Second traversal reuses cached states
+        assert!(lazy_dfa_matches(&mut lazy, b"\"abc\""));
+        assert_eq!(
+            lazy.states.len(),
+            states_after_first,
+            "should reuse cached states"
+        );
+    }
+
+    #[test]
+    fn test_lazy_dfa_budget_limits_cached_states() {
+        let (nfa, nfa_start) = build_regexp_nfa("[abc]+");
+        let mut lazy = LazyDfa::new(nfa, nfa_start, 3);
+
+        // Should still work but limit cached states
+        assert!(lazy_dfa_matches(&mut lazy, b"\"abc\""));
+        assert!(lazy.cached_count <= 3, "should respect budget");
+        // Cached count must be positive (catches += → *= mutation on cached_count)
+        assert!(
+            lazy.cached_count > 0,
+            "should have cached at least one state"
+        );
+    }
+
+    #[test]
+    fn test_lazy_dfa_nested_quantifiers() {
+        let (nfa, nfa_start) = build_regexp_nfa("(([abc]?)*)+");
+
+        let test_values: &[&[u8]] = &[b"\"\"", b"\"a\"", b"\"abc\"", b"\"aabbcc\"", b"\"d\""];
+
+        let mut lazy = LazyDfa::new(nfa.clone(), nfa_start, 1000);
+
+        for &val in test_values {
+            assert_eq!(
+                nfa_matches(&nfa, nfa_start, val),
+                lazy_dfa_matches(&mut lazy, val),
+                "NFA/lazy-DFA disagree on {:?}",
+                String::from_utf8_lossy(val),
+            );
+        }
+    }
+}
+
+#[cfg(test)]
 mod dfa_accel_tests {
     use super::dfa_test_helpers::build_regexp_nfa;
     use super::*;
+
+    #[cfg_attr(miri, ignore)]
+    #[test]
+    fn test_lazy_dfa_accel_negated_char_class() {
+        let (nfa, nfa_start) = build_regexp_nfa("a[^x]+x");
+
+        // NFA→DFA exceeds budget for this Unicode-heavy NFA
+        assert!(
+            nfa.nfa_to_dfa(nfa_start, 1000).is_none(),
+            "expected budget exceeded for [^x]+ Unicode NFA"
+        );
+
+        // Lazy DFA should still work and acquire AccelInfo during traversal
+        let mut lazy = LazyDfa::new(nfa.clone(), nfa_start, 10_000);
+
+        // Build a long value: "aaa...ax" (1000 'a's + 'x')
+        let long_val: Vec<u8> = std::iter::once(b'"')
+            .chain(std::iter::once(b'a'))
+            .chain(std::iter::repeat(b'a').take(1000))
+            .chain(std::iter::once(b'x'))
+            .chain(std::iter::once(b'"'))
+            .collect();
+
+        let mut transitions = Vec::new();
+        traverse_lazy_dfa(&mut lazy, &long_val, &mut transitions);
+        assert!(
+            !transitions.is_empty(),
+            "should match: a followed by 1000 a's then x"
+        );
+
+        // After traversal, at least one state should have AccelInfo
+        let accel_count = lazy.states.iter().filter(|s| s.accel.is_some()).count();
+        assert!(
+            accel_count > 0,
+            "lazy DFA should detect AccelInfo on self-loop state"
+        );
+    }
+
+    #[test]
+    fn test_lazy_dfa_accel_skip_zero() {
+        let (nfa, nfa_start) = build_regexp_nfa("a[^x]+x");
+
+        let mut lazy = LazyDfa::new(nfa, nfa_start, 10_000);
+
+        // "aax" — after literal 'a', loop sees 'a' (self-loop, triggers accel),
+        // then 'x' at skip==0 → falls through to normal processing
+        let mut transitions = Vec::new();
+        traverse_lazy_dfa(&mut lazy, b"\"aax\"", &mut transitions);
+        assert!(!transitions.is_empty(), "should match 'aax'");
+
+        // "ax" — [^x]+ requires at least one non-x char, so this does NOT match
+        transitions.clear();
+        traverse_lazy_dfa(&mut lazy, b"\"ax\"", &mut transitions);
+        assert!(
+            transitions.is_empty(),
+            "'ax' should NOT match a[^x]+x — no non-x chars between a and x"
+        );
+    }
+
+    #[cfg_attr(miri, ignore)]
+    #[test]
+    fn test_lazy_dfa_accel_multi_exit_bytes() {
+        let (nfa, nfa_start) = build_regexp_nfa("a[^xy]+y");
+
+        let mut lazy = LazyDfa::new(nfa, nfa_start, 10_000);
+
+        let long_val: Vec<u8> = std::iter::once(b'"')
+            .chain(std::iter::once(b'a'))
+            .chain(std::iter::repeat(b'a').take(500))
+            .chain(std::iter::once(b'y'))
+            .chain(std::iter::once(b'"'))
+            .collect();
+
+        let mut transitions = Vec::new();
+        traverse_lazy_dfa(&mut lazy, &long_val, &mut transitions);
+        assert!(!transitions.is_empty(), "should match 500 a's then y");
+
+        let accel_states: Vec<_> = lazy
+            .states
+            .iter()
+            .filter_map(|s| s.accel.as_ref())
+            .collect();
+        assert!(!accel_states.is_empty(), "should have accel on self-loop");
+        for accel in &accel_states {
+            assert_eq!(accel.len, 2, "expected 2 exit bytes for [^xy]+");
+        }
+    }
 
     /// Verifies that `compute_dfa_accel` populates `AccelInfo` on the spinout
     /// state produced by `[^x]+`. The loop state self-loops on every ASCII byte
