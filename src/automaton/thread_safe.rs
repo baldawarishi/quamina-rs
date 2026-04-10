@@ -146,7 +146,8 @@ pub struct FrozenFieldMatcher<X: Clone + Eq + Hash> {
 // in MultiConditionNfa. Those pointers are stable identity keys, never dereferenced across
 // threads.
 unsafe impl<X: Clone + Eq + Hash + Send + Sync> Send for FrozenFieldMatcher<X> {}
-// SAFETY: Same reasoning as Send above.
+// SAFETY: FrozenFieldMatcher has no interior mutability; &Self is safe to share
+// across threads for the same reason Send is safe above.
 unsafe impl<X: Clone + Eq + Hash + Send + Sync> Sync for FrozenFieldMatcher<X> {}
 
 impl<X: Clone + Eq + Hash> FrozenFieldMatcher<X> {
@@ -205,7 +206,8 @@ pub struct FrozenValueMatcher<X: Clone + Eq + Hash> {
 // raw pointers (*const FieldMatcher) used as stable identity keys (never dereferenced across
 // threads).
 unsafe impl<X: Clone + Eq + Hash + Send + Sync> Send for FrozenValueMatcher<X> {}
-// SAFETY: Same reasoning as Send above.
+// SAFETY: FrozenValueMatcher has no interior mutability after construction; &Self
+// is safe to share across threads for the same reason Send is safe above.
 unsafe impl<X: Clone + Eq + Hash + Send + Sync> Sync for FrozenValueMatcher<X> {}
 
 impl<X: Clone + Eq + Hash> FrozenValueMatcher<X> {

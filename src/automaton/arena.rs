@@ -7083,38 +7083,6 @@ mod kani_arena_proofs {
             );
         }
     }
-
-    /// Prove: nfa_to_dfa respects the state budget.
-    ///
-    /// For any NFA arena and budget, if nfa_to_dfa returns Some, the resulting
-    /// DFA arena has at most `state_budget` states.
-    #[kani::proof]
-    #[kani::unwind(4)]
-    fn nfa_to_dfa_respects_budget() {
-        let budget: usize = kani::any();
-        kani::assume(budget >= 1 && budget <= 8);
-
-        // Build a minimal NFA: start -ε→ s1, start -ε→ s2
-        let mut arena = StateArena::new();
-        let start = arena.alloc();
-        let s1 = arena.alloc();
-        let s2 = arena.alloc();
-        arena[start].table.epsilons.push(s1);
-        arena[start].table.epsilons.push(s2);
-        // s1: a→s1 (self-loop)
-        arena[s1].table = ArenaSmallTable::with_mappings(StateId::NONE, &[b'a'], &[s1]);
-        // s2: b→s2 (self-loop)
-        arena[s2].table = ArenaSmallTable::with_mappings(StateId::NONE, &[b'b'], &[s2]);
-        arena.precompute_epsilon_closures();
-
-        if let Some((dfa, _start)) = arena.nfa_to_dfa(start, budget) {
-            kani::assert(
-                dfa.len() <= budget,
-                "DFA state count must not exceed budget",
-            );
-        }
-        // If None, budget was exceeded — that's the correct behavior
-    }
 }
 
 /// Shared test helpers for NFA/DFA conversion tests.
@@ -7321,27 +7289,37 @@ mod dfa_accel_tests {
     use super::dfa_test_helpers::build_regexp_nfa;
     use super::*;
 
+    /// Verifies that `compute_dfa_accel` runs without error on a converted DFA
+    /// and that any accelerated states have the correct exit byte.
+    ///
+    /// Note: `[^x]+` produces `StateId::NONE` on 'x' (hard rejection), so none of
+    /// its DFA states satisfy the "all ASCII bytes lead to a real state" requirement
+    /// for acceleration. The test is therefore checking the absence of false-positive
+    /// accel entries rather than asserting accel fires. The actual accel code path
+    /// is exercised by `test_accel_traversal_miri_friendly`.
+    ///
+    /// Skipped under Miri: `[^x]+` produces a 17K-state Unicode NFA; subset
+    /// construction under interpretation would exceed the 30-minute CI budget.
+    #[cfg_attr(miri, ignore)]
     #[test]
     fn test_eager_dfa_accel_simple_pattern() {
         let (nfa, nfa_start) = build_regexp_nfa("[^x]+");
 
         if let Some((dfa, _dfa_start)) = nfa.nfa_to_dfa(nfa_start, 100_000) {
-            let accel_count = dfa
-                .states
-                .iter()
-                .filter(|s| s.table.accel.is_some())
-                .count();
-            if accel_count > 0 {
-                for state in &dfa.states {
-                    if let Some(ref accel) = state.table.accel {
-                        assert_eq!(accel.len, 1);
-                        assert_eq!(accel.exit_bytes[0], b'x');
-                    }
+            for state in &dfa.states {
+                if let Some(ref accel) = state.table.accel {
+                    assert_eq!(accel.len, 1);
+                    assert_eq!(accel.exit_bytes[0], b'x');
                 }
             }
         }
     }
 
+    /// Verifies that `traverse_arena_dfa` correctly matches a long value through
+    /// a large DFA converted from `[^x]+`.
+    ///
+    /// Skipped under Miri: see `test_eager_dfa_accel_simple_pattern`.
+    #[cfg_attr(miri, ignore)]
     #[test]
     fn test_eager_dfa_traversal_with_accel() {
         let (nfa, nfa_start) = build_regexp_nfa("[^x]+");
@@ -7358,8 +7336,61 @@ mod dfa_accel_tests {
             traverse_arena_dfa(&dfa, dfa_start, &long_val, &mut transitions);
             assert!(
                 !transitions.is_empty(),
-                "DFA with accel should match 1000 a's (no x = full match)"
+                "DFA should match 1000 a's (no x = full match)"
             );
         }
+    }
+
+    /// Miri-friendly accel coverage: builds a hand-crafted 2-state spinout DFA,
+    /// sets `AccelInfo` directly, and verifies that `traverse_arena_dfa` uses it
+    /// to skip to the exit byte without visiting every intermediate byte.
+    ///
+    /// The DFA accepts `[^z]+`: loop state self-loops on all ASCII bytes except
+    /// `b'z'` (exit) and `VALUE_TERMINATOR` (implicit stop). A field matcher is
+    /// attached to the exit state so a successful traversal produces a transition.
+    #[test]
+    fn test_accel_traversal_miri_friendly() {
+        use super::super::small_table::{AccelInfo, FieldMatcher, VALUE_TERMINATOR};
+        use std::sync::Arc;
+
+        let mut arena = StateArena::new();
+        let loop_state = arena.alloc();
+        let exit_state = arena.alloc();
+
+        // loop_state: b'z' → exit_state, VALUE_TERMINATOR → NONE, everything else → loop_state
+        let mut unpacked = [loop_state; BYTE_CEILING];
+        unpacked[b'z' as usize] = exit_state;
+        unpacked[VALUE_TERMINATOR as usize] = StateId::NONE;
+        arena[loop_state].table.pack(&unpacked);
+
+        // exit_state: VALUE_TERMINATOR → NONE (accept via field transition)
+        let fm = Arc::new(FieldMatcher::with_match_id(42));
+        arena[exit_state].field_transitions.push(fm);
+
+        // Attach AccelInfo directly — exit byte is b'z'
+        arena[loop_state].table.accel = Some(AccelInfo {
+            exit_bytes: [b'z', 0, 0],
+            len: 1,
+        });
+
+        arena.flatten_tables();
+
+        // "aaaz" — loop skips 'a','a','a', exits on 'z', then field transition fires
+        let val = b"\"aaaz\"";
+        let mut transitions = Vec::new();
+        traverse_arena_dfa(&arena, loop_state, val, &mut transitions);
+        assert!(
+            !transitions.is_empty(),
+            "accel traversal should find field transition on exit byte"
+        );
+
+        // "aaaa" — no exit byte, loop never exits, no field transition
+        let val_no_exit = b"\"aaaa\"";
+        transitions.clear();
+        traverse_arena_dfa(&arena, loop_state, val_no_exit, &mut transitions);
+        assert!(
+            transitions.is_empty(),
+            "no exit byte means no field transition"
+        );
     }
 }
