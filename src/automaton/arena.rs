@@ -7317,10 +7317,10 @@ mod dfa_accel_tests {
                 // The loop state has exactly two exit bytes:
                 // - b'"' (closing quote → accept state)
                 // - b'x' (rejection → NONE)
-                let exit_slice = &accel.exit_bytes[..accel.len as usize];
-                assert_eq!(accel.len, 2, "expected 2 exit bytes, got {exit_slice:?}");
-                assert!(exit_slice.contains(&b'"'), "b'\"' must be an exit byte");
-                assert!(exit_slice.contains(&b'x'), "b'x' must be an exit byte");
+                assert_eq!(accel.len, 2, "expected exactly 2 exit bytes");
+                let mut actual = [accel.exit_bytes[0], accel.exit_bytes[1]];
+                actual.sort_unstable();
+                assert_eq!(actual, [b'"', b'x']);
             }
         }
     }
