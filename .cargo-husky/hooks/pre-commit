@@ -9,10 +9,12 @@
 
 set -e
 
-echo '+cargo test --lib -- --skip stress --skip citylots --skip regexp_validity --test-threads=1'
-echo '  (skipping slow tests - full suite runs in CI; update .cargo-husky/hooks/pre-commit if adding slow tests)'
-echo '  (--test-threads=1 avoids SIGSEGV during parallel test cleanup on some platforms)'
-cargo test --lib -- --skip stress --skip citylots --skip regexp_validity --test-threads=1
+echo '+cargo test --lib (output suppressed unless failure)'
+TEST_OUTPUT=$(cargo test --lib -- --skip stress --skip citylots --skip regexp_validity --test-threads=1 2>&1) || {
+    echo "$TEST_OUTPUT"
+    exit 1
+}
+echo "$TEST_OUTPUT" | grep -E '^test result:'
 
 echo '+cargo clippy -- -D warnings'
 cargo clippy -- -D warnings
