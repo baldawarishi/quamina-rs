@@ -37,16 +37,6 @@ check:
 bench *filter:
     cargo bench {{filter}}
 
-# Run benchmarks in quick mode (fewer iterations)
-[group('bench')]
-bench-quick *filter:
-    cargo bench {{filter}} -- --quick
-
-# Save a benchmark baseline
-[group('bench')]
-bench-save name:
-    cargo bench -- --save-baseline {{name}}
-
 # Compare against a saved baseline
 [group('bench')]
 bench-compare name:
@@ -55,7 +45,7 @@ bench-compare name:
 # Run dhat heap profiling benchmark
 [group('bench')]
 bench-memory:
-    cargo test --features dhat-heap --release -- --ignored dhat
+    cargo bench --features dhat-heap memory
 
 # Build WASM and start the playground dev server
 [group('playground')]
