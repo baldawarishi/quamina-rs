@@ -7,11 +7,6 @@
 //! (locality with the code they verify):
 //! - `smalltable_pack_dstep_roundtrip`: ArenaSmallTable pack/dstep roundtrip
 //!   (bounded to 3-region tables to keep the proof tractable)
-//!
-//! Note: nfa_to_dfa budget enforcement is tested via unit tests
-//! (test_nfa_to_dfa_budget_exceeded). A Kani proof is not practical here
-//! because nfa_to_dfa uses FxHashMap<Vec<u32>> internally, which CBMC
-//! cannot model efficiently — the proof times out after 2+ minutes.
 
 #[cfg(kani)]
 mod case_fold_proofs {

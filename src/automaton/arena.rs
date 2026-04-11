@@ -974,11 +974,15 @@ impl std::ops::IndexMut<StateId> for StateArena {
 /// Transitions are computed lazily: the first time a byte is encountered, the
 /// next NFA state-set is computed and cached.
 struct LazyDfaState {
-    /// Full 256-entry table for O(1) lookup.
-    /// NONE = not yet computed, DEAD = known dead transition.
+    /// Full 256-entry transition table for O(1) lookup.
+    /// `NONE` = not yet computed, `DEAD` = known dead transition.
     transitions: Vec<StateId>,
+    /// Raw `Arc::as_ptr` values for field matchers reachable from this state's NFA set.
     field_transition_ptrs: Vec<usize>,
+    /// Whether this state's transition table is memoized for reuse across traversals.
+    /// Uncached states (budget exceeded) recompute transitions on every visit.
     cached: bool,
+    /// SIMD skip info if this state self-loops on most bytes with ≤ 3 exit bytes.
     accel: Option<AccelInfo>,
 }
 
@@ -990,7 +994,7 @@ struct LazyDfaState {
 /// The cache has a state budget. When full, new states are created as temporary
 /// (uncached) and discarded after the current traversal, but the traversal can
 /// still "snap back" to a cached state on the next byte transition.
-pub struct LazyDfa {
+pub(crate) struct LazyDfa {
     nfa_arena: StateArena,
     states: Vec<LazyDfaState>,
     state_map: FxHashMap<Vec<u32>, StateId>,
@@ -1000,39 +1004,6 @@ pub struct LazyDfa {
 }
 
 impl LazyDfa {
-    /// Number of states currently cached (for budget utilization diagnostics).
-    pub fn cached_count(&self) -> usize {
-        self.cached_count
-    }
-
-    /// The state budget this lazy DFA was created with.
-    pub fn state_budget(&self) -> usize {
-        self.state_budget
-    }
-
-    /// Rough heap byte estimate: NFA arena + lazy state cache.
-    ///
-    /// Each `LazyDfaState` owns a 256-entry `Vec<StateId>` (1 KiB) plus
-    /// a `Vec<usize>` for field-transition pointers. The state map adds
-    /// roughly 48 bytes per entry (key + value + hash-map overhead).
-    pub fn estimated_byte_size(&self) -> usize {
-        let per_state = 256 * size_of::<StateId>() // transitions table
-            + size_of::<Vec<StateId>>()             // Vec header
-            + size_of::<Vec<usize>>()               // field_transition_ptrs header
-            + size_of::<bool>()                     // cached flag
-            + size_of::<Option<AccelInfo>>(); // accel
-        let states_bytes = self.states.len() * per_state;
-        // nfa_sets: one Vec<StateId> per state
-        let nfa_sets_bytes: usize = self
-            .nfa_sets
-            .iter()
-            .map(|v| v.len() * size_of::<StateId>() + size_of::<Vec<StateId>>())
-            .sum();
-        // state_map: key = Vec<u32>, value = StateId, plus ~32 B hashmap overhead per entry
-        let map_bytes = self.state_map.len() * (size_of::<StateId>() + size_of::<Vec<u32>>() + 32);
-        states_bytes + nfa_sets_bytes + map_bytes + self.nfa_arena.estimated_byte_size()
-    }
-
     pub fn new(nfa_arena: StateArena, nfa_start: StateId, state_budget: usize) -> Self {
         let mut lazy = Self {
             nfa_arena,
@@ -1087,8 +1058,15 @@ impl LazyDfa {
         self.states.push(state);
         self.nfa_sets.push(nfa_states.to_vec());
 
+        // Always insert into state_map — even uncached states — so that the same
+        // NFA state-set is never allocated twice across traversals. Without this,
+        // a budget-exhausted lazy DFA accumulates duplicate states on every call:
+        // state_map misses the first allocation and creates a fresh one on the next.
+        // The `cached` flag still controls whether this state's transition table
+        // is filled in for reuse; state_map membership only prevents duplication.
+        self.state_map.insert(key, idx);
+
         if can_cache {
-            self.state_map.insert(key, idx);
             self.cached_count += 1;
         }
 
@@ -1188,7 +1166,7 @@ struct LazyDfaScratch {
 /// This is the tier-2 matching path: faster than NFA traversal (single state
 /// tracked, cached transitions), but uses more memory for the cache.
 #[inline]
-pub fn traverse_lazy_dfa(lazy_dfa: &mut LazyDfa, val: &[u8], transitions: &mut Vec<usize>) {
+pub(crate) fn traverse_lazy_dfa(lazy_dfa: &mut LazyDfa, val: &[u8], transitions: &mut Vec<usize>) {
     if lazy_dfa.states.is_empty() {
         return;
     }
@@ -1531,6 +1509,18 @@ pub fn traverse_arena_dfa(
             && let Some(skip) = try_accelerate_arena(&arena[current].table, &val[i..])
             && skip > 0
         {
+            // A self-loop (accelerated) state must not be accepting. If it were,
+            // the FT collection at the top of this loop would fire again on the
+            // next iteration, emitting duplicate match results.
+            // `debug_assert!` fires only in debug/test builds; zero cost in release.
+            debug_assert!(
+                if has_flat {
+                    arena.ft_ptrs_of(current).is_empty()
+                } else {
+                    arena[current].field_transitions.is_empty()
+                },
+                "accelerated state {current:?} has field transitions; they would be collected redundantly on each skip"
+            );
             i += skip;
             continue;
         }
@@ -7685,8 +7675,8 @@ mod lazy_dfa_tests {
         );
     }
 
-    #[cfg_attr(miri, ignore)]
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_lazy_dfa_nested_quantifiers() {
         let (nfa, nfa_start) = build_regexp_nfa("(([abc]?)*)+");
 
@@ -7710,8 +7700,11 @@ mod dfa_accel_tests {
     use super::dfa_test_helpers::build_regexp_nfa;
     use super::*;
 
-    #[cfg_attr(miri, ignore)]
+    // MIRI SKIP RATIONALE: a[^x]+x builds a large Unicode NFA; traversal with a 1000-byte
+    // value takes too long under interpretation. Coverage: test_accel_traversal_miri_friendly
+    // exercises the same acceleration code path with a hand-crafted 2-state DFA.
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_lazy_dfa_accel_negated_char_class() {
         let (nfa, nfa_start) = build_regexp_nfa("a[^x]+x");
 
@@ -7747,8 +7740,10 @@ mod dfa_accel_tests {
         );
     }
 
-    #[cfg_attr(miri, ignore)]
+    // MIRI SKIP RATIONALE: same as test_lazy_dfa_accel_negated_char_class — Unicode NFA.
+    // Coverage: test_accel_traversal_miri_friendly covers the skip==0 fallback path.
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_lazy_dfa_accel_skip_zero() {
         let (nfa, nfa_start) = build_regexp_nfa("a[^x]+x");
 
@@ -7769,8 +7764,10 @@ mod dfa_accel_tests {
         );
     }
 
-    #[cfg_attr(miri, ignore)]
+    // MIRI SKIP RATIONALE: same as test_lazy_dfa_accel_negated_char_class — Unicode NFA.
+    // Coverage: test_accel_traversal_miri_friendly covers the multi-exit-byte accel path.
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_lazy_dfa_accel_multi_exit_bytes() {
         let (nfa, nfa_start) = build_regexp_nfa("a[^xy]+y");
 
@@ -7798,15 +7795,14 @@ mod dfa_accel_tests {
         }
     }
 
-    /// Verifies that `compute_dfa_accel` populates `AccelInfo` on the spinout
-    /// state produced by `[^x]+`. The loop state self-loops on every ASCII byte
-    /// except `b'x'` (→ NONE). After the fix, NONE counts as a valid exit byte,
-    /// so the loop state is acceleratable with exit byte `b'x'`.
-    ///
-    /// Skipped under Miri: `[^x]+` produces a 17K-state Unicode NFA; subset
-    /// construction under interpretation would exceed the 30-minute CI budget.
-    #[cfg_attr(miri, ignore)]
+    // Verifies that `compute_dfa_accel` populates `AccelInfo` on the spinout state
+    // produced by `[^x]+`. The loop state self-loops on every ASCII byte except b'x'
+    // (→ NONE). NONE counts as a valid exit byte, so the state is acceleratable.
+    // MIRI SKIP RATIONALE: `[^x]+` produces a 17K-state Unicode NFA; subset construction
+    // under interpretation would exceed the 30-minute CI budget. Coverage:
+    // test_accel_traversal_miri_friendly verifies accel detection on a hand-crafted DFA.
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_eager_dfa_accel_simple_pattern() {
         let (nfa, nfa_start) = build_regexp_nfa("[^x]+");
 
@@ -7833,12 +7829,12 @@ mod dfa_accel_tests {
         }
     }
 
-    /// Verifies that `traverse_arena_dfa` correctly matches a long value through
-    /// a large DFA converted from `[^x]+`.
-    ///
-    /// Skipped under Miri: see `test_eager_dfa_accel_simple_pattern`.
-    #[cfg_attr(miri, ignore)]
+    // Verifies that `traverse_arena_dfa` correctly matches a long value through
+    // a large DFA converted from `[^x]+`.
+    // MIRI SKIP RATIONALE: same as test_eager_dfa_accel_simple_pattern — 17K-state Unicode NFA.
+    // Coverage: test_accel_traversal_miri_friendly exercises traverse_arena_dfa with accel.
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_eager_dfa_traversal_with_accel() {
         let (nfa, nfa_start) = build_regexp_nfa("[^x]+");
 
@@ -7909,6 +7905,75 @@ mod dfa_accel_tests {
         assert!(
             transitions.is_empty(),
             "no exit byte means no field transition"
+        );
+    }
+
+    // Documents how `try_compute_accel` acquires AccelInfo from NFA spinout states.
+    // The NFA builder sets AccelInfo on spinout states of ASCII-only negated patterns
+    // (e.g. `[^x]+`). `try_compute_accel` propagates it to the lazy DFA state.
+    // Non-negated patterns (`[abc]+`) and Unicode negated patterns produce no NFA
+    // AccelInfo (too many exit bytes), so the lazy DFA traverses byte-by-byte.
+    // MIRI SKIP RATIONALE: a[^x]+x builds a large Unicode NFA; the 100-byte traversal
+    // is too slow under interpretation. Coverage: test_accel_traversal_miri_friendly
+    // exercises the accel propagation path with a hand-crafted DFA.
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_lazy_dfa_accel_from_nfa_spinout_states() {
+        // a[^x]+x: NFA builder sets AccelInfo on the [^x]+ spinout states
+        // (ASCII-only negated class, 1 exit byte: b'x')
+        let (nfa, nfa_start) = build_regexp_nfa("a[^x]+x");
+
+        let nfa_accel_count = nfa
+            .states
+            .iter()
+            .filter(|s| s.table.accel.is_some())
+            .count();
+        assert!(
+            nfa_accel_count > 0,
+            "NFA builder should set AccelInfo on [^x]+ spinout states; got 0"
+        );
+
+        let mut lazy = LazyDfa::new(nfa, nfa_start, 10_000);
+        let long_val: Vec<u8> = std::iter::once(b'"')
+            .chain(std::iter::once(b'a'))
+            .chain(std::iter::repeat(b'a').take(100))
+            .chain(std::iter::once(b'x'))
+            .chain(std::iter::once(b'"'))
+            .collect();
+
+        let mut transitions = Vec::new();
+        traverse_lazy_dfa(&mut lazy, &long_val, &mut transitions);
+        assert!(!transitions.is_empty(), "should match correctly");
+
+        // try_compute_accel finds NFA AccelInfo and propagates it → lazy DFA state accelerated
+        let accel_count = lazy.states.iter().filter(|s| s.accel.is_some()).count();
+        assert!(
+            accel_count > 0,
+            "lazy DFA should acquire AccelInfo from NFA spinout states"
+        );
+
+        // Non-negated [abc]+: NFA builder does NOT set AccelInfo
+        // → try_compute_accel finds nothing → no lazy DFA acceleration
+        let (nfa2, nfa_start2) = build_regexp_nfa("[abc]+");
+        let nfa2_accel_count = nfa2
+            .states
+            .iter()
+            .filter(|s| s.table.accel.is_some())
+            .count();
+        assert_eq!(
+            nfa2_accel_count, 0,
+            "non-negated pattern NFA states should have no AccelInfo"
+        );
+
+        let mut lazy2 = LazyDfa::new(nfa2, nfa_start2, 100);
+        let mut t2 = Vec::new();
+        traverse_lazy_dfa(&mut lazy2, b"\"abc\"", &mut t2);
+        assert!(!t2.is_empty(), "should match");
+
+        let accel_count2 = lazy2.states.iter().filter(|s| s.accel.is_some()).count();
+        assert_eq!(
+            accel_count2, 0,
+            "non-negated [abc]+: no NFA AccelInfo → no lazy DFA accel"
         );
     }
 }

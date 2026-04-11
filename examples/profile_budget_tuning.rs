@@ -21,7 +21,8 @@ use quamina::json::CidrPattern;
 use quamina::regexp::{make_regexp_nfa_arena, parse_regexp};
 
 // ============================================================================
-// Budget constants (mirrored from thread_safe.rs)
+// Budget constants (mirrored from src/automaton/thread_safe.rs)
+// Keep in sync with EAGER_DFA_BUDGET_MULTIPLIER and EAGER_DFA_BUDGET_CAP there.
 // ============================================================================
 
 const EAGER_MULTIPLIER: usize = 8;
@@ -345,6 +346,75 @@ fn section1_tier_comparison() {
 }
 
 // ============================================================================
+// Section 2: Budget multiplier sensitivity sweep
+//
+// For each pattern, try budget multipliers [1×, 2×, 4×, 8×, 16×] and record
+// whether the DFA conversion succeeds, how many DFA states are produced, and
+// the match time. This informs the choice of EAGER_MULTIPLIER.
+// ============================================================================
+
+fn section2_budget_sensitivity() {
+    println!("=== Section 2: Budget multiplier sensitivity (DFA state count vs match time) ===");
+    println!("  Columns: NFA_n, then for each multiplier [1×,2×,4×,8×,16×]: ok/-- and match ns");
+    println!();
+
+    let multipliers: &[usize] = &[1, 2, 4, 8, 16];
+
+    println!(
+        "{:<18}  {:<8}  {:>6}    {}",
+        "label",
+        "kind",
+        "NFA_n",
+        multipliers
+            .iter()
+            .map(|m| format!("{:>14}", format!("{}×", m)))
+            .collect::<Vec<_>>()
+            .join("  "),
+    );
+    println!("{}", "-".repeat(120));
+
+    for case in &all_patterns() {
+        let encoded: Vec<Vec<u8>> = case.values.iter().map(|v| encode_value(v)).collect();
+        let (nfa_for_dfa, start_for_dfa) = build_kind(case.kind);
+        let nfa_states = nfa_for_dfa.len();
+
+        let mut cols: Vec<String> = Vec::new();
+        for &mult in multipliers {
+            let budget = (nfa_states * mult).min(EAGER_CAP);
+            if let Some((mut dfa, dfa_start)) = nfa_for_dfa.nfa_to_dfa(start_for_dfa, budget) {
+                let dfa_states = dfa.len();
+                dfa.flatten_tables();
+                let mut dfa_t = Vec::new();
+                let (ns, _) = bench(|| {
+                    for ev in &encoded {
+                        dfa_t.clear();
+                        traverse_arena_dfa(
+                            black_box(&dfa),
+                            black_box(dfa_start),
+                            black_box(ev),
+                            &mut dfa_t,
+                        );
+                    }
+                });
+                cols.push(format!("ok({:4}st) {:4}ns", dfa_states, ns));
+            } else {
+                cols.push(format!("{:>14}", "--"));
+            }
+        }
+
+        println!(
+            "{:<18}  {:<8}  {:>6}    {}",
+            case.label,
+            case.kind_name(),
+            nfa_states,
+            cols.join("  "),
+        );
+    }
+
+    println!();
+}
+
+// ============================================================================
 // Section 3: Multi-pattern (merged) build time + match time cost curve
 // ============================================================================
 
@@ -554,6 +624,7 @@ fn section4_tradeoff_summary() {
 
 fn main() {
     section1_tier_comparison();
+    section2_budget_sensitivity();
     section3_merged_performance();
     section4_tradeoff_summary();
 }
