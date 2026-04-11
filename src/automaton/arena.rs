@@ -7648,6 +7648,7 @@ mod lazy_dfa_tests {
         );
     }
 
+    #[cfg_attr(miri, ignore)]
     #[test]
     fn test_lazy_dfa_nested_quantifiers() {
         let (nfa, nfa_start) = build_regexp_nfa("(([abc]?)*)+");
@@ -7709,6 +7710,7 @@ mod dfa_accel_tests {
         );
     }
 
+    #[cfg_attr(miri, ignore)]
     #[test]
     fn test_lazy_dfa_accel_skip_zero() {
         let (nfa, nfa_start) = build_regexp_nfa("a[^x]+x");
