@@ -7573,6 +7573,43 @@ mod nfa_to_dfa_tests {
     }
 }
 
+/// Miri-only tests for traverse_arena_dfa with flattened tables.
+///
+/// freeze_value_matcher skips nfa_to_dfa under miri (FxHashMap/Mutex are
+/// ~200× slower under interpretation), so end-to-end tests won't exercise
+/// traverse_arena_dfa via the real pipeline. These tests reproduce the exact
+/// code path: convert NFA → DFA, call flatten_tables(), then traverse.
+#[cfg(all(test, miri))]
+mod miri_dfa_traversal_tests {
+    use super::dfa_test_helpers::*;
+    use super::*;
+
+    /// traverse_arena_dfa with flat tables: match and non-match.
+    #[test]
+    fn test_traverse_dfa_flat_match_and_no_match() {
+        let (nfa, nfa_start) = build_regexp_nfa("[ab]+");
+        let (mut dfa, dfa_start) = nfa.nfa_to_dfa(nfa_start, 1000).expect("should convert");
+        dfa.flatten_tables(); // mirrors freeze_value_matcher
+
+        assert!(dfa_matches(&dfa, dfa_start, b"\"a\""));
+        assert!(dfa_matches(&dfa, dfa_start, b"\"ab\""));
+        assert!(!dfa_matches(&dfa, dfa_start, b"\"c\""));
+        assert!(!dfa_matches(&dfa, dfa_start, b"\"\""));
+    }
+
+    /// traverse_arena_dfa with flat tables: alternation pattern.
+    #[test]
+    fn test_traverse_dfa_flat_alternation() {
+        let (nfa, nfa_start) = build_regexp_nfa("cat|dog");
+        let (mut dfa, dfa_start) = nfa.nfa_to_dfa(nfa_start, 1000).expect("should convert");
+        dfa.flatten_tables();
+
+        assert!(dfa_matches(&dfa, dfa_start, b"\"cat\""));
+        assert!(dfa_matches(&dfa, dfa_start, b"\"dog\""));
+        assert!(!dfa_matches(&dfa, dfa_start, b"\"car\""));
+    }
+}
+
 #[cfg(test)]
 mod lazy_dfa_tests {
     use super::dfa_test_helpers::*;
