@@ -9,14 +9,12 @@ Style inspired by [ripgrep's CHANGELOG](https://github.com/BurntSushi/ripgrep/bl
 ## [Unreleased]
 
 ### Added
-- NFA→DFA subset construction at freeze time: regexp patterns with epsilon transitions are now eagerly converted to DFA when within a state budget (8× NFA states, max 10,000), yielding up to 2.5× faster matching on long regexp inputs (`regexp_plus_long`: 1259→501 ns, `regexp_star_long`: 1125→459 ns)
-- Three-tier matching strategy: eager DFA (subset construction at freeze time) → lazy DFA (on-demand state caching for NFA arenas ≤ 10k states that exceed the eager budget) → NFA fallback (full epsilon closure traversal for very large NFAs)
-- DFA acceleration: `compute_dfa_accel` detects self-loop states after subset construction and attaches memchr skip info, enabling SIMD byte skipping on patterns like `[^x]+`
-- Profiling examples `examples/profile_negated.rs` and `examples/profile_budget_tuning.rs` for analyzing acceleration and budget trade-offs across pattern types
-- 21 new unit tests covering NFA→DFA conversion, budget enforcement, field transition preservation, NFA/DFA equivalence, lazy DFA caching, and DFA acceleration
+- NFA→DFA subset construction at freeze time: regexp patterns with epsilon transitions are eagerly converted to DFA (budget: 8× NFA states, max 10k), with a lazy DFA fallback for patterns exceeding the eager budget (`regexp_plus_long`: 1259→501 ns, `regexp_star_long`: 1125→459 ns, `pathological_epsilon`: 6.08→2.00 µs)
+- DFA acceleration: `compute_dfa_accel` detects self-loop states and attaches memchr skip info for SIMD byte skipping on patterns like `[^x]+`
+- Profiling examples for NFA→DFA budget tuning and negated char class acceleration
 
 ### Fixed
-- Negated character class regression: `[^x]+` patterns (17K NFA states from Unicode support) exceeded the eager DFA budget. Added SIMD-accelerated byte skipping via `AccelInfo::try_accelerate` to the DFA traversal path (`regexp_negated_1k`: 3.2 µs → 652 ns)
+- `[^x]+` patterns (17K-state Unicode NFA) exceeded the DFA budget and regressed; SIMD acceleration via `AccelInfo::try_accelerate` restores performance (`regexp_negated_1k`: 3.2 µs → 652 ns)
 
 ## [0.5.0] — 2026-03-23
 
