@@ -717,6 +717,9 @@ impl<X: Clone + Eq + Hash + Send + Sync> ThreadSafeCoreMatcher<X> {
             .map(|(mut arena, start)| {
                 arena.precompute_epsilon_closures();
 
+                // Under Miri, skip DFA conversion (FxHashMap/Mutex are ~200× slower
+                // under interpretation). Fall straight to Tier 3 (NFA traversal).
+                #[cfg(not(miri))]
                 if main_arena_is_nfa {
                     // Tier 1: Attempt eager NFA→DFA conversion.
                     let eager_budget =
