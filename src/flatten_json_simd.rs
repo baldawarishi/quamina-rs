@@ -32,9 +32,15 @@
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-/// Runtime-tunable size gate for `skip_string_value`. Default 64 (= SIMD chunk).
-/// Set to `usize::MAX` to disable SIMD; set to 0 to always use SIMD.
-pub static STRING_SIMD_THRESHOLD: AtomicUsize = AtomicUsize::new(64);
+/// Runtime-tunable size gate for `skip_string_value`. Default 0 (SIMD always on).
+/// Set to `usize::MAX` to disable SIMD.
+///
+/// Value chosen from `examples/profile_simd_threshold.rs` on 2026-04-21:
+/// citylots favors 0 (higher values cost ~1-3%), synthetic varying-size favors
+/// 0-128 interchangeably (128 best by -3.2%, 0 within 2%). Pinning 0 because
+/// citylots is the representative corpus; the padded-buffer fallback already
+/// handles short-string events without meaningful overhead.
+pub static STRING_SIMD_THRESHOLD: AtomicUsize = AtomicUsize::new(0);
 
 /// Runtime-tunable size gate for `skip_block`. Default 0 (SIMD always on —
 /// the padded-buffer fallback beats a scalar loop for small blocks on real

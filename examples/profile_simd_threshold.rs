@@ -143,7 +143,7 @@ fn main() {
     );
 
     // --- citylots: block gate ---
-    STRING_SIMD_THRESHOLD.store(64, Ordering::Relaxed);
+    STRING_SIMD_THRESHOLD.store(0, Ordering::Relaxed);
     run_sweep("citylots · skip_block gate", &thresholds, "block", || {
         for line in &lines {
             let _ = citylots_q.matches_for_event(line);
@@ -173,7 +173,7 @@ fn main() {
         },
     );
 
-    STRING_SIMD_THRESHOLD.store(64, Ordering::Relaxed);
+    STRING_SIMD_THRESHOLD.store(0, Ordering::Relaxed);
     run_sweep("synthetic · skip_block gate", &thresholds, "block", || {
         for ev in &synth_events {
             let _ = synth_q.matches_for_event(ev);
@@ -182,6 +182,6 @@ fn main() {
     });
 
     // Reset to defaults so this binary's closing allocs don't mislead anyone.
-    STRING_SIMD_THRESHOLD.store(64, Ordering::Relaxed);
+    STRING_SIMD_THRESHOLD.store(0, Ordering::Relaxed);
     BLOCK_SIMD_THRESHOLD.store(0, Ordering::Relaxed);
 }

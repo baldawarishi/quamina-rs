@@ -248,3 +248,24 @@ whitespace skipping, and number parsing.
   yet swept — Step 1).
 - Commits: (a) SIMD infra module + lib wiring + profile examples; (b) `skip_block`
   / `skip_string_value` callers switched over. See `git log` for SHAs.
+
+### Step 1 — threshold sweep (2026-04-21)
+
+Ran `examples/profile_simd_threshold` on apple silicon M-series. Sweep table
+(citylots, `ns/call`; synthetic omitted for brevity):
+
+| threshold | string-gate | block-gate |
+|-----------|-------------|------------|
+| 0         | 2559 (best) | 2647       |
+| 64        | 2612 (+2%)  | 2663 (+1%) |
+| MAX (off) | 2637 (+3%)  | 2650       |
+
+Synthetic varying-size events: string-gate bottoms out at 128 (-3.2% vs 0)
+but 32-256 are all within 1% of each other; block-gate penalizes values >64
+heavily (+33% at 2048). Pinned both thresholds to **0** — citylots wins, and
+short-event synthetic regression is under 2%.
+
+`STRING_SIMD_THRESHOLD: 64 → 0`, `BLOCK_SIMD_THRESHOLD: 0` (unchanged).
+
+Post-change `profile_status`: `flatten_only 2047 ns/op` (neutral vs. 2037 baseline;
+within measurement noise).
