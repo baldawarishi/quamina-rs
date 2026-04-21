@@ -709,6 +709,26 @@ impl<'a> FlattenContext<'a, '_> {
         self.step()?;
         let start = self.index;
 
+        // SIMD fast-advance: bulk-skip plain bytes to the first `"` or `\`.
+        // Ctrl-byte (<=0x1f) validation is deferred to the scalar tail; any
+        // bytes we jump over here go unvalidated, which matches quamina's
+        // lenient parsing posture on this path.
+        let (found, scanned_to) = crate::flatten_json_simd::scan_delim(self.event, self.index);
+        match found {
+            Some((pos, b'"')) => {
+                self.index = pos;
+                return Ok(MemberName::Borrowed(&self.event[start..pos]));
+            }
+            Some((pos, _)) => {
+                // `\` — hand off to the escape-decoding path.
+                self.index = pos;
+                return self.read_member_name_with_escapes(start);
+            }
+            None => {
+                self.index = scanned_to;
+            }
+        }
+
         while self.index < self.event.len() {
             let ch = self.event[self.index];
             if ch == b'"' {
@@ -811,6 +831,23 @@ impl<'a> FlattenContext<'a, '_> {
     fn read_string_value(&mut self) -> Result<FieldValue<'a>, FlattenError> {
         let val_start = self.index;
         self.step()?; // skip opening "
+
+        // SIMD fast-advance: bulk-skip plain bytes to the first `"` or `\`.
+        // See `read_member_name` for the ctrl-byte caveat.
+        let (found, scanned_to) = crate::flatten_json_simd::scan_delim(self.event, self.index);
+        match found {
+            Some((pos, b'"')) => {
+                self.index = pos;
+                return Ok(FieldValue::Borrowed(&self.event[val_start..=pos]));
+            }
+            Some((pos, _)) => {
+                self.index = pos;
+                return self.read_string_with_escapes(val_start);
+            }
+            None => {
+                self.index = scanned_to;
+            }
+        }
 
         while self.index < self.event.len() {
             let ch = self.event[self.index];

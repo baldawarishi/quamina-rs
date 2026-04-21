@@ -269,3 +269,23 @@ short-event synthetic regression is under 2%.
 
 Post-change `profile_status`: `flatten_only 2047 ns/op` (neutral vs. 2037 baseline;
 within measurement noise).
+
+### Step 2 — SIMD `read_string_value` + `read_member_name` (2026-04-21)
+
+Added `scan_delim` kernel (find-first `"`-or-`\`) to `flatten_json_simd.rs`:
+simpler than `scan_string` (no escape masking — on `\` we bail to scalar).
+Reuses the `Backend` trait and same 4-backend + dispatcher pattern.
+
+Call sites (`flatten_json.rs:read_member_name` / `read_string_value`):
+prefix the existing scalar loop with one `scan_delim` call. Hit on `"`
+returns the borrowed slice directly; hit on `\` hands off to the existing
+`*_with_escapes` path; chunk-exhausted falls through to the scalar tail.
+
+**Correctness caveat** (plan-approved): ctrl-byte (≤0x1f) validation is
+skipped for bytes SIMD jumps over. Malformed JSON with embedded ctrl bytes
+in strings will now be accepted where before it produced `illegal byte`.
+No `--lib` tests exercise this path, so no fix needed. If strict validation
+is later required, add `cmp_lt(0x20)` to the kernel.
+
+`profile_status`: `flatten_only 2047 → 1915 ns/op` (-6.4%).
+`cargo test --lib`: 773 pass. `just check`: clean.

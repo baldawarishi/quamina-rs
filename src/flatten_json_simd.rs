@@ -197,6 +197,30 @@ unsafe fn run_scan_string<B: Backend>(
     (None, i, prev_odd_bs)
 }
 
+/// Scan forward for the first `"` or `\`. Simpler than `run_scan_string`:
+/// the caller bails to scalar on `\`, so we don't need escape masking.
+///
+/// Returns `(Some((abs_pos, which_byte)), scanned_to)` — which_byte is `"` or
+/// `\`. On chunk-exhausted, `None` is returned and the caller continues from
+/// `scanned_to` with a scalar loop.
+#[inline(always)]
+unsafe fn run_scan_delim<B: Backend>(data: &[u8], start: usize) -> (Option<(usize, u8)>, usize) {
+    let mut i = start;
+    while i + 64 <= data.len() {
+        let chunk = unsafe { B::load(data, i) };
+        let q = unsafe { chunk.cmp_mask(b'"') };
+        let bs = unsafe { chunk.cmp_mask(b'\\') };
+        let hit = q | bs;
+        if hit != 0 {
+            let rel = hit.trailing_zeros() as usize;
+            let which = if (q >> rel) & 1 != 0 { b'"' } else { b'\\' };
+            return (Some((i + rel, which)), i + 64);
+        }
+        i += 64;
+    }
+    (None, i)
+}
+
 // ── NEON (aarch64) ───────────────────────────────────────────────────────────
 #[cfg(target_arch = "aarch64")]
 mod neon {
@@ -278,6 +302,11 @@ mod neon {
     ) -> (Option<usize>, usize, u64) {
         unsafe { run_scan_string::<NeonChunk>(data, start, init_odd_bs) }
     }
+
+    #[target_feature(enable = "neon")]
+    pub(super) unsafe fn scan_delim(data: &[u8], start: usize) -> (Option<(usize, u8)>, usize) {
+        unsafe { run_scan_delim::<NeonChunk>(data, start) }
+    }
 }
 
 // ── AVX2 (x86_64) ────────────────────────────────────────────────────────────
@@ -336,6 +365,11 @@ mod avx2 {
         init_odd_bs: u64,
     ) -> (Option<usize>, usize, u64) {
         unsafe { run_scan_string::<Avx2Chunk>(data, start, init_odd_bs) }
+    }
+
+    #[target_feature(enable = "avx2")]
+    pub(super) unsafe fn scan_delim(data: &[u8], start: usize) -> (Option<(usize, u8)>, usize) {
+        unsafe { run_scan_delim::<Avx2Chunk>(data, start) }
     }
 }
 
@@ -402,6 +436,11 @@ mod sse42 {
     ) -> (Option<usize>, usize, u64) {
         unsafe { run_scan_string::<Sse42Chunk>(data, start, init_odd_bs) }
     }
+
+    #[target_feature(enable = "sse4.2")]
+    pub(super) unsafe fn scan_delim(data: &[u8], start: usize) -> (Option<(usize, u8)>, usize) {
+        unsafe { run_scan_delim::<Sse42Chunk>(data, start) }
+    }
 }
 
 // ── Scalar fallback (all other targets) ──────────────────────────────────────
@@ -452,6 +491,10 @@ mod scalar {
     ) -> (Option<usize>, usize, u64) {
         unsafe { run_scan_string::<ScalarChunk>(data, start, init_odd_bs) }
     }
+
+    pub(super) fn scan_delim(data: &[u8], start: usize) -> (Option<(usize, u8)>, usize) {
+        unsafe { run_scan_delim::<ScalarChunk>(data, start) }
+    }
 }
 
 // ── Platform dispatcher ───────────────────────────────────────────────────────
@@ -460,6 +503,8 @@ mod scalar {
 type ScanFn = fn(&[u8], usize, u8, u8, &mut i32, bool, u64) -> (Option<usize>, usize, bool, u64);
 #[cfg(target_arch = "x86_64")]
 type ScanStringFn = fn(&[u8], usize, u64) -> (Option<usize>, usize, u64);
+#[cfg(target_arch = "x86_64")]
+type ScanDelimFn = fn(&[u8], usize) -> (Option<(usize, u8)>, usize);
 
 #[cfg(target_arch = "aarch64")]
 fn scan_block_dispatch(
@@ -481,6 +526,11 @@ fn scan_string_dispatch(
     init_odd_bs: u64,
 ) -> (Option<usize>, usize, u64) {
     unsafe { neon::scan_string(data, start, init_odd_bs) }
+}
+
+#[cfg(target_arch = "aarch64")]
+fn scan_delim_dispatch(data: &[u8], start: usize) -> (Option<(usize, u8)>, usize) {
+    unsafe { neon::scan_delim(data, start) }
 }
 
 // x86_64: resolve the backend once and cache the function pointer.
@@ -525,9 +575,16 @@ mod x86_dispatch {
     ) -> (Option<usize>, usize, u64) {
         unsafe { sse42::scan_string(data, start, init_odd_bs) }
     }
+    fn avx2_scan_delim(data: &[u8], start: usize) -> (Option<(usize, u8)>, usize) {
+        unsafe { avx2::scan_delim(data, start) }
+    }
+    fn sse42_scan_delim(data: &[u8], start: usize) -> (Option<(usize, u8)>, usize) {
+        unsafe { sse42::scan_delim(data, start) }
+    }
 
     static SCAN: OnceLock<ScanFn> = OnceLock::new();
     static SCAN_STR: OnceLock<ScanStringFn> = OnceLock::new();
+    static SCAN_DELIM: OnceLock<ScanDelimFn> = OnceLock::new();
 
     fn resolve_scan() -> ScanFn {
         if std::is_x86_feature_detected!("avx2") {
@@ -545,6 +602,15 @@ mod x86_dispatch {
             sse42_scan_string
         } else {
             scalar::scan_string
+        }
+    }
+    fn resolve_scan_delim() -> ScanDelimFn {
+        if std::is_x86_feature_detected!("avx2") {
+            avx2_scan_delim
+        } else if std::is_x86_feature_detected!("sse4.2") {
+            sse42_scan_delim
+        } else {
+            scalar::scan_delim
         }
     }
 
@@ -571,6 +637,12 @@ mod x86_dispatch {
         let f = *SCAN_STR.get_or_init(resolve_scan_string);
         f(data, start, init_odd_bs)
     }
+
+    #[inline]
+    pub(super) fn scan_delim(data: &[u8], start: usize) -> (Option<(usize, u8)>, usize) {
+        let f = *SCAN_DELIM.get_or_init(resolve_scan_delim);
+        f(data, start)
+    }
 }
 
 #[cfg(target_arch = "x86_64")]
@@ -595,6 +667,11 @@ fn scan_string_dispatch(
     x86_dispatch::scan_string(data, start, init_odd_bs)
 }
 
+#[cfg(target_arch = "x86_64")]
+fn scan_delim_dispatch(data: &[u8], start: usize) -> (Option<(usize, u8)>, usize) {
+    x86_dispatch::scan_delim(data, start)
+}
+
 #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
 fn scan_block_dispatch(
     data: &[u8],
@@ -617,6 +694,11 @@ fn scan_string_dispatch(
     scalar::scan_string(data, start, init_odd_bs)
 }
 
+#[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
+fn scan_delim_dispatch(data: &[u8], start: usize) -> (Option<(usize, u8)>, usize) {
+    scalar::scan_delim(data, start)
+}
+
 pub fn scan_block(
     data: &[u8],
     start: usize,
@@ -631,4 +713,11 @@ pub fn scan_block(
 
 pub fn scan_string(data: &[u8], start: usize, init_odd_bs: u64) -> (Option<usize>, usize, u64) {
     scan_string_dispatch(data, start, init_odd_bs)
+}
+
+/// Find the first `"` or `\` at or after `start` in `data`.
+/// Returns `(Some((abs_pos, which_byte)), scanned_to)` or `(None, scanned_to)`
+/// if the remainder is <64 bytes with no hit. `which_byte` is `"` or `\`.
+pub fn scan_delim(data: &[u8], start: usize) -> (Option<(usize, u8)>, usize) {
+    scan_delim_dispatch(data, start)
 }
