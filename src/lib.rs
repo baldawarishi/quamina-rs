@@ -9,6 +9,8 @@ pub mod automaton;
 mod case_folding;
 #[doc(hidden)]
 pub mod flatten_json;
+#[doc(hidden)]
+pub mod flatten_json_simd;
 mod flattener;
 #[doc(hidden)]
 pub mod json;
