@@ -293,7 +293,7 @@ impl<'a> FlattenContext<'a, '_> {
             match state {
                 ObjectState::InObject => {
                     if is_whitespace(ch) {
-                        // skip
+                        self.skip_ws_to_last();
                     } else if ch == b'"' {
                         member_name = self.read_member_name()?;
                         // Single fused lookup replaces separate is_segment_used + get + path_arc_for_segment
@@ -316,7 +316,7 @@ impl<'a> FlattenContext<'a, '_> {
 
                 ObjectState::SeekingColon => {
                     if is_whitespace(ch) {
-                        // skip
+                        self.skip_ws_to_last();
                     } else if ch == b':' {
                         state = ObjectState::MemberValue;
                     } else {
@@ -330,7 +330,8 @@ impl<'a> FlattenContext<'a, '_> {
                 ObjectState::MemberValue => {
                     // Skip whitespace before value
                     let mut ch = ch;
-                    while is_whitespace(ch) {
+                    if is_whitespace(ch) {
+                        self.skip_ws_to_last();
                         self.step()?;
                         ch = self.ch();
                     }
@@ -441,7 +442,7 @@ impl<'a> FlattenContext<'a, '_> {
 
                 ObjectState::AfterValue => {
                     if is_whitespace(ch) {
-                        // skip
+                        self.skip_ws_to_last();
                     } else if ch == b',' {
                         state = ObjectState::InObject;
                     } else if ch == b'}' {
@@ -479,7 +480,8 @@ impl<'a> FlattenContext<'a, '_> {
             match state {
                 ArrayState::InArray => {
                     // Skip whitespace
-                    while is_whitespace(ch) {
+                    if is_whitespace(ch) {
+                        self.skip_ws_to_last();
                         self.step()?;
                         ch = self.ch();
                     }
@@ -558,7 +560,7 @@ impl<'a> FlattenContext<'a, '_> {
 
                 ArrayState::AfterValue => {
                     if is_whitespace(ch) {
-                        // skip
+                        self.skip_ws_to_last();
                     } else if ch == b']' {
                         if self.skipping == 0 {
                             self.leave_array();
@@ -1050,6 +1052,21 @@ impl<'a> FlattenContext<'a, '_> {
     #[inline]
     fn ch(&self) -> u8 {
         self.event[self.index]
+    }
+
+    /// Batch-advance past a whitespace run. Precondition: `self.event[self.index]`
+    /// is JSON whitespace. Postcondition: `self.index` points at the last
+    /// whitespace byte in the run (or at `event.len() - 1` if the run extends
+    /// to EOF) so a subsequent `self.step()` lands on the first non-whitespace
+    /// byte.
+    #[inline]
+    fn skip_ws_to_last(&mut self) {
+        let bytes = self.event;
+        let mut i = self.index;
+        while i + 1 < bytes.len() && is_whitespace(bytes[i + 1]) {
+            i += 1;
+        }
+        self.index = i;
     }
 
     /// Advance to next byte.
