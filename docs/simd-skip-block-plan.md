@@ -289,3 +289,41 @@ is later required, add `cmp_lt(0x20)` to the kernel.
 
 `profile_status`: `flatten_only 2047 → 1915 ns/op` (-6.4%).
 `cargo test --lib`: 773 pass. `just check`: clean.
+
+### Resuming in a fresh session
+
+Phase 2 progress as of commit `1ba8abe` (2026-04-21): Steps 0-2 landed.
+Remaining: Step 3 (whitespace) and Step 4 (numbers). Both are defined in
+`~/.claude/plans/okay-let-s-create-a-snappy-elephant.md` — re-read that plan
+before starting.
+
+**To resume, in this order:**
+
+1. Re-read the plan file above and this doc's Phase 2 section.
+2. Confirm tree is clean: `git status` on `main` at `1ba8abe` (or later).
+3. Capture a fresh baseline before touching code:
+   ```
+   cargo run --release --example profile_status
+   cargo bench --bench matching -- flatten
+   ```
+   Record under a new `### Step 3 — baseline` subheading here.
+4. Implement **Step 3 (SIMD whitespace skipping)** — plan §"Step 3". Key
+   pre-flight reminders:
+   - Call sites at `src/flatten_json.rs:235, 244, 295, 318, 333, 443, 482, 560`.
+     **Verify these line numbers** — the file has shifted in Steps 0/2.
+     `rg 'is_whitespace'` in `flatten_json.rs` gives the current set.
+   - Some sites are tight loops (easy refactor); others are `match` arms
+     inside the state machine (be careful not to double-consume a non-
+     whitespace byte after the SIMD pass returns).
+   - Reuse `Backend` trait + `run_scan_nonws` pattern per plan snippet.
+   - Revert condition: any `--lib` failure or bench regression.
+5. After Step 3 lands + user bench gate, implement **Step 4 (SIMD `read_number`)**.
+   Decide during the step whether to extend `Backend` with `cmp_range` or
+   fall back to 10 `cmp_mask` ORs — plan notes this is the smallest-payoff
+   step, easiest to abandon.
+
+**Conventions** (same as Phase 1 / Steps 0-2):
+- Append one subsection to Phase 2 per step: what changed, benchmark delta,
+  commit SHA. Keep under 10 lines per step.
+- `cargo test --lib` (773 tests) + `just check` must pass after every step.
+- Stop for user bench gate between steps.
