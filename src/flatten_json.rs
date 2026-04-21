@@ -598,53 +598,108 @@ impl<'a> FlattenContext<'a, '_> {
 
     /// Skip a block (object or array) quickly without parsing.
     fn skip_block(&mut self, open: u8, close: u8) -> Result<(), FlattenError> {
-        let mut level = 0;
+        let mut level = 0i32;
 
-        while self.index < self.event.len() {
-            let ch = self.event[self.index];
-
-            match ch {
-                b'"' => self.skip_string_value()?,
-                c if c == open => level += 1,
-                c if c == close => {
-                    level -= 1;
-                    if level == 0 {
-                        return Ok(());
+        if self.event.len() - self.index < crate::flatten_json_simd::block_threshold() {
+            while self.index < self.event.len() {
+                let ch = self.event[self.index];
+                match ch {
+                    b'"' => {
+                        self.index += 1;
+                        self.skip_string_scalar(0)?;
+                        self.index += 1;
                     }
+                    c if c == open => {
+                        level += 1;
+                        self.index += 1;
+                    }
+                    c if c == close => {
+                        level -= 1;
+                        if level == 0 {
+                            return Ok(());
+                        }
+                        self.index += 1;
+                    }
+                    _ => self.index += 1,
                 }
-                _ => {}
             }
-
-            self.index += 1;
+            return Err(FlattenError::Error(self.error("truncated block")));
         }
 
-        Err(FlattenError::Error(self.error("truncated block")))
+        let (found, scanned_to, in_str, odd_bs) = crate::flatten_json_simd::scan_block(
+            self.event, self.index, open, close, &mut level, false, 0,
+        );
+        if let Some(pos) = found {
+            self.index = pos;
+            return Ok(());
+        }
+        self.index = scanned_to;
+
+        // Remaining < 64 bytes: copy into zero-padded buffer and run the same
+        // scan with carry-state from the first pass. Zeros won't match any
+        // structural char, so the padding produces no false positives.
+        let remaining = self.event.len() - self.index;
+        if remaining == 0 {
+            return Err(FlattenError::Error(self.error("truncated block")));
+        }
+        let mut buf = [0u8; 64];
+        buf[..remaining].copy_from_slice(&self.event[self.index..]);
+        match crate::flatten_json_simd::scan_block(&buf, 0, open, close, &mut level, in_str, odd_bs)
+            .0
+        {
+            Some(rel) => {
+                self.index += rel;
+                Ok(())
+            }
+            None => Err(FlattenError::Error(self.error("truncated block"))),
+        }
     }
 
     /// Skip a string value quickly.
+    #[inline]
     fn skip_string_value(&mut self) -> Result<(), FlattenError> {
         self.step()?; // skip opening "
 
-        while self.index < self.event.len() {
-            let ch = self.event[self.index];
-
-            // Handle escape sequences
-            if ch == b'\\' && self.index + 1 < self.event.len() {
-                let next = self.event[self.index + 1];
-                if next == b'\\' || next == b'"' {
-                    self.index += 2;
-                    continue;
-                }
-            }
-
-            if ch == b'"' {
-                return Ok(());
-            }
-
-            self.index += 1;
+        // Size-gate: small events don't amortize SIMD setup cost. Send them to
+        // the scalar helper (kept out-of-line to preserve hot-path code layout).
+        if self.event.len() - self.index < crate::flatten_json_simd::string_threshold() {
+            return self.skip_string_scalar(0);
         }
 
-        Err(FlattenError::Error(self.error("truncated string")))
+        let (found, scanned_to, odd_bs) =
+            crate::flatten_json_simd::scan_string(self.event, self.index, 0);
+        if let Some(pos) = found {
+            self.index = pos;
+            return Ok(());
+        }
+        self.index = scanned_to;
+        self.skip_string_scalar(odd_bs)
+    }
+
+    /// Scalar tail for `skip_string_value` — byte-loop, off the hot path.
+    /// `init_odd_bs != 0` → first byte is escaped (SIMD carry).
+    #[cold]
+    #[inline(never)]
+    fn skip_string_scalar(&mut self, init_odd_bs: u64) -> Result<(), FlattenError> {
+        if init_odd_bs != 0 && self.index < self.event.len() {
+            self.index += 1;
+        }
+        loop {
+            let slice = &self.event[self.index..];
+            let offset = slice
+                .iter()
+                .position(|&b| b == b'"' || b == b'\\')
+                .ok_or_else(|| FlattenError::Error(self.error("truncated string")))?;
+            self.index += offset;
+            if self.event[self.index] == b'"' {
+                return Ok(());
+            }
+            // b'\\': simdjson convention — any byte after `\` is escaped.
+            self.index += 1;
+            if self.index < self.event.len() {
+                self.index += 1;
+            }
+        }
     }
 
     /// Read a member name (the part between quotes).
