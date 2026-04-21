@@ -290,37 +290,54 @@ is later required, add `cmp_lt(0x20)` to the kernel.
 `profile_status`: `flatten_only 2047 → 1915 ns/op` (-6.4%).
 `cargo test --lib`: 773 pass. `just check`: clean.
 
+### Step 3 — whitespace skipping (2026-04-21, commit `f81b435`)
+
+Tried the planned `scan_nonws` SIMD kernel (NEON/AVX2/SSE4.2/scalar,
+mirroring `scan_delim`). Result: `profile_status` regressed 1962 → 2529
+ns/op (+29%). Root cause: pretty-printed JSON has 1-4 byte ws runs;
+SIMD's 64-byte load + 4 `cmp_mask` + OR chain per call costs ~10-20 ns
+while the scalar state-machine path was ~2 ns/byte. Reverted the SIMD
+module additions.
+
+Kept the call-site refactor (6 inner `is_whitespace` sites in
+`read_object`/`read_array` collapsed to `self.skip_ws_to_last()`), but
+backed by a scalar scan — advances `self.index` to the last ws byte in
+the run, so the outer `self.step()` lands on the first non-ws byte
+(unchanged control flow). One match-dispatch per ws run instead of one
+per ws byte.
+
+`profile_status`: 1962 → 1879 ns/op (-4.2%). Flatten benches: -2.1% to
+-7.4% across the five `flatten_*` benchmarks. 773 tests pass, `just check`
+clean. Sites 235/244 (top-level) left alone — low volume.
+
 ### Resuming in a fresh session
 
-Phase 2 progress as of commit `1ba8abe` (2026-04-21): Steps 0-2 landed.
-Remaining: Step 3 (whitespace) and Step 4 (numbers). Both are defined in
-`~/.claude/plans/okay-let-s-create-a-snappy-elephant.md` — re-read that plan
-before starting.
+Phase 2 progress as of commit `f81b435` (2026-04-21): Steps 0-3 landed.
+Step 3 shipped as scalar batching (SIMD regressed; see Step 3 subsection
+above). Remaining: Step 4 (numbers). Defined in
+`~/.claude/plans/okay-let-s-create-a-snappy-elephant.md` — re-read before
+starting.
 
-**To resume, in this order:**
+**To resume (Step 4), in this order:**
 
-1. Re-read the plan file above and this doc's Phase 2 section.
-2. Confirm tree is clean: `git status` on `main` at `1ba8abe` (or later).
-3. Capture a fresh baseline before touching code:
+1. Re-read the plan file above and this doc's Phase 2 section — note
+   Step 3's finding that SIMD setup overhead dominates short runs on
+   pretty-printed JSON. Keep that in mind for Step 4: JSON numbers are
+   also short (typically <20 bytes in status.json — `9034`, `158`,
+   `505874922023837700`), so SIMD may regress there too.
+2. Confirm tree is clean on `main` at `f81b435` (or later).
+3. Capture a fresh baseline:
    ```
    cargo run --release --example profile_status
    cargo bench --bench matching -- flatten
    ```
-   Record under a new `### Step 3 — baseline` subheading here.
-4. Implement **Step 3 (SIMD whitespace skipping)** — plan §"Step 3". Key
-   pre-flight reminders:
-   - Call sites at `src/flatten_json.rs:235, 244, 295, 318, 333, 443, 482, 560`.
-     **Verify these line numbers** — the file has shifted in Steps 0/2.
-     `rg 'is_whitespace'` in `flatten_json.rs` gives the current set.
-   - Some sites are tight loops (easy refactor); others are `match` arms
-     inside the state machine (be careful not to double-consume a non-
-     whitespace byte after the SIMD pass returns).
-   - Reuse `Backend` trait + `run_scan_nonws` pattern per plan snippet.
-   - Revert condition: any `--lib` failure or bench regression.
-5. After Step 3 lands + user bench gate, implement **Step 4 (SIMD `read_number`)**.
-   Decide during the step whether to extend `Backend` with `cmp_range` or
-   fall back to 10 `cmp_mask` ORs — plan notes this is the smallest-payoff
-   step, easiest to abandon.
+4. Implement **Step 4 (SIMD `read_number`)** per plan §"Step 4".
+   Decide during the step whether to extend `Backend` with `cmp_range`
+   or fall back to 10 `cmp_mask` ORs. Step 3 is a cautionary tale — if
+   SIMD regresses, consider whether the call-site refactor alone (a
+   scalar batched scan of the number extent) is worth keeping on its
+   own merits, or revert entirely. Plan notes Step 4 has the smallest
+   expected payoff and is the easiest to abandon.
 
 **Conventions** (same as Phase 1 / Steps 0-2):
 - Append one subsection to Phase 2 per step: what changed, benchmark delta,
