@@ -737,32 +737,6 @@ impl<'a> FlattenContext<'a, '_> {
     fn skip_block(&mut self, open: u8, close: u8) -> Result<(), FlattenError> {
         let mut level = 0i32;
 
-        if self.event.len() - self.index < crate::flatten_json_simd::block_threshold() {
-            while self.index < self.event.len() {
-                let ch = self.event[self.index];
-                match ch {
-                    b'"' => {
-                        self.index += 1;
-                        self.skip_string_scalar(0)?;
-                        self.index += 1;
-                    }
-                    c if c == open => {
-                        level += 1;
-                        self.index += 1;
-                    }
-                    c if c == close => {
-                        level -= 1;
-                        if level == 0 {
-                            return Ok(());
-                        }
-                        self.index += 1;
-                    }
-                    _ => self.index += 1,
-                }
-            }
-            return Err(FlattenError::Error(self.error("truncated block")));
-        }
-
         let (found, scanned_to, in_str, odd_bs) = crate::flatten_json_simd::scan_block(
             self.event, self.index, open, close, &mut level, false, 0,
         );
@@ -796,12 +770,6 @@ impl<'a> FlattenContext<'a, '_> {
     #[inline]
     fn skip_string_value(&mut self) -> Result<(), FlattenError> {
         self.step()?; // skip opening "
-
-        // Size-gate: small events don't amortize SIMD setup cost. Send them to
-        // the scalar helper (kept out-of-line to preserve hot-path code layout).
-        if self.event.len() - self.index < crate::flatten_json_simd::string_threshold() {
-            return self.skip_string_scalar(0);
-        }
 
         let (found, scanned_to, odd_bs) =
             crate::flatten_json_simd::scan_string(self.event, self.index, 0);

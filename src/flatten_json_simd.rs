@@ -19,43 +19,14 @@
 //! On x86_64 the backend is resolved once at first call and cached as a function
 //! pointer (via `OnceLock`) to avoid paying `is_x86_feature_detected!` per call.
 //!
-//! # Threshold tuning
-//!
-//! `STRING_SIMD_THRESHOLD` gates `skip_string_value`: events with remaining
-//! bytes `<` this value take a scalar path. Exposed as a runtime atomic so
-//! `examples/profile_simd_threshold.rs` can sweep values without recompiling.
-//! The default (64) matches the SIMD chunk size.
+//! Sub-64-byte tails are handled by the kernel's caller via a zero-padded buffer
+//! (zeros never match a structural byte); SIMD runs unconditionally — a runtime
+//! threshold sweep on representative corpora found no event size where a scalar
+//! short-circuit beat SIMD-on-padded-tail.
 //!
 //! Fast-path short-circuits in the scan loop:
 //! - if `bs_bits == 0 && prev_odd_bs == 0` → `escaped = 0`, skip `find_escaped`.
 //! - if `real_quotes == 0 && !prev_in_str` → `string_mask = 0`, skip `prefix_xor`.
-
-use std::sync::atomic::{AtomicUsize, Ordering};
-
-/// Runtime-tunable size gate for `skip_string_value`. Default 0 (SIMD always on).
-/// Set to `usize::MAX` to disable SIMD.
-///
-/// Value chosen from `examples/profile_simd_threshold.rs` on 2026-04-21:
-/// citylots favors 0 (higher values cost ~1-3%), synthetic varying-size favors
-/// 0-128 interchangeably (128 best by -3.2%, 0 within 2%). Pinning 0 because
-/// citylots is the representative corpus; the padded-buffer fallback already
-/// handles short-string events without meaningful overhead.
-pub static STRING_SIMD_THRESHOLD: AtomicUsize = AtomicUsize::new(0);
-
-/// Runtime-tunable size gate for `skip_block`. Default 0 (SIMD always on —
-/// the padded-buffer fallback beats a scalar loop for small blocks on real
-/// corpora; see `examples/profile_simd_threshold.rs`).
-pub static BLOCK_SIMD_THRESHOLD: AtomicUsize = AtomicUsize::new(0);
-
-#[inline]
-pub fn string_threshold() -> usize {
-    STRING_SIMD_THRESHOLD.load(Ordering::Relaxed)
-}
-
-#[inline]
-pub fn block_threshold() -> usize {
-    BLOCK_SIMD_THRESHOLD.load(Ordering::Relaxed)
-}
 
 const EVEN_BITS: u64 = 0x5555_5555_5555_5555;
 const ODD_BITS: u64 = 0xAAAA_AAAA_AAAA_AAAA;
