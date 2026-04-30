@@ -124,6 +124,14 @@ pub struct FlattenJsonState {
     /// 2. We only expose fields with the correct event lifetime
     /// 3. The mutable borrow of self prevents concurrent access
     fields: Vec<Field<'static>>,
+    /// Pooled scratch for per-object structural pre-scan offsets
+    /// (Phase 1 of lazy-flatten). One shared buffer across the whole
+    /// flatten call; nested `read_object` invocations push a length
+    /// marker before recursing and truncate back to it on return.
+    /// Cleared per-call (capacity-preserving) in `reset()`.
+    /// Wired in at Step 3 — currently dead.
+    #[allow(dead_code)]
+    obj_index_buf: Vec<u32>,
 }
 
 impl Default for FlattenJsonState {
@@ -138,6 +146,7 @@ impl FlattenJsonState {
         Self {
             array_trail: ArrayTrailVec::new(),
             fields: Vec::with_capacity(32),
+            obj_index_buf: Vec::new(),
         }
     }
 
@@ -147,6 +156,7 @@ impl FlattenJsonState {
     fn reset(&mut self) {
         self.array_trail.clear();
         self.fields.clear();
+        self.obj_index_buf.clear();
     }
 
     /// Flatten an event using this reusable state.

@@ -92,8 +92,8 @@ from the gate-check; possibly worse on skip-heavy inputs if gate is wrong. Track
 |---|--------|--------|-------------|-------|
 | 0. Baseline + profile_array_heavy commit | ✅ Done | `8fb46cf` | — | Apple Silicon M-series; tree at `f81b435`. |
 | 1. `scan_object_index` kernel | ✅ Done | `1b89de2` | array_heavy 2571→2533 ns (-1.5%, within noise) | Kernel + 4 backends + dispatchers + 7 unit tests. No callers yet. |
-| 2. Pool `obj_index_buf` | ⬜ **Resume here** | — | — | — |
-| 3. Pre-scan in `read_object` (gated) | ⬜ Todo | — | — | — |
+| 2. Pool `obj_index_buf` | ✅ Done | `0e1424e` | — | Field + reset; `#[allow(dead_code)]` until Step 3 wires it. |
+| 3. Pre-scan in `read_object` (gated) | ⬜ **Resume here** | — | — | — |
 | 4. Indexed read/skip variants | ⬜ Todo | — | — | — |
 | 5. Bench gate + tuning | ⬜ Todo | — | — | — |
 
@@ -152,6 +152,14 @@ Verified: 7 new unit tests cover empty body, single member, escaped quote, neste
 object/array (depth-2 skip), brace inside string, and 64-byte chunk-boundary carry.
 780 lib tests pass. `profile_array_heavy`: 2571 → 2533 ns/call (-1.5%, code-layout
 noise; kernel has no callers yet — wired in at Step 3).
+
+#### Step 2 — Pool `obj_index_buf`
+
+Added `obj_index_buf: Vec<u32>` to `FlattenJsonState` (default empty), cleared in
+`reset()` capacity-preserving alongside `array_trail` / `fields`. Field carries
+`#[allow(dead_code)]` since Step 3 is the first caller; `cargo clippy -- -D warnings`
+clean. 780 lib tests pass. Bench-neutral by construction (zero-byte pool initially;
+allocation happens only when Step 3 starts pushing offsets). No re-baseline taken.
 
 ---
 
@@ -256,10 +264,10 @@ If miri runtime grows >10% from baseline after a step, treat as a regression.
 
 ## To resume in a fresh session
 
-**Current state (2026-04-29):** Phase 1 Steps 0–1 done. Branch
-`perf/simd-flatten-json` at `1b89de2`. 780 lib tests pass, clippy + fmt clean.
-The `scan_object_index` SIMD kernel + 4 backends + dispatchers + 7 unit tests are
-landed but **have no callers yet** — first wiring happens at Step 3.
+**Current state (2026-04-29):** Phase 1 Steps 0–2 done. Pool field is in
+place (`#[allow(dead_code)]`); `scan_object_index` kernel + 4 backends + 7 unit
+tests landed; **no callers yet** — first wiring happens at Step 3.
+780 lib tests pass, clippy + fmt clean.
 
 1. Re-read in this order: this doc (top to bottom),
    `~/.claude/plans/create-a-plane-to-squishy-pearl.md` (design intent),
@@ -273,27 +281,34 @@ landed but **have no callers yet** — first wiring happens at Step 3.
    the verification block above.
 4. Pick up at the next ⬜ row.
 
-### Step 2 entry points (resume here)
+### Step 3 entry points (resume here)
 
-- **Type to extend:** `FlattenJsonState` in `src/flatten_json.rs:117-189`. Add a
-  field `obj_index_buf: Vec<u32>`. Default empty.
-- **Reset hook:** the existing `reset()` at `src/flatten_json.rs:146-150` —
-  call `self.obj_index_buf.clear()` (capacity-preserving).
-- **Recursion discipline (deferred to Step 3 caller, but plan ahead):** the
-  intent is one shared buffer across the whole flatten call; nested `read_object`
-  invocations push a length-marker before recursing and truncate back to that
-  length on return. Step 2 only adds the field; the marker discipline lives at
-  the call site in Step 3.
-- **No callers yet at Step 2** — the field is dead until Step 3 wires it through
-  the `read_object` pre-scan call. Compiles must stay clean (no `dead_code` warns
-  from `-D warnings`); allow with `#[allow(dead_code)]` on the field if needed,
-  *or* land Step 2 + Step 3 as a single commit if isolating Step 2 produces a
-  warning the lint chokes on.
-- **Kill criterion:** `dhat` allocation count on `bench_citylots_core` must not
-  increase. We don't have `dhat-rs` wired in yet — for Step 2, validate
-  conceptually: `clear()` preserves capacity, so after the first call there are
-  no further allocations from this buffer. Step 5 (the user bench gate) is where
-  we'd catch a wall-clock allocator regression.
+- **Caller hook:** `read_object` top at `src/flatten_json.rs:256` (and the
+  recursive call at `:408`). At entry, gate on `remaining_bytes >= 256` (matches
+  `BLOCK_SIMD_THRESHOLD` reasoning in `flatten_json_simd`). Above gate: call
+  `scan_object_index(event, self.index, &mut state.obj_index_buf, …)`. Below
+  gate: existing per-member SIMD path stays.
+- **Recursion discipline:** one shared `obj_index_buf` across the whole flatten
+  call. Before recursing into a nested object, snapshot `let mark =
+  state.obj_index_buf.len();`; after the nested `read_object` returns,
+  `state.obj_index_buf.truncate(mark);`. This keeps offsets contiguous without
+  per-level allocation.
+- **State-pool plumbing:** `FlattenContext` (`:193-200`) currently borrows
+  `&mut Vec<Field<'static>>` and `&mut ArrayTrailVec`. Step 3 will add a
+  `&'b mut Vec<u32>` borrow for `obj_index_buf`. Mind the existing borrow
+  pattern in `FlattenJsonState::flatten` (`:160-188`) — extend it.
+- **Kernel signature reminder:** `scan_object_index(data: &[u8], start: usize,
+  out: &mut Vec<u32>, depth: &mut u32, init_in_str: bool, init_odd_bs: u64) ->
+  (Option<usize> /* matching '}' */, ScanIndex, …)` per Step 1 wiring; offsets
+  emitted are depth-1 quote/open/close positions. Returning `None` for the
+  matching `}` means truncation → propagate as the existing `truncated block`
+  error.
+- **Re-baseline before measuring:** Step 3 is the first measurable change. Run
+  the verification block (`cargo bench --bench matching -- 'flatten|citylots|status_'`,
+  `profile_status`, `profile_array_heavy`) before any tuning; record numbers in
+  the Step 3 subsection.
+- **Kill criterion:** `flatten_status_*` regresses >2%. If hit, tune the size
+  gate (try 128, 384, 512) before reverting.
 
 ### Conventions
 
