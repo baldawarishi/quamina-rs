@@ -92,7 +92,7 @@ from the gate-check; possibly worse on skip-heavy inputs if gate is wrong. Track
 |---|--------|--------|-------------|-------|
 | 0. Baseline + profile_array_heavy commit | ✅ Done | `8fb46cf` | — | Apple Silicon M-series; tree at `f81b435`. |
 | 1. `scan_object_index` kernel | ✅ Done | `1b89de2` | array_heavy 2571→2533 ns (-1.5%, within noise) | Kernel + 4 backends + dispatchers + 7 unit tests. No callers yet. |
-| 2. Pool `obj_index_buf` | ✅ Done | `0e1424e` | — | Field + reset; `#[allow(dead_code)]` until Step 3 wires it. |
+| 2. Pool `obj_index_buf` | ✅ Done | `f588b72` | — | Field + reset; `#[allow(dead_code)]` until Step 3 wires it. |
 | 3. Pre-scan in `read_object` (gated) | ⬜ **Resume here** | — | — | — |
 | 4. Indexed read/skip variants | ⬜ Todo | — | — | — |
 | 5. Bench gate + tuning | ⬜ Todo | — | — | — |
