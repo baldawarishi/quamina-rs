@@ -307,12 +307,12 @@ mod avx2 {
         #[target_feature(enable = "avx2")]
         #[inline]
         unsafe fn cmp_mask(&self, target: u8) -> u64 {
-            unsafe {
-                let vt = _mm256_set1_epi8(target as i8);
-                let r0 = _mm256_movemask_epi8(_mm256_cmpeq_epi8(self.v0, vt)) as u32;
-                let r1 = _mm256_movemask_epi8(_mm256_cmpeq_epi8(self.v1, vt)) as u32;
-                (r0 as u64) | ((r1 as u64) << 32)
-            }
+            // `_mm256_{set1,cmpeq,movemask}_epi8` are safe-to-call within an
+            // AVX2 target_feature scope on modern stdlib; no inner block needed.
+            let vt = _mm256_set1_epi8(target as i8);
+            let r0 = _mm256_movemask_epi8(_mm256_cmpeq_epi8(self.v0, vt)) as u32;
+            let r1 = _mm256_movemask_epi8(_mm256_cmpeq_epi8(self.v1, vt)) as u32;
+            (r0 as u64) | ((r1 as u64) << 32)
         }
     }
 
@@ -375,14 +375,14 @@ mod sse42 {
         #[target_feature(enable = "sse4.2")]
         #[inline]
         unsafe fn cmp_mask(&self, target: u8) -> u64 {
-            unsafe {
-                let vt = _mm_set1_epi8(target as i8);
-                let r0 = _mm_movemask_epi8(_mm_cmpeq_epi8(self.v0, vt)) as u16;
-                let r1 = _mm_movemask_epi8(_mm_cmpeq_epi8(self.v1, vt)) as u16;
-                let r2 = _mm_movemask_epi8(_mm_cmpeq_epi8(self.v2, vt)) as u16;
-                let r3 = _mm_movemask_epi8(_mm_cmpeq_epi8(self.v3, vt)) as u16;
-                (r0 as u64) | ((r1 as u64) << 16) | ((r2 as u64) << 32) | ((r3 as u64) << 48)
-            }
+            // `_mm_{set1,cmpeq,movemask}_epi8` are safe-to-call within an
+            // SSE4.2 target_feature scope on modern stdlib; no inner block needed.
+            let vt = _mm_set1_epi8(target as i8);
+            let r0 = _mm_movemask_epi8(_mm_cmpeq_epi8(self.v0, vt)) as u16;
+            let r1 = _mm_movemask_epi8(_mm_cmpeq_epi8(self.v1, vt)) as u16;
+            let r2 = _mm_movemask_epi8(_mm_cmpeq_epi8(self.v2, vt)) as u16;
+            let r3 = _mm_movemask_epi8(_mm_cmpeq_epi8(self.v3, vt)) as u16;
+            (r0 as u64) | ((r1 as u64) << 16) | ((r2 as u64) << 32) | ((r3 as u64) << 48)
         }
     }
 
@@ -414,8 +414,12 @@ mod sse42 {
     }
 }
 
-// ── Scalar fallback (all other targets) ──────────────────────────────────────
-#[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
+// ── Scalar fallback ──────────────────────────────────────────────────────────
+// Built on x86_64 (used as the runtime fallback inside `x86_dispatch` when
+// neither AVX2 nor SSE4.2 is detected — e.g. under Miri, or on a CPU without
+// either feature) and on every non-aarch64 target (where it's the only path).
+// On aarch64, NEON is mandatory, so the scalar mod is unused and elided.
+#[cfg(not(target_arch = "aarch64"))]
 mod scalar {
     use super::*;
 
@@ -476,33 +480,6 @@ type ScanFn = fn(&[u8], usize, u8, u8, &mut i32, bool, u64) -> (Option<usize>, u
 type ScanStringFn = fn(&[u8], usize, u64) -> (Option<usize>, usize, u64);
 #[cfg(target_arch = "x86_64")]
 type ScanDelimFn = fn(&[u8], usize) -> (Option<(usize, u8)>, usize);
-
-#[cfg(target_arch = "aarch64")]
-fn scan_block_dispatch(
-    data: &[u8],
-    start: usize,
-    open: u8,
-    close: u8,
-    level: &mut i32,
-    init_in_str: bool,
-    init_odd_bs: u64,
-) -> (Option<usize>, usize, bool, u64) {
-    unsafe { neon::scan(data, start, open, close, level, init_in_str, init_odd_bs) }
-}
-
-#[cfg(target_arch = "aarch64")]
-fn scan_string_dispatch(
-    data: &[u8],
-    start: usize,
-    init_odd_bs: u64,
-) -> (Option<usize>, usize, u64) {
-    unsafe { neon::scan_string(data, start, init_odd_bs) }
-}
-
-#[cfg(target_arch = "aarch64")]
-fn scan_delim_dispatch(data: &[u8], start: usize) -> (Option<(usize, u8)>, usize) {
-    unsafe { neon::scan_delim(data, start) }
-}
 
 // x86_64: resolve the backend once and cache the function pointer.
 #[cfg(target_arch = "x86_64")]
@@ -616,58 +593,65 @@ mod x86_dispatch {
     }
 }
 
-#[cfg(target_arch = "x86_64")]
-fn scan_block_dispatch(
-    data: &[u8],
-    start: usize,
-    open: u8,
-    close: u8,
-    level: &mut i32,
-    init_in_str: bool,
-    init_odd_bs: u64,
-) -> (Option<usize>, usize, bool, u64) {
-    x86_dispatch::scan(data, start, open, close, level, init_in_str, init_odd_bs)
-}
-
-#[cfg(target_arch = "x86_64")]
-fn scan_string_dispatch(
-    data: &[u8],
-    start: usize,
-    init_odd_bs: u64,
-) -> (Option<usize>, usize, u64) {
-    x86_dispatch::scan_string(data, start, init_odd_bs)
-}
-
-#[cfg(target_arch = "x86_64")]
-fn scan_delim_dispatch(data: &[u8], start: usize) -> (Option<(usize, u8)>, usize) {
-    x86_dispatch::scan_delim(data, start)
-}
-
-#[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
-fn scan_block_dispatch(
-    data: &[u8],
-    start: usize,
-    open: u8,
-    close: u8,
-    level: &mut i32,
-    init_in_str: bool,
-    init_odd_bs: u64,
-) -> (Option<usize>, usize, bool, u64) {
-    scalar::scan(data, start, open, close, level, init_in_str, init_odd_bs)
-}
-
-#[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
-fn scan_string_dispatch(
-    data: &[u8],
-    start: usize,
-    init_odd_bs: u64,
-) -> (Option<usize>, usize, u64) {
-    scalar::scan_string(data, start, init_odd_bs)
-}
-
-#[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
-fn scan_delim_dispatch(data: &[u8], start: usize) -> (Option<(usize, u8)>, usize) {
-    scalar::scan_delim(data, start)
+// Top-level dispatchers route to the active backend. Each arm forwards to a
+// single backend module — the per-call CPU-feature probe (and its OnceLock
+// caching) lives one level deeper inside `x86_dispatch`.
+cfg_if::cfg_if! {
+    if #[cfg(target_arch = "aarch64")] {
+        #[inline]
+        fn scan_block_dispatch(
+            data: &[u8], start: usize, open: u8, close: u8,
+            level: &mut i32, init_in_str: bool, init_odd_bs: u64,
+        ) -> (Option<usize>, usize, bool, u64) {
+            unsafe { neon::scan(data, start, open, close, level, init_in_str, init_odd_bs) }
+        }
+        #[inline]
+        fn scan_string_dispatch(
+            data: &[u8], start: usize, init_odd_bs: u64,
+        ) -> (Option<usize>, usize, u64) {
+            unsafe { neon::scan_string(data, start, init_odd_bs) }
+        }
+        #[inline]
+        fn scan_delim_dispatch(data: &[u8], start: usize) -> (Option<(usize, u8)>, usize) {
+            unsafe { neon::scan_delim(data, start) }
+        }
+    } else if #[cfg(target_arch = "x86_64")] {
+        #[inline]
+        fn scan_block_dispatch(
+            data: &[u8], start: usize, open: u8, close: u8,
+            level: &mut i32, init_in_str: bool, init_odd_bs: u64,
+        ) -> (Option<usize>, usize, bool, u64) {
+            x86_dispatch::scan(data, start, open, close, level, init_in_str, init_odd_bs)
+        }
+        #[inline]
+        fn scan_string_dispatch(
+            data: &[u8], start: usize, init_odd_bs: u64,
+        ) -> (Option<usize>, usize, u64) {
+            x86_dispatch::scan_string(data, start, init_odd_bs)
+        }
+        #[inline]
+        fn scan_delim_dispatch(data: &[u8], start: usize) -> (Option<(usize, u8)>, usize) {
+            x86_dispatch::scan_delim(data, start)
+        }
+    } else {
+        #[inline]
+        fn scan_block_dispatch(
+            data: &[u8], start: usize, open: u8, close: u8,
+            level: &mut i32, init_in_str: bool, init_odd_bs: u64,
+        ) -> (Option<usize>, usize, bool, u64) {
+            scalar::scan(data, start, open, close, level, init_in_str, init_odd_bs)
+        }
+        #[inline]
+        fn scan_string_dispatch(
+            data: &[u8], start: usize, init_odd_bs: u64,
+        ) -> (Option<usize>, usize, u64) {
+            scalar::scan_string(data, start, init_odd_bs)
+        }
+        #[inline]
+        fn scan_delim_dispatch(data: &[u8], start: usize) -> (Option<(usize, u8)>, usize) {
+            scalar::scan_delim(data, start)
+        }
+    }
 }
 
 pub fn scan_block(
