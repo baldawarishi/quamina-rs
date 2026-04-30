@@ -124,15 +124,6 @@ impl FieldValue<'_> {
             FieldValue::EscapedRaw(s) => s,
         }
     }
-
-    /// Returns `true` if this value is [`FieldValue::EscapedRaw`] and needs
-    /// [`decode_json_escapes`] before equality comparison against a pattern
-    /// literal. Used by the matcher fast-path (Step 5) to skip the decode
-    /// wrapper for the common no-escape case.
-    #[allow(dead_code)] // wired in at Phase 2 Step 5
-    pub(crate) fn needs_escape_decode(&self) -> bool {
-        matches!(self, FieldValue::EscapedRaw(_))
-    }
 }
 
 /// Error variants returned by [`decode_json_escapes`].
@@ -268,14 +259,6 @@ pub struct FlattenJsonState {
     /// 2. We only expose fields with the correct event lifetime
     /// 3. The mutable borrow of self prevents concurrent access
     fields: Vec<Field<'static>>,
-    /// Pooled scratch for per-object structural pre-scan offsets
-    /// (Phase 1 of lazy-flatten). One shared buffer across the whole
-    /// flatten call; nested `read_object` invocations push a length
-    /// marker before recursing and truncate back to it on return.
-    /// Cleared per-call (capacity-preserving) in `reset()`.
-    /// Wired in at Step 3 — currently dead.
-    #[allow(dead_code)]
-    obj_index_buf: Vec<u32>,
 }
 
 impl Default for FlattenJsonState {
@@ -290,7 +273,6 @@ impl FlattenJsonState {
         Self {
             array_trail: ArrayTrailVec::new(),
             fields: Vec::with_capacity(32),
-            obj_index_buf: Vec::new(),
         }
     }
 
@@ -300,7 +282,6 @@ impl FlattenJsonState {
     fn reset(&mut self) {
         self.array_trail.clear();
         self.fields.clear();
-        self.obj_index_buf.clear();
     }
 
     /// Flatten an event using this reusable state.
