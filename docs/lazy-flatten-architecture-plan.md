@@ -91,8 +91,8 @@ from the gate-check; possibly worse on skip-heavy inputs if gate is wrong. Track
 | # | Status | Commit | Bench delta | Notes |
 |---|--------|--------|-------------|-------|
 | 0. Baseline + profile_array_heavy commit | ✅ Done | `8fb46cf` | — | Apple Silicon M-series; tree at `f81b435`. |
-| 1. `scan_object_index` kernel | ✅ Done | _this commit_ | array_heavy 2571→2533 ns (-1.5%, within noise) | Kernel + 4 backends + dispatchers + 7 unit tests. No callers yet. |
-| 2. Pool `obj_index_buf` | ⬜ Todo | — | — | — |
+| 1. `scan_object_index` kernel | ✅ Done | `1b89de2` | array_heavy 2571→2533 ns (-1.5%, within noise) | Kernel + 4 backends + dispatchers + 7 unit tests. No callers yet. |
+| 2. Pool `obj_index_buf` | ⬜ **Resume here** | — | — | — |
 | 3. Pre-scan in `read_object` (gated) | ⬜ Todo | — | — | — |
 | 4. Indexed read/skip variants | ⬜ Todo | — | — | — |
 | 5. Bench gate + tuning | ⬜ Todo | — | — | — |
@@ -229,11 +229,10 @@ _To be filled at Phase 2 Step 0._
 ## Verification (per phase boundary)
 
 ```bash
-# Bench (capture before and after each phase)
-cargo bench --bench matching -- flatten_context_fields flatten_direct_context_fields flatten_sort_context_fields
-cargo bench --bench matching -- flatten_middle_nested flatten_last_field
-cargo bench --bench matching -- citylots citylots_core
-cargo bench --bench matching -- status_context_fields status_middle_nested status_last_field status_all_patterns
+# Bench (capture before and after each phase). Criterion takes a SINGLE regex
+# filter — multi-arg space-separated lists silently fail with "unexpected
+# argument".
+cargo bench --bench matching -- 'flatten|citylots|status_'
 cargo run --release --example profile_status
 cargo run --release --example profile_array_heavy
 
@@ -257,13 +256,44 @@ If miri runtime grows >10% from baseline after a step, treat as a regression.
 
 ## To resume in a fresh session
 
-1. Re-read `~/.claude/plans/create-a-plane-to-squishy-pearl.md` (design intent),
-   `docs/simd-skip-block-plan.md` Phase 2 section (conventions), and this doc (current
-   progress) before touching code.
-2. Confirm tree state: `git log --oneline -1` shows the last committed step.
-   `cargo test --lib` clean.
-3. Capture a fresh baseline with the bench commands above.
-4. Pick up at the next un-checked row in the relevant Progress table.
+**Current state (2026-04-29):** Phase 1 Steps 0–1 done. Branch
+`perf/simd-flatten-json` at `1b89de2`. 780 lib tests pass, clippy + fmt clean.
+The `scan_object_index` SIMD kernel + 4 backends + dispatchers + 7 unit tests are
+landed but **have no callers yet** — first wiring happens at Step 3.
+
+1. Re-read in this order: this doc (top to bottom),
+   `~/.claude/plans/create-a-plane-to-squishy-pearl.md` (design intent),
+   `docs/simd-skip-block-plan.md` Phase 2 section (conventions for the per-step
+   subsection style and the "stop at the bench gate" rule).
+2. Confirm tree state — `git log --oneline -1` should show
+   `1b89de2 perf(flatten_json_simd): scan_object_index kernel` (or a later
+   commit if more steps landed). `cargo test --lib` clean.
+3. **No re-baseline needed** for Step 2 (allocation-pool change; bench-neutral
+   by construction). Re-baseline before Step 3 (first measurable step) by re-running
+   the verification block above.
+4. Pick up at the next ⬜ row.
+
+### Step 2 entry points (resume here)
+
+- **Type to extend:** `FlattenJsonState` in `src/flatten_json.rs:117-189`. Add a
+  field `obj_index_buf: Vec<u32>`. Default empty.
+- **Reset hook:** the existing `reset()` at `src/flatten_json.rs:146-150` —
+  call `self.obj_index_buf.clear()` (capacity-preserving).
+- **Recursion discipline (deferred to Step 3 caller, but plan ahead):** the
+  intent is one shared buffer across the whole flatten call; nested `read_object`
+  invocations push a length-marker before recursing and truncate back to that
+  length on return. Step 2 only adds the field; the marker discipline lives at
+  the call site in Step 3.
+- **No callers yet at Step 2** — the field is dead until Step 3 wires it through
+  the `read_object` pre-scan call. Compiles must stay clean (no `dead_code` warns
+  from `-D warnings`); allow with `#[allow(dead_code)]` on the field if needed,
+  *or* land Step 2 + Step 3 as a single commit if isolating Step 2 produces a
+  warning the lint chokes on.
+- **Kill criterion:** `dhat` allocation count on `bench_citylots_core` must not
+  increase. We don't have `dhat-rs` wired in yet — for Step 2, validate
+  conceptually: `clear()` preserves capacity, so after the first call there are
+  no further allocations from this buffer. Step 5 (the user bench gate) is where
+  we'd catch a wall-clock allocator regression.
 
 ### Conventions
 
@@ -283,5 +313,5 @@ If miri runtime grows >10% from baseline after a step, treat as a regression.
 | `src/flatten_json.rs` | `obj_index_buf` pool, `read_object` pre-scan, indexed read variants | `FieldValue::EscapedRaw`, `decode_json_escapes` extraction, `read_string_value` escape path |
 | `src/automaton/thread_safe.rs` | — | Wrap `transition_on` callers (`:1033`) for lazy decode |
 | `src/lib.rs` | — | `NfaBuffers::decode_scratch` |
-| `examples/profile_array_heavy.rs` | Commit (currently untracked) | — |
-| `docs/lazy-flatten-architecture-plan.md` (this file) | Created with Phase 1+2 | Append step subsections |
+| `examples/profile_array_heavy.rs` | Tracked at `8fb46cf` — walk-heavy-array canary | — |
+| `docs/lazy-flatten-architecture-plan.md` (this file) | Created `8fb46cf`, updated each step | Append step subsections |
