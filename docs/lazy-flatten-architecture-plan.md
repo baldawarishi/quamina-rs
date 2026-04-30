@@ -92,10 +92,10 @@ from the gate-check; possibly worse on skip-heavy inputs if gate is wrong. Track
 |---|--------|--------|-------------|-------|
 | 0. Baseline + profile_array_heavy commit | ✅ Done | `8fb46cf` | — | Apple Silicon M-series; tree at `f81b435`. |
 | 1. `scan_object_index` kernel | ✅ Done | `1b89de2` | array_heavy 2571→2533 ns (-1.5%, within noise) | Kernel + 4 backends + dispatchers + 7 unit tests. No callers yet. |
-| 2. Pool `obj_index_buf` | ✅ Done | `f588b72` | — | Field + reset; `#[allow(dead_code)]` until Step 3 wires it. |
-| 3. Pre-scan in `read_object` (gated) | ⬜ **Resume here** | — | — | — |
-| 4. Indexed read/skip variants | ⬜ Todo | — | — | — |
-| 5. Bench gate + tuning | ⬜ Todo | — | — | — |
+| 2. Pool `obj_index_buf` | ✅ Done | `f588b72` | — | Field + reset; preserved as `#[allow(dead_code)]` after Phase 1 abandon. |
+| 3. Pre-scan in `read_object` (gated) | ❌ **Abandoned** | — | +2470% on `flatten_context_fields` | See `docs/lazy-flatten-phase1-step3-attempt.md` — pre-scan is incompatible with early-exit. |
+| 4. Indexed read/skip variants | ⏭️ Skipped | — | — | Depended on Step 3. |
+| 5. Bench gate + tuning | ⏭️ Skipped | — | — | — |
 
 #### Baseline (Step 0, 2026-04-29, branch `perf/simd-flatten-json` at `f81b435`)
 
@@ -160,6 +160,18 @@ Added `obj_index_buf: Vec<u32>` to `FlattenJsonState` (default empty), cleared i
 `#[allow(dead_code)]` since Step 3 is the first caller; `cargo clippy -- -D warnings`
 clean. 780 lib tests pass. Bench-neutral by construction (zero-byte pool initially;
 allocation happens only when Step 3 starts pushing offsets). No re-baseline taken.
+
+#### Step 3 — Per-object pre-scan in `read_object` — abandoned
+
+Tried wrapping `read_object` with stack-discipline `obj_index_buf` snapshot/truncate
+and a `scan_object_index` call gated on `remaining >= 256`. Shadow-only — no
+consumers — but **regressed `flatten_context_fields` 84 ns → 2.17 µs (+2470%)** on
+status.json. Root cause: the existing parser hits `FlattenError::EarlyStop` for
+patterns that match few fields (~hundreds of bytes parsed), but `scan_object_index`
+unconditionally sweeps the entire 9.4 KB body up front. Per-object pre-scan is
+**incompatible with early-exit semantics**. Reverted with `git checkout`. Full
+post-mortem with table + alternatives in `docs/lazy-flatten-phase1-step3-attempt.md`.
+Phase 1 abandoned at this step; proceeding to Phase 2.
 
 ---
 
@@ -264,9 +276,13 @@ If miri runtime grows >10% from baseline after a step, treat as a regression.
 
 ## To resume in a fresh session
 
-**Current state (2026-04-29):** Phase 1 Steps 0–2 done. Pool field is in
-place (`#[allow(dead_code)]`); `scan_object_index` kernel + 4 backends + 7 unit
-tests landed; **no callers yet** — first wiring happens at Step 3.
+**Current state (2026-04-29):** Phase 1 abandoned at Step 3. Step 0–2 landed
+(`8fb46cf`, `1b89de2`, `f588b72`). Step 3 attempted shadow wire-up; reverted
+after measuring +2470% regression on `flatten_context_fields` due to
+incompatibility with `FlattenError::EarlyStop`. Post-mortem in
+`docs/lazy-flatten-phase1-step3-attempt.md`. The `scan_object_index` kernel
+and pooled `obj_index_buf` field are preserved (kernel useful in isolation;
+field marked `#[allow(dead_code)]`). Resume at **Phase 2 Step 0**.
 780 lib tests pass, clippy + fmt clean.
 
 1. Re-read in this order: this doc (top to bottom),
@@ -281,34 +297,24 @@ tests landed; **no callers yet** — first wiring happens at Step 3.
    the verification block above.
 4. Pick up at the next ⬜ row.
 
-### Step 3 entry points (resume here)
+### Phase 2 Step 0 entry points (resume here)
 
-- **Caller hook:** `read_object` top at `src/flatten_json.rs:256` (and the
-  recursive call at `:408`). At entry, gate on `remaining_bytes >= 256` (matches
-  `BLOCK_SIMD_THRESHOLD` reasoning in `flatten_json_simd`). Above gate: call
-  `scan_object_index(event, self.index, &mut state.obj_index_buf, …)`. Below
-  gate: existing per-member SIMD path stays.
-- **Recursion discipline:** one shared `obj_index_buf` across the whole flatten
-  call. Before recursing into a nested object, snapshot `let mark =
-  state.obj_index_buf.len();`; after the nested `read_object` returns,
-  `state.obj_index_buf.truncate(mark);`. This keeps offsets contiguous without
-  per-level allocation.
-- **State-pool plumbing:** `FlattenContext` (`:193-200`) currently borrows
-  `&mut Vec<Field<'static>>` and `&mut ArrayTrailVec`. Step 3 will add a
-  `&'b mut Vec<u32>` borrow for `obj_index_buf`. Mind the existing borrow
-  pattern in `FlattenJsonState::flatten` (`:160-188`) — extend it.
-- **Kernel signature reminder:** `scan_object_index(data: &[u8], start: usize,
-  out: &mut Vec<u32>, depth: &mut u32, init_in_str: bool, init_odd_bs: u64) ->
-  (Option<usize> /* matching '}' */, ScanIndex, …)` per Step 1 wiring; offsets
-  emitted are depth-1 quote/open/close positions. Returning `None` for the
-  matching `}` means truncation → propagate as the existing `truncated block`
-  error.
-- **Re-baseline before measuring:** Step 3 is the first measurable change. Run
-  the verification block (`cargo bench --bench matching -- 'flatten|citylots|status_'`,
-  `profile_status`, `profile_array_heavy`) before any tuning; record numbers in
-  the Step 3 subsection.
-- **Kill criterion:** `flatten_status_*` regresses >2%. If hit, tune the size
-  gate (try 128, 384, 512) before reverting.
+Phase 1 is closed. Start Phase 2 fresh:
+
+- **Pre-Phase-2 baseline = current tree.** Step 3 was reverted, so the working
+  tree at `8fc7844` matches the post-Step-2 baseline already captured in this
+  doc. Re-run the verification block before touching code only if more than a
+  day has passed since the previous baseline (criterion drift is real on
+  shared hardware).
+- **First touch:** `src/flatten_json.rs:843` (`read_string_value`). Phase 2
+  Step 1 extracts the body of `read_string_with_escapes` into
+  `pub(crate) fn decode_json_escapes(raw: &[u8], scratch: &mut Vec<u8>) -> &[u8]`.
+  No behavior change — just refactor to an in-place writer.
+- **Watch for:** `read_member_name_with_escapes` (`:764`) is the same shape as
+  `read_string_with_escapes` (`:883`). The plan keeps `MemberName::EscapedRaw`
+  out of scope (names hit hashmap immediately), so Phase 2 only refactors the
+  *value* path. Don't accidentally also extract the member-name decoder
+  unless you have a separate use-case.
 
 ### Conventions
 
