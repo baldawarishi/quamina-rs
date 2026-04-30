@@ -94,7 +94,8 @@ from the gate-check; possibly worse on skip-heavy inputs if gate is wrong. Track
 | 1. `scan_object_index` kernel | ✅ Done | `1b89de2` | array_heavy 2571→2533 ns (-1.5%, within noise) | Kernel + 4 backends + dispatchers + 7 unit tests. No callers yet. |
 | 2. Pool `obj_index_buf` | ✅ Done | `f588b72` | — | Field + reset; preserved as `#[allow(dead_code)]` after Phase 1 abandon. |
 | 3. Pre-scan in `read_object` (gated) | ❌ **Abandoned** | — | +2470% on `flatten_context_fields` | See `docs/lazy-flatten-phase1-step3-attempt.md` — pre-scan is incompatible with early-exit. |
-| 4. Indexed read/skip variants | ⏭️ Skipped | — | — | Depended on Step 3. |
+| 3b. Strategy microbench | ✅ Done | `b2b6a8e` | V1 ≥ V0 on every workload | `examples/profile_prescan_strategies.rs`; closes Phase 1. |
+| 4. Indexed read/skip variants | ⏭️ Skipped | — | — | Microbench shows no headroom for any chunk-bounded design. |
 | 5. Bench gate + tuning | ⏭️ Skipped | — | — | — |
 
 #### Baseline (Step 0, 2026-04-29, branch `perf/simd-flatten-json` at `f81b435`)
@@ -171,7 +172,43 @@ patterns that match few fields (~hundreds of bytes parsed), but `scan_object_ind
 unconditionally sweeps the entire 9.4 KB body up front. Per-object pre-scan is
 **incompatible with early-exit semantics**. Reverted with `git checkout`. Full
 post-mortem with table + alternatives in `docs/lazy-flatten-phase1-step3-attempt.md`.
-Phase 1 abandoned at this step; proceeding to Phase 2.
+
+#### Step 3 follow-up — Strategy microbench
+
+Built `examples/profile_prescan_strategies.rs` (commit `b2b6a8e`) to quantify
+the amortization headroom for any chunk-bounded redesign without modifying
+production code. Compares per-member `scan_delim` (V0) against full
+`scan_object_index` (V1), chunk-bounded `scan_object_index` at K∈{1,2,4,8,16,ALL}
+chunks (V2 — models option (a) streaming with consumer-driven refill +
+early-exit at chunk K), and per-chunk streaming with carry state (V3 —
+measures dispatch overhead).
+
+Results on aarch64 NEON (M-series), full output in commit:
+
+| Workload | V0 full walk | V1 full pre-scan | V2 K=1 | V2 K=ALL | Verdict |
+|---|---|---|---|---|---|
+| W1 (30 short, 360 B) | 177 ns / 60 quotes | 182 ns | 33.7 ns | 172.8 ns | ≈ break-even |
+| W2 (200 short, 2.6 KB) | 937 ns / 400 quotes | 1303 ns | 34.6 ns | 1316 ns | **V1 −39% vs V0** |
+| W3 (status outer, 147 B) | 14.8 ns / 7 quotes | 39 ns | 19.4 ns | 42.5 ns | **V1 −165%** |
+| status.json full body | 5.5 ns / 2 quotes | 1923 ns | 14.1 ns | 1923 ns | catastrophic |
+
+Read on the data — **even a perfectly chunk-bounded streaming pre-scan
+(option (a) with zero implementation overhead) loses to baseline on every
+measured workload, including the full-walk W2**. Per-member `scan_delim`
+costs ~2.3-3 ns/find; `scan_object_index` costs ~13-32 ns/chunk and pushes
+to a Vec (more overhead on dense bodies). The plan's "amortize N re-scans"
+premise is false — `scan_delim` already returns at first hit per chunk, so
+re-scan cost is bounded by chunk size, not body size.
+
+V3 streaming dispatch overhead is small (~5-10% per chunk vs V1's monolithic
+loop) — i.e. the streaming approach doesn't pay much extra for control flow.
+The kernel itself is the cost, not the dispatch.
+
+**Conclusion:** Phase 1's "pre-scan amortization" thesis is structurally
+unsupported by the data. Both option (a) "streaming chunk pre-scan" and
+option (b) "multi-hit scan_delim" inherit the same per-chunk-load cost
+(option (b) is a strict improvement on (a) since it drops depth+string
+masking, but the upper bound is V0 itself). Phase 1 closed.
 
 ---
 
@@ -276,14 +313,24 @@ If miri runtime grows >10% from baseline after a step, treat as a regression.
 
 ## To resume in a fresh session
 
-**Current state (2026-04-29):** Phase 1 abandoned at Step 3. Step 0–2 landed
-(`8fb46cf`, `1b89de2`, `f588b72`). Step 3 attempted shadow wire-up; reverted
-after measuring +2470% regression on `flatten_context_fields` due to
-incompatibility with `FlattenError::EarlyStop`. Post-mortem in
-`docs/lazy-flatten-phase1-step3-attempt.md`. The `scan_object_index` kernel
-and pooled `obj_index_buf` field are preserved (kernel useful in isolation;
-field marked `#[allow(dead_code)]`). Resume at **Phase 2 Step 0**.
-780 lib tests pass, clippy + fmt clean.
+**Current state (2026-04-29):** Phase 1 closed. Step 0–2 landed
+(`8fb46cf`, `1b89de2`, `f588b72`). Step 3 attempted shadow wire-up;
+reverted after measuring +2470% regression on `flatten_context_fields`
+(post-mortem: `docs/lazy-flatten-phase1-step3-attempt.md`). Step 3b
+microbench (`b2b6a8e`, `examples/profile_prescan_strategies.rs`) showed
+that **even a zero-overhead chunk-bounded pre-scan loses to baseline on
+every measured workload** — V1 was −39% vs V0 on the W2 full-walk case
+where the plan expected the biggest win. Per-member `scan_delim` is
+already near-optimal (~2.3-3 ns/find) and `scan_object_index` costs
+~13-32 ns/chunk which can't be amortized below baseline.
+
+The `scan_object_index` kernel and pooled `obj_index_buf` field are
+preserved in the tree (kernel useful in isolation; field marked
+`#[allow(dead_code)]`).
+
+Resume at **Phase 2 Step 0** (lazy value materialization). Phase 2 is
+structurally independent of pre-scan and the plan's expected ≤2% win
+remains live. 780 lib tests pass, clippy + fmt clean.
 
 1. Re-read in this order: this doc (top to bottom),
    `~/.claude/plans/create-a-plane-to-squishy-pearl.md` (design intent),
@@ -299,22 +346,96 @@ field marked `#[allow(dead_code)]`). Resume at **Phase 2 Step 0**.
 
 ### Phase 2 Step 0 entry points (resume here)
 
-Phase 1 is closed. Start Phase 2 fresh:
+Phase 1 is closed (microbench data + post-mortem rules out chunked redesigns).
+Start Phase 2 fresh.
 
-- **Pre-Phase-2 baseline = current tree.** Step 3 was reverted, so the working
-  tree at `8fc7844` matches the post-Step-2 baseline already captured in this
-  doc. Re-run the verification block before touching code only if more than a
-  day has passed since the previous baseline (criterion drift is real on
-  shared hardware).
-- **First touch:** `src/flatten_json.rs:843` (`read_string_value`). Phase 2
-  Step 1 extracts the body of `read_string_with_escapes` into
-  `pub(crate) fn decode_json_escapes(raw: &[u8], scratch: &mut Vec<u8>) -> &[u8]`.
-  No behavior change — just refactor to an in-place writer.
-- **Watch for:** `read_member_name_with_escapes` (`:764`) is the same shape as
-  `read_string_with_escapes` (`:883`). The plan keeps `MemberName::EscapedRaw`
-  out of scope (names hit hashmap immediately), so Phase 2 only refactors the
-  *value* path. Don't accidentally also extract the member-name decoder
-  unless you have a separate use-case.
+#### Read order before touching code
+
+1. **This doc, top to bottom** (especially the Phase 1 Step 3 + Step 3b
+   summaries — they explain why the kernel + pool field stay in the tree
+   even though no production code calls them).
+2. `docs/lazy-flatten-phase1-step3-attempt.md` — the early-exit failure mode.
+3. `~/.claude/plans/create-a-plane-to-squishy-pearl.md` — Phase 2 design
+   intent (this doc is the live tracker; that one is the original plan).
+4. `docs/simd-skip-block-plan.md` Phase 2 section — conventions for
+   per-step subsection style and the "stop at the bench gate" rule.
+
+#### Tree state to confirm
+
+```bash
+git log --oneline -1   # should be b2b6a8e or later
+cargo test --lib       # 780 passing
+just check             # clean
+```
+
+If `git status` shows the unrelated `docs/simd-narrow-first-scan-attempt.md`
+as untracked, that's pre-existing and unrelated to this plan.
+
+#### Re-baseline before Step 1
+
+Step 1 is a refactor (no behavior change), but Phase 2's `<2%` kill criterion
+will need a fresh baseline. Run before touching code:
+
+```bash
+cargo bench --bench matching -- 'flatten|citylots|status_'
+cargo run --release --example profile_status
+cargo run --release --example profile_array_heavy
+```
+
+Record numbers in the new "Phase 2 Step 0 — baseline" subsection (style
+matches the existing Phase 1 Step 0 baseline block in this doc).
+
+#### Step 1 plan in detail
+
+**File:** `src/flatten_json.rs`. Read `read_string_with_escapes` at `:883`
+in full first — it's ~80 lines covering the escape table, `\uXXXX` decoding,
+and surrogate-pair handling. Extract its body into:
+
+```rust
+pub(crate) fn decode_json_escapes(raw: &[u8], scratch: &mut Vec<u8>) -> &[u8] {
+    // Caller passes the bytes between the opening and closing `"` (NOT
+    // including the quotes). `scratch` is cleared at function entry; the
+    // returned slice borrows from `scratch`.
+}
+```
+
+Caveats from the existing code:
+
+- The current implementation pushes the leading `"` into the output Vec
+  (`val: Vec<u8> = vec![b'"'];` at `:887`) and the trailing `"` at the end
+  (`:894`). The new helper takes already-stripped bytes and returns
+  un-quoted content. Caller in `read_string_with_escapes` re-wraps with
+  quotes for the `Owned(Vec<u8>)` path; in Phase 2 Step 5 the matcher-side
+  wrapper bypasses re-wrapping.
+- `read_hex_4` is a method on `FlattenContext`. The extracted helper can't
+  call it. Either (a) inline the hex parsing into `decode_json_escapes` —
+  16 lines — or (b) make `read_hex_4` a free function. (a) is cleaner; the
+  caller already validated bounds before reaching escape territory.
+- Surrogate-pair logic at `:921-937` reads ahead in `self.event` past the
+  current position. In the extracted helper, `raw` is the full content
+  slice between quotes — surrogate look-ahead becomes look-ahead within
+  `raw`. Mind the bounds.
+- Member-name decoder `read_member_name_with_escapes` (`:764`) has the
+  same body shape. **Out of scope for Phase 2** — names hit the hashmap
+  immediately, so lazy decode is no win. Don't extract it as part of
+  Step 1; doing so adds a usage site without a Phase 2 consumer.
+
+**Verification at Step 1:** `cargo test --lib` clean. The two-step plan
+is "extract, then switch caller" — Step 1 only extracts, so test coverage
+of `read_string_with_escapes` is the regression net.
+
+#### Steps 2-5 already specified in the table above
+
+No new design needed — the existing Phase 2 Steps table at line 207 is the
+working spec. Pick up at Step 2 once Step 1 lands.
+
+### Files in scope for Phase 2
+
+| File | Phase 2 changes |
+|---|---|
+| `src/flatten_json.rs` | Extract `decode_json_escapes`; add `FieldValue::EscapedRaw`; switch `read_string_value` escape branch |
+| `src/automaton/thread_safe.rs` | Wrap `transition_on` callers (`:1033`) for lazy decode |
+| `src/lib.rs` | Add `decode_scratch: Vec<u8>` to `NfaBuffers` (`:46-50`) |
 
 ### Conventions
 
