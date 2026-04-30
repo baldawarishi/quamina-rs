@@ -95,16 +95,25 @@ impl FieldMatcher {
 pub struct NfaBuffers {
     /// Reusable buffers for arena-based NFA traversal
     pub arena_bufs: super::arena::ArenaNfaBuffers,
+    /// Pooled scratch for lazy decode of [`FieldValue::EscapedRaw`]
+    /// values (Phase 2 of lazy-flatten). The matcher wrapper at
+    /// `try_to_match_direct` clears + fills this buffer with the
+    /// escape-decoded `"..."` form before calling `transition_on`.
+    /// Only allocates when an event actually contains escapes; capacity
+    /// is preserved across calls via `clear()` in [`NfaBuffers::clear`].
+    pub decode_scratch: Vec<u8>,
 }
 
 impl NfaBuffers {
     pub fn new() -> Self {
         Self {
             arena_bufs: super::arena::ArenaNfaBuffers::new(),
+            decode_scratch: Vec::new(),
         }
     }
 
     pub fn clear(&mut self) {
         self.arena_bufs.clear();
+        self.decode_scratch.clear();
     }
 }

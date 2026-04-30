@@ -74,14 +74,24 @@ impl Field<'_> {
     }
 }
 
-/// Field value - either a slice of the original event or an owned string
-/// for values containing escape sequences.
+/// Field value emitted by the flattener.
+///
+/// All three variants represent string values **with their surrounding `"`
+/// quotes** (the type tag the automaton uses to distinguish strings from
+/// numbers); numeric/boolean/null values use `Borrowed` without quotes.
 #[derive(Clone, Debug)]
 pub enum FieldValue<'a> {
-    /// Borrowed slice from original event (zero-copy)
+    /// Zero-copy slice from the original event. No escape sequences inside —
+    /// the flattener emits `Owned` (or `EscapedRaw` in Phase 2) when it sees
+    /// a `\`.
     Borrowed(&'a [u8]),
-    /// Owned bytes (for escaped strings)
+    /// Owned, pre-decoded bytes. Used by callers that need a stable, decoded
+    /// representation independent of the source event lifetime.
     Owned(Vec<u8>),
+    /// Borrowed slice (with quotes) that contains un-decoded `\X` escape
+    /// sequences. The matcher decodes on demand via [`decode_json_escapes`]
+    /// only when a value transition actually inspects the bytes.
+    EscapedRaw(&'a [u8]),
 }
 
 /// Member name - either borrowed or owned if it contains escapes.
@@ -100,12 +110,147 @@ impl MemberName<'_> {
 }
 
 impl FieldValue<'_> {
+    /// Returns the raw byte representation of the value.
+    ///
+    /// For [`FieldValue::EscapedRaw`] this slice still contains un-decoded
+    /// `\X` escape sequences. Callers comparing against the matcher's
+    /// canonical form must run the bytes through [`decode_json_escapes`]
+    /// first; consumers that only need a stable identity (e.g. tests
+    /// asserting raw event content) can use the slice as-is.
+    #[inline]
     pub fn as_bytes(&self) -> &[u8] {
         match self {
             FieldValue::Borrowed(s) => s,
             FieldValue::Owned(v) => v,
+            FieldValue::EscapedRaw(s) => s,
         }
     }
+
+    /// Returns `true` if this value is [`FieldValue::EscapedRaw`] and needs
+    /// [`decode_json_escapes`] before equality comparison against a pattern
+    /// literal. Used by the matcher fast-path (Step 5) to skip the decode
+    /// wrapper for the common no-escape case.
+    #[allow(dead_code)] // wired in at Phase 2 Step 5
+    pub(crate) fn needs_escape_decode(&self) -> bool {
+        matches!(self, FieldValue::EscapedRaw(_))
+    }
+}
+
+/// Error variants returned by [`decode_json_escapes`].
+///
+/// The lazy-decode path runs at the matcher boundary and silently drops
+/// these errors (treating malformed values as no-match), since
+/// `read_string_value_lazy` already validated escape syntax at flatten
+/// time. The variants exist so the decoder can still abort cleanly
+/// rather than walk past invalid bytes.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum DecodeEscapeError {
+    /// Trailing `\` with no following byte.
+    PrematureEnd,
+    /// `\X` where `X` is not a recognized escape.
+    MalformedEscape,
+    /// Raw control byte (≤ 0x1f) inside the string content.
+    IllegalByte,
+    /// `\u` followed by fewer than 4 bytes.
+    TruncatedUnicode,
+    /// `\uXXXX` where one of the digits is not a hex char.
+    InvalidHex,
+}
+
+/// Decode JSON escape sequences in `raw`, appending the decoded UTF-8 bytes
+/// to `scratch`.
+///
+/// `raw` is the bytes between (but not including) the surrounding `"` quotes.
+/// **Append semantics:** `scratch` is NOT cleared on entry — callers control
+/// initial state. This lets the matcher-side wrapper pre-push a `"`, call
+/// this fn, then post-push a closing `"` to assemble the with-quotes value
+/// the automaton compares against without an extra copy.
+///
+/// This is the lazy-decode path for [`FieldValue::EscapedRaw`] (Phase 2):
+/// values containing `\` are emitted as a borrowed raw slice and only run
+/// through this decoder when a matcher actually inspects the bytes.
+pub(crate) fn decode_json_escapes(
+    raw: &[u8],
+    scratch: &mut Vec<u8>,
+) -> Result<(), DecodeEscapeError> {
+    let mut i = 0;
+    while i < raw.len() {
+        let ch = raw[i];
+        if ch == b'\\' {
+            i += 1;
+            if i >= raw.len() {
+                return Err(DecodeEscapeError::PrematureEnd);
+            }
+            let escaped = raw[i];
+            match escaped {
+                b'"' => scratch.push(b'"'),
+                b'\\' => scratch.push(b'\\'),
+                b'/' => scratch.push(b'/'),
+                b'b' => scratch.push(0x08),
+                b'f' => scratch.push(0x0c),
+                b'n' => scratch.push(b'\n'),
+                b'r' => scratch.push(b'\r'),
+                b't' => scratch.push(b'\t'),
+                b'u' => {
+                    i += 1;
+                    let code = decode_hex_4(raw, &mut i)?;
+                    if code < 0x80 {
+                        scratch.push(code as u8);
+                    } else if code < 0x800 {
+                        scratch.push(0xC0 | ((code >> 6) as u8));
+                        scratch.push(0x80 | ((code & 0x3F) as u8));
+                    } else if (0xD800..=0xDBFF).contains(&code) {
+                        // High surrogate - check for low surrogate
+                        if i + 5 < raw.len() && raw[i] == b'\\' && raw[i + 1] == b'u' {
+                            i += 2;
+                            let low = decode_hex_4(raw, &mut i)?;
+                            if (0xDC00..=0xDFFF).contains(&low) {
+                                let full = 0x10000 + ((code - 0xD800) << 10) + (low - 0xDC00);
+                                scratch.push(0xF0 | ((full >> 18) as u8));
+                                scratch.push(0x80 | (((full >> 12) & 0x3F) as u8));
+                                scratch.push(0x80 | (((full >> 6) & 0x3F) as u8));
+                                scratch.push(0x80 | ((full & 0x3F) as u8));
+                            }
+                        }
+                    } else {
+                        scratch.push(0xE0 | ((code >> 12) as u8));
+                        scratch.push(0x80 | (((code >> 6) & 0x3F) as u8));
+                        scratch.push(0x80 | ((code & 0x3F) as u8));
+                    }
+                    // Mirror the original loop's trailing decrement; the
+                    // outer `i += 1` re-advances past the last consumed hex.
+                    i -= 1;
+                }
+                _ => return Err(DecodeEscapeError::MalformedEscape),
+            }
+        } else if ch <= 0x1f {
+            return Err(DecodeEscapeError::IllegalByte);
+        } else {
+            scratch.push(ch);
+        }
+        i += 1;
+    }
+    Ok(())
+}
+
+/// Read 4 hex digits at `*i` from `raw`, advancing `*i` past them.
+fn decode_hex_4(raw: &[u8], i: &mut usize) -> Result<u32, DecodeEscapeError> {
+    let mut value = 0u32;
+    for _ in 0..4 {
+        if *i >= raw.len() {
+            return Err(DecodeEscapeError::TruncatedUnicode);
+        }
+        let ch = raw[*i];
+        let digit = match ch {
+            b'0'..=b'9' => ch - b'0',
+            b'a'..=b'f' => ch - b'a' + 10,
+            b'A'..=b'F' => ch - b'A' + 10,
+            _ => return Err(DecodeEscapeError::InvalidHex),
+        };
+        value = value * 16 + digit as u32;
+        *i += 1;
+    }
+    Ok(value)
 }
 
 /// Reusable JSON flattener state.
@@ -840,6 +985,14 @@ impl<'a> FlattenContext<'a, '_> {
     }
 
     /// Read a string value (including quotes).
+    ///
+    /// Phase 2 lazy path: when escapes are present, this returns
+    /// [`FieldValue::EscapedRaw`] (zero-copy borrow of the raw event slice
+    /// including quotes). The actual decode is deferred to the matcher
+    /// wrapper in `try_to_match_direct`, which only decodes when value
+    /// transitions are attempted. Malformed-escape and illegal-byte errors
+    /// inside escape-bearing values are no longer surfaced at flatten
+    /// time — the trade-off for skipping the per-call decode allocation.
     fn read_string_value(&mut self) -> Result<FieldValue<'a>, FlattenError> {
         let val_start = self.index;
         self.step()?; // skip opening "
@@ -854,7 +1007,7 @@ impl<'a> FlattenContext<'a, '_> {
             }
             Some((pos, _)) => {
                 self.index = pos;
-                return self.read_string_with_escapes(val_start);
+                return self.read_string_value_lazy(val_start);
             }
             None => {
                 self.index = scanned_to;
@@ -866,8 +1019,7 @@ impl<'a> FlattenContext<'a, '_> {
             if ch == b'"' {
                 return Ok(FieldValue::Borrowed(&self.event[val_start..=self.index]));
             } else if ch == b'\\' {
-                // Has escapes - need to unescape
-                return self.read_string_with_escapes(val_start);
+                return self.read_string_value_lazy(val_start);
             } else if ch <= 0x1f {
                 return Err(FlattenError::Error(
                     self.error(&format!("illegal byte {:02x} in string value", ch)),
@@ -879,84 +1031,71 @@ impl<'a> FlattenContext<'a, '_> {
         Err(FlattenError::Error(self.error("event truncated in string")))
     }
 
-    /// Read a string value that contains escape sequences.
-    fn read_string_with_escapes(
-        &mut self,
-        val_start: usize,
-    ) -> Result<FieldValue<'a>, FlattenError> {
-        let mut val = vec![b'"'];
-        // Copy content from after opening quote to current position (the backslash)
-        val.extend_from_slice(&self.event[val_start + 1..self.index]);
-
-        while self.index < self.event.len() {
-            let ch = self.event[self.index];
+    /// Lazy escape-path for [`read_string_value`]. Locates the closing `"`,
+    /// validates escape syntax in-place (without decoding), and emits
+    /// [`FieldValue::EscapedRaw`] borrowing from the event. The actual
+    /// decode runs at match time.
+    ///
+    /// In-pass validation preserves the pre-Phase-2 error contract:
+    /// malformed escapes and illegal control bytes inside walked values
+    /// still surface at flatten time. This costs a small extra check per
+    /// `\` but adds no allocation; the dominant cost (per-byte UTF-8
+    /// emit) is still deferred.
+    fn read_string_value_lazy(&mut self, val_start: usize) -> Result<FieldValue<'a>, FlattenError> {
+        // self.index is at the first `\`; scan forward to closing `"`,
+        // validating escape syntax along the way.
+        let mut i = self.index;
+        loop {
+            if i >= self.event.len() {
+                self.index = i;
+                return Err(FlattenError::Error(self.error("premature end of event")));
+            }
+            let ch = self.event[i];
             if ch == b'"' {
-                val.push(b'"');
-                return Ok(FieldValue::Owned(val));
-            } else if ch == b'\\' {
-                self.index += 1;
-                if self.index >= self.event.len() {
+                self.index = i;
+                return Ok(FieldValue::EscapedRaw(&self.event[val_start..=i]));
+            }
+            if ch == b'\\' {
+                if i + 1 >= self.event.len() {
+                    self.index = i + 1;
                     return Err(FlattenError::Error(self.error("premature end in escape")));
                 }
-                let escaped = self.event[self.index];
+                let escaped = self.event[i + 1];
                 match escaped {
-                    b'"' => val.push(b'"'),
-                    b'\\' => val.push(b'\\'),
-                    b'/' => val.push(b'/'),
-                    b'b' => val.push(0x08),
-                    b'f' => val.push(0x0c),
-                    b'n' => val.push(b'\n'),
-                    b'r' => val.push(b'\r'),
-                    b't' => val.push(b'\t'),
+                    b'"' | b'\\' | b'/' | b'b' | b'f' | b'n' | b'r' | b't' => i += 2,
                     b'u' => {
-                        // Unicode escape - parse 4 hex digits
-                        self.index += 1;
-                        let code = self.read_hex_4()?;
-                        // Simple case: BMP character
-                        if code < 0x80 {
-                            val.push(code as u8);
-                        } else if code < 0x800 {
-                            val.push(0xC0 | ((code >> 6) as u8));
-                            val.push(0x80 | ((code & 0x3F) as u8));
-                        } else if (0xD800..=0xDBFF).contains(&code) {
-                            // High surrogate - check for low surrogate
-                            if self.index + 5 < self.event.len()
-                                && self.event[self.index] == b'\\'
-                                && self.event[self.index + 1] == b'u'
-                            {
-                                self.index += 2;
-                                let low = self.read_hex_4()?;
-                                if (0xDC00..=0xDFFF).contains(&low) {
-                                    let full = 0x10000 + ((code - 0xD800) << 10) + (low - 0xDC00);
-                                    val.push(0xF0 | ((full >> 18) as u8));
-                                    val.push(0x80 | (((full >> 12) & 0x3F) as u8));
-                                    val.push(0x80 | (((full >> 6) & 0x3F) as u8));
-                                    val.push(0x80 | ((full & 0x3F) as u8));
-                                    // Don't decrement here - the decrement at end of b'u' case handles it
-                                }
-                            }
-                        } else {
-                            val.push(0xE0 | ((code >> 12) as u8));
-                            val.push(0x80 | (((code >> 6) & 0x3F) as u8));
-                            val.push(0x80 | ((code & 0x3F) as u8));
+                        // \uXXXX — need 4 hex digits at i+2..i+6
+                        if i + 6 > self.event.len() {
+                            self.index = self.event.len();
+                            return Err(FlattenError::Error(
+                                self.error("truncated unicode escape"),
+                            ));
                         }
-                        self.index -= 1; // will be incremented at end of loop
+                        for j in 0..4 {
+                            if !self.event[i + 2 + j].is_ascii_hexdigit() {
+                                self.index = i + 2 + j;
+                                return Err(FlattenError::Error(
+                                    self.error("invalid hex digit in unicode escape"),
+                                ));
+                            }
+                        }
+                        i += 6;
                     }
                     _ => {
+                        self.index = i + 1;
                         return Err(FlattenError::Error(self.error("malformed escape in text")));
                     }
                 }
-            } else if ch <= 0x1f {
+                continue;
+            }
+            if ch <= 0x1f {
+                self.index = i;
                 return Err(FlattenError::Error(
                     self.error(&format!("illegal byte {:02x} in string value", ch)),
                 ));
-            } else {
-                val.push(ch);
             }
-            self.index += 1;
+            i += 1;
         }
-
-        Err(FlattenError::Error(self.error("premature end of event")))
     }
 
     /// Read 4 hex digits for a \uXXXX escape.
@@ -1185,6 +1324,27 @@ mod tests {
         tree
     }
 
+    /// Test helper: return the decoded with-quotes form regardless of
+    /// `FieldValue` variant. Use in place of `field.val.as_bytes()` for
+    /// tests that assert against post-decode bytes; calling `as_bytes()`
+    /// directly on a [`FieldValue::EscapedRaw`] returns the still-encoded
+    /// raw event slice.
+    fn decoded_value(field: &Field) -> Vec<u8> {
+        match &field.val {
+            FieldValue::Borrowed(s) => s.to_vec(),
+            FieldValue::Owned(v) => v.clone(),
+            FieldValue::EscapedRaw(s) => {
+                assert!(s.len() >= 2 && s[0] == b'"' && s[s.len() - 1] == b'"');
+                let mut out = Vec::with_capacity(s.len());
+                out.push(b'"');
+                decode_json_escapes(&s[1..s.len() - 1], &mut out)
+                    .expect("decode_json_escapes failed on test input");
+                out.push(b'"');
+                out
+            }
+        }
+    }
+
     #[test]
     fn test_simple_object() {
         let event = br#"{"status": "active", "count": 42}"#;
@@ -1267,8 +1427,9 @@ mod tests {
         let fields = state.flatten(event, &tree).unwrap();
 
         assert_eq!(fields.len(), 1);
-        // Value should be unescaped
-        assert_eq!(fields[0].val.as_bytes(), b"\"hello\nworld\"");
+        // EscapedRaw carries un-decoded bytes; `decoded_value` runs the
+        // matcher-side decoder to assert the post-decode form.
+        assert_eq!(decoded_value(&fields[0]).as_slice(), b"\"hello\nworld\"");
     }
 
     #[test]
@@ -1279,7 +1440,7 @@ mod tests {
         let fields = state.flatten(event, &tree).unwrap();
 
         assert_eq!(fields.len(), 1);
-        assert_eq!(fields[0].val.as_bytes(), b"\"A\"");
+        assert_eq!(decoded_value(&fields[0]).as_slice(), b"\"A\"");
     }
 
     #[test]
@@ -1715,7 +1876,10 @@ x"#,
         let fields = state.flatten(event, &tree).unwrap();
         assert_eq!(fields.len(), 1);
         // U+00AB is «, encoded as UTF-8: 0xC2 0xAB
-        assert_eq!(fields[0].val.as_bytes(), &[b'"', 0xC2, 0xAB, b'"']);
+        assert_eq!(
+            decoded_value(&fields[0]).as_slice(),
+            &[b'"', 0xC2, 0xAB, b'"']
+        );
 
         // Also test in a member name
         let tree2 = make_tree(&["\u{00FF}key"]);
@@ -1810,7 +1974,10 @@ x"#,
         let fields = state.flatten(event, &tree).unwrap();
         assert_eq!(fields.len(), 1);
         // é = 0xC3 0xA9
-        assert_eq!(fields[0].val.as_bytes(), &[b'"', 0xC3, 0xA9, b'"']);
+        assert_eq!(
+            decoded_value(&fields[0]).as_slice(),
+            &[b'"', 0xC3, 0xA9, b'"']
+        );
     }
 
     #[test]
@@ -1822,7 +1989,10 @@ x"#,
         let fields = state.flatten(event, &tree).unwrap();
         assert_eq!(fields.len(), 1);
         // U+0080 = 0xC2 0x80 in UTF-8
-        assert_eq!(fields[0].val.as_bytes(), &[b'"', 0xC2, 0x80, b'"']);
+        assert_eq!(
+            decoded_value(&fields[0]).as_slice(),
+            &[b'"', 0xC2, 0x80, b'"']
+        );
     }
 
     #[test]
@@ -1834,7 +2004,10 @@ x"#,
         let fields = state.flatten(event, &tree).unwrap();
         assert_eq!(fields.len(), 1);
         // U+0800 = 0xE0 0xA0 0x80 in UTF-8
-        assert_eq!(fields[0].val.as_bytes(), &[b'"', 0xE0, 0xA0, 0x80, b'"']);
+        assert_eq!(
+            decoded_value(&fields[0]).as_slice(),
+            &[b'"', 0xE0, 0xA0, 0x80, b'"']
+        );
     }
 
     #[test]
@@ -1845,7 +2018,10 @@ x"#,
         let fields = state.flatten(event, &tree).unwrap();
         assert_eq!(fields.len(), 1);
         // 中 = 0xE4 0xB8 0xAD
-        assert_eq!(fields[0].val.as_bytes(), &[b'"', 0xE4, 0xB8, 0xAD, b'"']);
+        assert_eq!(
+            decoded_value(&fields[0]).as_slice(),
+            &[b'"', 0xE4, 0xB8, 0xAD, b'"']
+        );
     }
 
     #[test]
@@ -1857,7 +2033,7 @@ x"#,
         assert_eq!(fields.len(), 1);
         // 😀 = 0xF0 0x9F 0x98 0x80
         assert_eq!(
-            fields[0].val.as_bytes(),
+            decoded_value(&fields[0]).as_slice(),
             &[b'"', 0xF0, 0x9F, 0x98, 0x80, b'"']
         );
     }
@@ -1906,7 +2082,7 @@ x"#,
         assert_eq!(fields.len(), 1);
         // 😀 = 0xF0 0x9F 0x98 0x80
         assert_eq!(
-            fields[0].val.as_bytes(),
+            decoded_value(&fields[0]).as_slice(),
             &[b'"', 0xF0, 0x9F, 0x98, 0x80, b'"']
         );
     }

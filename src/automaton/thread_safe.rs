@@ -109,6 +109,29 @@ impl<'a, T> Iterator for TransitionsIter<'a, T> {
     }
 }
 
+/// Decode a `FieldValue::EscapedRaw` into the matcher's scratch buffer and
+/// return a slice referencing the decoded `"..."` form. Marked `#[cold]` +
+/// `#[inline(never)]` so the EscapedRaw arm of the value-extract match in
+/// `try_to_match_direct` stays out of the hot path; the no-escape path
+/// (Borrowed/Owned, vast majority of fields) does not pull this body into
+/// icache, and LLVM emits a tail-edge branch hint.
+///
+/// `raw` is the still-quoted slice from the source event. Decoder errors
+/// are suppressed: malformed input that reached this point already passed
+/// the flatten-time closing-quote scan, so the worst case is an
+/// un-decodable suffix that simply won't match any pattern.
+#[cold]
+#[inline(never)]
+fn decode_escaped_for_match<'a>(raw: &[u8], scratch: &'a mut Vec<u8>) -> &'a [u8] {
+    scratch.clear();
+    if raw.len() >= 2 {
+        scratch.push(b'"');
+        let _ = crate::flatten_json::decode_json_escapes(&raw[1..raw.len() - 1], scratch);
+        scratch.push(b'"');
+    }
+    scratch.as_slice()
+}
+
 /// Check if two array trails have no conflicts (using flatten_json::ArrayPos)
 fn no_array_trail_conflict_ref(
     from: &[crate::flatten_json::ArrayPos],
@@ -179,8 +202,21 @@ impl<X: Clone + Eq + Hash> FrozenFieldMatcher<X> {
         is_number: bool,
         bufs: &mut NfaBuffers,
     ) -> Transitions<Arc<Self>> {
+        self.transition_on_arena(path, value, is_number, &mut bufs.arena_bufs)
+    }
+
+    /// Like [`transition_on`] but takes the arena buffers directly so that
+    /// the caller can hold a disjoint mutable borrow of `decode_scratch`
+    /// (Phase 2 lazy-decode wrapper). The public method is a thin wrapper.
+    pub(crate) fn transition_on_arena(
+        &self,
+        path: &str,
+        value: &[u8],
+        is_number: bool,
+        arena_bufs: &mut crate::automaton::arena::ArenaNfaBuffers,
+    ) -> Transitions<Arc<Self>> {
         if let Some(vm) = self.transitions.get(path) {
-            vm.transition_on(value, is_number, bufs)
+            vm.transition_on_arena(value, is_number, arena_bufs)
         } else {
             Transitions::Empty
         }
@@ -241,13 +277,18 @@ impl<X: Clone + Eq + Hash> FrozenValueMatcher<X> {
         }
     }
 
-    /// Transition on a value during matching
+    /// Transition on a value during matching.
+    ///
+    /// Takes [`ArenaNfaBuffers`] directly (rather than the outer
+    /// [`NfaBuffers`]) so the caller in `try_to_match_direct` can hold a
+    /// disjoint mutable borrow on `decode_scratch` for the Phase 2 lazy
+    /// escape-decode path while this method walks the arena.
     #[inline]
-    pub(crate) fn transition_on(
+    pub(crate) fn transition_on_arena(
         &self,
         value: &[u8],
         is_number: bool,
-        bufs: &mut NfaBuffers,
+        arena_bufs: &mut crate::automaton::arena::ArenaNfaBuffers,
     ) -> Transitions<Arc<FrozenFieldMatcher<X>>> {
         // Singleton fast path: when no multi-condition NFAs coexist with singleton,
         // we can short-circuit without touching transition_map.
@@ -299,30 +340,25 @@ impl<X: Clone + Eq + Hash> FrozenValueMatcher<X> {
                 if self.main_arena_is_nfa {
                     if let Some(ref lazy_dfa_mutex) = self.lazy_dfa {
                         // Tier 2: Lazy DFA — on-demand DFA state caching
-                        bufs.arena_bufs.transitions.clear();
+                        arena_bufs.transitions.clear();
                         let mut lazy_dfa = lazy_dfa_mutex.lock();
                         traverse_lazy_dfa(
                             &mut lazy_dfa,
                             value_to_match,
-                            &mut bufs.arena_bufs.transitions,
+                            &mut arena_bufs.transitions,
                         );
                     } else {
                         // Tier 3: NFA path — handles epsilon transitions and spinout states
-                        bufs.arena_bufs.clear();
-                        traverse_arena_nfa(arena, start, value_to_match, &mut bufs.arena_bufs);
+                        arena_bufs.clear();
+                        traverse_arena_nfa(arena, start, value_to_match, arena_bufs);
                     }
                 } else {
                     // Tier 1: DFA fast path — tight loop, no buffer management overhead
-                    bufs.arena_bufs.transitions.clear();
-                    traverse_arena_dfa(
-                        arena,
-                        start,
-                        value_to_match,
-                        &mut bufs.arena_bufs.transitions,
-                    );
+                    arena_bufs.transitions.clear();
+                    traverse_arena_dfa(arena, start, value_to_match, &mut arena_bufs.transitions);
                 }
 
-                for &ptr in &bufs.arena_bufs.transitions {
+                for &ptr in &arena_bufs.transitions {
                     if let Some(frozen_fm) = self.transition_map.get(&ptr) {
                         result.push(frozen_fm.clone());
                     }
@@ -331,15 +367,15 @@ impl<X: Clone + Eq + Hash> FrozenValueMatcher<X> {
 
             // Traverse suffix_arena backward (right-to-left DFA for suffix patterns)
             if let Some((ref arena, start)) = self.suffix_arena {
-                bufs.arena_bufs.transitions.clear();
+                arena_bufs.transitions.clear();
                 traverse_arena_dfa_backward(
                     arena,
                     start,
                     value_to_match,
-                    &mut bufs.arena_bufs.transitions,
+                    &mut arena_bufs.transitions,
                 );
 
-                for &ptr in &bufs.arena_bufs.transitions {
+                for &ptr in &arena_bufs.transitions {
                     if let Some(frozen_fm) = self.transition_map.get(&ptr) {
                         result.push(frozen_fm.clone());
                     }
@@ -360,15 +396,15 @@ impl<X: Clone + Eq + Hash> FrozenValueMatcher<X> {
 
                 for condition in &mc_nfa.conditions {
                     // Traverse the condition automaton on the full value
-                    bufs.arena_bufs.clear();
+                    arena_bufs.clear();
                     traverse_arena_nfa(
                         &condition.arena,
                         condition.start,
                         value_to_match,
-                        &mut bufs.arena_bufs,
+                        arena_bufs,
                     );
 
-                    let condition_matched = !bufs.arena_bufs.transitions.is_empty();
+                    let condition_matched = !arena_bufs.transitions.is_empty();
 
                     // Check if condition passes:
                     // - Positive condition: must match
@@ -1010,7 +1046,6 @@ impl<X: Clone + Eq + Hash + Send + Sync> ThreadSafeCoreMatcher<X> {
     ) {
         let field = &fields[index];
         let path = field.path_str();
-        let value = field.value_bytes();
         let array_trail = field.array_trail_slice();
 
         // Check exists:true transition
@@ -1029,8 +1064,30 @@ impl<X: Clone + Eq + Hash + Send + Sync> ThreadSafeCoreMatcher<X> {
         // Check exists:false
         self.check_exists_false_direct(state, fields, index, matches, bufs);
 
+        // Phase 2 lazy-decode: a `FieldValue::EscapedRaw` carries the raw
+        // event bytes (with `\X` escapes intact); the matcher decodes on
+        // demand into `bufs.decode_scratch` only when value transitions are
+        // actually attempted. Disjoint borrows of `decode_scratch` and
+        // `arena_bufs` let `transition_on_arena` run while `value` borrows
+        // from the scratch buffer.
+        //
+        // Match arms are explicit (not `_ => field.value_bytes()`) so the
+        // common Borrowed/Owned paths read the variant once instead of
+        // twice (the wildcard form re-matched inside `as_bytes`).
+        let NfaBuffers {
+            arena_bufs,
+            decode_scratch,
+        } = bufs;
+        let value: &[u8] = match &field.val {
+            crate::flatten_json::FieldValue::Borrowed(s) => s,
+            crate::flatten_json::FieldValue::Owned(v) => v.as_slice(),
+            crate::flatten_json::FieldValue::EscapedRaw(raw) => {
+                decode_escaped_for_match(raw, decode_scratch)
+            }
+        };
+
         // Try value transitions
-        let next_states = state.transition_on(path, value, field.is_number, bufs);
+        let next_states = state.transition_on_arena(path, value, field.is_number, arena_bufs);
 
         for next_state in next_states.iter() {
             for m in &next_state.matches {
