@@ -418,8 +418,10 @@ mod sse42 {
 // Built on x86_64 (used as the runtime fallback inside `x86_dispatch` when
 // neither AVX2 nor SSE4.2 is detected — e.g. under Miri, or on a CPU without
 // either feature) and on every non-aarch64 target (where it's the only path).
-// On aarch64, NEON is mandatory, so the scalar mod is unused and elided.
-#[cfg(not(target_arch = "aarch64"))]
+// On aarch64, NEON is mandatory, so the scalar mod is unused at runtime and
+// elided — except under `cfg(test)`, where the parity tests use it as the
+// reference implementation against NEON.
+#[cfg(any(test, not(target_arch = "aarch64")))]
 mod scalar {
     use super::*;
 
@@ -675,4 +677,205 @@ pub fn scan_string(data: &[u8], start: usize, init_odd_bs: u64) -> (Option<usize
 /// if the remainder is <64 bytes with no hit. `which_byte` is `"` or `\`.
 pub fn scan_delim(data: &[u8], start: usize) -> (Option<(usize, u8)>, usize) {
     scan_delim_dispatch(data, start)
+}
+
+// ── Cross-backend parity tests ───────────────────────────────────────────────
+//
+// Every SIMD backend must produce bit-identical output to the scalar
+// reference on the same input. The corpus is intentionally compact (each
+// case ≤ 192 bytes, ≤ 8 cases) so the suite stays inside Miri's CI budget.
+//
+// Miri behaviour: `is_x86_feature_detected!` always returns false under
+// Miri, so the AVX2/SSE4.2 branches are skipped automatically — Miri only
+// exercises the scalar path against itself, validating UB-freedom of the
+// shared `run_scan*` kernels. The aarch64 NEON backend is gated with
+// `cfg(target_arch = "aarch64")` and Miri runs on x86_64 in CI, so NEON is
+// also elided there at compile time. NEON parity is exercised on dev
+// machines (the user's mac) and on any future aarch64 CI runner.
+#[cfg(test)]
+mod parity_tests {
+    use super::*;
+
+    /// Build the parity corpus. Each case targets a distinct code path in
+    /// `run_scan*`: empty / sub-chunk / chunk-aligned / multi-chunk with
+    /// string masking / odd-length backslash carry / even-length runs.
+    fn corpus() -> Vec<(&'static str, Vec<u8>)> {
+        let mut v: Vec<(&'static str, Vec<u8>)> = vec![
+            ("empty", vec![]),
+            ("short_no_struct", b"hello world".to_vec()),
+            ("short_quotes", b"\"hi\"".to_vec()),
+            ("short_escape", b"\"a\\\"b\"".to_vec()),
+        ];
+
+        // Exactly one chunk (64B) with both an open and close brace.
+        let mut one = vec![b'.'; 64];
+        one[10] = b'{';
+        one[50] = b'}';
+        v.push(("one_chunk_braces", one));
+
+        // Two chunks: a `{` lives inside a string in chunk 0 (must be
+        // masked out), the real `}` lives in chunk 1.
+        let mut two = vec![b'.'; 128];
+        two[10] = b'"';
+        two[40] = b'{';
+        two[70] = b'"';
+        two[90] = b'}';
+        v.push(("two_chunks_string_mask", two));
+
+        // Odd-length backslash run straddling the 64-byte boundary: the
+        // following `"` must be treated as escaped, NOT as a real quote.
+        let mut odd = vec![b'a'; 192];
+        odd[0] = b'"';
+        for byte in odd.iter_mut().take(67).skip(60) {
+            *byte = b'\\';
+        }
+        odd[67] = b'"'; // escaped — must be ignored
+        odd[100] = b'"'; // real close
+        v.push(("odd_bs_carry", odd));
+
+        // Even-length backslash run: carry must NOT propagate; following
+        // `"` is real.
+        let mut even = vec![b'a'; 128];
+        even[0] = b'"';
+        for byte in even.iter_mut().take(64).skip(60) {
+            *byte = b'\\';
+        }
+        even[64] = b'"'; // real (preceded by `\\\\`)
+        v.push(("even_bs_no_carry", even));
+
+        v
+    }
+
+    /// Initial-state matrix for `scan_block` / `scan_string`. Covers fresh
+    /// state plus both carry flags so the `find_escaped` / `prefix_xor`
+    /// fast-path guards (`bs_bits == 0 && prev_odd_bs == 0`,
+    /// `real_quotes == 0 && !prev_in_str`) are exercised.
+    const SCAN_INIT_STATES: &[(bool, u64, &str)] = &[
+        (false, 0, "fresh"),
+        (true, 0, "in_str"),
+        (false, 1, "odd_bs"),
+        (true, 1, "in_str+odd_bs"),
+    ];
+
+    #[test]
+    fn scan_block_parity() {
+        for (case, data) in corpus() {
+            for &(in_str, odd_bs, st) in SCAN_INIT_STATES {
+                let mut lvl_ref = 1i32;
+                let baseline = scalar::scan(&data, 0, b'{', b'}', &mut lvl_ref, in_str, odd_bs);
+                let scenario = format!("{case}/{st}");
+
+                #[cfg(target_arch = "aarch64")]
+                {
+                    let mut lvl = 1i32;
+                    let got = unsafe { neon::scan(&data, 0, b'{', b'}', &mut lvl, in_str, odd_bs) };
+                    assert_eq!(got, baseline, "neon vs scalar @ {scenario}");
+                    assert_eq!(lvl, lvl_ref, "neon level @ {scenario}");
+                }
+
+                #[cfg(target_arch = "x86_64")]
+                {
+                    if std::is_x86_feature_detected!("avx2") {
+                        let mut lvl = 1i32;
+                        let got =
+                            unsafe { avx2::scan(&data, 0, b'{', b'}', &mut lvl, in_str, odd_bs) };
+                        assert_eq!(got, baseline, "avx2 vs scalar @ {scenario}");
+                        assert_eq!(lvl, lvl_ref, "avx2 level @ {scenario}");
+                    }
+                    if std::is_x86_feature_detected!("sse4.2") {
+                        let mut lvl = 1i32;
+                        let got =
+                            unsafe { sse42::scan(&data, 0, b'{', b'}', &mut lvl, in_str, odd_bs) };
+                        assert_eq!(got, baseline, "sse42 vs scalar @ {scenario}");
+                        assert_eq!(lvl, lvl_ref, "sse42 level @ {scenario}");
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn scan_string_parity() {
+        for (case, data) in corpus() {
+            for &(_, odd_bs, st) in SCAN_INIT_STATES {
+                let baseline = scalar::scan_string(&data, 0, odd_bs);
+                let scenario = format!("{case}/{st}");
+
+                #[cfg(target_arch = "aarch64")]
+                {
+                    let got = unsafe { neon::scan_string(&data, 0, odd_bs) };
+                    assert_eq!(got, baseline, "neon vs scalar @ {scenario}");
+                }
+
+                #[cfg(target_arch = "x86_64")]
+                {
+                    if std::is_x86_feature_detected!("avx2") {
+                        let got = unsafe { avx2::scan_string(&data, 0, odd_bs) };
+                        assert_eq!(got, baseline, "avx2 vs scalar @ {scenario}");
+                    }
+                    if std::is_x86_feature_detected!("sse4.2") {
+                        let got = unsafe { sse42::scan_string(&data, 0, odd_bs) };
+                        assert_eq!(got, baseline, "sse42 vs scalar @ {scenario}");
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn scan_delim_parity() {
+        for (case, data) in corpus() {
+            let baseline = scalar::scan_delim(&data, 0);
+
+            #[cfg(target_arch = "aarch64")]
+            {
+                let got = unsafe { neon::scan_delim(&data, 0) };
+                assert_eq!(got, baseline, "neon vs scalar @ {case}");
+            }
+
+            #[cfg(target_arch = "x86_64")]
+            {
+                if std::is_x86_feature_detected!("avx2") {
+                    let got = unsafe { avx2::scan_delim(&data, 0) };
+                    assert_eq!(got, baseline, "avx2 vs scalar @ {case}");
+                }
+                if std::is_x86_feature_detected!("sse4.2") {
+                    let got = unsafe { sse42::scan_delim(&data, 0) };
+                    assert_eq!(got, baseline, "sse42 vs scalar @ {case}");
+                }
+            }
+        }
+    }
+
+    /// Mid-stream start: every backend must respect `start > 0` identically
+    /// (matters for `read_string_value` resuming after a `\` bail-out).
+    #[test]
+    fn nonzero_start_parity() {
+        let mut data = vec![b'.'; 192];
+        data[5] = b'"';
+        data[80] = b'"';
+        data[150] = b'"';
+
+        for &start in &[1usize, 32, 64, 65, 128] {
+            let baseline = scalar::scan_delim(&data, start);
+
+            #[cfg(target_arch = "aarch64")]
+            {
+                let got = unsafe { neon::scan_delim(&data, start) };
+                assert_eq!(got, baseline, "neon vs scalar @ start={start}");
+            }
+
+            #[cfg(target_arch = "x86_64")]
+            {
+                if std::is_x86_feature_detected!("avx2") {
+                    let got = unsafe { avx2::scan_delim(&data, start) };
+                    assert_eq!(got, baseline, "avx2 vs scalar @ start={start}");
+                }
+                if std::is_x86_feature_detected!("sse4.2") {
+                    let got = unsafe { sse42::scan_delim(&data, start) };
+                    assert_eq!(got, baseline, "sse42 vs scalar @ start={start}");
+                }
+            }
+        }
+    }
 }
