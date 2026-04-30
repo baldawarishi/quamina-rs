@@ -90,8 +90,8 @@ from the gate-check; possibly worse on skip-heavy inputs if gate is wrong. Track
 
 | # | Status | Commit | Bench delta | Notes |
 |---|--------|--------|-------------|-------|
-| 0. Baseline + profile_array_heavy commit | ✅ Done | _this commit_ | — | Apple Silicon M-series; tree at `f81b435`. |
-| 1. `scan_object_index` kernel | ⬜ Todo | — | — | — |
+| 0. Baseline + profile_array_heavy commit | ✅ Done | `8fb46cf` | — | Apple Silicon M-series; tree at `f81b435`. |
+| 1. `scan_object_index` kernel | ✅ Done | _this commit_ | array_heavy 2571→2533 ns (-1.5%, within noise) | Kernel + 4 backends + dispatchers + 7 unit tests. No callers yet. |
 | 2. Pool `obj_index_buf` | ⬜ Todo | — | — | — |
 | 3. Pre-scan in `read_object` (gated) | ⬜ Todo | — | — | — |
 | 4. Indexed read/skip variants | ⬜ Todo | — | — | — |
@@ -136,6 +136,22 @@ walk-heavy-array canary for Phase 1.
 
 Criterion `change` vs prior runs is informational only — Phase 1 deltas are computed
 against these absolute numbers.
+
+#### Step 1 — `scan_object_index` kernel
+
+Added `run_scan_object_index<B: Backend>` to `flatten_json_simd.rs` plus per-backend
+`scan_object_index` wrappers (NEON, AVX2, SSE4.2, scalar), an `OnceLock`-cached
+x86_64 dispatcher, and the public entry `scan_object_index(data, start, &mut Vec<u32>,
+&mut depth, init_in_str, init_odd_bs)`. Reuses `find_escaped` + `prefix_xor`; uses 6
+`cmp_mask` calls (`"`, `\`, `{`, `}`, `[`, `]`) with the same string-mask gating as
+`run_scan`. Emits depth-1 quote/open/close offsets only — depth ≥2 internals are
+skipped (consumer recurses or calls `skip_block_indexed`). Carry state mirrors
+`scan_block` so a padded-tail re-scan resumes seamlessly.
+
+Verified: 7 new unit tests cover empty body, single member, escaped quote, nested
+object/array (depth-2 skip), brace inside string, and 64-byte chunk-boundary carry.
+780 lib tests pass. `profile_array_heavy`: 2571 → 2533 ns/call (-1.5%, code-layout
+noise; kernel has no callers yet — wired in at Step 3).
 
 ---
 

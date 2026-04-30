@@ -197,6 +197,91 @@ unsafe fn run_scan_string<B: Backend>(
     (None, i, prev_odd_bs)
 }
 
+/// One structural pass over an open object body.
+///
+/// Caller has already consumed the opening `{` and starts scanning at the first
+/// byte of the body, with `*depth == 1`. The kernel:
+/// - Appends to `out` the absolute offsets of every depth-1 structural byte
+///   inside the body — i.e. quotes that bound a member name or string value,
+///   and `{`/`[`/`}`/`]` that open/close an immediate sub-value.
+/// - Returns the position of the matching outer `}` (the depth 1→0 transition)
+///   when found. That close is **not** emitted to `out`.
+/// - Carries `prev_in_str` and `prev_odd_bs` across chunks just like `run_scan`,
+///   and propagates `*depth` for padded-tail continuation.
+///
+/// Quotes and structurals at depth ≥ 2 are intentionally skipped — a nested
+/// object whose body the consumer needs to walk will recurse and run its own
+/// pre-scan; a nested value the consumer skips wholesale needs only the outer
+/// open/close pair, which we already emit.
+#[inline(always)]
+unsafe fn run_scan_object_index<B: Backend>(
+    data: &[u8],
+    start: usize,
+    out: &mut Vec<u32>,
+    depth: &mut i32,
+    init_in_str: bool,
+    init_odd_bs: u64,
+) -> (Option<usize>, usize, bool, u64) {
+    let mut i = start;
+    let mut prev_in_str = init_in_str;
+    let mut prev_odd_bs = init_odd_bs;
+
+    while i + 64 <= data.len() {
+        let chunk = unsafe { B::load(data, i) };
+        let bs_bits = unsafe { chunk.cmp_mask(b'\\') };
+        let quote_bits = unsafe { chunk.cmp_mask(b'"') };
+        let lb = unsafe { chunk.cmp_mask(b'{') };
+        let rb = unsafe { chunk.cmp_mask(b'}') };
+        let la = unsafe { chunk.cmp_mask(b'[') };
+        let ra = unsafe { chunk.cmp_mask(b']') };
+
+        let escaped = if bs_bits == 0 && prev_odd_bs == 0 {
+            0
+        } else {
+            find_escaped(bs_bits, &mut prev_odd_bs)
+        };
+        let real_quotes = quote_bits & !escaped;
+        let string_mask = if real_quotes == 0 && !prev_in_str {
+            0
+        } else {
+            prefix_xor(real_quotes, &mut prev_in_str)
+        };
+        let opens = (lb | la) & !string_mask;
+        let closes = (rb | ra) & !string_mask;
+
+        let base = i as u32;
+        let mut bits = real_quotes | opens | closes;
+        while bits != 0 {
+            let pos = bits.trailing_zeros();
+            let bit = 1u64 << pos;
+            if (opens & bit) != 0 {
+                if *depth == 1 {
+                    out.push(base + pos);
+                }
+                *depth += 1;
+            } else if (closes & bit) != 0 {
+                *depth -= 1;
+                if *depth == 0 {
+                    return (Some(i + pos as usize), i + 64, prev_in_str, prev_odd_bs);
+                }
+                if *depth == 1 {
+                    out.push(base + pos);
+                }
+            } else {
+                // real_quotes (string boundary)
+                if *depth == 1 {
+                    out.push(base + pos);
+                }
+            }
+            bits &= bits - 1;
+        }
+
+        i += 64;
+    }
+
+    (None, i, prev_in_str, prev_odd_bs)
+}
+
 /// Scan forward for the first `"` or `\`. Simpler than `run_scan_string`:
 /// the caller bails to scalar on `\`, so we don't need escape masking.
 ///
@@ -307,6 +392,20 @@ mod neon {
     pub(super) unsafe fn scan_delim(data: &[u8], start: usize) -> (Option<(usize, u8)>, usize) {
         unsafe { run_scan_delim::<NeonChunk>(data, start) }
     }
+
+    #[target_feature(enable = "neon")]
+    pub(super) unsafe fn scan_object_index(
+        data: &[u8],
+        start: usize,
+        out: &mut Vec<u32>,
+        depth: &mut i32,
+        init_in_str: bool,
+        init_odd_bs: u64,
+    ) -> (Option<usize>, usize, bool, u64) {
+        unsafe {
+            run_scan_object_index::<NeonChunk>(data, start, out, depth, init_in_str, init_odd_bs)
+        }
+    }
 }
 
 // ── AVX2 (x86_64) ────────────────────────────────────────────────────────────
@@ -370,6 +469,20 @@ mod avx2 {
     #[target_feature(enable = "avx2")]
     pub(super) unsafe fn scan_delim(data: &[u8], start: usize) -> (Option<(usize, u8)>, usize) {
         unsafe { run_scan_delim::<Avx2Chunk>(data, start) }
+    }
+
+    #[target_feature(enable = "avx2")]
+    pub(super) unsafe fn scan_object_index(
+        data: &[u8],
+        start: usize,
+        out: &mut Vec<u32>,
+        depth: &mut i32,
+        init_in_str: bool,
+        init_odd_bs: u64,
+    ) -> (Option<usize>, usize, bool, u64) {
+        unsafe {
+            run_scan_object_index::<Avx2Chunk>(data, start, out, depth, init_in_str, init_odd_bs)
+        }
     }
 }
 
@@ -441,6 +554,20 @@ mod sse42 {
     pub(super) unsafe fn scan_delim(data: &[u8], start: usize) -> (Option<(usize, u8)>, usize) {
         unsafe { run_scan_delim::<Sse42Chunk>(data, start) }
     }
+
+    #[target_feature(enable = "sse4.2")]
+    pub(super) unsafe fn scan_object_index(
+        data: &[u8],
+        start: usize,
+        out: &mut Vec<u32>,
+        depth: &mut i32,
+        init_in_str: bool,
+        init_odd_bs: u64,
+    ) -> (Option<usize>, usize, bool, u64) {
+        unsafe {
+            run_scan_object_index::<Sse42Chunk>(data, start, out, depth, init_in_str, init_odd_bs)
+        }
+    }
 }
 
 // ── Scalar fallback (all other targets) ──────────────────────────────────────
@@ -495,6 +622,19 @@ mod scalar {
     pub(super) fn scan_delim(data: &[u8], start: usize) -> (Option<(usize, u8)>, usize) {
         unsafe { run_scan_delim::<ScalarChunk>(data, start) }
     }
+
+    pub(super) fn scan_object_index(
+        data: &[u8],
+        start: usize,
+        out: &mut Vec<u32>,
+        depth: &mut i32,
+        init_in_str: bool,
+        init_odd_bs: u64,
+    ) -> (Option<usize>, usize, bool, u64) {
+        unsafe {
+            run_scan_object_index::<ScalarChunk>(data, start, out, depth, init_in_str, init_odd_bs)
+        }
+    }
 }
 
 // ── Platform dispatcher ───────────────────────────────────────────────────────
@@ -505,6 +645,9 @@ type ScanFn = fn(&[u8], usize, u8, u8, &mut i32, bool, u64) -> (Option<usize>, u
 type ScanStringFn = fn(&[u8], usize, u64) -> (Option<usize>, usize, u64);
 #[cfg(target_arch = "x86_64")]
 type ScanDelimFn = fn(&[u8], usize) -> (Option<(usize, u8)>, usize);
+#[cfg(target_arch = "x86_64")]
+type ScanObjIndexFn =
+    fn(&[u8], usize, &mut Vec<u32>, &mut i32, bool, u64) -> (Option<usize>, usize, bool, u64);
 
 #[cfg(target_arch = "aarch64")]
 fn scan_block_dispatch(
@@ -531,6 +674,18 @@ fn scan_string_dispatch(
 #[cfg(target_arch = "aarch64")]
 fn scan_delim_dispatch(data: &[u8], start: usize) -> (Option<(usize, u8)>, usize) {
     unsafe { neon::scan_delim(data, start) }
+}
+
+#[cfg(target_arch = "aarch64")]
+fn scan_object_index_dispatch(
+    data: &[u8],
+    start: usize,
+    out: &mut Vec<u32>,
+    depth: &mut i32,
+    init_in_str: bool,
+    init_odd_bs: u64,
+) -> (Option<usize>, usize, bool, u64) {
+    unsafe { neon::scan_object_index(data, start, out, depth, init_in_str, init_odd_bs) }
 }
 
 // x86_64: resolve the backend once and cache the function pointer.
@@ -581,10 +736,31 @@ mod x86_dispatch {
     fn sse42_scan_delim(data: &[u8], start: usize) -> (Option<(usize, u8)>, usize) {
         unsafe { sse42::scan_delim(data, start) }
     }
+    fn avx2_scan_object_index(
+        data: &[u8],
+        start: usize,
+        out: &mut Vec<u32>,
+        depth: &mut i32,
+        init_in_str: bool,
+        init_odd_bs: u64,
+    ) -> (Option<usize>, usize, bool, u64) {
+        unsafe { avx2::scan_object_index(data, start, out, depth, init_in_str, init_odd_bs) }
+    }
+    fn sse42_scan_object_index(
+        data: &[u8],
+        start: usize,
+        out: &mut Vec<u32>,
+        depth: &mut i32,
+        init_in_str: bool,
+        init_odd_bs: u64,
+    ) -> (Option<usize>, usize, bool, u64) {
+        unsafe { sse42::scan_object_index(data, start, out, depth, init_in_str, init_odd_bs) }
+    }
 
     static SCAN: OnceLock<ScanFn> = OnceLock::new();
     static SCAN_STR: OnceLock<ScanStringFn> = OnceLock::new();
     static SCAN_DELIM: OnceLock<ScanDelimFn> = OnceLock::new();
+    static SCAN_OBJ_IDX: OnceLock<ScanObjIndexFn> = OnceLock::new();
 
     fn resolve_scan() -> ScanFn {
         if std::is_x86_feature_detected!("avx2") {
@@ -611,6 +787,15 @@ mod x86_dispatch {
             sse42_scan_delim
         } else {
             scalar::scan_delim
+        }
+    }
+    fn resolve_scan_object_index() -> ScanObjIndexFn {
+        if std::is_x86_feature_detected!("avx2") {
+            avx2_scan_object_index
+        } else if std::is_x86_feature_detected!("sse4.2") {
+            sse42_scan_object_index
+        } else {
+            scalar::scan_object_index
         }
     }
 
@@ -643,6 +828,19 @@ mod x86_dispatch {
         let f = *SCAN_DELIM.get_or_init(resolve_scan_delim);
         f(data, start)
     }
+
+    #[inline]
+    pub(super) fn scan_object_index(
+        data: &[u8],
+        start: usize,
+        out: &mut Vec<u32>,
+        depth: &mut i32,
+        init_in_str: bool,
+        init_odd_bs: u64,
+    ) -> (Option<usize>, usize, bool, u64) {
+        let f = *SCAN_OBJ_IDX.get_or_init(resolve_scan_object_index);
+        f(data, start, out, depth, init_in_str, init_odd_bs)
+    }
 }
 
 #[cfg(target_arch = "x86_64")]
@@ -672,6 +870,18 @@ fn scan_delim_dispatch(data: &[u8], start: usize) -> (Option<(usize, u8)>, usize
     x86_dispatch::scan_delim(data, start)
 }
 
+#[cfg(target_arch = "x86_64")]
+fn scan_object_index_dispatch(
+    data: &[u8],
+    start: usize,
+    out: &mut Vec<u32>,
+    depth: &mut i32,
+    init_in_str: bool,
+    init_odd_bs: u64,
+) -> (Option<usize>, usize, bool, u64) {
+    x86_dispatch::scan_object_index(data, start, out, depth, init_in_str, init_odd_bs)
+}
+
 #[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
 fn scan_block_dispatch(
     data: &[u8],
@@ -699,6 +909,18 @@ fn scan_delim_dispatch(data: &[u8], start: usize) -> (Option<(usize, u8)>, usize
     scalar::scan_delim(data, start)
 }
 
+#[cfg(not(any(target_arch = "aarch64", target_arch = "x86_64")))]
+fn scan_object_index_dispatch(
+    data: &[u8],
+    start: usize,
+    out: &mut Vec<u32>,
+    depth: &mut i32,
+    init_in_str: bool,
+    init_odd_bs: u64,
+) -> (Option<usize>, usize, bool, u64) {
+    scalar::scan_object_index(data, start, out, depth, init_in_str, init_odd_bs)
+}
+
 pub fn scan_block(
     data: &[u8],
     start: usize,
@@ -720,4 +942,144 @@ pub fn scan_string(data: &[u8], start: usize, init_odd_bs: u64) -> (Option<usize
 /// if the remainder is <64 bytes with no hit. `which_byte` is `"` or `\`.
 pub fn scan_delim(data: &[u8], start: usize) -> (Option<(usize, u8)>, usize) {
     scan_delim_dispatch(data, start)
+}
+
+/// One structural pass over an open object body.
+///
+/// Caller has consumed the opening `{` and starts at the first byte of the body
+/// with `*depth == 1`. Appends to `out` the absolute offsets of every depth-1
+/// quote and `{`/`[`/`}`/`]`. Returns the position of the matching outer `}`
+/// (the depth 1→0 transition) when found; that close is **not** emitted.
+///
+/// Carry state mirrors `scan_block`: on chunk-exhausted (returns `None`), the
+/// caller may continue from `scanned_to` (typically via a zero-padded tail
+/// buffer) reusing `prev_in_str`, `prev_odd_bs`, and `*depth`.
+pub fn scan_object_index(
+    data: &[u8],
+    start: usize,
+    out: &mut Vec<u32>,
+    depth: &mut i32,
+    init_in_str: bool,
+    init_odd_bs: u64,
+) -> (Option<usize>, usize, bool, u64) {
+    scan_object_index_dispatch(data, start, out, depth, init_in_str, init_odd_bs)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Pad `body` (the bytes of an object body, **not** including the leading `{`)
+    /// to a multiple of 64 with trailing zeros so the SIMD path engages without
+    /// the caller having to manage a padded-tail buffer in tests.
+    fn padded(body: &[u8]) -> Vec<u8> {
+        let mut v = body.to_vec();
+        let pad = 64 - (v.len() % 64);
+        if pad != 64 {
+            v.resize(v.len() + pad, 0);
+        }
+        if v.len() < 64 {
+            v.resize(64, 0);
+        }
+        v
+    }
+
+    fn run(body: &[u8]) -> (Option<usize>, Vec<u32>) {
+        let buf = padded(body);
+        let mut out = Vec::new();
+        let mut depth: i32 = 1;
+        let (close, _scanned, _in_str, _odd_bs) =
+            scan_object_index(&buf, 0, &mut out, &mut depth, false, 0);
+        (close, out)
+    }
+
+    #[test]
+    fn empty_object_body() {
+        // Body of `{}` — caller stripped the `{`, so we see `}...` immediately.
+        let (close, out) = run(b"}");
+        assert_eq!(close, Some(0));
+        assert!(out.is_empty(), "no depth-1 structurals before the close");
+    }
+
+    #[test]
+    fn single_string_member() {
+        // {"k":"v"}  — body = `"k":"v"}`
+        let body = b"\"k\":\"v\"}";
+        let (close, out) = run(body);
+        assert_eq!(close, Some(7), "matching `}}` at position 7");
+        // 4 quotes at offsets 0, 2, 4, 6
+        assert_eq!(out, vec![0, 2, 4, 6]);
+    }
+
+    #[test]
+    fn escaped_quote_inside_value() {
+        // {"k":"a\"b"}  — embedded escaped quote must not be counted.
+        let body = b"\"k\":\"a\\\"b\"}";
+        let (close, out) = run(body);
+        assert_eq!(close, Some(10));
+        // Quotes at: 0,2 (name), 4 (value open), 9 (value close after a\"b)
+        assert_eq!(out, vec![0, 2, 4, 9]);
+    }
+
+    #[test]
+    fn nested_object_emits_only_depth_1_pair() {
+        // {"o":{"n":"v"}}  — body = `"o":{"n":"v"}}`
+        // Depth-1: quotes around "o" (offsets 0, 2), `{` at 4, `}` at 12.
+        // Depth-2 quotes (around "n" and "v") are skipped.
+        let body = b"\"o\":{\"n\":\"v\"}}";
+        let (close, out) = run(body);
+        assert_eq!(close, Some(13));
+        assert_eq!(out, vec![0, 2, 4, 12]);
+    }
+
+    #[test]
+    fn nested_array_with_strings_skipped() {
+        // {"a":["x","y"]}  — body = `"a":["x","y"]}`
+        // Depth-1: quotes around "a" (0,2), `[` at 4, `]` at 12.
+        let body = b"\"a\":[\"x\",\"y\"]}";
+        let (close, out) = run(body);
+        assert_eq!(close, Some(13));
+        assert_eq!(out, vec![0, 2, 4, 12]);
+    }
+
+    #[test]
+    fn brace_inside_string_value_not_structural() {
+        // {"k":"v}x"}  — `}` inside the string must not be treated as the close.
+        let body = b"\"k\":\"v}x\"}";
+        let (close, out) = run(body);
+        assert_eq!(close, Some(9));
+        assert_eq!(out, vec![0, 2, 4, 8]);
+    }
+
+    #[test]
+    fn carry_across_64b_chunk_boundary() {
+        // Build a body whose first chunk ends inside a string, then resume.
+        // Body: `"k":"<60 bytes>"}` — total 65 bytes; first 64 land mid-string.
+        let mut body = Vec::new();
+        body.extend_from_slice(b"\"k\":\"");
+        body.extend(std::iter::repeat(b'a').take(60));
+        body.extend_from_slice(b"\"}");
+        // First call on body[..64]: chunk exhausted with prev_in_str=true.
+        let mut padded_first = body[..64].to_vec();
+        let mut out = Vec::new();
+        let mut depth: i32 = 1;
+        let (close, scanned, in_str, odd_bs) =
+            scan_object_index(&padded_first, 0, &mut out, &mut depth, false, 0);
+        assert!(close.is_none(), "close not yet seen");
+        assert_eq!(scanned, 64);
+        assert!(in_str, "still inside the value string");
+        assert_eq!(odd_bs, 0);
+        // Tail: pad remainder to 64 bytes with zeros and resume.
+        padded_first.clear();
+        padded_first.extend_from_slice(&body[64..]);
+        padded_first.resize(64, 0);
+        let (close2, _scanned2, _in_str2, _odd_bs2) =
+            scan_object_index(&padded_first, 0, &mut out, &mut depth, in_str, odd_bs);
+        // Matching `}` is at body offset 66, i.e. index 2 of the tail buffer.
+        assert_eq!(close2, Some(2));
+        // Out: name-quotes (0, 2), value-open quote (4), value-close quote (65 → 1 in tail).
+        // The tail call appends offsets relative to the tail buffer, so out becomes
+        // [0, 2, 4, 1] (the 4 from chunk 1, the 1 from chunk 2's value-close quote).
+        assert_eq!(out, vec![0, 2, 4, 1]);
+    }
 }
