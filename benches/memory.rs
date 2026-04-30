@@ -356,12 +356,11 @@ fn profile_number_matching() -> MemoryStats {
     MemoryStats::capture("number_matching_100_events")
 }
 
-/// Profile: Phase 2 lazy escape-decode validation. Events whose matched
-/// values contain `\X` escapes used to allocate one `Vec<u8>` per emitted
-/// field (pre-Phase-2 `FieldValue::Owned` path); post-Phase-2 the value is
-/// borrowed as `FieldValue::EscapedRaw` and decoded into a pooled scratch
-/// buffer at the matcher boundary, so per-event growth is bounded by the
-/// scratch's steady-state capacity.
+/// Profile: lazy escape-decode validation. Events whose matched values
+/// contain `\X` escapes are emitted as `FieldValue::EscapedRaw` (a borrowed
+/// raw slice) and decoded into a pooled scratch buffer at the matcher
+/// boundary, so per-event growth is bounded by the scratch's steady-state
+/// capacity rather than allocating a fresh `Vec<u8>` per emitted field.
 ///
 /// 100 events × 4 escape-bearing matched fields = 400 escape decodes.
 /// Bounded alloc count (≪ 400) confirms the pool reuses scratch capacity.
@@ -485,7 +484,7 @@ fn main() {
             profile_shellstyle_matching(),
         ),
         (
-            "Matching: Escape-content 100 events × 4 fields (Phase 2 lazy decode)",
+            "Matching: Escape-content 100 events × 4 fields (lazy decode)",
             profile_escape_content_matching(),
         ),
     ];

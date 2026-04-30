@@ -82,8 +82,7 @@ impl Field<'_> {
 #[derive(Clone, Debug)]
 pub enum FieldValue<'a> {
     /// Zero-copy slice from the original event. No escape sequences inside —
-    /// the flattener emits `Owned` (or `EscapedRaw` in Phase 2) when it sees
-    /// a `\`.
+    /// the flattener emits `EscapedRaw` instead when the value contains `\`.
     Borrowed(&'a [u8]),
     /// Owned, pre-decoded bytes. Used by callers that need a stable, decoded
     /// representation independent of the source event lifetime.
@@ -166,9 +165,9 @@ pub(crate) enum DecodeEscapeError {
 /// this fn, then post-push a closing `"` to assemble the with-quotes value
 /// the automaton compares against without an extra copy.
 ///
-/// This is the lazy-decode path for [`FieldValue::EscapedRaw`] (Phase 2):
-/// values containing `\` are emitted as a borrowed raw slice and only run
-/// through this decoder when a matcher actually inspects the bytes.
+/// This is the lazy-decode path for [`FieldValue::EscapedRaw`]: values
+/// containing `\` are emitted as a borrowed raw slice and only run through
+/// this decoder when a matcher actually inspects the bytes.
 pub(crate) fn decode_json_escapes(
     raw: &[u8],
     scratch: &mut Vec<u8>,
@@ -986,13 +985,13 @@ impl<'a> FlattenContext<'a, '_> {
 
     /// Read a string value (including quotes).
     ///
-    /// Phase 2 lazy path: when escapes are present, this returns
-    /// [`FieldValue::EscapedRaw`] (zero-copy borrow of the raw event slice
-    /// including quotes). The actual decode is deferred to the matcher
-    /// wrapper in `try_to_match_direct`, which only decodes when value
-    /// transitions are attempted. Malformed-escape and illegal-byte errors
-    /// inside escape-bearing values are no longer surfaced at flatten
-    /// time — the trade-off for skipping the per-call decode allocation.
+    /// When escapes are present, returns [`FieldValue::EscapedRaw`] (a
+    /// zero-copy borrow of the raw event slice including quotes). The actual
+    /// decode is deferred to the matcher wrapper in `try_to_match_direct`,
+    /// which only decodes when value transitions are attempted.
+    /// Malformed-escape and illegal-byte errors inside escape-bearing values
+    /// are not surfaced at flatten time — the trade-off for skipping the
+    /// per-call decode allocation.
     fn read_string_value(&mut self) -> Result<FieldValue<'a>, FlattenError> {
         let val_start = self.index;
         self.step()?; // skip opening "

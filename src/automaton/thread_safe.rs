@@ -207,7 +207,8 @@ impl<X: Clone + Eq + Hash> FrozenFieldMatcher<X> {
 
     /// Like [`transition_on`] but takes the arena buffers directly so that
     /// the caller can hold a disjoint mutable borrow of `decode_scratch`
-    /// (Phase 2 lazy-decode wrapper). The public method is a thin wrapper.
+    /// while running the lazy escape-decode path. The public method is a
+    /// thin wrapper.
     pub(crate) fn transition_on_arena(
         &self,
         path: &str,
@@ -281,7 +282,7 @@ impl<X: Clone + Eq + Hash> FrozenValueMatcher<X> {
     ///
     /// Takes [`ArenaNfaBuffers`] directly (rather than the outer
     /// [`NfaBuffers`]) so the caller in `try_to_match_direct` can hold a
-    /// disjoint mutable borrow on `decode_scratch` for the Phase 2 lazy
+    /// disjoint mutable borrow on `decode_scratch` for the lazy
     /// escape-decode path while this method walks the arena.
     #[inline]
     pub(crate) fn transition_on_arena(
@@ -1064,7 +1065,7 @@ impl<X: Clone + Eq + Hash + Send + Sync> ThreadSafeCoreMatcher<X> {
         // Check exists:false
         self.check_exists_false_direct(state, fields, index, matches, bufs);
 
-        // Phase 2 lazy-decode: a `FieldValue::EscapedRaw` carries the raw
+        // Lazy escape-decode: a `FieldValue::EscapedRaw` carries the raw
         // event bytes (with `\X` escapes intact); the matcher decodes on
         // demand into `bufs.decode_scratch` only when value transitions are
         // actually attempted. Disjoint borrows of `decode_scratch` and
