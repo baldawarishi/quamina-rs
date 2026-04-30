@@ -356,6 +356,37 @@ fn profile_number_matching() -> MemoryStats {
     MemoryStats::capture("number_matching_100_events")
 }
 
+/// Profile: Phase 2 lazy escape-decode validation. Events whose matched
+/// values contain `\X` escapes used to allocate one `Vec<u8>` per emitted
+/// field (pre-Phase-2 `FieldValue::Owned` path); post-Phase-2 the value is
+/// borrowed as `FieldValue::EscapedRaw` and decoded into a pooled scratch
+/// buffer at the matcher boundary, so per-event growth is bounded by the
+/// scratch's steady-state capacity.
+///
+/// 100 events × 4 escape-bearing matched fields = 400 escape decodes.
+/// Bounded alloc count (≪ 400) confirms the pool reuses scratch capacity.
+fn profile_escape_content_matching() -> MemoryStats {
+    let mut q = Quamina::new();
+    q.add_pattern(
+        "P",
+        r#"{"a": ["x with \"quotes\""], "b": ["line\nbreak"], "c": ["tab\there"], "d": ["uniécode"]}"#,
+    )
+    .unwrap();
+
+    // Each event has all four matched fields with escapes.
+    let event =
+        r#"{"a":"x with \"quotes\"","b":"line\nbreak","c":"tab\there","d":"uniécode"}"#.as_bytes();
+
+    #[cfg(feature = "dhat-heap")]
+    let _profiler = dhat::Profiler::builder().testing().build();
+
+    for _ in 0..100 {
+        let _ = q.matches_for_event(event).unwrap();
+    }
+
+    MemoryStats::capture("escape_content_100_events_4_fields")
+}
+
 /// Profile: Shellstyle pattern matching (26 patterns A* through Z*)
 fn profile_shellstyle_matching() -> MemoryStats {
     // Build matcher outside profiling
@@ -452,6 +483,10 @@ fn main() {
         (
             "Matching: Shellstyle 100 events",
             profile_shellstyle_matching(),
+        ),
+        (
+            "Matching: Escape-content 100 events × 4 fields (Phase 2 lazy decode)",
+            profile_escape_content_matching(),
         ),
     ];
 
