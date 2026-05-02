@@ -676,6 +676,36 @@ pub fn scan_delim(data: &[u8], start: usize) -> (Option<(usize, u8)>, usize) {
     scan_delim_dispatch(data, start)
 }
 
+// Test-only scalar entry points. Used by `flatten_json::FlattenContext`
+// dispatch helpers when `force_scalar` is set so the SIMD↔scalar parity
+// test can run both kernels through the same higher-level pipeline.
+#[cfg(test)]
+pub(crate) fn scan_block_scalar(
+    data: &[u8],
+    start: usize,
+    open: u8,
+    close: u8,
+    level: &mut i32,
+    init_in_str: bool,
+    init_odd_bs: u64,
+) -> (Option<usize>, usize, bool, u64) {
+    scalar::scan(data, start, open, close, level, init_in_str, init_odd_bs)
+}
+
+#[cfg(test)]
+pub(crate) fn scan_string_scalar(
+    data: &[u8],
+    start: usize,
+    init_odd_bs: u64,
+) -> (Option<usize>, usize, u64) {
+    scalar::scan_string(data, start, init_odd_bs)
+}
+
+#[cfg(test)]
+pub(crate) fn scan_delim_scalar(data: &[u8], start: usize) -> (Option<(usize, u8)>, usize) {
+    scalar::scan_delim(data, start)
+}
+
 // ── Cross-backend parity tests ───────────────────────────────────────────────
 //
 // Every SIMD backend must produce bit-identical output to the scalar

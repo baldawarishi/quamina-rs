@@ -275,6 +275,10 @@ pub struct FlattenJsonState {
     /// 2. We only expose fields with the correct event lifetime
     /// 3. The mutable borrow of self prevents concurrent access
     fields: Vec<Field<'static>>,
+    /// Test-only: when set, every SIMD scan goes through the scalar
+    /// reference path. Used by the SIMD↔scalar parity test.
+    #[cfg(test)]
+    force_scalar: bool,
 }
 
 impl Default for FlattenJsonState {
@@ -289,7 +293,16 @@ impl FlattenJsonState {
         Self {
             array_trail: ArrayTrailVec::new(),
             fields: Vec::with_capacity(32),
+            #[cfg(test)]
+            force_scalar: false,
         }
+    }
+
+    /// Test-only: route all SIMD scans through the scalar reference path
+    /// so the parity test can compare results from both kernels.
+    #[cfg(test)]
+    pub(crate) fn set_force_scalar(&mut self, v: bool) {
+        self.force_scalar = v;
     }
 
     /// Reset internal state for reuse.
@@ -322,6 +335,8 @@ impl FlattenJsonState {
             skipping: 0,
             array_trail: &mut self.array_trail,
             array_count: 0,
+            #[cfg(test)]
+            force_scalar: self.force_scalar,
         };
 
         ctx.flatten_impl(tree)?;
@@ -350,6 +365,9 @@ struct FlattenContext<'a, 'b> {
     skipping: i32,
     array_trail: &'b mut ArrayTrailVec,
     array_count: i32,
+    /// Test-only: route SIMD scans through the scalar reference path.
+    #[cfg(test)]
+    force_scalar: bool,
 }
 
 impl<'a> FlattenContext<'a, '_> {
@@ -361,6 +379,67 @@ impl<'a> FlattenContext<'a, '_> {
         // receive a slice with the correct 'a lifetime.
         let static_field: Field<'static> = unsafe { std::mem::transmute(field) };
         self.fields.push(static_field);
+    }
+
+    // SIMD dispatch helpers. Future SIMD call sites must go through these
+    // (not `crate::flatten_json_simd::scan_*` directly) so the
+    // `force_scalar` test toggle keeps the parity test honest.
+    #[inline]
+    #[allow(clippy::too_many_arguments)]
+    fn scan_block_dispatch(
+        &self,
+        data: &[u8],
+        start: usize,
+        open: u8,
+        close: u8,
+        level: &mut i32,
+        init_in_str: bool,
+        init_odd_bs: u64,
+    ) -> (Option<usize>, usize, bool, u64) {
+        #[cfg(test)]
+        if self.force_scalar {
+            return crate::flatten_json_simd::scan_block_scalar(
+                data,
+                start,
+                open,
+                close,
+                level,
+                init_in_str,
+                init_odd_bs,
+            );
+        }
+        crate::flatten_json_simd::scan_block(
+            data,
+            start,
+            open,
+            close,
+            level,
+            init_in_str,
+            init_odd_bs,
+        )
+    }
+
+    #[inline]
+    fn scan_string_dispatch(
+        &self,
+        data: &[u8],
+        start: usize,
+        init_odd_bs: u64,
+    ) -> (Option<usize>, usize, u64) {
+        #[cfg(test)]
+        if self.force_scalar {
+            return crate::flatten_json_simd::scan_string_scalar(data, start, init_odd_bs);
+        }
+        crate::flatten_json_simd::scan_string(data, start, init_odd_bs)
+    }
+
+    #[inline]
+    fn scan_delim_dispatch(&self, data: &[u8], start: usize) -> (Option<(usize, u8)>, usize) {
+        #[cfg(test)]
+        if self.force_scalar {
+            return crate::flatten_json_simd::scan_delim_scalar(data, start);
+        }
+        crate::flatten_json_simd::scan_delim(data, start)
     }
 }
 
@@ -753,9 +832,8 @@ impl<'a> FlattenContext<'a, '_> {
     fn skip_block(&mut self, open: u8, close: u8) -> Result<(), FlattenError> {
         let mut level = 0i32;
 
-        let (found, scanned_to, in_str, odd_bs) = crate::flatten_json_simd::scan_block(
-            self.event, self.index, open, close, &mut level, false, 0,
-        );
+        let (found, scanned_to, in_str, odd_bs) =
+            self.scan_block_dispatch(self.event, self.index, open, close, &mut level, false, 0);
         if let Some(pos) = found {
             self.index = pos;
             return Ok(());
@@ -771,7 +849,8 @@ impl<'a> FlattenContext<'a, '_> {
         }
         let mut buf = [0u8; 64];
         buf[..remaining].copy_from_slice(&self.event[self.index..]);
-        match crate::flatten_json_simd::scan_block(&buf, 0, open, close, &mut level, in_str, odd_bs)
+        match self
+            .scan_block_dispatch(&buf, 0, open, close, &mut level, in_str, odd_bs)
             .0
         {
             Some(rel) => {
@@ -787,8 +866,7 @@ impl<'a> FlattenContext<'a, '_> {
     fn skip_string_value(&mut self) -> Result<(), FlattenError> {
         self.step()?; // skip opening "
 
-        let (found, scanned_to, odd_bs) =
-            crate::flatten_json_simd::scan_string(self.event, self.index, 0);
+        let (found, scanned_to, odd_bs) = self.scan_string_dispatch(self.event, self.index, 0);
         if let Some(pos) = found {
             self.index = pos;
             return Ok(());
@@ -834,7 +912,7 @@ impl<'a> FlattenContext<'a, '_> {
         // Ctrl-byte (<=0x1f) validation is deferred to the scalar tail; any
         // bytes we jump over here go unvalidated, which matches quamina's
         // lenient parsing posture on this path.
-        let (found, scanned_to) = crate::flatten_json_simd::scan_delim(self.event, self.index);
+        let (found, scanned_to) = self.scan_delim_dispatch(self.event, self.index);
         match found {
             Some((pos, b'"')) => {
                 self.index = pos;
@@ -947,7 +1025,7 @@ impl<'a> FlattenContext<'a, '_> {
 
         // SIMD fast-advance: bulk-skip plain bytes to the first `"` or `\`.
         // See `read_member_name` for the ctrl-byte caveat.
-        let (found, scanned_to) = crate::flatten_json_simd::scan_delim(self.event, self.index);
+        let (found, scanned_to) = self.scan_delim_dispatch(self.event, self.index);
         match found {
             Some((pos, b'"')) => {
                 self.index = pos;
@@ -1964,6 +2042,98 @@ x"#,
                 *expected,
                 "case={label}"
             );
+        }
+    }
+
+    #[test]
+    fn test_simd_vs_scalar_flatten_parity() {
+        // Run a varied corpus through `flatten()` twice — once with the
+        // platform SIMD scanners, once with `force_scalar=true` — and assert
+        // byte-identical Field outputs (path, val bytes, array_trail,
+        // is_number). Anchors all SIMD call sites against their scalar
+        // reference at the integration level, not just the kernel level.
+        struct Case {
+            label: &'static str,
+            tree_paths: &'static [&'static str],
+            event: &'static [u8],
+        }
+        let cases: &[Case] = &[
+            Case {
+                label: "simple_object",
+                tree_paths: &["status", "count"],
+                event: br#"{"status": "active", "count": 42}"#,
+            },
+            Case {
+                label: "nested_object",
+                tree_paths: &["context\nuser\nid"],
+                event: br#"{"context": {"user": {"id": "abc"}}}"#,
+            },
+            Case {
+                label: "array_of_strings",
+                tree_paths: &["items"],
+                event: br#"{"items": ["a", "b", "c"]}"#,
+            },
+            Case {
+                label: "escapes_in_value",
+                tree_paths: &["v"],
+                event: br#"{"v": "line break\nend"}"#,
+            },
+            Case {
+                label: "escapes_in_name",
+                tree_paths: &["é"],
+                event: br#"{"\u00E9": "yes"}"#,
+            },
+            Case {
+                label: "deep_nesting",
+                tree_paths: &["a\nb\nc\nd\ne"],
+                event: br#"{"a":{"b":{"c":{"d":{"e": "deep"}}}}}"#,
+            },
+            Case {
+                label: "skipped_fields_with_strings",
+                tree_paths: &["keep"],
+                event: br#"{"skip1": "with \"quoted\" inside", "skip2": [1,2,3], "keep": "yes"}"#,
+            },
+            Case {
+                label: "long_padding_to_exercise_chunked_scan",
+                tree_paths: &["target"],
+                event: br#"{"filler": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "target": "found"}"#,
+            },
+        ];
+
+        fn snapshot(fields: &[Field<'_>]) -> Vec<(Vec<u8>, Vec<u8>, bool, Vec<(i32, i32)>)> {
+            fields
+                .iter()
+                .map(|f| {
+                    (
+                        f.path.as_ref().to_vec(),
+                        decoded_value(f),
+                        f.is_number,
+                        f.array_trail
+                            .iter()
+                            .map(|p| (p.array, p.pos))
+                            .collect::<Vec<_>>(),
+                    )
+                })
+                .collect()
+        }
+
+        for case in cases {
+            let tree = make_tree(case.tree_paths);
+
+            let mut s_simd = FlattenJsonState::new();
+            let f_simd = s_simd
+                .flatten(case.event, &tree)
+                .unwrap_or_else(|e| panic!("simd flatten failed for {}: {e:?}", case.label));
+            let snap_simd = snapshot(f_simd);
+
+            let mut s_scalar = FlattenJsonState::new();
+            s_scalar.set_force_scalar(true);
+            let f_scalar = s_scalar
+                .flatten(case.event, &tree)
+                .unwrap_or_else(|e| panic!("scalar flatten failed for {}: {e:?}", case.label));
+            let snap_scalar = snapshot(f_scalar);
+
+            assert_eq!(snap_simd, snap_scalar, "case={}", case.label);
         }
     }
 
