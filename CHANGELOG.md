@@ -9,18 +9,18 @@ Style inspired by [ripgrep's CHANGELOG](https://github.com/BurntSushi/ripgrep/bl
 ## [Unreleased]
 
 ### Added
-- NFA→DFA subset construction at freeze time: regexp patterns with epsilon transitions are eagerly converted to DFA (budget: 8× NFA states, max 10k), with a lazy DFA fallback for patterns exceeding the eager budget (`regexp_plus_long`: 1259→501 ns, `regexp_star_long`: 1125→459 ns, `pathological_epsilon`: 6.08→2.00 µs)
-- DFA acceleration: `compute_dfa_accel` detects self-loop states and attaches memchr skip info for SIMD byte skipping on patterns like `[^x]+`
+- Eager NFA→DFA subset construction at freeze time for regexp patterns, with a lazy DFA fallback for patterns exceeding the eager budget (`pathological_epsilon`: 6.08→2.00 µs)
+- DFA acceleration for self-loop states (e.g. `[^x]+`) via memchr-based byte skipping
 - Profiling examples for NFA→DFA budget tuning and negated char class acceleration
-- aarch64 CI runner (`ubuntu-24.04-arm`) plus cross-backend parity tests in `flatten_json_simd` so NEON / AVX2 / SSE4.2 are asserted bit-identical to the scalar reference on every chunk-aligned, sub-chunk, multi-chunk, and odd/even-backslash-carry corpus case
+- aarch64 CI runner (`ubuntu-24.04-arm`) plus cross-backend parity tests asserting NEON / AVX2 / SSE4.2 are bit-identical to the scalar reference
 
 ### Changed
-- New `flatten_json_simd` module: 64-byte chunked simdjson-style scanner (`find_escaped` + `prefix_xor` masking) with NEON / AVX2 / SSE4.2 / scalar backends behind a shared `Backend` trait; x86_64 dispatch resolved once via `OnceLock`. Wired into `skip_block`, `skip_string_value`, `read_string_value`, and `read_member_name` (`status.json flatten_only`: 2047→1879 ns/op cumulative across the chain)
-- Lazy escape decode: values containing `\X` escapes are emitted as `FieldValue::EscapedRaw` (zero-copy borrow) and decoded into a pooled `decode_scratch` only when value transitions actually inspect the bytes; common no-escape path stays zero-alloc (`citylots`: 1.698 µs→1.644 µs, `status_context_fields`: 216→200 ns)
-- Batch whitespace skipping in the scalar parser via `skip_ws_to_last` — one match dispatch per run instead of per byte (`flatten_context_fields`: -7.4%, `flatten_direct_context_fields`: -6.3%)
+- New SIMD-accelerated JSON scanner (NEON / AVX2 / SSE4.2 / scalar backends) wired into the flattener's string and skip paths (`status.json flatten_only`: 2047→1879 ns/op)
+- Lazy escape decode: values containing `\X` escapes are emitted as a zero-copy borrow and decoded only when a matcher inspects the bytes; the no-escape path stays zero-alloc (`citylots`: 1.698→1.644 µs)
+- Batch whitespace skipping in the scalar flattener (`flatten_context_fields`: -7.4%)
 
 ### Fixed
-- `[^x]+` patterns (17K-state Unicode NFA) exceeded the DFA budget and regressed; SIMD acceleration via `AccelInfo::try_accelerate` restores performance (`regexp_negated_1k`: 3.2 µs → 652 ns)
+- `[^x]+` patterns (17K-state Unicode NFA) regressed past the DFA budget; restored via memchr-based byte-skip acceleration (`regexp_negated_1k`: 3.2 µs → 652 ns)
 
 ## [0.5.0] — 2026-03-23
 
