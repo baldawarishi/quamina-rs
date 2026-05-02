@@ -1910,6 +1910,64 @@ x"#,
     }
 
     #[test]
+    fn test_escaped_raw_decode_parity() {
+        let tree = make_tree(&["v"]);
+
+        // Sub-table A: escape form vs equivalent pre-decoded UTF-8.
+        // Both forms must produce identical bytes through `decoded_value`.
+        // The escape-form input must take the lazy-decode `EscapedRaw` path.
+        let dual: &[(&str, &str, &str)] = &[
+            ("ascii_below_0080", "\\u0041", "A"),
+            ("bmp_2byte", "\\u00E9", "é"),
+            ("bmp_3byte", "\\u4E2D", "中"),
+            ("surrogate_pair", "\\uD83D\\uDE00", "😀"),
+        ];
+        for (label, escape_form, pre_decoded) in dual {
+            let mut s_esc = FlattenJsonState::new();
+            let event_esc = format!(r#"{{"v": "{escape_form}"}}"#);
+            let f_esc = s_esc.flatten(event_esc.as_bytes(), &tree).unwrap();
+            assert_eq!(f_esc.len(), 1, "case={label}");
+            assert!(
+                matches!(f_esc[0].val, FieldValue::EscapedRaw(_)),
+                "case={label}: expected EscapedRaw variant"
+            );
+            let decoded_esc = decoded_value(&f_esc[0]);
+
+            let mut s_lit = FlattenJsonState::new();
+            let event_lit = format!(r#"{{"v": "{pre_decoded}"}}"#);
+            let f_lit = s_lit.flatten(event_lit.as_bytes(), &tree).unwrap();
+            assert_eq!(f_lit.len(), 1, "case={label}");
+            let decoded_lit = decoded_value(&f_lit[0]);
+
+            assert_eq!(decoded_esc, decoded_lit, "case={label}");
+        }
+
+        // Sub-table B: control-byte escapes have no raw-byte equivalent
+        // inside a JSON string (RFC 8259), so assert against hardcoded
+        // expected bytes.
+        let literal: &[(&str, &str, &[u8])] = &[
+            ("literal_newline", "\\n", &[b'"', 0x0A, b'"']),
+            ("literal_tab", "\\t", &[b'"', 0x09, b'"']),
+            ("literal_backslash", "\\\\", &[b'"', 0x5C, b'"']),
+        ];
+        for (label, escape_form, expected) in literal {
+            let mut state = FlattenJsonState::new();
+            let event = format!(r#"{{"v": "{escape_form}"}}"#);
+            let fields = state.flatten(event.as_bytes(), &tree).unwrap();
+            assert_eq!(fields.len(), 1, "case={label}");
+            assert!(
+                matches!(fields[0].val, FieldValue::EscapedRaw(_)),
+                "case={label}: expected EscapedRaw variant"
+            );
+            assert_eq!(
+                decoded_value(&fields[0]).as_slice(),
+                *expected,
+                "case={label}"
+            );
+        }
+    }
+
+    #[test]
     fn test_skip_string_with_unicode_escape() {
         // Unicode escapes in skipped strings must not confuse the skip logic
         let tree = make_tree(&["keep"]);
