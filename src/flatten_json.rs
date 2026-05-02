@@ -1859,131 +1859,54 @@ x"#,
     }
 
     #[test]
-    fn test_unicode_escape_2byte_in_name() {
-        // \u00E9 = é, 2-byte UTF-8: 0xC3 0xA9
-        let tree = make_tree(&["é"]);
-        let mut state = FlattenJsonState::new();
-        let event = br#"{"\u00E9": "yes"}"#;
-        let fields = state.flatten(event, &tree).unwrap();
-        assert_eq!(fields.len(), 1);
-        assert_eq!(fields[0].val.as_bytes(), br#""yes""#);
+    fn test_unicode_escapes_in_name() {
+        let cases: &[(&str, &str, &[u8])] = &[
+            ("2byte_e9", "\\u00E9", &[0xC3, 0xA9]),
+            ("boundary_0080", "\\u0080", &[0xC2, 0x80]),
+            ("boundary_0800", "\\u0800", &[0xE0, 0xA0, 0x80]),
+            ("3byte_cjk", "\\u4E2D", &[0xE4, 0xB8, 0xAD]),
+            (
+                "surrogate_pair_emoji",
+                "\\uD83D\\uDE00",
+                &[0xF0, 0x9F, 0x98, 0x80],
+            ),
+        ];
+        for (label, escape_form, decoded_bytes) in cases {
+            let path = std::str::from_utf8(decoded_bytes).unwrap();
+            let tree = make_tree(&[path]);
+            let mut state = FlattenJsonState::new();
+            let event = format!(r#"{{"{escape_form}": "x"}}"#);
+            let fields = state.flatten(event.as_bytes(), &tree).unwrap();
+            assert_eq!(fields.len(), 1, "case={label}");
+            assert_eq!(fields[0].val.as_bytes(), br#""x""#, "case={label}");
+        }
     }
 
     #[test]
-    fn test_unicode_escape_boundary_0080_in_name() {
-        // U+0080 sits at the 1-byte / 2-byte UTF-8 boundary
-        let tree = make_tree(&["\u{0080}"]);
-        let mut state = FlattenJsonState::new();
-        let event = br#"{"\u0080": "boundary"}"#;
-        let fields = state.flatten(event, &tree).unwrap();
-        assert_eq!(fields.len(), 1);
-        assert_eq!(fields[0].val.as_bytes(), br#""boundary""#);
-    }
-
-    #[test]
-    fn test_unicode_escape_boundary_0800_in_name() {
-        // U+0800 sits at the 2-byte / 3-byte UTF-8 boundary
-        let tree = make_tree(&["\u{0800}"]);
-        let mut state = FlattenJsonState::new();
-        let event = br#"{"\u0800": "boundary2"}"#;
-        let fields = state.flatten(event, &tree).unwrap();
-        assert_eq!(fields.len(), 1);
-        assert_eq!(fields[0].val.as_bytes(), br#""boundary2""#);
-    }
-
-    #[test]
-    fn test_unicode_escape_3byte_in_name() {
-        // \u4E2D = 中, 3-byte UTF-8: 0xE4 0xB8 0xAD
-        let tree = make_tree(&["中"]);
-        let mut state = FlattenJsonState::new();
-        let event = br#"{"\u4E2D": "ok"}"#;
-        let fields = state.flatten(event, &tree).unwrap();
-        assert_eq!(fields.len(), 1);
-        assert_eq!(fields[0].val.as_bytes(), br#""ok""#);
-    }
-
-    #[test]
-    fn test_unicode_escape_surrogate_pair_in_name() {
-        // \uD83D\uDE00 = 😀, surrogate pair, 4-byte UTF-8: 0xF0 0x9F 0x98 0x80
-        let tree = make_tree(&["😀"]);
-        let mut state = FlattenJsonState::new();
-        let event = br#"{"\uD83D\uDE00": "smile"}"#;
-        let fields = state.flatten(event, &tree).unwrap();
-        assert_eq!(fields.len(), 1);
-        assert_eq!(fields[0].val.as_bytes(), br#""smile""#);
-    }
-
-    #[test]
-    fn test_unicode_escape_2byte_in_value() {
-        // 2-byte unicode escape in a string value
+    fn test_unicode_escapes_in_value() {
+        let cases: &[(&str, &str, &[u8])] = &[
+            ("2byte_e9", "\\u00E9", &[0xC3, 0xA9]),
+            ("boundary_0080", "\\u0080", &[0xC2, 0x80]),
+            ("boundary_0800", "\\u0800", &[0xE0, 0xA0, 0x80]),
+            ("3byte_cjk", "\\u4E2D", &[0xE4, 0xB8, 0xAD]),
+            (
+                "surrogate_pair_emoji",
+                "\\uD83D\\uDE00",
+                &[0xF0, 0x9F, 0x98, 0x80],
+            ),
+        ];
         let tree = make_tree(&["v"]);
-        let mut state = FlattenJsonState::new();
-        let event = br#"{"v": "\u00E9"}"#;
-        let fields = state.flatten(event, &tree).unwrap();
-        assert_eq!(fields.len(), 1);
-        // é = 0xC3 0xA9
-        assert_eq!(
-            decoded_value(&fields[0]).as_slice(),
-            &[b'"', 0xC3, 0xA9, b'"']
-        );
-    }
-
-    #[test]
-    fn test_unicode_escape_boundary_0080_in_value() {
-        // U+0080 sits at the 1-byte / 2-byte UTF-8 boundary
-        let tree = make_tree(&["v"]);
-        let mut state = FlattenJsonState::new();
-        let event = br#"{"v": "\u0080"}"#;
-        let fields = state.flatten(event, &tree).unwrap();
-        assert_eq!(fields.len(), 1);
-        // U+0080 = 0xC2 0x80 in UTF-8
-        assert_eq!(
-            decoded_value(&fields[0]).as_slice(),
-            &[b'"', 0xC2, 0x80, b'"']
-        );
-    }
-
-    #[test]
-    fn test_unicode_escape_boundary_0800_in_value() {
-        // U+0800 sits at the 2-byte / 3-byte UTF-8 boundary
-        let tree = make_tree(&["v"]);
-        let mut state = FlattenJsonState::new();
-        let event = br#"{"v": "\u0800"}"#;
-        let fields = state.flatten(event, &tree).unwrap();
-        assert_eq!(fields.len(), 1);
-        // U+0800 = 0xE0 0xA0 0x80 in UTF-8
-        assert_eq!(
-            decoded_value(&fields[0]).as_slice(),
-            &[b'"', 0xE0, 0xA0, 0x80, b'"']
-        );
-    }
-
-    #[test]
-    fn test_unicode_escape_3byte_in_value() {
-        let tree = make_tree(&["v"]);
-        let mut state = FlattenJsonState::new();
-        let event = br#"{"v": "\u4E2D"}"#;
-        let fields = state.flatten(event, &tree).unwrap();
-        assert_eq!(fields.len(), 1);
-        // 中 = 0xE4 0xB8 0xAD
-        assert_eq!(
-            decoded_value(&fields[0]).as_slice(),
-            &[b'"', 0xE4, 0xB8, 0xAD, b'"']
-        );
-    }
-
-    #[test]
-    fn test_unicode_escape_surrogate_pair_in_value() {
-        let tree = make_tree(&["v"]);
-        let mut state = FlattenJsonState::new();
-        let event = br#"{"v": "\uD83D\uDE00"}"#;
-        let fields = state.flatten(event, &tree).unwrap();
-        assert_eq!(fields.len(), 1);
-        // 😀 = 0xF0 0x9F 0x98 0x80
-        assert_eq!(
-            decoded_value(&fields[0]).as_slice(),
-            &[b'"', 0xF0, 0x9F, 0x98, 0x80, b'"']
-        );
+        for (label, escape_form, expected) in cases {
+            let mut state = FlattenJsonState::new();
+            let event = format!(r#"{{"v": "{escape_form}"}}"#);
+            let fields = state.flatten(event.as_bytes(), &tree).unwrap();
+            assert_eq!(fields.len(), 1, "case={label}");
+            let mut want = Vec::with_capacity(expected.len() + 2);
+            want.push(b'"');
+            want.extend_from_slice(expected);
+            want.push(b'"');
+            assert_eq!(decoded_value(&fields[0]), want, "case={label}");
+        }
     }
 
     #[test]
