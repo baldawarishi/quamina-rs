@@ -740,6 +740,28 @@ mod parity_tests {
         even[64] = b'"'; // real (preceded by `\\\\`)
         v.push(("even_bs_no_carry", even));
 
+        // Truncated string with no closing `"`: `scan_string` and
+        // `scan_delim` must report `None` rather than overrunning.
+        let mut trunc = vec![b'a'; 80];
+        trunc[0] = b'"';
+        v.push(("truncated_string", trunc));
+
+        // Unclosed brace, padded to 192 bytes of filler: `scan_block`'s
+        // `find_close_in_bits` must return `None` after exhausting input.
+        let mut unclosed = vec![b'.'; 192];
+        unclosed[0] = b'{';
+        v.push(("unclosed_brace_192", unclosed));
+
+        // Backslash at the last byte of chunk 0 (byte 63): the next `"`
+        // at byte 64 is escaped via the cross-chunk `prev_odd_bs` carry,
+        // not via in-chunk masking.
+        let mut bs_boundary = vec![b'a'; 128];
+        bs_boundary[0] = b'"';
+        bs_boundary[63] = b'\\';
+        bs_boundary[64] = b'"'; // escaped via carry, must be ignored
+        bs_boundary[100] = b'"'; // real close
+        v.push(("bs_at_chunk_boundary", bs_boundary));
+
         v
     }
 
