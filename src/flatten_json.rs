@@ -129,10 +129,9 @@ impl FieldValue<'_> {
 /// Error variants returned by [`decode_json_escapes`].
 ///
 /// The lazy-decode path runs at the matcher boundary and silently drops
-/// these errors (treating malformed values as no-match), since
-/// `read_string_value_lazy` already validated escape syntax at flatten
-/// time. The variants exist so the decoder can still abort cleanly
-/// rather than walk past invalid bytes.
+/// these errors (treating malformed values as no-match), since escape
+/// syntax was already validated at flatten time. The variants exist so
+/// the decoder can still abort cleanly rather than walk past invalid bytes.
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum DecodeEscapeError {
     /// Trailing `\` with no following byte.

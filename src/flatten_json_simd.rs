@@ -16,13 +16,13 @@
 //!
 //! Backends: NEON (aarch64), AVX2 / SSE4.2 (x86_64), scalar (all others).
 //!
-//! On x86_64 the backend is resolved once at first call and cached as a function
-//! pointer (via `OnceLock`) to avoid paying `is_x86_feature_detected!` per call.
+//! On x86_64 the backend is resolved once at first call and cached as a
+//! function pointer to avoid per-call feature detection.
 //!
-//! Sub-64-byte tails are handled by the kernel's caller via a zero-padded buffer
-//! (zeros never match a structural byte); SIMD runs unconditionally — a runtime
-//! threshold sweep on representative corpora found no event size where a scalar
-//! short-circuit beat SIMD-on-padded-tail.
+//! Sub-64-byte tails are handled by the kernel's caller via a zero-padded
+//! buffer (zeros never match a structural byte); SIMD runs unconditionally
+//! across all event sizes — short-event scalar short-circuits were
+//! evaluated and not retained.
 //!
 //! Fast-path short-circuits in the scan loop:
 //! - if `bs_bits == 0 && prev_odd_bs == 0` → `escaped = 0`, skip `find_escaped`.
@@ -415,12 +415,9 @@ mod sse42 {
 }
 
 // ── Scalar fallback ──────────────────────────────────────────────────────────
-// Built on x86_64 (used as the runtime fallback inside `x86_dispatch` when
-// neither AVX2 nor SSE4.2 is detected — e.g. under Miri, or on a CPU without
-// either feature) and on every non-aarch64 target (where it's the only path).
-// On aarch64, NEON is mandatory, so the scalar mod is unused at runtime and
-// elided — except under `cfg(test)`, where the parity tests use it as the
-// reference implementation against NEON.
+// Runtime fallback on x86_64 when no SIMD ISA is detected, the only path on
+// non-aarch64 non-x86 targets, and the parity-test reference under
+// `cfg(test)` on aarch64 (where NEON is the runtime path).
 #[cfg(any(test, not(target_arch = "aarch64")))]
 mod scalar {
     use super::*;

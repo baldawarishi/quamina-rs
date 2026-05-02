@@ -109,17 +109,14 @@ impl<'a, T> Iterator for TransitionsIter<'a, T> {
     }
 }
 
-/// Decode a `FieldValue::EscapedRaw` into the matcher's scratch buffer and
-/// return a slice referencing the decoded `"..."` form. Marked `#[cold]` +
-/// `#[inline(never)]` so the EscapedRaw arm of the value-extract match in
-/// `try_to_match_direct` stays out of the hot path; the no-escape path
-/// (Borrowed/Owned, vast majority of fields) does not pull this body into
-/// icache, and LLVM emits a tail-edge branch hint.
+/// Decode a `FieldValue::EscapedRaw` into `scratch` and return a slice
+/// referencing the decoded `"..."` form. `#[cold]` + `#[inline(never)]`
+/// keep this body out of the no-escape hot path (the vast majority of
+/// fields), so it doesn't compete for icache.
 ///
 /// `raw` is the still-quoted slice from the source event. Decoder errors
-/// are suppressed: malformed input that reached this point already passed
-/// the flatten-time closing-quote scan, so the worst case is an
-/// un-decodable suffix that simply won't match any pattern.
+/// are suppressed: escape syntax was already validated at flatten time,
+/// so the worst case is an un-decodable suffix that simply won't match.
 #[cold]
 #[inline(never)]
 fn decode_escaped_for_match<'a>(raw: &[u8], scratch: &'a mut Vec<u8>) -> &'a [u8] {
@@ -205,10 +202,9 @@ impl<X: Clone + Eq + Hash> FrozenFieldMatcher<X> {
         self.transition_on_arena(path, value, is_number, &mut bufs.arena_bufs)
     }
 
-    /// Like [`transition_on`] but takes the arena buffers directly so that
-    /// the caller can hold a disjoint mutable borrow of `decode_scratch`
-    /// while running the lazy escape-decode path. The public method is a
-    /// thin wrapper.
+    /// Like [`Self::transition_on`] but takes the arena buffers directly so
+    /// the caller can hold a disjoint mutable borrow of the decode scratch
+    /// buffer while running the lazy escape-decode path.
     pub(crate) fn transition_on_arena(
         &self,
         path: &str,
@@ -281,9 +277,9 @@ impl<X: Clone + Eq + Hash> FrozenValueMatcher<X> {
     /// Transition on a value during matching.
     ///
     /// Takes [`ArenaNfaBuffers`] directly (rather than the outer
-    /// [`NfaBuffers`]) so the caller in `try_to_match_direct` can hold a
-    /// disjoint mutable borrow on `decode_scratch` for the lazy
-    /// escape-decode path while this method walks the arena.
+    /// [`NfaBuffers`]) so the caller can hold a disjoint mutable borrow on
+    /// the decode scratch buffer for the lazy escape-decode path while this
+    /// method walks the arena.
     #[inline]
     pub(crate) fn transition_on_arena(
         &self,
