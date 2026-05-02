@@ -183,29 +183,17 @@ pub(crate) fn decode_json_escapes(
                 b'u' => {
                     i += 1;
                     let code = decode_hex_4(raw, &mut i)?;
-                    if code < 0x80 {
-                        scratch.push(code as u8);
-                    } else if code < 0x800 {
-                        scratch.push(0xC0 | ((code >> 6) as u8));
-                        scratch.push(0x80 | ((code & 0x3F) as u8));
-                    } else if (0xD800..=0xDBFF).contains(&code) {
-                        // High surrogate - check for low surrogate
-                        if i + 5 < raw.len() && raw[i] == b'\\' && raw[i + 1] == b'u' {
-                            i += 2;
-                            let low = decode_hex_4(raw, &mut i)?;
-                            if (0xDC00..=0xDFFF).contains(&low) {
-                                let full = 0x10000 + ((code - 0xD800) << 10) + (low - 0xDC00);
-                                scratch.push(0xF0 | ((full >> 18) as u8));
-                                scratch.push(0x80 | (((full >> 12) & 0x3F) as u8));
-                                scratch.push(0x80 | (((full >> 6) & 0x3F) as u8));
-                                scratch.push(0x80 | ((full & 0x3F) as u8));
-                            }
-                        }
+                    let low = if (0xD800..=0xDBFF).contains(&code)
+                        && i + 5 < raw.len()
+                        && raw[i] == b'\\'
+                        && raw[i + 1] == b'u'
+                    {
+                        i += 2;
+                        Some(decode_hex_4(raw, &mut i)?)
                     } else {
-                        scratch.push(0xE0 | ((code >> 12) as u8));
-                        scratch.push(0x80 | (((code >> 6) & 0x3F) as u8));
-                        scratch.push(0x80 | ((code & 0x3F) as u8));
-                    }
+                        None
+                    };
+                    encode_unicode_escape(code, low, scratch);
                     // Mirror the original loop's trailing decrement; the
                     // outer `i += 1` re-advances past the last consumed hex.
                     i -= 1;
@@ -240,6 +228,35 @@ fn decode_hex_4(raw: &[u8], i: &mut usize) -> Result<u32, DecodeEscapeError> {
         *i += 1;
     }
     Ok(value)
+}
+
+/// Append the UTF-8 encoding of a `\uXXXX` escape's codepoint to `out`.
+///
+/// `code` is the high `\uXXXX` value. For a high surrogate (0xD800-0xDBFF),
+/// the caller must pass the already-decoded low `\uXXXX` value as `low`; if
+/// `low` is `None` or out of the low-surrogate range, the codepoint is
+/// silently dropped (matching JSON parser convention for lone surrogates).
+fn encode_unicode_escape(code: u32, low: Option<u32>, out: &mut Vec<u8>) {
+    if code < 0x80 {
+        out.push(code as u8);
+    } else if code < 0x800 {
+        out.push(0xC0 | ((code >> 6) as u8));
+        out.push(0x80 | ((code & 0x3F) as u8));
+    } else if (0xD800..=0xDBFF).contains(&code) {
+        if let Some(low) = low
+            && (0xDC00..=0xDFFF).contains(&low)
+        {
+            let full = 0x10000 + ((code - 0xD800) << 10) + (low - 0xDC00);
+            out.push(0xF0 | ((full >> 18) as u8));
+            out.push(0x80 | (((full >> 12) & 0x3F) as u8));
+            out.push(0x80 | (((full >> 6) & 0x3F) as u8));
+            out.push(0x80 | ((full & 0x3F) as u8));
+        }
+    } else {
+        out.push(0xE0 | ((code >> 12) as u8));
+        out.push(0x80 | (((code >> 6) & 0x3F) as u8));
+        out.push(0x80 | ((code & 0x3F) as u8));
+    }
 }
 
 /// Reusable JSON flattener state.
@@ -883,33 +900,17 @@ impl<'a> FlattenContext<'a, '_> {
                     b'u' => {
                         self.index += 1;
                         let code = self.read_hex_4()?;
-                        if code < 0x80 {
-                            name.push(code as u8);
-                        } else if code < 0x800 {
-                            name.push(0xC0 | ((code >> 6) as u8));
-                            name.push(0x80 | ((code & 0x3F) as u8));
-                        } else if (0xD800..=0xDBFF).contains(&code) {
-                            // High surrogate - check for low surrogate
-                            if self.index + 5 < self.event.len()
-                                && self.event[self.index] == b'\\'
-                                && self.event[self.index + 1] == b'u'
-                            {
-                                self.index += 2;
-                                let low = self.read_hex_4()?;
-                                if (0xDC00..=0xDFFF).contains(&low) {
-                                    let full = 0x10000 + ((code - 0xD800) << 10) + (low - 0xDC00);
-                                    name.push(0xF0 | ((full >> 18) as u8));
-                                    name.push(0x80 | (((full >> 12) & 0x3F) as u8));
-                                    name.push(0x80 | (((full >> 6) & 0x3F) as u8));
-                                    name.push(0x80 | ((full & 0x3F) as u8));
-                                    // Don't decrement here - the decrement at end of b'u' case handles it
-                                }
-                            }
+                        let low = if (0xD800..=0xDBFF).contains(&code)
+                            && self.index + 5 < self.event.len()
+                            && self.event[self.index] == b'\\'
+                            && self.event[self.index + 1] == b'u'
+                        {
+                            self.index += 2;
+                            Some(self.read_hex_4()?)
                         } else {
-                            name.push(0xE0 | ((code >> 12) as u8));
-                            name.push(0x80 | (((code >> 6) & 0x3F) as u8));
-                            name.push(0x80 | ((code & 0x3F) as u8));
-                        }
+                            None
+                        };
+                        encode_unicode_escape(code, low, &mut name);
                         self.index -= 1;
                     }
                     _ => {
