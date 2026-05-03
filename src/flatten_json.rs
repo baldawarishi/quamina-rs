@@ -183,8 +183,9 @@ pub(crate) fn decode_json_escapes(
                 b'u' => {
                     i += 1;
                     let code = decode_hex_4(raw, &mut i)?;
+                    // Need 6 bytes for the second `\uXXXX`: `\`, `u`, then 4 hex digits.
                     let low = if (0xD800..=0xDBFF).contains(&code)
-                        && i + 5 < raw.len()
+                        && i + 6 <= raw.len()
                         && raw[i] == b'\\'
                         && raw[i + 1] == b'u'
                     {
@@ -384,6 +385,10 @@ impl<'a> FlattenContext<'a, '_> {
     // SIMD dispatch helpers. Future SIMD call sites must go through these
     // (not `crate::flatten_json_simd::scan_*` directly) so the
     // `force_scalar` test toggle keeps the parity test honest.
+    // `#[inline]` rather than `#[inline(always)]`: these are thin shims that
+    // tail-call the SIMD entry point (which itself is `#[inline]` over
+    // an `#[inline(always)]` kernel). Forcing inlining here would just
+    // duplicate the cfg branch at every call site without speeding the loop.
     #[inline]
     #[allow(clippy::too_many_arguments)]
     fn scan_block_dispatch(
@@ -909,9 +914,10 @@ impl<'a> FlattenContext<'a, '_> {
         let start = self.index;
 
         // SIMD fast-advance: bulk-skip plain bytes to the first `"` or `\`.
-        // Ctrl-byte (<=0x1f) validation is deferred to the scalar tail; any
-        // bytes we jump over here go unvalidated, which matches quamina's
-        // lenient parsing posture on this path.
+        // Bytes the scanner jumps over are accepted unchecked — control bytes
+        // (<= 0x1f) are only rejected by the scalar tail below, and that tail
+        // runs only when SIMD doesn't find a delimiter in its 64-byte window.
+        // Matches Go quamina's lenient member-name parsing.
         let (found, scanned_to) = self.scan_delim_dispatch(self.event, self.index);
         match found {
             Some((pos, b'"')) => {
@@ -1010,21 +1016,22 @@ impl<'a> FlattenContext<'a, '_> {
         Err(FlattenError::Error(self.error("premature end of event")))
     }
 
-    /// Read a string value (including quotes).
+    /// Read a string value (including surrounding quotes). Returns
+    /// [`FieldValue::Borrowed`] for the common no-escape case, or hands
+    /// off to [`read_string_value_lazy`] which emits
+    /// [`FieldValue::EscapedRaw`] for on-demand decode at match time.
     ///
-    /// When escapes are present, returns [`FieldValue::EscapedRaw`] (a
-    /// zero-copy borrow of the raw event slice including quotes). The actual
-    /// decode is deferred to the matcher wrapper in `try_to_match_direct`,
-    /// which only decodes when value transitions are attempted.
-    /// Malformed-escape and illegal-byte errors inside escape-bearing values
-    /// are not surfaced at flatten time — the trade-off for skipping the
-    /// per-call decode allocation.
+    /// Control-byte (<= 0x1f) validation: bytes skipped by the SIMD
+    /// fast-path are accepted unchecked. The scalar tail (only reached
+    /// when SIMD finds no delimiter in its 64-byte window) and
+    /// [`read_string_value_lazy`] both validate inline. Matches Go
+    /// quamina's lenient string parsing.
     fn read_string_value(&mut self) -> Result<FieldValue<'a>, FlattenError> {
         let val_start = self.index;
         self.step()?; // skip opening "
 
         // SIMD fast-advance: bulk-skip plain bytes to the first `"` or `\`.
-        // See `read_member_name` for the ctrl-byte caveat.
+        // Same ctrl-byte caveat as `read_member_name`.
         let (found, scanned_to) = self.scan_delim_dispatch(self.event, self.index);
         match found {
             Some((pos, b'"')) => {

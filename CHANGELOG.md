@@ -16,7 +16,7 @@ Style inspired by [ripgrep's CHANGELOG](https://github.com/BurntSushi/ripgrep/bl
 
 ### Changed
 - New SIMD-accelerated JSON scanner (NEON / AVX2 / SSE4.2 / scalar backends) wired into the flattener's string and skip paths (`status.json flatten_only`: 2047→1879 ns/op)
-- Lazy escape decode: values containing `\X` escapes are emitted as a zero-copy borrow and decoded only when a matcher inspects the bytes; the no-escape path stays zero-alloc (`citylots`: 1.698→1.644 µs)
+- Lazy escape decode: escape-bearing values are emitted as a borrowed raw slice and decoded into a pooled scratch buffer only when a matcher inspects the bytes; the no-escape path stays zero-copy and zero-alloc (`citylots`: 1.698→1.644 µs)
 - Batch whitespace skipping in the scalar flattener (`flatten_context_fields`: -7.4%)
 
 ### Fixed

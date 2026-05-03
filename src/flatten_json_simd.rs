@@ -59,6 +59,10 @@ fn find_escaped(bs: u64, prev_odd_bs: &mut u64) -> u64 {
     (even_carries & !bs & ODD_BITS) | (odd_carries & !bs & EVEN_BITS)
 }
 
+/// Walk the merged open/close bitmask in ascending position order, tracking
+/// nesting depth, and return the position of the close that brings `level`
+/// back to zero. Each iteration peels off the lowest set bit via
+/// `bits & (bits - 1)`. Returns `None` if the chunk closes no outer block.
 #[inline]
 fn find_close_in_bits(opens: u64, closes: u64, level: &mut i32) -> Option<u32> {
     let mut bits = opens | closes;
@@ -594,7 +598,10 @@ mod x86_dispatch {
 
 // Top-level dispatchers route to the active backend. Each arm forwards to a
 // single backend module — the per-call CPU-feature probe (and its OnceLock
-// caching) lives one level deeper inside `x86_dispatch`.
+// caching) lives one level deeper inside `x86_dispatch`. These wrappers are
+// `#[inline]` (not `#[inline(always)]`): the hot work is in the kernel's
+// `run_scan<B>` (already `#[inline(always)]`), and leaving these as plain
+// inline lets LLVM keep one shared shim across call sites if it prefers.
 cfg_if::cfg_if! {
     if #[cfg(target_arch = "aarch64")] {
         #[inline]
@@ -925,6 +932,218 @@ mod parity_tests {
                     assert_eq!(got, baseline, "sse42 vs scalar @ start={start}");
                 }
             }
+        }
+    }
+
+    /// Randomized SIMD↔scalar parity. The hand-written corpus above pins
+    /// known-tricky bit patterns (chunk boundaries, odd backslash carries);
+    /// this driver fuzzes the whole `(byte distribution × length × start
+    /// offset × init state)` space against the same kernels, catching any
+    /// drift the curated cases miss.
+    ///
+    /// Inputs are biased toward bytes the kernels actually care about
+    /// (`"`, `\`, `{`, `}`, plus filler) so most chunks contain real
+    /// structural events instead of being dominated by `'a'`.
+    ///
+    /// MIRI SKIP RATIONALE: 256 cases × multiple init states × four start
+    /// offsets is well within native runtime budget but explodes under
+    /// Miri interpretation; the curated `corpus()` cases stay Miri-covered.
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn randomized_parity_fuzz() {
+        use rand::{RngExt, SeedableRng};
+
+        let mut rng = rand::rngs::StdRng::seed_from_u64(0xF1AC_5B0D_FAA8_9E11);
+        // Bytes the kernels react to plus filler. Distribution roughly
+        // matches what we see in real JSON: lots of filler, occasional
+        // structural bytes, fewer escapes.
+        const ALPHABET: &[u8] = b"aaaaaaaa\"\"\\{}.,: ";
+
+        // Spans both within-chunk (<64), exact chunk boundary, and
+        // multi-chunk (>64, >128) to exercise carry propagation.
+        const LENGTHS: &[usize] = &[0, 1, 7, 31, 63, 64, 65, 96, 127, 128, 129, 192, 256];
+
+        for case_idx in 0..256u32 {
+            let len = LENGTHS[(case_idx as usize) % LENGTHS.len()];
+            let mut data = vec![0u8; len];
+            for byte in &mut data {
+                *byte = ALPHABET[rng.random_range(0..ALPHABET.len())];
+            }
+
+            for &(in_str, odd_bs, st) in SCAN_INIT_STATES {
+                for &start in &[0usize, 1, 32, 64] {
+                    if start > len {
+                        continue;
+                    }
+
+                    // scan_block parity
+                    let mut lvl_ref = 1i32;
+                    let baseline_block =
+                        scalar::scan(&data, start, b'{', b'}', &mut lvl_ref, in_str, odd_bs);
+                    let scenario = format!("case={case_idx}/len={len}/start={start}/{st}");
+
+                    #[cfg(target_arch = "aarch64")]
+                    {
+                        let mut lvl = 1i32;
+                        let got = unsafe {
+                            neon::scan(&data, start, b'{', b'}', &mut lvl, in_str, odd_bs)
+                        };
+                        assert_eq!(got, baseline_block, "neon scan_block @ {scenario}");
+                        assert_eq!(lvl, lvl_ref, "neon scan_block level @ {scenario}");
+                    }
+                    #[cfg(target_arch = "x86_64")]
+                    {
+                        if std::is_x86_feature_detected!("avx2") {
+                            let mut lvl = 1i32;
+                            let got = unsafe {
+                                avx2::scan(&data, start, b'{', b'}', &mut lvl, in_str, odd_bs)
+                            };
+                            assert_eq!(got, baseline_block, "avx2 scan_block @ {scenario}");
+                            assert_eq!(lvl, lvl_ref, "avx2 scan_block level @ {scenario}");
+                        }
+                        if std::is_x86_feature_detected!("sse4.2") {
+                            let mut lvl = 1i32;
+                            let got = unsafe {
+                                sse42::scan(&data, start, b'{', b'}', &mut lvl, in_str, odd_bs)
+                            };
+                            assert_eq!(got, baseline_block, "sse42 scan_block @ {scenario}");
+                            assert_eq!(lvl, lvl_ref, "sse42 scan_block level @ {scenario}");
+                        }
+                    }
+
+                    // scan_string parity (in_str irrelevant — kernel keys off odd_bs only)
+                    let baseline_string = scalar::scan_string(&data, start, odd_bs);
+                    #[cfg(target_arch = "aarch64")]
+                    {
+                        let got = unsafe { neon::scan_string(&data, start, odd_bs) };
+                        assert_eq!(got, baseline_string, "neon scan_string @ {scenario}");
+                    }
+                    #[cfg(target_arch = "x86_64")]
+                    {
+                        if std::is_x86_feature_detected!("avx2") {
+                            let got = unsafe { avx2::scan_string(&data, start, odd_bs) };
+                            assert_eq!(got, baseline_string, "avx2 scan_string @ {scenario}");
+                        }
+                        if std::is_x86_feature_detected!("sse4.2") {
+                            let got = unsafe { sse42::scan_string(&data, start, odd_bs) };
+                            assert_eq!(got, baseline_string, "sse42 scan_string @ {scenario}");
+                        }
+                    }
+
+                    // scan_delim parity (no init state)
+                    let baseline_delim = scalar::scan_delim(&data, start);
+                    #[cfg(target_arch = "aarch64")]
+                    {
+                        let got = unsafe { neon::scan_delim(&data, start) };
+                        assert_eq!(got, baseline_delim, "neon scan_delim @ {scenario}");
+                    }
+                    #[cfg(target_arch = "x86_64")]
+                    {
+                        if std::is_x86_feature_detected!("avx2") {
+                            let got = unsafe { avx2::scan_delim(&data, start) };
+                            assert_eq!(got, baseline_delim, "avx2 scan_delim @ {scenario}");
+                        }
+                        if std::is_x86_feature_detected!("sse4.2") {
+                            let got = unsafe { sse42::scan_delim(&data, start) };
+                            assert_eq!(got, baseline_delim, "sse42 scan_delim @ {scenario}");
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// End-to-end fuzz: random bytes (potentially malformed JSON) flow
+    /// through the full `FlattenJsonState::flatten` pipeline twice — once
+    /// with platform SIMD, once with `force_scalar=true` — and the two
+    /// runs must agree on success/failure and emitted fields. Catches any
+    /// dispatch-level divergence the kernel-level parity test misses
+    /// (e.g. wrong fast-path branch in `read_string_value`).
+    ///
+    /// MIRI SKIP RATIONALE: same as `randomized_parity_fuzz` — the curated
+    /// `test_simd_vs_scalar_flatten_parity` corpus runs under Miri.
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn randomized_flatten_parity_fuzz() {
+        use crate::flatten_json::FlattenJsonState;
+        use crate::segments_tree::SegmentsTree;
+        use rand::{RngExt, SeedableRng};
+
+        let mut rng = rand::rngs::StdRng::seed_from_u64(0xC0FF_EE15_BAD0_F00D);
+
+        // Assemble a minimal tree that subscribes to a few common paths so
+        // the matcher actually emits fields when the random JSON happens
+        // to be well-formed enough to flatten.
+        let mut tree = SegmentsTree::new();
+        for path in ["a", "b", "v", "name"] {
+            tree.add(path);
+        }
+
+        // Build random JSON-ish snippets by stitching plausible pieces.
+        // Most cases will be valid; malformed ones are equally interesting
+        // because we only require SIMD↔scalar agreement, not success.
+        let value_pool: &[&[u8]] = &[
+            b"\"plain\"",
+            b"\"with \\\"quote\\\"\"",
+            b"\"line\\nbreak\"",
+            b"\"\\uD83D\\uDE00\"",
+            b"42",
+            b"-3.14",
+            b"true",
+            b"false",
+            b"null",
+            b"[1,2,3]",
+            b"{\"x\": \"y\"}",
+            // Long filler value to push past the 64-byte chunk boundary.
+            b"\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"",
+        ];
+        let key_pool: &[&[u8]] = &[b"a", b"b", b"v", b"name", b"other", b"skip"];
+
+        for _ in 0..128 {
+            let n_fields = rng.random_range(1..=5);
+            let mut event: Vec<u8> = Vec::with_capacity(256);
+            event.push(b'{');
+            for i in 0..n_fields {
+                if i > 0 {
+                    event.push(b',');
+                }
+                event.push(b'"');
+                event.extend_from_slice(key_pool[rng.random_range(0..key_pool.len())]);
+                event.extend_from_slice(b"\": ");
+                event.extend_from_slice(value_pool[rng.random_range(0..value_pool.len())]);
+            }
+            event.push(b'}');
+
+            type Snapshot = Option<Vec<(Vec<u8>, Vec<u8>, bool)>>;
+            fn snap(
+                fields: Result<&mut [crate::flatten_json::Field<'_>], crate::QuaminaError>,
+            ) -> Snapshot {
+                fields.ok().map(|fs| {
+                    fs.iter()
+                        .map(|f| {
+                            (
+                                f.path.as_ref().to_vec(),
+                                f.val.as_bytes().to_vec(),
+                                f.is_number,
+                            )
+                        })
+                        .collect()
+                })
+            }
+
+            let mut s_simd = FlattenJsonState::new();
+            let snap_simd = snap(s_simd.flatten(&event, &tree));
+
+            let mut s_scalar = FlattenJsonState::new();
+            s_scalar.set_force_scalar(true);
+            let snap_scalar = snap(s_scalar.flatten(&event, &tree));
+
+            assert_eq!(
+                snap_simd,
+                snap_scalar,
+                "SIMD↔scalar flatten divergence on event: {:?}",
+                String::from_utf8_lossy(&event),
+            );
         }
     }
 }

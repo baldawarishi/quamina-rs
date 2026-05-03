@@ -123,7 +123,18 @@ fn decode_escaped_for_match<'a>(raw: &[u8], scratch: &'a mut Vec<u8>) -> &'a [u8
     scratch.clear();
     if raw.len() >= 2 {
         scratch.push(b'"');
-        let _ = crate::flatten_json::decode_json_escapes(&raw[1..raw.len() - 1], scratch);
+        let result = crate::flatten_json::decode_json_escapes(&raw[1..raw.len() - 1], scratch);
+        // The flatten-time scan in `read_string_value_lazy` validates every
+        // escape sequence, so a decode error here would mean either a future
+        // bug in the validator or that an `EscapedRaw` was constructed
+        // outside the validated path. Surface it loudly in debug; in
+        // release we leave the partially-decoded suffix dropped, since the
+        // worst case is a value that simply won't match.
+        debug_assert!(
+            result.is_ok(),
+            "decode_escaped_for_match: validated EscapedRaw failed to decode: {result:?}",
+        );
+        let _ = result;
         scratch.push(b'"');
     }
     scratch.as_slice()
@@ -2009,6 +2020,47 @@ mod tests {
     }
 
     // -- ensure_frozen + collect_fm_stats / collect_vm_stats dedup --
+
+    /// Drive the lazy escape-decode path end-to-end: a matcher built for the
+    /// decoded form must hit when the event arrives with the escape-bearing
+    /// form (which the flattener emits as `FieldValue::EscapedRaw`). Also
+    /// guards `decode_escaped_for_match`'s `debug_assert!(result.is_ok())` —
+    /// if the validator/decoder ever drift apart, this test panics in debug.
+    #[test]
+    fn test_lazy_escape_decode_matches_through_matcher() {
+        let mut q: crate::Quamina<String> = crate::Quamina::new();
+        // Pattern value uses the JSON escape form too; the parser decodes it
+        // into the canonical bytes the matcher arena is built around.
+        q.add_pattern("p1".to_string(), r#"{"v": ["hi\nthere"]}"#)
+            .unwrap();
+
+        // Event with the same string in escape form → flattener emits
+        // EscapedRaw → matcher decodes via decode_escaped_for_match.
+        let matches = q
+            .matches_for_event(br#"{"v": "hi\nthere"}"#)
+            .expect("matches_for_event failed");
+        assert_eq!(matches, vec!["p1".to_string()]);
+
+        // Surrogate-pair escape — exercises the non-trivial decode branch
+        // in `decode_json_escapes` that combines two `\uXXXX` halves into a
+        // 4-byte UTF-8 sequence. Pattern uses the BMP-as-codepoint form
+        // (`\u{1F600}` is a Rust string escape, not JSON); event side
+        // carries the JSON surrogate pair `😀`.
+        let mut q2: crate::Quamina<String> = crate::Quamina::new();
+        q2.add_pattern("p2".to_string(), "{\"v\": [\"smile \u{1F600}\"]}")
+            .unwrap();
+        let m2 = q2
+            .matches_for_event(b"{\"v\": \"smile \\uD83D\\uDE00\"}")
+            .expect("matches_for_event failed");
+        assert_eq!(m2, vec!["p2".to_string()]);
+
+        // Mismatched value with escapes must NOT match — confirms the
+        // decoded bytes (not the raw escape sequence) drive the comparison.
+        let m3 = q
+            .matches_for_event(br#"{"v": "bye\nthere"}"#)
+            .expect("matches_for_event failed");
+        assert!(m3.is_empty(), "decoded mismatch should not match");
+    }
 
     #[test]
     fn test_arena_stats_non_zero() {
