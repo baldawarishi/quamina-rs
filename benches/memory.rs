@@ -383,7 +383,15 @@ fn profile_escape_content_matching() -> MemoryStats {
         let _ = q.matches_for_event(event).unwrap();
     }
 
-    MemoryStats::capture("escape_content_100_events_4_fields")
+    let stats = MemoryStats::capture("escape_content_100_events_4_fields");
+    // Assert pool reuses scratch capacity. 100 events * 4 fields = 400 decodes.
+    #[cfg(feature = "dhat-heap")]
+    assert!(
+        stats.total_allocs < 200,
+        "escape decode scratch should be pooled, but got {} allocs",
+        stats.total_allocs
+    );
+    stats
 }
 
 /// Profile: Shellstyle pattern matching (26 patterns A* through Z*)

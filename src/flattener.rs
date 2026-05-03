@@ -28,7 +28,7 @@
 //! ```
 
 use crate::QuaminaError;
-use crate::flatten_json::{ArrayPos, FlattenJsonState};
+use crate::flatten_json::{ArrayPos, FieldValue, FlattenJsonState, decode_json_escapes};
 use crate::segments_tree::SegmentsTree;
 use std::any::Any;
 
@@ -234,14 +234,38 @@ impl Flattener for JsonFlattener {
 
         let fields = self.state.flatten(event, segments_tree)?;
 
-        // Convert borrowed fields to owned
+        // Convert borrowed fields to owned. `EscapedRaw` carries un-decoded
+        // `\X` escapes (lazy-decode optimization on the default fast path);
+        // the trait boundary forces ownership so we materialize the decoded
+        // form here. Without this, `OwnedField.val` would carry raw bytes
+        // like `\\` + `n` while patterns were decoded at compile time, and
+        // matches would silently miss.
         Ok(fields
             .iter()
-            .map(|f| OwnedField {
-                path: f.path.to_vec(),
-                val: f.val.as_bytes().to_vec(),
-                array_trail: f.array_trail.to_vec(),
-                is_number: f.is_number,
+            .map(|f| {
+                let val = match &f.val {
+                    FieldValue::Borrowed(s) => s.to_vec(),
+                    FieldValue::Owned(v) => v.clone(),
+                    FieldValue::EscapedRaw(raw) => {
+                        // raw includes the surrounding `"`; decode the
+                        // interior. Decoder errors are dropped: the
+                        // flatten-time validator in `read_string_value_lazy`
+                        // already rejected malformed escapes, so a partial
+                        // decode here produces a value that won't match —
+                        // same contract as `decode_escaped_for_match`.
+                        let mut out = Vec::with_capacity(raw.len());
+                        out.push(b'"');
+                        let _ = decode_json_escapes(&raw[1..raw.len() - 1], &mut out);
+                        out.push(b'"');
+                        out
+                    }
+                };
+                OwnedField {
+                    path: f.path.to_vec(),
+                    val,
+                    array_trail: f.array_trail.to_vec(),
+                    is_number: f.is_number,
+                }
             })
             .collect())
     }

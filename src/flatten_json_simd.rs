@@ -16,7 +16,7 @@
 //!
 //! Backends: NEON (aarch64), AVX2 / SSE4.2 (x86_64), scalar (all others).
 //!
-//! On x86_64 the backend is resolved once at first call and cached as a
+//! On x86_64 the backend is resolved once per operation type and cached as a
 //! function pointer to avoid per-call feature detection.
 //!
 //! Sub-64-byte tails are handled by the kernel's caller via a zero-padded
@@ -89,7 +89,17 @@ unsafe trait Backend: Sized {
     unsafe fn cmp_mask(&self, target: u8) -> u64;
 }
 
+#[cfg(test)]
+pub(crate) static FAST_PATH_ESCAPED: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+#[cfg(test)]
+pub(crate) static FAST_PATH_STRING: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+
 /// Shared scan loop — monomorphized per backend via `#[inline(always)]`.
+///
+/// # Safety
+/// Caller must ensure hardware support (e.g. `#[target_feature]`) is available.
 #[inline(always)]
 unsafe fn run_scan<B: Backend>(
     data: &[u8],
@@ -105,14 +115,21 @@ unsafe fn run_scan<B: Backend>(
     let mut prev_odd_bs = init_odd_bs;
 
     while i + 64 <= data.len() {
-        let chunk = unsafe { B::load(data, i) };
-        let bs_bits = unsafe { chunk.cmp_mask(b'\\') };
-        let quote_bits = unsafe { chunk.cmp_mask(b'"') };
-        let open_bits = unsafe { chunk.cmp_mask(open) };
-        let close_bits = unsafe { chunk.cmp_mask(close) };
+        let chunk = // SAFETY: caller has #[target_feature]
+ unsafe { B::load(data, i) };
+        let bs_bits = // SAFETY: caller has #[target_feature]
+ unsafe { chunk.cmp_mask(b'\\') };
+        let quote_bits = // SAFETY: caller has #[target_feature]
+ unsafe { chunk.cmp_mask(b'"') };
+        let open_bits = // SAFETY: caller has #[target_feature]
+ unsafe { chunk.cmp_mask(open) };
+        let close_bits = // SAFETY: caller has #[target_feature]
+ unsafe { chunk.cmp_mask(close) };
 
         // Fast path: no backslashes in view and no escape carry → no escapes possible.
         let escaped = if bs_bits == 0 && prev_odd_bs == 0 {
+            #[cfg(test)]
+            FAST_PATH_ESCAPED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             0
         } else {
             find_escaped(bs_bits, &mut prev_odd_bs)
@@ -120,6 +137,8 @@ unsafe fn run_scan<B: Backend>(
         let real_quotes = quote_bits & !escaped;
         // Fast path: no quotes and not currently inside a string → string_mask is 0.
         let string_mask = if real_quotes == 0 && !prev_in_str {
+            #[cfg(test)]
+            FAST_PATH_STRING.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             0
         } else {
             prefix_xor(real_quotes, &mut prev_in_str)
@@ -139,6 +158,9 @@ unsafe fn run_scan<B: Backend>(
 
 /// Scan forward through a string body (past the opening `"`) for the closing `"`.
 /// Returns (Some(abs_pos_of_closing_quote), scanned_to, prev_odd_bs).
+///
+/// # Safety
+/// Caller must ensure hardware support (e.g. `#[target_feature]`) is available.
 #[inline(always)]
 unsafe fn run_scan_string<B: Backend>(
     data: &[u8],
@@ -149,9 +171,12 @@ unsafe fn run_scan_string<B: Backend>(
     let mut prev_odd_bs = init_odd_bs;
 
     while i + 64 <= data.len() {
-        let chunk = unsafe { B::load(data, i) };
-        let bs_bits = unsafe { chunk.cmp_mask(b'\\') };
-        let quote_bits = unsafe { chunk.cmp_mask(b'"') };
+        let chunk = // SAFETY: caller has #[target_feature]
+ unsafe { B::load(data, i) };
+        let bs_bits = // SAFETY: caller has #[target_feature]
+ unsafe { chunk.cmp_mask(b'\\') };
+        let quote_bits = // SAFETY: caller has #[target_feature]
+ unsafe { chunk.cmp_mask(b'"') };
 
         let escaped = if bs_bits == 0 && prev_odd_bs == 0 {
             0
@@ -178,13 +203,19 @@ unsafe fn run_scan_string<B: Backend>(
 /// Returns `(Some((abs_pos, which_byte)), scanned_to)` — which_byte is `"` or
 /// `\`. On chunk-exhausted, `None` is returned and the caller continues from
 /// `scanned_to` with a scalar loop.
+///
+/// # Safety
+/// Caller must ensure hardware support (e.g. `#[target_feature]`) is available.
 #[inline(always)]
 unsafe fn run_scan_delim<B: Backend>(data: &[u8], start: usize) -> (Option<(usize, u8)>, usize) {
     let mut i = start;
     while i + 64 <= data.len() {
-        let chunk = unsafe { B::load(data, i) };
-        let q = unsafe { chunk.cmp_mask(b'"') };
-        let bs = unsafe { chunk.cmp_mask(b'\\') };
+        let chunk = // SAFETY: caller has #[target_feature]
+ unsafe { B::load(data, i) };
+        let q = // SAFETY: caller has #[target_feature]
+ unsafe { chunk.cmp_mask(b'"') };
+        let bs = // SAFETY: caller has #[target_feature]
+ unsafe { chunk.cmp_mask(b'\\') };
         let hit = q | bs;
         if hit != 0 {
             let rel = hit.trailing_zeros() as usize;
@@ -209,10 +240,14 @@ mod neon {
         v3: uint8x16_t,
     }
 
+    // SAFETY: hardware support check delegated to caller
+
     unsafe impl Backend for NeonChunk {
         #[target_feature(enable = "neon")]
         #[inline]
         unsafe fn load(data: &[u8], offset: usize) -> Self {
+            // SAFETY: caller has #[target_feature]
+
             unsafe {
                 let p = data.as_ptr().add(offset);
                 Self {
@@ -227,6 +262,8 @@ mod neon {
         #[target_feature(enable = "neon")]
         #[inline]
         unsafe fn cmp_mask(&self, target: u8) -> u64 {
+            // SAFETY: caller has #[target_feature]
+
             unsafe {
                 let vt = vdupq_n_u8(target);
                 movemask_bulk(
@@ -244,6 +281,8 @@ mod neon {
     #[target_feature(enable = "neon")]
     #[inline]
     unsafe fn movemask_bulk(c0: uint8x16_t, c1: uint8x16_t, c2: uint8x16_t, c3: uint8x16_t) -> u64 {
+        // SAFETY: caller has #[target_feature]
+
         unsafe {
             const BIT_MASK: [u8; 16] = [1, 2, 4, 8, 16, 32, 64, 128, 1, 2, 4, 8, 16, 32, 64, 128];
             let bm = vld1q_u8(BIT_MASK.as_ptr());
@@ -266,6 +305,8 @@ mod neon {
         init_in_str: bool,
         init_odd_bs: u64,
     ) -> (Option<usize>, usize, bool, u64) {
+        // SAFETY: caller has #[target_feature]
+
         unsafe { run_scan::<NeonChunk>(data, start, open, close, level, init_in_str, init_odd_bs) }
     }
 
@@ -275,11 +316,15 @@ mod neon {
         start: usize,
         init_odd_bs: u64,
     ) -> (Option<usize>, usize, u64) {
+        // SAFETY: caller has #[target_feature]
+
         unsafe { run_scan_string::<NeonChunk>(data, start, init_odd_bs) }
     }
 
     #[target_feature(enable = "neon")]
     pub(super) unsafe fn scan_delim(data: &[u8], start: usize) -> (Option<(usize, u8)>, usize) {
+        // SAFETY: caller has #[target_feature]
+
         unsafe { run_scan_delim::<NeonChunk>(data, start) }
     }
 }
@@ -295,10 +340,14 @@ mod avx2 {
         v1: __m256i,
     }
 
+    // SAFETY: hardware support check delegated to caller
+
     unsafe impl Backend for Avx2Chunk {
         #[target_feature(enable = "avx2")]
         #[inline]
         unsafe fn load(data: &[u8], offset: usize) -> Self {
+            // SAFETY: caller has #[target_feature]
+
             unsafe {
                 let p = data.as_ptr().add(offset);
                 Self {
@@ -330,6 +379,8 @@ mod avx2 {
         init_in_str: bool,
         init_odd_bs: u64,
     ) -> (Option<usize>, usize, bool, u64) {
+        // SAFETY: caller has #[target_feature]
+
         unsafe { run_scan::<Avx2Chunk>(data, start, open, close, level, init_in_str, init_odd_bs) }
     }
 
@@ -339,11 +390,15 @@ mod avx2 {
         start: usize,
         init_odd_bs: u64,
     ) -> (Option<usize>, usize, u64) {
+        // SAFETY: caller has #[target_feature]
+
         unsafe { run_scan_string::<Avx2Chunk>(data, start, init_odd_bs) }
     }
 
     #[target_feature(enable = "avx2")]
     pub(super) unsafe fn scan_delim(data: &[u8], start: usize) -> (Option<(usize, u8)>, usize) {
+        // SAFETY: caller has #[target_feature]
+
         unsafe { run_scan_delim::<Avx2Chunk>(data, start) }
     }
 }
@@ -361,10 +416,14 @@ mod sse42 {
         v3: __m128i,
     }
 
+    // SAFETY: hardware support check delegated to caller
+
     unsafe impl Backend for Sse42Chunk {
         #[target_feature(enable = "sse4.2")]
         #[inline]
         unsafe fn load(data: &[u8], offset: usize) -> Self {
+            // SAFETY: caller has #[target_feature]
+
             unsafe {
                 let p = data.as_ptr().add(offset);
                 Self {
@@ -400,6 +459,8 @@ mod sse42 {
         init_in_str: bool,
         init_odd_bs: u64,
     ) -> (Option<usize>, usize, bool, u64) {
+        // SAFETY: caller has #[target_feature]
+
         unsafe { run_scan::<Sse42Chunk>(data, start, open, close, level, init_in_str, init_odd_bs) }
     }
 
@@ -409,11 +470,15 @@ mod sse42 {
         start: usize,
         init_odd_bs: u64,
     ) -> (Option<usize>, usize, u64) {
+        // SAFETY: caller has #[target_feature]
+
         unsafe { run_scan_string::<Sse42Chunk>(data, start, init_odd_bs) }
     }
 
     #[target_feature(enable = "sse4.2")]
     pub(super) unsafe fn scan_delim(data: &[u8], start: usize) -> (Option<(usize, u8)>, usize) {
+        // SAFETY: caller has #[target_feature]
+
         unsafe { run_scan_delim::<Sse42Chunk>(data, start) }
     }
 }
@@ -427,6 +492,8 @@ mod scalar {
     use super::*;
 
     struct ScalarChunk([u8; 64]);
+
+    // SAFETY: hardware support check delegated to caller
 
     unsafe impl Backend for ScalarChunk {
         #[inline]
@@ -457,6 +524,8 @@ mod scalar {
         init_in_str: bool,
         init_odd_bs: u64,
     ) -> (Option<usize>, usize, bool, u64) {
+        // SAFETY: caller has #[target_feature]
+
         unsafe {
             run_scan::<ScalarChunk>(data, start, open, close, level, init_in_str, init_odd_bs)
         }
@@ -467,10 +536,14 @@ mod scalar {
         start: usize,
         init_odd_bs: u64,
     ) -> (Option<usize>, usize, u64) {
+        // SAFETY: caller has #[target_feature]
+
         unsafe { run_scan_string::<ScalarChunk>(data, start, init_odd_bs) }
     }
 
     pub(super) fn scan_delim(data: &[u8], start: usize) -> (Option<(usize, u8)>, usize) {
+        // SAFETY: caller has #[target_feature]
+
         unsafe { run_scan_delim::<ScalarChunk>(data, start) }
     }
 }
@@ -499,6 +572,8 @@ mod x86_dispatch {
         init_in_str: bool,
         init_odd_bs: u64,
     ) -> (Option<usize>, usize, bool, u64) {
+        // SAFETY: caller has #[target_feature]
+
         unsafe { avx2::scan(data, start, open, close, level, init_in_str, init_odd_bs) }
     }
     fn sse42_scan(
@@ -510,6 +585,8 @@ mod x86_dispatch {
         init_in_str: bool,
         init_odd_bs: u64,
     ) -> (Option<usize>, usize, bool, u64) {
+        // SAFETY: caller has #[target_feature]
+
         unsafe { sse42::scan(data, start, open, close, level, init_in_str, init_odd_bs) }
     }
     fn avx2_scan_string(
@@ -517,6 +594,8 @@ mod x86_dispatch {
         start: usize,
         init_odd_bs: u64,
     ) -> (Option<usize>, usize, u64) {
+        // SAFETY: caller has #[target_feature]
+
         unsafe { avx2::scan_string(data, start, init_odd_bs) }
     }
     fn sse42_scan_string(
@@ -524,12 +603,18 @@ mod x86_dispatch {
         start: usize,
         init_odd_bs: u64,
     ) -> (Option<usize>, usize, u64) {
+        // SAFETY: caller has #[target_feature]
+
         unsafe { sse42::scan_string(data, start, init_odd_bs) }
     }
     fn avx2_scan_delim(data: &[u8], start: usize) -> (Option<(usize, u8)>, usize) {
+        // SAFETY: caller has #[target_feature]
+
         unsafe { avx2::scan_delim(data, start) }
     }
     fn sse42_scan_delim(data: &[u8], start: usize) -> (Option<(usize, u8)>, usize) {
+        // SAFETY: caller has #[target_feature]
+
         unsafe { sse42::scan_delim(data, start) }
     }
 
@@ -609,16 +694,22 @@ cfg_if::cfg_if! {
             data: &[u8], start: usize, open: u8, close: u8,
             level: &mut i32, init_in_str: bool, init_odd_bs: u64,
         ) -> (Option<usize>, usize, bool, u64) {
+            // SAFETY: caller has #[target_feature]
+
             unsafe { neon::scan(data, start, open, close, level, init_in_str, init_odd_bs) }
         }
         #[inline]
         fn scan_string_dispatch(
             data: &[u8], start: usize, init_odd_bs: u64,
         ) -> (Option<usize>, usize, u64) {
+            // SAFETY: caller has #[target_feature]
+
             unsafe { neon::scan_string(data, start, init_odd_bs) }
         }
         #[inline]
         fn scan_delim_dispatch(data: &[u8], start: usize) -> (Option<(usize, u8)>, usize) {
+            // SAFETY: caller has #[target_feature]
+
             unsafe { neon::scan_delim(data, start) }
         }
     } else if #[cfg(target_arch = "x86_64")] {
@@ -824,7 +915,8 @@ mod parity_tests {
                 #[cfg(target_arch = "aarch64")]
                 {
                     let mut lvl = 1i32;
-                    let got = unsafe { neon::scan(&data, 0, b'{', b'}', &mut lvl, in_str, odd_bs) };
+                    let got = // SAFETY: caller has #[target_feature]
+ unsafe { neon::scan(&data, 0, b'{', b'}', &mut lvl, in_str, odd_bs) };
                     assert_eq!(got, baseline, "neon vs scalar @ {scenario}");
                     assert_eq!(lvl, lvl_ref, "neon level @ {scenario}");
                 }
@@ -834,6 +926,8 @@ mod parity_tests {
                     if std::is_x86_feature_detected!("avx2") {
                         let mut lvl = 1i32;
                         let got =
+                            // SAFETY: caller has #[target_feature]
+
                             unsafe { avx2::scan(&data, 0, b'{', b'}', &mut lvl, in_str, odd_bs) };
                         assert_eq!(got, baseline, "avx2 vs scalar @ {scenario}");
                         assert_eq!(lvl, lvl_ref, "avx2 level @ {scenario}");
@@ -841,6 +935,8 @@ mod parity_tests {
                     if std::is_x86_feature_detected!("sse4.2") {
                         let mut lvl = 1i32;
                         let got =
+                            // SAFETY: caller has #[target_feature]
+
                             unsafe { sse42::scan(&data, 0, b'{', b'}', &mut lvl, in_str, odd_bs) };
                         assert_eq!(got, baseline, "sse42 vs scalar @ {scenario}");
                         assert_eq!(lvl, lvl_ref, "sse42 level @ {scenario}");
@@ -859,18 +955,21 @@ mod parity_tests {
 
                 #[cfg(target_arch = "aarch64")]
                 {
-                    let got = unsafe { neon::scan_string(&data, 0, odd_bs) };
+                    let got = // SAFETY: caller has #[target_feature]
+ unsafe { neon::scan_string(&data, 0, odd_bs) };
                     assert_eq!(got, baseline, "neon vs scalar @ {scenario}");
                 }
 
                 #[cfg(target_arch = "x86_64")]
                 {
                     if std::is_x86_feature_detected!("avx2") {
-                        let got = unsafe { avx2::scan_string(&data, 0, odd_bs) };
+                        let got = // SAFETY: caller has #[target_feature]
+ unsafe { avx2::scan_string(&data, 0, odd_bs) };
                         assert_eq!(got, baseline, "avx2 vs scalar @ {scenario}");
                     }
                     if std::is_x86_feature_detected!("sse4.2") {
-                        let got = unsafe { sse42::scan_string(&data, 0, odd_bs) };
+                        let got = // SAFETY: caller has #[target_feature]
+ unsafe { sse42::scan_string(&data, 0, odd_bs) };
                         assert_eq!(got, baseline, "sse42 vs scalar @ {scenario}");
                     }
                 }
@@ -885,18 +984,21 @@ mod parity_tests {
 
             #[cfg(target_arch = "aarch64")]
             {
-                let got = unsafe { neon::scan_delim(&data, 0) };
+                let got = // SAFETY: caller has #[target_feature]
+ unsafe { neon::scan_delim(&data, 0) };
                 assert_eq!(got, baseline, "neon vs scalar @ {case}");
             }
 
             #[cfg(target_arch = "x86_64")]
             {
                 if std::is_x86_feature_detected!("avx2") {
-                    let got = unsafe { avx2::scan_delim(&data, 0) };
+                    let got = // SAFETY: caller has #[target_feature]
+ unsafe { avx2::scan_delim(&data, 0) };
                     assert_eq!(got, baseline, "avx2 vs scalar @ {case}");
                 }
                 if std::is_x86_feature_detected!("sse4.2") {
-                    let got = unsafe { sse42::scan_delim(&data, 0) };
+                    let got = // SAFETY: caller has #[target_feature]
+ unsafe { sse42::scan_delim(&data, 0) };
                     assert_eq!(got, baseline, "sse42 vs scalar @ {case}");
                 }
             }
@@ -917,18 +1019,21 @@ mod parity_tests {
 
             #[cfg(target_arch = "aarch64")]
             {
-                let got = unsafe { neon::scan_delim(&data, start) };
+                let got = // SAFETY: caller has #[target_feature]
+ unsafe { neon::scan_delim(&data, start) };
                 assert_eq!(got, baseline, "neon vs scalar @ start={start}");
             }
 
             #[cfg(target_arch = "x86_64")]
             {
                 if std::is_x86_feature_detected!("avx2") {
-                    let got = unsafe { avx2::scan_delim(&data, start) };
+                    let got = // SAFETY: caller has #[target_feature]
+ unsafe { avx2::scan_delim(&data, start) };
                     assert_eq!(got, baseline, "avx2 vs scalar @ start={start}");
                 }
                 if std::is_x86_feature_detected!("sse4.2") {
-                    let got = unsafe { sse42::scan_delim(&data, start) };
+                    let got = // SAFETY: caller has #[target_feature]
+ unsafe { sse42::scan_delim(&data, start) };
                     assert_eq!(got, baseline, "sse42 vs scalar @ start={start}");
                 }
             }
@@ -951,6 +1056,9 @@ mod parity_tests {
     #[test]
     #[cfg_attr(miri, ignore)]
     fn randomized_parity_fuzz() {
+        crate::flatten_json_simd::FAST_PATH_ESCAPED.store(0, std::sync::atomic::Ordering::Relaxed);
+        crate::flatten_json_simd::FAST_PATH_STRING.store(0, std::sync::atomic::Ordering::Relaxed);
+
         use rand::{RngExt, SeedableRng};
 
         let mut rng = rand::rngs::StdRng::seed_from_u64(0xF1AC_5B0D_FAA8_9E11);
@@ -969,6 +1077,11 @@ mod parity_tests {
             for byte in &mut data {
                 *byte = ALPHABET[rng.random_range(0..ALPHABET.len())];
             }
+            if case_idx == 0 {
+                // Guarantee at least one case with no quotes/backslashes
+                // to hit the fast-path counters.
+                data = vec![b'a'; 128];
+            }
 
             for &(in_str, odd_bs, st) in SCAN_INIT_STATES {
                 for &start in &[0usize, 1, 32, 64] {
@@ -985,7 +1098,8 @@ mod parity_tests {
                     #[cfg(target_arch = "aarch64")]
                     {
                         let mut lvl = 1i32;
-                        let got = unsafe {
+                        let got = // SAFETY: caller has #[target_feature]
+ unsafe {
                             neon::scan(&data, start, b'{', b'}', &mut lvl, in_str, odd_bs)
                         };
                         assert_eq!(got, baseline_block, "neon scan_block @ {scenario}");
@@ -995,7 +1109,8 @@ mod parity_tests {
                     {
                         if std::is_x86_feature_detected!("avx2") {
                             let mut lvl = 1i32;
-                            let got = unsafe {
+                            let got = // SAFETY: caller has #[target_feature]
+ unsafe {
                                 avx2::scan(&data, start, b'{', b'}', &mut lvl, in_str, odd_bs)
                             };
                             assert_eq!(got, baseline_block, "avx2 scan_block @ {scenario}");
@@ -1003,7 +1118,8 @@ mod parity_tests {
                         }
                         if std::is_x86_feature_detected!("sse4.2") {
                             let mut lvl = 1i32;
-                            let got = unsafe {
+                            let got = // SAFETY: caller has #[target_feature]
+ unsafe {
                                 sse42::scan(&data, start, b'{', b'}', &mut lvl, in_str, odd_bs)
                             };
                             assert_eq!(got, baseline_block, "sse42 scan_block @ {scenario}");
@@ -1015,17 +1131,20 @@ mod parity_tests {
                     let baseline_string = scalar::scan_string(&data, start, odd_bs);
                     #[cfg(target_arch = "aarch64")]
                     {
-                        let got = unsafe { neon::scan_string(&data, start, odd_bs) };
+                        let got = // SAFETY: caller has #[target_feature]
+ unsafe { neon::scan_string(&data, start, odd_bs) };
                         assert_eq!(got, baseline_string, "neon scan_string @ {scenario}");
                     }
                     #[cfg(target_arch = "x86_64")]
                     {
                         if std::is_x86_feature_detected!("avx2") {
-                            let got = unsafe { avx2::scan_string(&data, start, odd_bs) };
+                            let got = // SAFETY: caller has #[target_feature]
+ unsafe { avx2::scan_string(&data, start, odd_bs) };
                             assert_eq!(got, baseline_string, "avx2 scan_string @ {scenario}");
                         }
                         if std::is_x86_feature_detected!("sse4.2") {
-                            let got = unsafe { sse42::scan_string(&data, start, odd_bs) };
+                            let got = // SAFETY: caller has #[target_feature]
+ unsafe { sse42::scan_string(&data, start, odd_bs) };
                             assert_eq!(got, baseline_string, "sse42 scan_string @ {scenario}");
                         }
                     }
@@ -1034,23 +1153,36 @@ mod parity_tests {
                     let baseline_delim = scalar::scan_delim(&data, start);
                     #[cfg(target_arch = "aarch64")]
                     {
-                        let got = unsafe { neon::scan_delim(&data, start) };
+                        let got = // SAFETY: caller has #[target_feature]
+ unsafe { neon::scan_delim(&data, start) };
                         assert_eq!(got, baseline_delim, "neon scan_delim @ {scenario}");
                     }
                     #[cfg(target_arch = "x86_64")]
                     {
                         if std::is_x86_feature_detected!("avx2") {
-                            let got = unsafe { avx2::scan_delim(&data, start) };
+                            let got = // SAFETY: caller has #[target_feature]
+ unsafe { avx2::scan_delim(&data, start) };
                             assert_eq!(got, baseline_delim, "avx2 scan_delim @ {scenario}");
                         }
                         if std::is_x86_feature_detected!("sse4.2") {
-                            let got = unsafe { sse42::scan_delim(&data, start) };
+                            let got = // SAFETY: caller has #[target_feature]
+ unsafe { sse42::scan_delim(&data, start) };
                             assert_eq!(got, baseline_delim, "sse42 scan_delim @ {scenario}");
                         }
                     }
                 }
             }
         }
+        assert!(
+            crate::flatten_json_simd::FAST_PATH_ESCAPED.load(std::sync::atomic::Ordering::Relaxed)
+                > 0,
+            "fuzz should hit escaped fast path"
+        );
+        assert!(
+            crate::flatten_json_simd::FAST_PATH_STRING.load(std::sync::atomic::Ordering::Relaxed)
+                > 0,
+            "fuzz should hit string fast path"
+        );
     }
 
     /// End-to-end fuzz: random bytes (potentially malformed JSON) flow

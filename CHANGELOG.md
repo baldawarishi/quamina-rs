@@ -14,10 +14,13 @@ Style inspired by [ripgrep's CHANGELOG](https://github.com/BurntSushi/ripgrep/bl
 - Profiling examples for NFA→DFA budget tuning and negated char class acceleration
 - aarch64 CI runner (`ubuntu-24.04-arm`) plus cross-backend parity tests asserting NEON / AVX2 / SSE4.2 are bit-identical to the scalar reference
 
+### Breaking
+- Added `EscapedRaw(&'a [u8])` variant to the public `FieldValue` enum to support lazy escape decoding. Consumers exhaustively matching on `FieldValue` must add a match arm.
+
 ### Changed
-- New SIMD-accelerated JSON scanner (NEON / AVX2 / SSE4.2 / scalar backends) wired into the flattener's string and skip paths (`status.json flatten_only`: 2047→1879 ns/op)
-- Lazy escape decode: escape-bearing values are emitted as a borrowed raw slice and decoded into a pooled scratch buffer only when a matcher inspects the bytes; the no-escape path stays zero-copy and zero-alloc (`citylots`: 1.698→1.644 µs)
-- Batch whitespace skipping in the scalar flattener (`flatten_context_fields`: -7.4%)
+- New SIMD-accelerated JSON scanner (NEON / AVX2 / SSE4.2 / scalar backends) speeds up block skipping, string scanning, and delimiter detection (`status.json flatten_only`: 2047→1879 ns/op)
+- Lazy escape decode: escape-bearing values are emitted as a borrowed raw slice and decoded into a pooled scratch buffer only when a matcher inspects the bytes (`citylots` matches: 1.698→1.644 µs)
+- Batch whitespace skipping (`flatten_context_fields`: -7.4%)
 
 ### Fixed
 - `[^x]+` patterns (17K-state Unicode NFA) regressed past the DFA budget; restored via memchr-based byte-skip acceleration (`regexp_negated_1k`: 3.2 µs → 652 ns)

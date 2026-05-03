@@ -1008,6 +1008,73 @@ fn test_json_flattener_through_trait() {
     assert_eq!(matches, vec!["p1"]);
 }
 
+/// Regression: lazy escape-decode (`FieldValue::EscapedRaw`) must produce
+/// the same matcher output through the custom-flattener trait pipeline as
+/// it does through the default fast path.
+///
+/// On the default path, `matches_for_fields_direct` decodes `EscapedRaw`
+/// into a scratch buffer at the matcher boundary. The custom-flattener
+/// path goes through `JsonFlattener::flatten` → `OwnedField` → wrapped as
+/// `FieldValue::Owned`, which the matcher hands to the automaton without
+/// decoding. If `JsonFlattener::flatten` doesn't materialize escapes
+/// before constructing `OwnedField`, the two paths diverge: a value with
+/// `\n` in the event matches against the literal byte `\n` (decoded) on
+/// the default path but against the two raw bytes `\\` + `n` on the
+/// custom-flattener path.
+#[test]
+fn test_json_flattener_through_trait_with_escapes() {
+    use crate::flattener::JsonFlattener;
+
+    // Three escape forms that all exercise `FieldValue::EscapedRaw`:
+    //   - simple control escape (`\n`)
+    //   - literal escape (`\\`)
+    //   - unicode escape that yields multi-byte UTF-8 (`é` → 0xC3 0xA9)
+    let cases: &[(&str, &str, &str)] = &[
+        (
+            "control",
+            r#"{"v": ["hi\nthere"]}"#,
+            r#"{"v": "hi\nthere"}"#,
+        ),
+        ("backslash", r#"{"v": ["a\\b"]}"#, r#"{"v": "a\\b"}"#),
+        ("unicode", r#"{"v": ["café"]}"#, r#"{"v": "café"}"#),
+    ];
+
+    for (label, pattern, event) in cases {
+        // Default fast path: thread-local FlattenJsonState → matcher decodes
+        // EscapedRaw into bufs.decode_scratch.
+        let mut q_default: Quamina<String> = Quamina::new();
+        q_default
+            .add_pattern("p".to_string(), pattern)
+            .unwrap_or_else(|e| panic!("default add_pattern failed for {label}: {e:?}"));
+        let m_default = q_default
+            .matches_for_event(event.as_bytes())
+            .unwrap_or_else(|e| panic!("default matches_for_event failed for {label}: {e:?}"));
+
+        // Custom-flattener path: JsonFlattener wrapped behind the trait.
+        let mut q_custom: Quamina<String> = QuaminaBuilder::<String>::new()
+            .with_flattener(Box::new(JsonFlattener::new()))
+            .unwrap()
+            .build()
+            .unwrap();
+        q_custom
+            .add_pattern("p".to_string(), pattern)
+            .unwrap_or_else(|e| panic!("custom add_pattern failed for {label}: {e:?}"));
+        let m_custom = q_custom
+            .matches_for_event(event.as_bytes())
+            .unwrap_or_else(|e| panic!("custom matches_for_event failed for {label}: {e:?}"));
+
+        assert_eq!(
+            m_default, m_custom,
+            "case={label}: default and custom-flattener paths disagree on escape-bearing event"
+        );
+        assert_eq!(
+            m_default,
+            vec!["p".to_string()],
+            "case={label}: default path should match"
+        );
+    }
+}
+
 // ============================================================================
 // Additional Core Tests (recovered from original)
 // ============================================================================

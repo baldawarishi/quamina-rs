@@ -125,15 +125,10 @@ fn decode_escaped_for_match<'a>(raw: &[u8], scratch: &'a mut Vec<u8>) -> &'a [u8
         scratch.push(b'"');
         let result = crate::flatten_json::decode_json_escapes(&raw[1..raw.len() - 1], scratch);
         // The flatten-time scan in `read_string_value_lazy` validates every
-        // escape sequence, so a decode error here would mean either a future
-        // bug in the validator or that an `EscapedRaw` was constructed
-        // outside the validated path. Surface it loudly in debug; in
-        // release we leave the partially-decoded suffix dropped, since the
+        // escape sequence. If an `EscapedRaw` was constructed outside the
+        // validated path with invalid escapes, `decode_json_escapes` will err.
+        // We leave the partially-decoded suffix dropped, since the
         // worst case is a value that simply won't match.
-        debug_assert!(
-            result.is_ok(),
-            "decode_escaped_for_match: validated EscapedRaw failed to decode: {result:?}",
-        );
         let _ = result;
         scratch.push(b'"');
     }

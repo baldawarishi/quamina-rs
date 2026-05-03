@@ -90,6 +90,11 @@ pub enum FieldValue<'a> {
     /// Borrowed slice (with quotes) that contains un-decoded `\X` escape
     /// sequences. The matcher decodes on demand via [`decode_json_escapes`]
     /// only when a value transition actually inspects the bytes.
+    ///
+    /// **Contract:** The bytes in this slice must be pre-validated by the
+    /// flattener (e.g. via `read_string_value_lazy`). Malformed escape
+    /// sequences constructed outside the validated path will silently fail
+    /// to decode and fail to match.
     EscapedRaw(&'a [u8]),
 }
 
@@ -300,7 +305,9 @@ impl FlattenJsonState {
     }
 
     /// Test-only: route all SIMD scans through the scalar reference path
-    /// so the parity test can compare results from both kernels.
+    /// so the parity test can compare results from both kernels. Note:
+    /// this flag intentionally persists across `reset()` calls so that
+    /// test suites can apply it globally to a state object.
     #[cfg(test)]
     pub(crate) fn set_force_scalar(&mut self, v: bool) {
         self.force_scalar = v;
@@ -816,6 +823,11 @@ impl<'a> FlattenContext<'a, '_> {
     }
 
     /// Skip remaining content until we exit the current object.
+    ///
+    /// Note on SIMD: This loop remains a scalar walk over structural characters.
+    /// It is functionally fast because it delegates large skips to SIMD-accelerated
+    /// children (`skip_string_value`, `skip_block`). Converting the outer loop
+    /// to SIMD scan is omitted as it adds complexity for minimal gain over delegating.
     fn leave_object(&mut self) -> Result<(), FlattenError> {
         while self.index < self.event.len() {
             let ch = self.event[self.index];
@@ -914,10 +926,8 @@ impl<'a> FlattenContext<'a, '_> {
         let start = self.index;
 
         // SIMD fast-advance: bulk-skip plain bytes to the first `"` or `\`.
-        // Bytes the scanner jumps over are accepted unchecked — control bytes
-        // (<= 0x1f) are only rejected by the scalar tail below, and that tail
-        // runs only when SIMD doesn't find a delimiter in its 64-byte window.
-        // Matches Go quamina's lenient member-name parsing.
+        // Matches Go quamina's lenient member-name parsing (control bytes
+        // are accepted unchecked).
         let (found, scanned_to) = self.scan_delim_dispatch(self.event, self.index);
         match found {
             Some((pos, b'"')) => {
@@ -941,10 +951,6 @@ impl<'a> FlattenContext<'a, '_> {
             } else if ch == b'\\' {
                 // Has escapes - need to decode
                 return self.read_member_name_with_escapes(start);
-            } else if ch <= 0x1f {
-                return Err(FlattenError::Error(
-                    self.error(&format!("illegal byte {:02x} in field name", ch)),
-                ));
             } else {
                 self.index += 1;
             }
@@ -1003,10 +1009,6 @@ impl<'a> FlattenContext<'a, '_> {
                         ));
                     }
                 }
-            } else if ch <= 0x1f {
-                return Err(FlattenError::Error(
-                    self.error(&format!("illegal byte {:02x} in field name", ch)),
-                ));
             } else {
                 name.push(ch);
             }
@@ -1021,11 +1023,8 @@ impl<'a> FlattenContext<'a, '_> {
     /// off to [`read_string_value_lazy`] which emits
     /// [`FieldValue::EscapedRaw`] for on-demand decode at match time.
     ///
-    /// Control-byte (<= 0x1f) validation: bytes skipped by the SIMD
-    /// fast-path are accepted unchecked. The scalar tail (only reached
-    /// when SIMD finds no delimiter in its 64-byte window) and
-    /// [`read_string_value_lazy`] both validate inline. Matches Go
-    /// quamina's lenient string parsing.
+    /// Matches Go quamina's lenient string parsing (control bytes are
+    /// accepted unchecked).
     fn read_string_value(&mut self) -> Result<FieldValue<'a>, FlattenError> {
         let val_start = self.index;
         self.step()?; // skip opening "
@@ -1053,10 +1052,6 @@ impl<'a> FlattenContext<'a, '_> {
                 return Ok(FieldValue::Borrowed(&self.event[val_start..=self.index]));
             } else if ch == b'\\' {
                 return self.read_string_value_lazy(val_start);
-            } else if ch <= 0x1f {
-                return Err(FlattenError::Error(
-                    self.error(&format!("illegal byte {:02x} in string value", ch)),
-                ));
             }
             self.index += 1;
         }
@@ -1120,12 +1115,6 @@ impl<'a> FlattenContext<'a, '_> {
                     }
                 }
                 continue;
-            }
-            if ch <= 0x1f {
-                self.index = i;
-                return Err(FlattenError::Error(
-                    self.error(&format!("illegal byte {:02x} in string value", ch)),
-                ));
             }
             i += 1;
         }
