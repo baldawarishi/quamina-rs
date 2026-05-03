@@ -39,21 +39,25 @@ use super::small_table::{FieldMatcher, NfaBuffers};
 
 /// Multiplier for eager DFA budget relative to NFA state count.
 /// A typical NFA-to-DFA expansion is well under 8x for real-world patterns.
+#[cfg(not(miri))]
 const EAGER_DFA_BUDGET_MULTIPLIER: usize = 8;
 
 /// Hard cap on eager DFA states. Prevents excessive freeze-time latency for
 /// pathological patterns (e.g. deeply nested quantifiers).
+#[cfg(not(miri))]
 const EAGER_DFA_BUDGET_CAP: usize = 10_000;
 
 /// Multiplier for lazy DFA budget relative to the eager budget.
 /// Gives the lazy tier 10× more DFA state budget than the eager tier,
 /// covering patterns whose DFA is too large for eager but still finite.
+#[cfg(not(miri))]
 const LAZY_DFA_BUDGET_MULTIPLIER: usize = 10;
 
 /// Hard cap on lazy DFA cached states. Matches the eager DFA cap so that
 /// large-NFA patterns (where eager_budget already hits EAGER_DFA_BUDGET_CAP)
 /// get the same ceiling. Empirically, all real-world patterns saturate at
 /// ≤ 32 hot-path states; 10 000 is conservative headroom.
+#[cfg(not(miri))]
 const LAZY_DFA_BUDGET_CAP: usize = 10_000;
 
 /// Compact collection for `transition_on` results, optimized for the common cases.
@@ -712,8 +716,11 @@ impl<X: Clone + Eq + Hash + Send + Sync> ThreadSafeCoreMatcher<X> {
         //   Tier 1: Eager DFA — subset construction at freeze time (fast matching)
         //   Tier 2: Lazy DFA — on-demand DFA state caching during matching
         //   Tier 3: NFA — full NFA traversal with epsilon closure expansion
+        #[cfg_attr(miri, allow(unused_mut))]
         let mut main_arena_is_nfa = *mutable.main_arena_is_nfa.borrow();
+        #[cfg_attr(miri, allow(unused_mut))]
         let mut lazy_dfa: Option<Box<Mutex<LazyDfa>>> = None;
+
         let main_arena = mutable
             .main_arena
             .borrow()
