@@ -152,32 +152,27 @@ macro_rules! assert_add_err {
 }
 
 /// Helper for wildcard pattern tests — tests a single pattern against match/no-match lists.
-pub(crate) fn exercise_wildcard(pattern: &str, should_match: &[&str], should_not_match: &[&str]) {
+pub fn exercise_wildcard(pattern: &str, should_match: &[&str], should_not_match: &[&str]) {
     let mut q = crate::Quamina::new();
-    let full_pattern = format!(r#"{{"x": [{{"wildcard": "{}"}}]}}"#, pattern);
+    let full_pattern = format!(r#"{{"x": [{{"wildcard": "{pattern}"}}]}}"#);
     q.add_pattern(pattern, &full_pattern)
-        .unwrap_or_else(|_| panic!("Pattern should be valid: {}", pattern));
+        .unwrap_or_else(|_| panic!("Pattern should be valid: {pattern}"));
 
     for text in should_match {
-        let event = format!(r#"{{"x": "{}"}}"#, text);
+        let event = format!(r#"{{"x": "{text}"}}"#);
         let matches = q.matches_for_event(event.as_bytes()).unwrap();
         assert!(
             matches.contains(&pattern),
-            "Pattern '{}' should match '{}', got {:?}",
-            pattern,
-            text,
-            matches
+            "Pattern '{pattern}' should match '{text}', got {matches:?}"
         );
     }
 
     for text in should_not_match {
-        let event = format!(r#"{{"x": "{}"}}"#, text);
+        let event = format!(r#"{{"x": "{text}"}}"#);
         let matches = q.matches_for_event(event.as_bytes()).unwrap();
         assert!(
             !matches.contains(&pattern),
-            "Pattern '{}' should NOT match '{}'",
-            pattern,
-            text
+            "Pattern '{pattern}' should NOT match '{text}'"
         );
     }
 }

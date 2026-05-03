@@ -1024,7 +1024,6 @@ pub(crate) struct LazyDfa {
 }
 
 impl LazyDfa {
-    #[cfg(not(miri))]
     pub fn new(nfa_arena: StateArena, nfa_start: StateId, state_budget: usize) -> Self {
         let mut lazy = Self {
             nfa_arena,

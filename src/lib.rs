@@ -1,6 +1,7 @@
 //! quamina-rs: Fast pattern-matching library for filtering JSON events
 
 #![deny(missing_docs)]
+#![cfg_attr(miri, allow(warnings))]
 
 // Internal modules exposed as `pub` only for benchmarks (benches/matching.rs).
 // Not part of the public API — use `Quamina` instead.

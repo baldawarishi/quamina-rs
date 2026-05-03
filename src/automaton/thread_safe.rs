@@ -715,10 +715,8 @@ impl<X: Clone + Eq + Hash + Send + Sync> ThreadSafeCoreMatcher<X> {
         // Three-tier strategy:
         //   Tier 1: Eager DFA — subset construction at freeze time (fast matching)
         //   Tier 2: Lazy DFA — on-demand DFA state caching during matching
-        //   Tier 3: NFA — full NFA traversal with epsilon closure expansion
-        #[cfg_attr(miri, allow(unused_mut))]
+        // Tier 3: NFA — full NFA traversal with epsilon closure expansion
         let mut main_arena_is_nfa = *mutable.main_arena_is_nfa.borrow();
-        #[cfg_attr(miri, allow(unused_mut))]
         let mut lazy_dfa: Option<Box<Mutex<LazyDfa>>> = None;
 
         let main_arena = mutable
