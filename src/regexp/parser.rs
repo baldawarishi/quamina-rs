@@ -84,25 +84,29 @@ impl Default for QuantifiedAtom {
 impl QuantifiedAtom {
     /// Returns true if this atom matches exactly once (no quantifier).
     #[inline]
-    pub fn is_singleton(&self) -> bool {
+    #[must_use]
+    pub const fn is_singleton(&self) -> bool {
         self.quant_min == 1 && self.quant_max == 1
     }
 
     /// Returns true if this atom is optional (?).
     #[inline]
-    pub fn is_qm(&self) -> bool {
+    #[must_use]
+    pub const fn is_qm(&self) -> bool {
         self.quant_min == 0 && self.quant_max == 1
     }
 
     /// Returns true if this atom uses + (one or more).
     #[inline]
-    pub fn is_plus(&self) -> bool {
+    #[must_use]
+    pub const fn is_plus(&self) -> bool {
         self.quant_min == 1 && self.quant_max == REGEXP_QUANTIFIER_MAX
     }
 
     /// Returns true if this atom uses * (zero or more).
     #[inline]
-    pub fn is_star(&self) -> bool {
+    #[must_use]
+    pub const fn is_star(&self) -> bool {
         self.quant_min == 0 && self.quant_max == REGEXP_QUANTIFIER_MAX
     }
 }
@@ -128,12 +132,14 @@ pub enum LookaroundType {
 
 impl LookaroundType {
     /// Returns true if this is a negative lookaround ((?!...) or (?<!...))
-    pub fn is_negative(&self) -> bool {
+    #[must_use]
+    pub const fn is_negative(&self) -> bool {
         matches!(self, Self::NegativeLookahead | Self::NegativeLookbehind)
     }
 
     /// Returns true if this is a lookbehind ((?<=...) or (?<!...))
-    pub fn is_lookbehind(&self) -> bool {
+    #[must_use]
+    pub const fn is_lookbehind(&self) -> bool {
         matches!(self, Self::PositiveLookbehind | Self::NegativeLookbehind)
     }
 }
@@ -224,7 +230,7 @@ impl RegexpParse {
         subtree
     }
 
-    fn is_nested(&self) -> bool {
+    const fn is_nested(&self) -> bool {
         !self.nesting.is_empty()
     }
 
@@ -257,7 +263,7 @@ impl RegexpParse {
         let got = self.next_rune()?;
         if got != wanted {
             return Err(RegexpError {
-                message: format!("expected '{}', got '{}'", wanted, got),
+                message: format!("expected '{wanted}', got '{got}'"),
                 offset: self.last_index,
             });
         }
@@ -272,11 +278,11 @@ impl RegexpParse {
         Ok(next == c)
     }
 
-    fn backup1(&mut self, one_rune: char) {
+    const fn backup1(&mut self, one_rune: char) {
         self.index -= one_rune.len_utf8();
     }
 
-    fn is_empty(&self) -> bool {
+    const fn is_empty(&self) -> bool {
         self.index >= self.bytes.len()
     }
 
@@ -432,6 +438,7 @@ fn branch_fixed_length(branch: &RegexpBranch) -> Option<usize> {
 
 /// Collect all lookaround atoms from a tree with their positions.
 /// Used for pattern transformation.
+#[must_use]
 pub fn collect_lookarounds(tree: &RegexpRoot) -> Vec<(usize, usize, LookaroundType, RegexpRoot)> {
     let mut result = Vec::new();
     for (branch_idx, branch) in tree.iter().enumerate() {
@@ -447,6 +454,7 @@ pub fn collect_lookarounds(tree: &RegexpRoot) -> Vec<(usize, usize, LookaroundTy
 }
 
 /// Check if a tree contains any lookaround at the top level.
+#[must_use]
 pub fn has_top_level_lookaround(tree: &RegexpRoot) -> bool {
     for branch in tree {
         for atom in branch {
@@ -459,6 +467,7 @@ pub fn has_top_level_lookaround(tree: &RegexpRoot) -> bool {
 }
 
 /// Check if a tree contains any word boundary atom (`~b` or `~B`).
+#[must_use]
 pub fn has_word_boundary(tree: &RegexpRoot) -> bool {
     for branch in tree {
         for atom in branch {
@@ -829,7 +838,7 @@ pub fn expand_word_boundaries(tree: &RegexpRoot) -> Result<RegexpRoot, String> {
                     (true, false) => expand_wb_at_start(suffix, is_boundary, &mut new_alternatives),
                     (false, true) => expand_wb_at_end(prefix, is_boundary, &mut new_alternatives),
                     (false, false) => {
-                        expand_wb_in_middle(prefix, suffix, is_boundary, &mut new_alternatives)
+                        expand_wb_in_middle(prefix, suffix, is_boundary, &mut new_alternatives);
                     }
                 }
             }
@@ -877,7 +886,7 @@ pub fn parse_regexp(re: &str) -> Result<RegexpRoot, RegexpError> {
     let unimplemented = parse.found_unimplemented();
     if !unimplemented.is_empty() {
         return Err(RegexpError {
-            message: format!("unimplemented features: {:?}", unimplemented),
+            message: format!("unimplemented features: {unimplemented:?}"),
             offset: 0,
         });
     }
@@ -1181,8 +1190,7 @@ fn read_atom(parse: &mut RegexpParse) -> Result<QuantifiedAtom, RegexpError> {
                                     // Could be named group (?<name>...) - not supported
                                     return Err(RegexpError {
                                         message: format!(
-                                            "named capturing groups (?<{}...) not supported",
-                                            c
+                                            "named capturing groups (?<{c}...) not supported"
                                         ),
                                         offset: parse.last_index,
                                     });
@@ -1198,7 +1206,7 @@ fn read_atom(parse: &mut RegexpParse) -> Result<QuantifiedAtom, RegexpError> {
                         Ok(c) => {
                             // Some other (? extension we don't support
                             return Err(RegexpError {
-                                message: format!("unsupported group extension (?{}...)", c),
+                                message: format!("unsupported group extension (?{c}...)"),
                                 offset: parse.last_index,
                             });
                         }
@@ -1262,7 +1270,7 @@ fn read_atom(parse: &mut RegexpParse) -> Result<QuantifiedAtom, RegexpError> {
         }),
         c if c == ESCAPE => {
             let next = parse.next_rune().map_err(|_| RegexpError {
-                message: format!("'{}' at end of regular expression", ESCAPE),
+                message: format!("'{ESCAPE}' at end of regular expression"),
                 offset: parse.last_index,
             })?;
 
@@ -1296,7 +1304,7 @@ fn read_atom(parse: &mut RegexpParse) -> Result<QuantifiedAtom, RegexpError> {
                 // For negated categories, prefix cache key with "-"
                 let cache_key = if next == 'P' {
                     runes = invert_rune_range(runes);
-                    cache_key.map(|k| format!("-{}", k))
+                    cache_key.map(|k| format!("-{k}"))
                 } else {
                     cache_key
                 };
@@ -1326,18 +1334,18 @@ fn read_atom(parse: &mut RegexpParse) -> Result<QuantifiedAtom, RegexpError> {
                 && (1..=9).contains(&digit)
             {
                 return Err(RegexpError {
-                    message: format!("backreferences (~{}) are not supported", digit),
+                    message: format!("backreferences (~{digit}) are not supported"),
                     offset: parse.last_index,
                 });
             }
 
             Err(RegexpError {
-                message: format!("invalid character '{}' after '{}'", next, ESCAPE),
+                message: format!("invalid character '{next}' after '{ESCAPE}'"),
                 offset: parse.last_index,
             })
         }
         '?' | '+' | '*' | '{' => Err(RegexpError {
-            message: format!("invalid character '{}' (quantifier without atom)", b),
+            message: format!("invalid character '{b}' (quantifier without atom)"),
             offset: parse.last_index,
         }),
         '|' => {
@@ -1539,16 +1547,13 @@ fn read_cce1(parse: &mut RegexpParse, first: bool) -> Result<RuneRange, RegexpEr
             return Ok(runes);
         }
         check_single_char_escape(next).ok_or_else(|| RegexpError {
-            message: format!(
-                "invalid character '{}' after {} in character class",
-                next, ESCAPE
-            ),
+            message: format!("invalid character '{next}' after {ESCAPE} in character class"),
             offset: parse.last_index,
         })?
     } else {
         if !is_cc_char(r) {
             return Err(RegexpError {
-                message: format!("invalid character '{}' in character class", r),
+                message: format!("invalid character '{r}' in character class"),
                 offset: parse.last_index,
             });
         }
@@ -1591,13 +1596,13 @@ fn read_cce1(parse: &mut RegexpParse, first: bool) -> Result<RuneRange, RegexpEr
             offset: parse.index,
         })?;
         check_single_char_escape(escaped).ok_or_else(|| RegexpError {
-            message: format!("invalid char '{}' after - in character class", escaped),
+            message: format!("invalid char '{escaped}' after - in character class"),
             offset: parse.last_index,
         })?
     } else {
         if !is_cc_char(range_end) {
             return Err(RegexpError {
-                message: format!("invalid char '{}' in range", range_end),
+                message: format!("invalid char '{range_end}' in range"),
                 offset: parse.last_index,
             });
         }
@@ -1606,7 +1611,7 @@ fn read_cce1(parse: &mut RegexpParse, first: bool) -> Result<RuneRange, RegexpEr
 
     if lo > hi {
         return Err(RegexpError {
-            message: format!("invalid range {}-{}", lo, hi),
+            message: format!("invalid range {lo}-{hi}"),
             offset: parse.last_index,
         });
     }
@@ -1617,7 +1622,7 @@ fn read_cce1(parse: &mut RegexpParse, first: bool) -> Result<RuneRange, RegexpEr
 /// Subtract one rune range from another: `base - subtract`.
 /// Returns characters that are in `base` but NOT in `subtract`.
 /// Both inputs are simplified before processing.
-pub(crate) fn subtract_rune_range(base: RuneRange, subtract: RuneRange) -> RuneRange {
+pub fn subtract_rune_range(base: RuneRange, subtract: RuneRange) -> RuneRange {
     let base = simplify_rune_range(base);
     let subtract = simplify_rune_range(subtract);
 
@@ -1662,7 +1667,7 @@ pub(crate) fn subtract_rune_range(base: RuneRange, subtract: RuneRange) -> RuneR
 }
 
 /// Simplify and merge overlapping rune ranges
-pub(crate) fn simplify_rune_range(mut rranges: RuneRange) -> RuneRange {
+pub fn simplify_rune_range(mut rranges: RuneRange) -> RuneRange {
     if rranges.is_empty() {
         return rranges;
     }
@@ -1728,7 +1733,7 @@ fn add_gap_range(inverted: &mut Vec<RunePair>, start: u32, end: u32) {
 
 /// Invert a rune range (for negated character classes).
 /// Returns a range that matches everything NOT in the input range.
-pub(crate) fn invert_rune_range(mut rr: RuneRange) -> RuneRange {
+pub fn invert_rune_range(mut rr: RuneRange) -> RuneRange {
     rr.sort_by_key(|rp| rp.lo);
 
     // Merge overlapping/adjacent ranges after sorting
@@ -1796,7 +1801,7 @@ fn read_category(parse: &mut RegexpParse) -> Result<(RuneRange, Option<String>),
             return Ok((ranges, None));
         }
         return Err(RegexpError {
-            message: format!("unknown Unicode block ~p{{{}}}", name),
+            message: format!("unknown Unicode block ~p{{{name}}}"),
             offset: parse.last_index,
         });
     }
@@ -1816,7 +1821,7 @@ fn read_category(parse: &mut RegexpParse) -> Result<(RuneRange, Option<String>),
     let valid_initials = ['L', 'M', 'N', 'P', 'Z', 'S', 'C'];
     if !valid_initials.contains(&initial) {
         return Err(RegexpError {
-            message: format!("unknown category {}", initial),
+            message: format!("unknown category {initial}"),
             offset: parse.last_index,
         });
     }
@@ -1838,7 +1843,7 @@ fn read_category(parse: &mut RegexpParse) -> Result<(RuneRange, Option<String>),
 
         if !valid_details.contains(d) {
             return Err(RegexpError {
-                message: format!("unknown category {}p{{{}{}", ESCAPE, initial, d),
+                message: format!("unknown category {ESCAPE}p{{{initial}{d}"),
                 offset: parse.last_index,
             });
         }
@@ -1846,21 +1851,21 @@ fn read_category(parse: &mut RegexpParse) -> Result<(RuneRange, Option<String>),
         // Check for extra characters
         if chars.next().is_some() {
             return Err(RegexpError {
-                message: format!("invalid category name ~p{{{}}}", name),
+                message: format!("invalid category name ~p{{{name}}}"),
                 offset: parse.last_index,
             });
         }
     }
 
     // Build the cache key (e.g., "L", "Lu", "Nd")
-    let cache_key = detail.map_or_else(|| initial.to_string(), |d| format!("{}{}", initial, d));
+    let cache_key = detail.map_or_else(|| initial.to_string(), |d| format!("{initial}{d}"));
 
     // Look up the category ranges
     if let Some(ranges) = get_category_ranges(initial, detail) {
         Ok((ranges, Some(cache_key)))
     } else {
         Err(RegexpError {
-            message: format!("unknown category ~p{{{}}}", name),
+            message: format!("unknown category ~p{{{name}}}"),
             offset: parse.last_index,
         })
     }
@@ -1868,13 +1873,12 @@ fn read_category(parse: &mut RegexpParse) -> Result<(RuneRange, Option<String>),
 
 /// Read a quantifier (?, *, +, {m,n}) with optional lazy modifier (?)
 fn read_quantifier(parse: &mut RegexpParse, qa: &mut QuantifiedAtom) -> Result<(), RegexpError> {
-    let b = match parse.next_rune() {
-        Ok(c) => c,
-        Err(_) => {
-            qa.quant_min = 1;
-            qa.quant_max = 1;
-            return Ok(());
-        }
+    let b = if let Ok(c) = parse.next_rune() {
+        c
+    } else {
+        qa.quant_min = 1;
+        qa.quant_max = 1;
+        return Ok(());
     };
 
     let mut is_quantifier = true;
@@ -1980,7 +1984,7 @@ fn read_range_quantifier(
                 }
                 _ => {
                     return Err(RegexpError {
-                        message: format!("unexpected character '{}' in quantifier", b),
+                        message: format!("unexpected character '{b}' in quantifier"),
                         offset: parse.last_index,
                     });
                 }
@@ -1996,10 +2000,7 @@ fn read_range_quantifier(
 
     if !b.is_ascii_digit() {
         return Err(RegexpError {
-            message: format!(
-                "invalid character '{}' in quantifier range, wanted a digit",
-                b
-            ),
+            message: format!("invalid character '{b}' in quantifier range, wanted a digit"),
             offset: parse.last_index,
         });
     }
@@ -2024,7 +2025,7 @@ fn read_range_quantifier(
             return Ok(());
         } else {
             return Err(RegexpError {
-                message: format!("invalid character '{}', expected '}}'", b),
+                message: format!("invalid character '{b}', expected '}}'"),
                 offset: parse.last_index,
             });
         }

@@ -48,6 +48,6 @@ fn main() {
     let elapsed = start.elapsed();
     let total_ops = iterations * lines.len();
     let ns_per_op = elapsed.as_nanos() / total_ops as u128;
-    eprintln!("{} total operations in {:?}", total_ops, elapsed);
-    eprintln!("{} ns/op", ns_per_op);
+    eprintln!("{total_ops} total operations in {elapsed:?}");
+    eprintln!("{ns_per_op} ns/op");
 }

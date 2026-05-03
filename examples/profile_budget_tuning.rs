@@ -82,7 +82,7 @@ fn fmt_ns(min: u64, max: u64) -> String {
     if jitter > 1.10 {
         format!("{}ns!({:.0}%)", min, (jitter - 1.0) * 100.0)
     } else {
-        format!("{}ns", min)
+        format!("{min}ns")
     }
 }
 
@@ -105,7 +105,7 @@ struct PatternCase {
 }
 
 impl PatternCase {
-    fn kind_name(&self) -> &'static str {
+    const fn kind_name(&self) -> &'static str {
         match self.kind {
             PatternKind::Regexp(_) => "regexp",
             PatternKind::Shellstyle(_) => "shell",
@@ -265,10 +265,7 @@ fn encode_value(s: &str) -> Vec<u8> {
 
 fn section1_tier_comparison() {
     println!("=== Section 1: Per-pattern performance profile (build + memory + match) ===");
-    println!(
-        "  warm_ns  = steady-state: pre-warmed {} passes, then min of {} rounds",
-        WARMUP, ROUNDS
-    );
+    println!("  warm_ns  = steady-state: pre-warmed {WARMUP} passes, then min of {ROUNDS} rounds");
     println!("  !        = >10% jitter between rounds (noisy measurement)");
     println!();
 
@@ -338,7 +335,7 @@ fn section1_tier_comparison() {
                 nfa_match_min as f64 / dfa_match_min as f64,
             );
         } else {
-            println!("  EagerDFA not convertible at budget {}", eb);
+            println!("  EagerDFA not convertible at budget {eb}");
         }
 
         println!();
@@ -396,7 +393,7 @@ fn section2_budget_sensitivity() {
                         );
                     }
                 });
-                cols.push(format!("ok({:4}st) {:4}ns", dfa_states, ns));
+                cols.push(format!("ok({dfa_states:4}st) {ns:4}ns"));
             } else {
                 cols.push(format!("{:>14}", "--"));
             }
@@ -490,8 +487,8 @@ fn section3_merged_performance() {
     let encoded: Vec<Vec<u8>> = match_values.iter().map(|v| encode_value(v)).collect();
 
     println!(
-        "{:>5}  {:<20}  {:>10}  {:>8}  {:>12}  {}",
-        "#", "added", "NFA_states", "mem_KB", "NFA_ns", "tier"
+        "{:>5}  {:<20}  {:>10}  {:>8}  {:>12}  tier",
+        "#", "added", "NFA_states", "mem_KB", "NFA_ns"
     );
     println!("{}", "-".repeat(65));
 
@@ -592,7 +589,7 @@ fn section4_tradeoff_summary() {
                         );
                     }
                 });
-                (format!("{}", mem), format!("{} ns", ns))
+                (format!("{mem}"), format!("{ns} ns"))
             } else {
                 ("N/A".to_string(), "N/A".to_string())
             };
@@ -611,10 +608,7 @@ fn section4_tradeoff_summary() {
 
     println!();
     println!("Notes:");
-    println!(
-        "  DFA = N/A when eager budget exceeded (EAGER_CAP={})",
-        EAGER_CAP
-    );
+    println!("  DFA = N/A when eager budget exceeded (EAGER_CAP={EAGER_CAP})");
     println!();
 }
 

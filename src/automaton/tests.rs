@@ -648,8 +648,8 @@ fn test_sparse_set_capacity_returns_correct_value() {
 #[test]
 fn test_sparse_set_insert_return_value() {
     let mut set = SparseSet::new(10);
-    assert_eq!(set.insert(3), true);
-    assert_eq!(set.insert(3), false);
+    assert!(set.insert(3));
+    assert!(!set.insert(3));
 }
 
 /// Successive inserts must all remain visible — verifies that the internal
@@ -672,11 +672,11 @@ fn test_sparse_set_insert_increments_len() {
 #[test]
 fn test_sparse_set_contains_correctness() {
     let mut set = SparseSet::new(10);
-    assert_eq!(set.contains(0), false);
-    assert_eq!(set.contains(5), false);
+    assert!(!set.contains(0));
+    assert!(!set.contains(5));
     set.insert(5);
-    assert_eq!(set.contains(5), true);
-    assert_eq!(set.contains(0), false);
+    assert!(set.contains(5));
+    assert!(!set.contains(0));
 }
 
 /// An ID that wasn't inserted must not be reported as present, even when

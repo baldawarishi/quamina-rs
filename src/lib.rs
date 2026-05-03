@@ -136,14 +136,14 @@ pub enum QuaminaError {
 impl fmt::Display for QuaminaError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::InvalidJson(msg) => write!(f, "invalid JSON: {}", msg),
-            Self::InvalidPattern(msg) => write!(f, "invalid pattern: {}", msg),
+            Self::InvalidJson(msg) => write!(f, "invalid JSON: {msg}"),
+            Self::InvalidPattern(msg) => write!(f, "invalid pattern: {msg}"),
             Self::InvalidUtf8 => write!(f, "invalid UTF-8"),
             Self::UnsupportedMediaType(mt) => {
-                write!(f, "media type \"{}\" is not supported by Quamina", mt)
+                write!(f, "media type \"{mt}\" is not supported by Quamina")
             }
             Self::PatternTooComplex(msg) => {
-                write!(f, "pattern too complex: {}", msg)
+                write!(f, "pattern too complex: {msg}")
             }
         }
     }
@@ -224,6 +224,7 @@ pub struct QuaminaBuilder<X: Clone + Eq + Hash + Send + Sync = String> {
 
 impl<X: Clone + Eq + Hash + Send + Sync> QuaminaBuilder<X> {
     /// Create a new QuaminaBuilder with default settings
+    #[must_use]
     pub fn new() -> Self {
         Self {
             auto_rebuild_enabled: true,
@@ -343,6 +344,7 @@ impl<X: Clone + Eq + Hash + Send + Sync> QuaminaBuilder<X> {
     /// # Ok(())
     /// # }
     /// ```
+    #[must_use]
     pub fn with_max_pattern_depth(mut self, depth: usize) -> Self {
         assert!(depth > 0, "max_pattern_depth must be at least 1");
         self.pattern_limits.max_pattern_depth = depth;
@@ -365,6 +367,7 @@ impl<X: Clone + Eq + Hash + Send + Sync> QuaminaBuilder<X> {
     /// # Ok(())
     /// # }
     /// ```
+    #[must_use]
     pub fn with_max_fields_per_pattern(mut self, count: usize) -> Self {
         assert!(count > 0, "max_fields_per_pattern must be at least 1");
         self.pattern_limits.max_fields_per_pattern = count;
@@ -387,6 +390,7 @@ impl<X: Clone + Eq + Hash + Send + Sync> QuaminaBuilder<X> {
     /// # Ok(())
     /// # }
     /// ```
+    #[must_use]
     pub fn with_arena_byte_budget(mut self, budget: usize) -> Self {
         assert!(budget > 0, "arena_byte_budget must be at least 1");
         self.pattern_limits.arena_byte_budget = budget;
@@ -409,6 +413,7 @@ impl<X: Clone + Eq + Hash + Send + Sync> QuaminaBuilder<X> {
     /// # Ok(())
     /// # }
     /// ```
+    #[must_use]
     pub fn with_max_states_per_pattern(mut self, max_states: usize) -> Self {
         assert!(max_states > 0, "max_states_per_pattern must be at least 1");
         self.pattern_limits.max_states_per_pattern = max_states;
@@ -431,7 +436,8 @@ impl<X: Clone + Eq + Hash + Send + Sync> QuaminaBuilder<X> {
     ///     .build()
     ///     .unwrap();
     /// ```
-    pub fn with_auto_rebuild(mut self, enabled: bool) -> Self {
+    #[must_use]
+    pub const fn with_auto_rebuild(mut self, enabled: bool) -> Self {
         self.auto_rebuild_enabled = enabled;
         self
     }
@@ -549,6 +555,7 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
     /// let mut q = Quamina::<String>::new();
     /// assert!(q.is_empty());
     /// ```
+    #[must_use]
     pub fn new() -> Self {
         let limits = PatternLimits::default();
         Self {
@@ -724,13 +731,13 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
 
     /// Access the underlying automaton (for direct matching without Mutex).
     #[doc(hidden)]
-    pub fn automaton(&self) -> &ThreadSafeCoreMatcher<X> {
+    pub const fn automaton(&self) -> &ThreadSafeCoreMatcher<X> {
         &self.automaton
     }
 
     /// Access the segments tree (for direct flattening without Mutex).
     #[doc(hidden)]
-    pub fn segments_tree(&self) -> &SegmentsTree {
+    pub const fn segments_tree(&self) -> &SegmentsTree {
         &self.segments_tree
     }
 
@@ -823,7 +830,7 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
     }
 
     /// Get the pruner statistics
-    pub fn pruner_stats(&self) -> &PrunerStats {
+    pub const fn pruner_stats(&self) -> &PrunerStats {
         &self.pruner_stats
     }
 
@@ -837,12 +844,12 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
     }
 
     /// Enable or disable auto-rebuild
-    pub fn set_auto_rebuild(&mut self, enabled: bool) {
+    pub const fn set_auto_rebuild(&mut self, enabled: bool) {
         self.auto_rebuild_enabled = enabled;
     }
 
     /// Check if auto-rebuild is enabled
-    pub fn auto_rebuild_enabled(&self) -> bool {
+    pub const fn auto_rebuild_enabled(&self) -> bool {
         self.auto_rebuild_enabled
     }
 

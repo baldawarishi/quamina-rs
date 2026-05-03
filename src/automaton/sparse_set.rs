@@ -47,7 +47,7 @@ impl SparseSet {
 
     /// Returns the capacity of this set.
     #[inline]
-    pub fn capacity(&self) -> usize {
+    pub const fn capacity(&self) -> usize {
         self.dense.len()
     }
 
@@ -82,7 +82,7 @@ impl SparseSet {
 
     /// Clear the set in O(1) time.
     #[inline]
-    pub fn clear(&mut self) {
+    pub const fn clear(&mut self) {
         self.len = 0;
     }
 }

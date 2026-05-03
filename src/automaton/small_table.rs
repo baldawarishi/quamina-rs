@@ -40,6 +40,7 @@ impl AccelInfo {
     /// Returns `Some(offset)` where offset is the position of the first exit
     /// byte, or `None` if no exit byte is found in the slice.
     #[inline]
+    #[must_use]
     pub fn try_accelerate(&self, remaining: &[u8]) -> Option<usize> {
         match self.len {
             1 => memchr::memchr(self.exit_bytes[0], remaining),
@@ -72,6 +73,7 @@ pub struct FieldMatcher {
 }
 
 impl FieldMatcher {
+    #[must_use]
     pub fn new() -> Self {
         Self {
             match_id: None,
@@ -81,6 +83,7 @@ impl FieldMatcher {
     }
 
     /// Create a new FieldMatcher with a match ID
+    #[must_use]
     pub fn with_match_id(id: u64) -> Self {
         Self {
             match_id: Some(id),
@@ -98,6 +101,7 @@ pub struct NfaBuffers {
 }
 
 impl NfaBuffers {
+    #[must_use]
     pub fn new() -> Self {
         Self {
             arena_bufs: super::arena::ArenaNfaBuffers::new(),

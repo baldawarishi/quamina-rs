@@ -116,6 +116,7 @@ pub struct MutableFieldMatcher<X: Clone + Eq + std::hash::Hash> {
 }
 
 impl<X: Clone + Eq + std::hash::Hash> MutableFieldMatcher<X> {
+    #[must_use]
     pub fn new() -> Self {
         Self {
             transitions: RefCell::new(FxHashMap::default()),
@@ -240,6 +241,7 @@ impl<X: Clone + Eq + std::hash::Hash> Default for MutableValueMatcher<X> {
 }
 
 impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
+    #[must_use]
     pub fn new() -> Self {
         Self {
             singleton_match: RefCell::new(None),
@@ -255,6 +257,7 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
         }
     }
 
+    #[must_use]
     pub fn with_budget(budget: usize) -> Self {
         Self {
             singleton_match: RefCell::new(None),
@@ -1135,6 +1138,7 @@ pub struct CoreMatcher<X: Clone + Eq + std::hash::Hash> {
 
 impl<X: Clone + Eq + std::hash::Hash> CoreMatcher<X> {
     /// Create a new CoreMatcher with default arena budget (10 MB).
+    #[must_use]
     pub fn new() -> Self {
         Self {
             root: Rc::new(MutableFieldMatcher::new()),
@@ -1198,6 +1202,7 @@ impl<X: Clone + Eq + std::hash::Hash> CoreMatcher<X> {
     /// Match fields against patterns and return matching pattern identifiers.
     ///
     /// Fields should already be sorted by path.
+    #[must_use]
     pub fn matches_for_fields(&self, fields: &[EventField]) -> Vec<X> {
         if fields.is_empty() {
             // Still need to check exists:false patterns
@@ -3073,7 +3078,7 @@ mod tests {
         }];
         let matches = cm.matches_for_fields(&hello);
         assert!(
-            matches.len() >= 1,
+            !matches.is_empty(),
             "singleton-to-arena merge should preserve matches"
         );
     }
@@ -3132,16 +3137,15 @@ mod tests {
         // Add multiple patterns - each one calls check_budget
         for i in 0..5 {
             let result = cm.add_pattern(
-                format!("p{}", i),
+                format!("p{i}"),
                 &[(
                     "f".to_string(),
-                    vec![Matcher::Exact(format!("\"pattern{}\"", i))],
+                    vec![Matcher::Exact(format!("\"pattern{i}\""))],
                 )],
             );
             assert!(
                 result.is_ok(),
-                "pattern {} should succeed with default budget",
-                i
+                "pattern {i} should succeed with default budget"
             );
         }
 
@@ -3149,13 +3153,13 @@ mod tests {
         for i in 0..5 {
             let fields = vec![EventField {
                 path: "f".to_string(),
-                value: format!("\"pattern{}\"", i),
+                value: format!("\"pattern{i}\""),
                 array_trail: vec![],
                 is_number: false,
             }];
             assert_eq!(
                 cm.matches_for_fields(&fields),
-                vec![format!("p{}", i)],
+                vec![format!("p{i}")],
                 "pattern {} should match",
                 i
             );
@@ -3171,27 +3175,24 @@ mod tests {
         // Add several patterns that will be merged
         for i in 0..3 {
             let result = cm.add_pattern(
-                format!("p{}", i),
-                &[(
-                    "x".to_string(),
-                    vec![Matcher::Prefix(format!("prefix{}", i))],
-                )],
+                format!("p{i}"),
+                &[("x".to_string(), vec![Matcher::Prefix(format!("prefix{i}"))])],
             );
-            assert!(result.is_ok(), "pattern {} merge should succeed", i);
+            assert!(result.is_ok(), "pattern {i} merge should succeed");
         }
 
         // Verify merged patterns all work
         for i in 0..3 {
             let fields = vec![EventField {
                 path: "x".to_string(),
-                value: format!("\"prefix{}_test\"", i),
+                value: format!("\"prefix{i}_test\""),
                 array_trail: vec![],
                 is_number: false,
             }];
             let matches = cm.matches_for_fields(&fields);
             assert_eq!(
                 matches,
-                vec![format!("p{}", i)],
+                vec![format!("p{i}")],
                 "merged pattern {} should match",
                 i
             );

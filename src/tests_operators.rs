@@ -29,33 +29,28 @@ fn exercise_multi_patterns(
     // Add all patterns
     for (pattern, _) in patterns_with_matches {
         q.add_pattern(*pattern, pattern)
-            .unwrap_or_else(|e| panic!("Failed to add pattern {}: {:?}", pattern, e));
+            .unwrap_or_else(|e| panic!("Failed to add pattern {pattern}: {e:?}"));
     }
 
     // Verify each pattern matches its expected values
     for (pattern, should_match) in patterns_with_matches {
         for val in *should_match {
-            let event = format!(r#"{{"x":"{}"}}"#, val);
+            let event = format!(r#"{{"x":"{val}"}}"#);
             let matches = q.matches_for_event(event.as_bytes()).unwrap();
             assert!(
                 matches.contains(pattern),
-                "Pattern '{}' should match '{}', got {:?}",
-                pattern,
-                val,
-                matches
+                "Pattern '{pattern}' should match '{val}', got {matches:?}"
             );
         }
     }
 
     // Verify none of the should_not_match values match any pattern
     for val in should_not_match_any {
-        let event = format!(r#"{{"x":"{}"}}"#, val);
+        let event = format!(r#"{{"x":"{val}"}}"#);
         let matches = q.matches_for_event(event.as_bytes()).unwrap();
         assert!(
             matches.is_empty(),
-            "'{}' should not match any pattern, got {:?}",
-            val,
-            matches
+            "'{val}' should not match any pattern, got {matches:?}"
         );
     }
 }
@@ -215,7 +210,7 @@ fn test_shellstyle_contains() {
     let q = q!("p1" => r#"{"x": [{"shellstyle": "*foo*"}]}"#);
 
     for text in ["xxfooyy", "fooyy", "xxfoo", "foo"] {
-        let event = format!(r#"{{"x": "{}"}}"#, text);
+        let event = format!(r#"{{"x": "{text}"}}"#);
         assert_matches!(q, event, vec!["p1"]);
     }
 
@@ -706,15 +701,15 @@ fn test_cidr_ipv4_prefix_various_lengths() {
     ];
 
     for (name, pattern_cidr, ip_match, ip_nomatch) in tests {
-        let pattern = format!(r#"{{"ip": [{{"cidr": "{}"}}]}}"#, pattern_cidr);
+        let pattern = format!(r#"{{"ip": [{{"cidr": "{pattern_cidr}"}}]}}"#);
         let q = q!("p1" => pattern.as_str());
 
-        let event_match = format!(r#"{{"ip": "{}"}}"#, ip_match);
-        let msg_match = format!("{}: {} should match {}", name, ip_match, pattern_cidr);
+        let event_match = format!(r#"{{"ip": "{ip_match}"}}"#);
+        let msg_match = format!("{name}: {ip_match} should match {pattern_cidr}");
         assert_matches!(q, &event_match, vec!["p1"], &msg_match);
 
-        let event_nomatch = format!(r#"{{"ip": "{}"}}"#, ip_nomatch);
-        let msg_nomatch = format!("{}: {} should NOT match {}", name, ip_nomatch, pattern_cidr);
+        let event_nomatch = format!(r#"{{"ip": "{ip_nomatch}"}}"#);
+        let msg_nomatch = format!("{name}: {ip_nomatch} should NOT match {pattern_cidr}");
         assert_no_match!(q, &event_nomatch, &msg_nomatch);
     }
 }
@@ -742,15 +737,15 @@ fn test_cidr_ipv6_double_colon_variations() {
     ];
 
     for (pattern_cidr, ip_match, ip_nomatch) in tests {
-        let pattern = format!(r#"{{"ip": [{{"cidr": "{}"}}]}}"#, pattern_cidr);
+        let pattern = format!(r#"{{"ip": [{{"cidr": "{pattern_cidr}"}}]}}"#);
         let q = q!("p1" => pattern.as_str());
 
-        let event_match = format!(r#"{{"ip": "{}"}}"#, ip_match);
-        let msg_match = format!("{} should match {}", ip_match, pattern_cidr);
+        let event_match = format!(r#"{{"ip": "{ip_match}"}}"#);
+        let msg_match = format!("{ip_match} should match {pattern_cidr}");
         assert_matches!(q, &event_match, vec!["p1"], &msg_match);
 
-        let event_nomatch = format!(r#"{{"ip": "{}"}}"#, ip_nomatch);
-        let msg_nomatch = format!("{} should NOT match {}", ip_nomatch, pattern_cidr);
+        let event_nomatch = format!(r#"{{"ip": "{ip_nomatch}"}}"#);
+        let msg_nomatch = format!("{ip_nomatch} should NOT match {pattern_cidr}");
         assert_no_match!(q, &event_nomatch, &msg_nomatch);
     }
 }
@@ -923,9 +918,7 @@ fn test_lookahead_with_exact_on_same_field() {
         .unwrap();
 
     // Lookahead pattern should still match "foobar"
-    let m = q
-        .matches_for_event(r#"{"v": "foobar"}"#.as_bytes())
-        .unwrap();
+    let m = q.matches_for_event(br#"{"v": "foobar"}"#).unwrap();
     assert!(
         m.contains(&"look".to_string()),
         "lookahead pattern should match 'foobar' even with exact pattern on same field"
@@ -936,7 +929,7 @@ fn test_lookahead_with_exact_on_same_field() {
     );
 
     // Exact pattern should still match "hello"
-    let m = q.matches_for_event(r#"{"v": "hello"}"#.as_bytes()).unwrap();
+    let m = q.matches_for_event(br#"{"v": "hello"}"#).unwrap();
     assert!(
         m.contains(&"exact".to_string()),
         "exact pattern should match 'hello'"
@@ -947,7 +940,7 @@ fn test_lookahead_with_exact_on_same_field() {
     );
 
     // Neither should match an unrelated value
-    let m = q.matches_for_event(r#"{"v": "other"}"#.as_bytes()).unwrap();
+    let m = q.matches_for_event(br#"{"v": "other"}"#).unwrap();
     assert!(m.is_empty(), "no pattern should match 'other'");
 }
 
@@ -963,15 +956,13 @@ fn test_exact_added_before_lookahead_on_same_field() {
     )
     .unwrap();
 
-    let m = q
-        .matches_for_event(r#"{"v": "foobar"}"#.as_bytes())
-        .unwrap();
+    let m = q.matches_for_event(br#"{"v": "foobar"}"#).unwrap();
     assert!(
         m.contains(&"look".to_string()),
         "lookahead pattern should match 'foobar' when exact was added first"
     );
 
-    let m = q.matches_for_event(r#"{"v": "hello"}"#.as_bytes()).unwrap();
+    let m = q.matches_for_event(br#"{"v": "hello"}"#).unwrap();
     assert!(
         m.contains(&"exact".to_string()),
         "exact pattern should match 'hello'"
@@ -992,9 +983,7 @@ fn test_singleton_hit_and_multi_condition_hit_same_value() {
     q.add_pattern("exact".to_string(), r#"{"v": ["foobar"]}"#)
         .unwrap();
 
-    let m = q
-        .matches_for_event(r#"{"v": "foobar"}"#.as_bytes())
-        .unwrap();
+    let m = q.matches_for_event(br#"{"v": "foobar"}"#).unwrap();
     assert!(
         m.contains(&"look".to_string()),
         "lookahead should match 'foobar'"
@@ -1252,13 +1241,11 @@ fn test_exists_false_ordering() {
 
     for (i, pattern) in should_not_patterns.iter().enumerate() {
         let mut q = Quamina::new();
-        q.add_pattern(format!("p{}", i), pattern).unwrap();
+        q.add_pattern(format!("p{i}"), pattern).unwrap();
         let matches = q.matches_for_event(event.as_bytes()).unwrap();
         assert!(
             matches.is_empty(),
-            "Pattern {} should NOT match: {}",
-            i,
-            pattern
+            "Pattern {i} should NOT match: {pattern}"
         );
     }
 }
@@ -1394,21 +1381,16 @@ fn test_regex_various_patterns() {
 
     for &(name, regex, matches, no_matches) in cases {
         let mut q = Quamina::new();
-        let pattern = format!(r#"{{"a": [{{"regex": "{}"}}]}}"#, regex);
+        let pattern = format!(r#"{{"a": [{{"regex": "{regex}"}}]}}"#);
         q.add_pattern(name, &pattern).unwrap();
 
         for m in matches {
-            let event = format!(r#"{{"a": "{}"}}"#, m);
-            assert_has_match!(
-                q,
-                &event,
-                name,
-                &format!("'{}' should match '{}'", regex, m)
-            );
+            let event = format!(r#"{{"a": "{m}"}}"#);
+            assert_has_match!(q, &event, name, &format!("'{regex}' should match '{m}'"));
         }
         for m in no_matches {
-            let event = format!(r#"{{"a": "{}"}}"#, m);
-            assert_no_match!(q, &event, &format!("'{}' should NOT match '{}'", regex, m));
+            let event = format!(r#"{{"a": "{m}"}}"#);
+            assert_no_match!(q, &event, &format!("'{regex}' should NOT match '{m}'"));
         }
     }
 }
@@ -1535,7 +1517,7 @@ fn test_regexp_end2end() {
         }
 
         for m in test.matches {
-            let event = format!(r#"{{"a": "{}"}}"#, m);
+            let event = format!(r#"{{"a": "{m}"}}"#);
             let matches = q.matches_for_event(event.as_bytes()).unwrap();
             assert!(
                 matches.contains(&"test"),
@@ -1546,7 +1528,7 @@ fn test_regexp_end2end() {
         }
 
         for m in test.nomatches {
-            let event = format!(r#"{{"a": "{}"}}"#, m);
+            let event = format!(r#"{{"a": "{m}"}}"#);
             let matches = q.matches_for_event(event.as_bytes()).unwrap();
             assert!(
                 matches.is_empty(),
@@ -1561,16 +1543,16 @@ fn test_regexp_end2end() {
     let mut all_patterns = Quamina::new();
     for (i, test) in tests.iter().enumerate() {
         let pattern = format!(r#"{{"a": [{{"regexp": "{}"}}]}}"#, test.regex);
-        let name = format!("p{}", i);
+        let name = format!("p{i}");
         if let Err(e) = all_patterns.add_pattern(name, &pattern) {
             panic!("Failed to add pattern '{}': {}", test.regex, e);
         }
     }
 
     for (i, test) in tests.iter().enumerate() {
-        let expected_name = format!("p{}", i);
+        let expected_name = format!("p{i}");
         for m in test.matches {
-            let event = format!(r#"{{"a": "{}"}}"#, m);
+            let event = format!(r#"{{"a": "{m}"}}"#);
             let matches = all_patterns.matches_for_event(event.as_bytes()).unwrap();
             assert!(
                 matches.contains(&expected_name),
@@ -1586,8 +1568,8 @@ fn test_regexp_end2end() {
 fn test_shellstyle_long_case() {
     let q = q!("p1" => r#"{"x": [{"shellstyle": "*abab"}]}"#);
     for text in ["abaabab", "ababab", "ababaabab", "abab"] {
-        let event = format!(r#"{{"x": "{}"}}"#, text);
-        assert_matches!(q, &event, vec!["p1"], &format!("Should match {}", text));
+        let event = format!(r#"{{"x": "{text}"}}"#);
+        assert_matches!(q, &event, vec!["p1"], &format!("Should match {text}"));
     }
 }
 
@@ -1654,14 +1636,14 @@ fn test_anything_but_with_overlapping_exclusions() {
     // All excluded values should not match
     let excluded = ["tim", "time", "timed"];
     for val in excluded {
-        let event = format!(r#"{{"x": "{}"}}"#, val);
+        let event = format!(r#"{{"x": "{val}"}}"#);
         assert_no_match!(q, event);
     }
 
     // Similar but non-excluded values should match
     let included = ["t", "ti", "timer", "timely", "timekeeper"];
     for val in included {
-        let event = format!(r#"{{"x": "{}"}}"#, val);
+        let event = format!(r#"{{"x": "{val}"}}"#);
         assert_match_count!(q, event, 1);
     }
 }
@@ -1683,7 +1665,7 @@ fn test_anything_but_wordle_words() {
 
     let mut q = Quamina::new();
     // Build pattern with quoted problem words for JSON array
-    let problem_json: Vec<String> = problem_words.iter().map(|w| format!("\"{}\"", w)).collect();
+    let problem_json: Vec<String> = problem_words.iter().map(|w| format!("\"{w}\"")).collect();
     let pattern = format!(
         r#"{{"a": [{{"anything-but": [{}]}}]}}"#,
         problem_json.join(",")
@@ -1692,12 +1674,11 @@ fn test_anything_but_wordle_words() {
 
     // Problem words should NOT match (they're excluded)
     for word in &problem_words {
-        let event = format!(r#"{{"a": "{}"}}"#, word);
+        let event = format!(r#"{{"a": "{word}"}}"#);
         let matches = q.matches_for_event(event.as_bytes()).unwrap();
         assert!(
             matches.is_empty(),
-            "Problem word '{}' should be excluded",
-            word
+            "Problem word '{word}' should be excluded"
         );
     }
 
@@ -1710,13 +1691,12 @@ fn test_anything_but_wordle_words() {
             if word.is_empty() {
                 continue;
             }
-            let event = format!(r#"{{"a": "{}"}}"#, word);
+            let event = format!(r#"{{"a": "{word}"}}"#);
             let matches = q.matches_for_event(event.as_bytes()).unwrap();
             assert_eq!(
                 matches.len(),
                 1,
-                "Wordle word '{}' should match anything-but pattern",
-                word
+                "Wordle word '{word}' should match anything-but pattern"
             );
         }
     }
@@ -1731,14 +1711,14 @@ fn test_shellstyle_repeated_sequences() {
     // These should all match *abab
     let should_match = ["abab", "abaabab", "ababab", "ababaabab", "xxabab"];
     for val in should_match {
-        let event = format!(r#"{{"x": "{}"}}"#, val);
+        let event = format!(r#"{{"x": "{val}"}}"#);
         assert_matches!(q, event, vec!["p1"]);
     }
 
     // These should not match
     let should_not = ["abab_", "aba", "ab", "xaba"];
     for val in should_not {
-        let event = format!(r#"{{"x": "{}"}}"#, val);
+        let event = format!(r#"{{"x": "{val}"}}"#);
         assert_no_match!(q, event);
     }
 }
@@ -1793,12 +1773,12 @@ fn test_shellstyle_complex_wildcards() {
         let q = q!("p1" => pattern);
 
         for val in should_match {
-            let event = format!(r#"{{"x": "{}"}}"#, val);
+            let event = format!(r#"{{"x": "{val}"}}"#);
             assert_matches!(q, event, vec!["p1"]);
         }
 
         for val in should_not {
-            let event = format!(r#"{{"x": "{}"}}"#, val);
+            let event = format!(r#"{{"x": "{val}"}}"#);
             assert_no_match!(q, event);
         }
     }
@@ -1917,8 +1897,7 @@ fn test_wildcard_invalid_escape_sequences() {
     let valid_result = q.add_pattern("valid", r#"{"x": [{"wildcard": "he*\\**"}]}"#);
     assert!(
         valid_result.is_ok(),
-        "he*\\** should be valid: {:?}",
-        valid_result
+        "he*\\** should be valid: {valid_result:?}"
     );
 
     // Invalid patterns
@@ -1933,7 +1912,7 @@ fn test_wildcard_invalid_escape_sequences() {
     for (pattern, desc) in invalid_patterns {
         let mut q2 = Quamina::new();
         let result = q2.add_pattern("p", pattern);
-        assert!(result.is_err(), "{} should be rejected: {}", desc, pattern);
+        assert!(result.is_err(), "{desc} should be rejected: {pattern}");
     }
 }
 
@@ -1952,11 +1931,7 @@ fn test_wildcard_syntax_errors() {
     for pattern in invalid_patterns {
         let mut q = Quamina::new();
         let result = q.add_pattern("p", pattern);
-        assert!(
-            result.is_err(),
-            "Should reject invalid pattern: {}",
-            pattern
-        );
+        assert!(result.is_err(), "Should reject invalid pattern: {pattern}");
     }
 }
 
@@ -2576,7 +2551,7 @@ fn test_shellstyle_double_wildcard_variations() {
 
     // Additional positive cases from Go
     for val in ["xxyycdzz", "xxabyyzz"] {
-        let event = format!(r#"{{"x": "{}"}}"#, val);
+        let event = format!(r#"{{"x": "{val}"}}"#);
         assert_matches!(q, event, vec!["p1"]);
     }
 
@@ -2584,7 +2559,7 @@ fn test_shellstyle_double_wildcard_variations() {
     let q2 = q!("p2" => r#"{"x": [{"shellstyle": "*xx*yy*"}]}"#);
 
     for val in ["abxxcdyyef", "xxcdyyef", "abxxyyef", "xxcdyy", "xxyyef"] {
-        let event = format!(r#"{{"x": "{}"}}"#, val);
+        let event = format!(r#"{{"x": "{val}"}}"#);
         assert_matches!(q2, event, vec!["p2"]);
     }
 }
@@ -2636,7 +2611,7 @@ fn test_regexp_validity() {
 
     let mut problems = 0;
 
-    for sample in REGEXP_SAMPLES.iter() {
+    for sample in REGEXP_SAMPLES {
         fn should_skip(re: &str) -> bool {
             let chars: Vec<char> = re.chars().collect();
             for i in 0..chars.len().saturating_sub(1) {
@@ -2706,8 +2681,7 @@ fn test_regexp_validity() {
                     traverse_arena_nfa(&arena, start, &value, &mut bufs);
                     let matched = bufs
                         .transitions
-                        .iter()
-                        .any(|&m| m == Arc::as_ptr(&field_matcher) as usize);
+                        .contains(&(Arc::as_ptr(&field_matcher) as usize));
                     if !matched && !should_match.is_empty() {
                         problems += 1;
                     }
@@ -2723,8 +2697,7 @@ fn test_regexp_validity() {
                     traverse_arena_nfa(&arena, start, &value, &mut bufs);
                     let matched = bufs
                         .transitions
-                        .iter()
-                        .any(|&m| m == Arc::as_ptr(&field_matcher) as usize);
+                        .contains(&(Arc::as_ptr(&field_matcher) as usize));
                     if matched
                         && !(should_not_match.is_empty()
                             && star_samples_matching_empty(sample.regex))
@@ -2748,8 +2721,7 @@ fn test_regexp_validity() {
 
     assert!(
         problems <= 4,
-        "Found {} regexp validation problems (expected <= 4)",
-        problems
+        "Found {problems} regexp validation problems (expected <= 4)"
     );
 }
 
@@ -3144,20 +3116,16 @@ fn test_lookaround_buffer_reuse_no_stale_state() {
         .unwrap();
 
     for _ in 0..200 {
-        let m = q
-            .matches_for_event(r#"{"v": "foobar"}"#.as_bytes())
-            .unwrap();
+        let m = q.matches_for_event(br#"{"v": "foobar"}"#).unwrap();
         assert!(
             m.contains(&"look".to_string()),
             "foobar should match lookahead"
         );
 
-        let m = q.matches_for_event(r#"{"w": "hello"}"#.as_bytes()).unwrap();
+        let m = q.matches_for_event(br#"{"w": "hello"}"#).unwrap();
         assert!(m.contains(&"exact".to_string()), "hello should match exact");
 
-        let m = q
-            .matches_for_event(r#"{"v": "nomatch"}"#.as_bytes())
-            .unwrap();
+        let m = q.matches_for_event(br#"{"v": "nomatch"}"#).unwrap();
         assert!(m.is_empty(), "nomatch should match nothing");
     }
 }
@@ -3181,18 +3149,14 @@ fn test_lookaround_multiple_conditions_no_cross_contamination() {
 
     // Run many times — cross-contamination would show up as intermittent failures
     for _ in 0..200 {
-        let m = q
-            .matches_for_event(r#"{"v": "foobar"}"#.as_bytes())
-            .unwrap();
+        let m = q.matches_for_event(br#"{"v": "foobar"}"#).unwrap();
         assert!(m.contains(&"pos".to_string()), "foobar should match pos");
         assert!(
             !m.contains(&"neg".to_string()),
             "foobar should not match neg"
         );
 
-        let m = q
-            .matches_for_event(r#"{"v": "foobaz"}"#.as_bytes())
-            .unwrap();
+        let m = q.matches_for_event(br#"{"v": "foobaz"}"#).unwrap();
         assert!(
             !m.contains(&"pos".to_string()),
             "foobaz should not match pos"
@@ -3217,20 +3181,16 @@ fn test_lookaround_buffer_reuse_no_stale_state_miri_friendly() {
     q.add_pattern("exact".to_string(), r#"{"w": ["hello"]}"#)
         .unwrap();
 
-    let m = q
-        .matches_for_event(r#"{"v": "foobar"}"#.as_bytes())
-        .unwrap();
+    let m = q.matches_for_event(br#"{"v": "foobar"}"#).unwrap();
     assert!(
         m.contains(&"look".to_string()),
         "foobar should match lookahead"
     );
 
-    let m = q.matches_for_event(r#"{"w": "hello"}"#.as_bytes()).unwrap();
+    let m = q.matches_for_event(br#"{"w": "hello"}"#).unwrap();
     assert!(m.contains(&"exact".to_string()), "hello should match exact");
 
-    let m = q
-        .matches_for_event(r#"{"v": "nomatch"}"#.as_bytes())
-        .unwrap();
+    let m = q.matches_for_event(br#"{"v": "nomatch"}"#).unwrap();
     assert!(m.is_empty(), "nomatch should match nothing");
 }
 
@@ -3247,18 +3207,14 @@ fn test_lookaround_multiple_conditions_no_cross_contamination_miri_friendly() {
     q.add_pattern("neg".to_string(), r#"{"v": [{"regexp": "foo(?!bar)baz"}]}"#)
         .unwrap();
 
-    let m = q
-        .matches_for_event(r#"{"v": "foobar"}"#.as_bytes())
-        .unwrap();
+    let m = q.matches_for_event(br#"{"v": "foobar"}"#).unwrap();
     assert!(m.contains(&"pos".to_string()), "foobar should match pos");
     assert!(
         !m.contains(&"neg".to_string()),
         "foobar should not match neg"
     );
 
-    let m = q
-        .matches_for_event(r#"{"v": "foobaz"}"#.as_bytes())
-        .unwrap();
+    let m = q.matches_for_event(br#"{"v": "foobaz"}"#).unwrap();
     assert!(
         !m.contains(&"pos".to_string()),
         "foobaz should not match pos"
@@ -3423,12 +3379,12 @@ fn test_surrogate_boundary_before() {
 
     // Character just before surrogate block (U+D7FF)
     let char_d7ff = '\u{D7FF}'; // ߿
-    let pattern_d7ff = format!(r#"{{"text": [{{"regex": "[{}]"}}]}}"#, char_d7ff);
+    let pattern_d7ff = format!(r#"{{"text": [{{"regex": "[{char_d7ff}]"}}]}}"#);
     q.add_pattern("p1", &pattern_d7ff)
         .expect("Failed to add pattern with U+D7FF");
 
     // Should match the exact character
-    let event_d7ff = format!(r#"{{"text": "{}"}}"#, char_d7ff);
+    let event_d7ff = format!(r#"{{"text": "{char_d7ff}"}}"#);
     assert_has_match!(q, &event_d7ff, "p1");
 
     // Should not match other characters
@@ -3436,12 +3392,12 @@ fn test_surrogate_boundary_before() {
 
     // Character just after surrogate block (U+E000)
     let char_e000 = '\u{E000}'; // private use area
-    let pattern_e000 = format!(r#"{{"text": [{{"regex": "[{}]"}}]}}"#, char_e000);
+    let pattern_e000 = format!(r#"{{"text": [{{"regex": "[{char_e000}]"}}]}}"#);
     let mut q2 = Quamina::new();
     q2.add_pattern("p2", &pattern_e000)
         .expect("Failed to add pattern with U+E000");
 
-    let event_e000 = format!(r#"{{"text": "{}"}}"#, char_e000);
+    let event_e000 = format!(r#"{{"text": "{char_e000}"}}"#);
     assert_has_match!(q2, &event_e000, "p2");
     assert_no_has_match!(q2, r#"{"text": "a"}"#, "p2");
 }
@@ -3455,31 +3411,28 @@ fn test_surrogate_boundary_range() {
 
     let char_d7fc = '\u{D7FC}'; // before surrogate
     let char_e003 = '\u{E003}'; // after surrogate
-    let pattern = format!(
-        r#"{{"text": [{{"regex": "[{}-{}]"}}]}}"#,
-        char_d7fc, char_e003
-    );
+    let pattern = format!(r#"{{"text": [{{"regex": "[{char_d7fc}-{char_e003}]"}}]}}"#);
 
     q.add_pattern("p1", &pattern)
         .expect("Failed to add pattern with range spanning surrogate");
 
     // Should match chars before surrogate
-    let event_d7fc = format!(r#"{{"text": "{}"}}"#, char_d7fc);
+    let event_d7fc = format!(r#"{{"text": "{char_d7fc}"}}"#);
     assert_has_match!(q, &event_d7fc, "p1");
 
     // Should match chars after surrogate
     let char_e000 = '\u{E000}'; // after surrogate
-    let event_e000 = format!(r#"{{"text": "{}"}}"#, char_e000);
+    let event_e000 = format!(r#"{{"text": "{char_e000}"}}"#);
     assert_has_match!(q, &event_e000, "p1");
 
-    let event_e003 = format!(r#"{{"text": "{}"}}"#, char_e003);
+    let event_e003 = format!(r#"{{"text": "{char_e003}"}}"#);
     assert_has_match!(q, &event_e003, "p1");
 
     // Should not match outside range
     assert_no_has_match!(q, r#"{"text": "a"}"#, "p1");
 
     let char_d7fb = '\u{D7FB}'; // outside before range
-    let event_d7fb = format!(r#"{{"text": "{}"}}"#, char_d7fb);
+    let event_d7fb = format!(r#"{{"text": "{char_d7fb}"}}"#);
     assert_no_has_match!(q, &event_d7fb, "p1");
 }
 
@@ -3495,10 +3448,7 @@ fn test_surrogate_boundary_multiple_ranges() {
 
     let char_d7fe = '\u{D7FE}'; // before surrogate
     let char_e002 = '\u{E002}'; // after surrogate
-    let pattern_p2 = format!(
-        r#"{{"text": [{{"regex": "[{}-{}]"}}]}}"#,
-        char_d7fe, char_e002
-    );
+    let pattern_p2 = format!(r#"{{"text": [{{"regex": "[{char_d7fe}-{char_e002}]"}}]}}"#);
     q.add_pattern("p2", &pattern_p2)
         .expect("Failed to add pattern p2");
 
@@ -3507,10 +3457,10 @@ fn test_surrogate_boundary_multiple_ranges() {
     assert_no_has_match!(q, r#"{"text": "M"}"#, "p1");
 
     // p2 matches in the surrogate-crossing range
-    let event_d7fe = format!(r#"{{"text": "{}"}}"#, char_d7fe);
+    let event_d7fe = format!(r#"{{"text": "{char_d7fe}"}}"#);
     assert_has_match!(q, &event_d7fe, "p2");
 
-    let event_e002 = format!(r#"{{"text": "{}"}}"#, char_e002);
+    let event_e002 = format!(r#"{{"text": "{char_e002}"}}"#);
     assert_has_match!(q, &event_e002, "p2");
 
     // Patterns don't cross-match

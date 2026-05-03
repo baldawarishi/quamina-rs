@@ -76,7 +76,7 @@ fn profile_pattern_add_simple() -> MemoryStats {
 
     let mut q = Quamina::<usize>::new();
     for i in 0..100 {
-        q.add_pattern(i, &format!(r#"{{"field_{}": ["value_{}"]}}"#, i, i))
+        q.add_pattern(i, &format!(r#"{{"field_{i}": ["value_{i}"]}}"#))
             .unwrap();
     }
 
@@ -93,10 +93,10 @@ fn profile_pattern_add_multivalue() -> MemoryStats {
     let mut q = Quamina::<usize>::new();
     for i in 0..100 {
         let values: String = (0..10)
-            .map(|j| format!("\"value_{}_{}\"", i, j))
+            .map(|j| format!("\"value_{i}_{j}\""))
             .collect::<Vec<_>>()
             .join(", ");
-        let pattern = format!(r#"{{"field": [{}]}}"#, values);
+        let pattern = format!(r#"{{"field": [{values}]}}"#);
         q.add_pattern(i, &pattern).unwrap();
     }
 
@@ -173,10 +173,7 @@ fn profile_numeric_patterns() -> MemoryStats {
         let upper = (i + 1) * 100;
         q.add_pattern(
             i,
-            &format!(
-                r#"{{"score": [{{"numeric": [">=", {}, "<", {}]}}]}}"#,
-                lower, upper
-            ),
+            &format!(r#"{{"score": [{{"numeric": [">=", {lower}, "<", {upper}]}}]}}"#),
         )
         .unwrap();
     }
@@ -193,7 +190,7 @@ fn profile_steady_state_1000() -> MemoryStats {
 
     let mut q = Quamina::<usize>::new();
     for i in 0..1000 {
-        q.add_pattern(i, &format!(r#"{{"field_{}": ["value_{}"]}}"#, i, i))
+        q.add_pattern(i, &format!(r#"{{"field_{i}": ["value_{i}"]}}"#))
             .unwrap();
     }
 
@@ -207,7 +204,7 @@ fn profile_matching_hot_path() -> MemoryStats {
     // Build matcher outside profiling
     let mut q = Quamina::<usize>::new();
     for i in 0..100 {
-        q.add_pattern(i, &format!(r#"{{"status": ["status_{}"]}}"#, i))
+        q.add_pattern(i, &format!(r#"{{"status": ["status_{i}"]}}"#))
             .unwrap();
     }
 
@@ -247,7 +244,7 @@ fn profile_matching_large_json() -> MemoryStats {
 fn profile_matching_no_match() -> MemoryStats {
     let mut q = Quamina::<usize>::new();
     for i in 0..100 {
-        q.add_pattern(i, &format!(r#"{{"status": ["status_{}"]}}"#, i))
+        q.add_pattern(i, &format!(r#"{{"status": ["status_{i}"]}}"#))
             .unwrap();
     }
 
@@ -320,10 +317,10 @@ fn profile_number_matching() -> MemoryStats {
     // Build pattern with 10 exact float values
     let values: String = targets
         .iter()
-        .map(|f| format!("{:.6}", f))
+        .map(|f| format!("{f:.6}"))
         .collect::<Vec<_>>()
         .join(", ");
-    let pattern = format!(r#"{{"x": [{}]}}"#, values);
+    let pattern = format!(r#"{{"x": [{values}]}}"#);
 
     // Build matcher outside profiling
     let mut q = Quamina::new();
@@ -336,11 +333,11 @@ fn profile_number_matching() -> MemoryStats {
             if i % 2 == 0 {
                 // Matching event - use one of the target values
                 let val = format!("{:.6}", targets[i % 10]);
-                format!(r#"{{"x": {}}}"#, val).into_bytes()
+                format!(r#"{{"x": {val}}}"#).into_bytes()
             } else {
                 // Non-matching event - use a different random value
                 let val = format!("{:.6}", rng.random::<f64>() + 10.0); // +10 ensures no collision
-                format!(r#"{{"x": {}}}"#, val).into_bytes()
+                format!(r#"{{"x": {val}}}"#).into_bytes()
             }
         })
         .collect();
@@ -364,23 +361,23 @@ fn profile_shellstyle_matching() -> MemoryStats {
     for letter in 'A'..='Z' {
         q.add_pattern(
             letter.to_string(),
-            &format!(r#"{{"name": [{{"shellstyle": "{}*"}}]}}"#, letter),
+            &format!(r#"{{"name": [{{"shellstyle": "{letter}*"}}]}}"#),
         )
         .unwrap();
     }
 
     // Sample events - mix of matches and non-matches
     let events: Vec<Vec<u8>> = vec![
-        r#"{"name": "ALICE"}"#.as_bytes().to_vec(),
-        r#"{"name": "BELVEDERE"}"#.as_bytes().to_vec(),
-        r#"{"name": "CALIFORNIA"}"#.as_bytes().to_vec(),
-        r#"{"name": "DOWNTOWN"}"#.as_bytes().to_vec(),
-        r#"{"name": "EMBARCADERO"}"#.as_bytes().to_vec(),
-        r#"{"name": "FOLSOM"}"#.as_bytes().to_vec(),
-        r#"{"name": "GEARY"}"#.as_bytes().to_vec(),
-        r#"{"name": "HAIGHT"}"#.as_bytes().to_vec(),
-        r#"{"name": "lowercase"}"#.as_bytes().to_vec(), // no match
-        r#"{"name": "123NUMERIC"}"#.as_bytes().to_vec(), // no match
+        br#"{"name": "ALICE"}"#.to_vec(),
+        br#"{"name": "BELVEDERE"}"#.to_vec(),
+        br#"{"name": "CALIFORNIA"}"#.to_vec(),
+        br#"{"name": "DOWNTOWN"}"#.to_vec(),
+        br#"{"name": "EMBARCADERO"}"#.to_vec(),
+        br#"{"name": "FOLSOM"}"#.to_vec(),
+        br#"{"name": "GEARY"}"#.to_vec(),
+        br#"{"name": "HAIGHT"}"#.to_vec(),
+        br#"{"name": "lowercase"}"#.to_vec(),  // no match
+        br#"{"name": "123NUMERIC"}"#.to_vec(), // no match
     ];
 
     #[cfg(feature = "dhat-heap")]
@@ -466,7 +463,7 @@ fn main() {
         println!("===========================================");
 
         for (title, stats) in &results {
-            println!("\n=== {} ===", title);
+            println!("\n=== {title} ===");
             stats.print_human();
         }
 

@@ -45,6 +45,7 @@ fn rune_to_utf8(r: char) -> Vec<u8> {
 }
 
 /// Check if a regexp tree has any `+` or `*` quantifiers that would benefit from arena-based NFA.
+#[must_use]
 pub fn regexp_has_plus_star(root: &RegexpRoot) -> bool {
     for branch in root {
         for qa in branch {
@@ -73,6 +74,7 @@ pub fn regexp_has_plus_star(root: &RegexpRoot) -> bool {
 ///
 /// # Returns
 /// A tuple of (arena, start_state_id, field_matcher)
+#[must_use]
 pub fn make_regexp_nfa_arena(root: RegexpRoot) -> (StateArena, StateId, Arc<FieldMatcher>) {
     let next_field = Arc::new(FieldMatcher::new());
 
@@ -413,7 +415,7 @@ fn make_arena_dot_fa(arena: &mut StateArena, dest: StateId) -> StateId {
 ///
 /// Like dot but excludes word char bytes (a-z, A-Z, 0-9, _) from ASCII transitions.
 /// Multi-byte UTF-8 sequences are all non-word chars (word chars are ASCII-only).
-pub(crate) fn make_nonword_char_fa(arena: &mut StateArena, dest: StateId) -> StateId {
+pub fn make_nonword_char_fa(arena: &mut StateArena, dest: StateId) -> StateId {
     make_utf8_char_fa(
         arena,
         dest,
@@ -499,14 +501,14 @@ fn instantiate_shell(shell: &CachedShell, arena: &mut StateArena, next: StateId)
         let mut table = src_table.clone();
 
         // Remap steps
-        for step in table.steps.iter_mut() {
+        for step in &mut table.steps {
             if !step.is_none() {
                 *step = id_map[step.index()];
             }
         }
 
         // Remap epsilons
-        for eps in table.epsilons.iter_mut() {
+        for eps in &mut table.epsilons {
             if !eps.is_none() {
                 *eps = id_map[eps.index()];
             }
