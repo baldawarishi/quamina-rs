@@ -5,68 +5,54 @@
 
 use quamina::Quamina;
 
-fn main() {
-    let mut q = Quamina::new();
+fn add_shellstyle_pattern(q: &mut Quamina, name: &str, shellstyle: &str) {
+    q.add_pattern(
+        name.to_string(),
+        &format!(r#"{{"STREET": [{{"shellstyle": "{shellstyle}"}}]}}"#),
+    )
+    .unwrap();
+}
 
-    // Add 16 letter patterns (A* through P*)
+fn load_patterns(q: &mut Quamina) {
+    // 16 letter patterns (A* through P*)
     for letter in [
         "A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P",
     ] {
-        q.add_pattern(
-            letter.to_string(),
-            &format!(r#"{{"STREET": [{{"shellstyle": "{letter}*"}}]}}"#),
-        )
-        .unwrap();
+        add_shellstyle_pattern(q, letter, &format!("{letter}*"));
     }
 
-    // Add funky patterns with multiple wildcards (trigger complex NFA traversal)
-    let funky_patterns = [
+    // Multiple-wildcard patterns to exercise complex NFA traversal.
+    for (name, shellstyle) in [
         ("funky1", "*E*E*E*"),
         ("funky2", "*A*B*"),
         ("funky3", "*N*P*"),
         ("funky4", "*O*O*O*"),
-    ];
-    for (name, shellstyle) in funky_patterns {
-        q.add_pattern(
-            name.to_string(),
-            &format!(r#"{{"STREET": [{{"shellstyle": "{shellstyle}"}}]}}"#),
-        )
-        .unwrap();
+    ] {
+        add_shellstyle_pattern(q, name, shellstyle);
     }
 
-    // Add CJK patterns
-    let cjk_patterns = [
+    for (name, shellstyle) in [
         ("jp1", "*東京*"),
         ("jp2", "新*"),
         ("cn1", "*北京*"),
         ("cn2", "上海*"),
         ("kr1", "*서울*"),
-    ];
-    for (name, shellstyle) in cjk_patterns {
-        q.add_pattern(
-            name.to_string(),
-            &format!(r#"{{"STREET": [{{"shellstyle": "{shellstyle}"}}]}}"#),
-        )
-        .unwrap();
+    ] {
+        add_shellstyle_pattern(q, name, shellstyle);
     }
 
-    // Add emoji patterns
-    let emoji_patterns = [
+    for (name, shellstyle) in [
         ("emoji1", "*🎉*"),
         ("emoji2", "🚀*"),
         ("emoji3", "*❤️*"),
         ("emoji4", "*🌟*🎯*"),
-    ];
-    for (name, shellstyle) in emoji_patterns {
-        q.add_pattern(
-            name.to_string(),
-            &format!(r#"{{"STREET": [{{"shellstyle": "{shellstyle}"}}]}}"#),
-        )
-        .unwrap();
+    ] {
+        add_shellstyle_pattern(q, name, shellstyle);
     }
+}
 
-    // Events that will match and require NFA traversal
-    let events: Vec<Vec<u8>> = vec![
+fn sample_events() -> Vec<Vec<u8>> {
+    vec![
         r#"{"STREET": "ASHBURY"}"#.into(),
         r#"{"STREET": "BELVEDERE"}"#.into(),
         r#"{"STREET": "CRANLEIGH"}"#.into(),
@@ -98,7 +84,13 @@ fn main() {
         r#"{"STREET": "Star 🌟 Plaza 🎯"}"#.into(),
         r#"{"STREET": "Tokyo 東京 Street"}"#.into(),
         r#"{"STREET": "Happy 😊 Avenue"}"#.into(),
-    ];
+    ]
+}
+
+fn main() {
+    let mut q = Quamina::new();
+    load_patterns(&mut q);
+    let events = sample_events();
 
     // Run many iterations for good profiling data
     let iterations = 100_000;

@@ -12,7 +12,7 @@ use std::sync::Arc;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::arena::{
-    ArenaNfaBuffers, StateArena, StateId, insert_string_into_arena, insert_suffix_into_arena,
+    NfaBuffers as ArenaNfaBuffers, StateArena, StateId, insert_string, insert_suffix,
     make_anything_but_arena_fa, make_cidr_arena_fa, make_monocase_arena_fa,
     make_numeric_greater_arena_fa, make_numeric_less_arena_fa, make_numeric_range_arena_fa,
     make_prefix_arena_fa, make_shellstyle_arena_fa, make_string_arena_fa, make_suffix_dfa,
@@ -440,8 +440,9 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
                 self.add_numeric_range_transition(cmp)
             }
             Matcher::Cidr(cidr) => self.add_cidr_transition(cidr),
-            // Catch-all for any future matcher types
-            _ => Ok(Rc::new(MutableFieldMatcher::new())),
+            // Exists is resolved at the field level; here it gets an empty
+            // value matcher so the pattern still wires into the field tree.
+            Matcher::Exists(_) => Ok(Rc::new(MutableFieldMatcher::new())),
         }
     }
 
@@ -474,7 +475,7 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
             let mut main = self.main_arena.borrow_mut();
             let (arena, start) = main.as_mut().unwrap();
             for val in values {
-                insert_string_into_arena(arena, *start, val, next_arc.clone());
+                insert_string(arena, *start, val, next_arc.clone());
             }
         }
         self.check_main_arena_budget()?;
@@ -527,7 +528,7 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
         {
             let mut main = self.main_arena.borrow_mut();
             let (arena, start) = main.as_mut().unwrap();
-            insert_string_into_arena(arena, *start, val, next_arc);
+            insert_string(arena, *start, val, next_arc);
         }
         self.check_main_arena_budget()?;
 
@@ -559,8 +560,8 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
         {
             let mut main = self.main_arena.borrow_mut();
             let (arena, start) = main.as_mut().unwrap();
-            insert_string_into_arena(arena, *start, val, next_arc.clone());
-            insert_string_into_arena(arena, *start, &q_num, next_arc);
+            insert_string(arena, *start, val, next_arc.clone());
+            insert_string(arena, *start, &q_num, next_arc);
         }
         self.check_main_arena_budget()?;
 
@@ -632,7 +633,7 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
         // Insert into suffix arena (separate DFA trie from main_arena)
         let mut suffix_arena = self.suffix_arena.borrow_mut();
         if let Some((ref mut arena, start)) = *suffix_arena {
-            insert_suffix_into_arena(arena, start, &reversed, next_arc);
+            insert_suffix(arena, start, &reversed, next_arc);
         } else {
             let (arena, start) = make_suffix_dfa(&reversed, next_arc);
             *suffix_arena = Some((arena, start));
@@ -887,7 +888,7 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
         is_number: bool,
         _bufs: &mut NfaBuffers,
     ) -> Vec<Rc<MutableFieldMatcher<X>>> {
-        // Singleton fast path: when no multi-condition NFAs coexist with singleton,
+        // Singleton fast path: when no multi-condition NFAs coexist with the singleton,
         // we can short-circuit without touching transition_map.
         if self.multi_condition_nfas.borrow().is_empty()
             && let Some(ref singleton_val) = *self.singleton_match.borrow()
@@ -903,8 +904,8 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
         let transition_map = self.transition_map.borrow();
         let mut result = Vec::new();
 
-        // Check singleton match (when multi-condition NFAs coexist with singleton,
-        // we couldn't use the fast path above)
+        // Singleton coexisting with multi-condition NFAs — emit the singleton
+        // transition here, but skip main/suffix arenas (which are empty in that mode).
         let has_singleton = if let Some(ref singleton_val) = *self.singleton_match.borrow() {
             if singleton_val == value
                 && let Some(ref trans) = *self.singleton_transition.borrow()
@@ -916,121 +917,122 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
             false
         };
 
-        // Try with Q-number conversion if this matcher has numbers and value is numeric
-        // Use stack-allocated QNumberStack to avoid heap allocation
-        let q_num_storage: Option<crate::numbits::QNumberStack> =
-            if self.has_numbers.get() && is_number {
-                // Try to parse as f64 and convert to Q-number
-                if let Ok(s) = std::str::from_utf8(value) {
-                    if let Ok(n) = s.parse::<f64>() {
-                        Some(crate::numbits::q_num_stack(n))
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                }
-            } else {
-                None
-            };
+        let q_num_storage = self.maybe_q_number(value, is_number);
         let value_to_match: &[u8] = match &q_num_storage {
             Some(q) => q.as_slice(),
             None => value,
         };
 
-        // When singleton is active, main_arena and suffix_arena are empty — skip them.
         if !has_singleton {
-            // Traverse main_arena (unified arena for all pattern types)
-            if let Some((ref arena, start)) = *self.main_arena.borrow() {
-                let mut arena_bufs = self.arena_bufs.borrow_mut();
-                if *self.main_arena_is_nfa.borrow() {
-                    traverse_arena_nfa(arena, start, value_to_match, &mut arena_bufs);
-                } else {
-                    arena_bufs.transitions.clear();
-                    traverse_arena_dfa(arena, start, value_to_match, &mut arena_bufs.transitions);
-                }
-
-                // Map field matcher pointer transitions to Rc<MutableFieldMatcher<X>>
-                for &ptr in &arena_bufs.transitions {
-                    if let Some(mutable_fm) = transition_map.get(&(ptr as *const FieldMatcher)) {
-                        result.push(mutable_fm.clone());
-                    }
-                }
-            }
-
-            // Traverse suffix_arena backward (right-to-left DFA for suffix patterns)
-            if let Some((ref arena, start)) = *self.suffix_arena.borrow() {
-                let mut arena_bufs = self.arena_bufs.borrow_mut();
-                arena_bufs.transitions.clear();
-                traverse_arena_dfa_backward(
-                    arena,
-                    start,
-                    value_to_match,
-                    &mut arena_bufs.transitions,
-                );
-
-                for &ptr in &arena_bufs.transitions {
-                    if let Some(mutable_fm) = transition_map.get(&(ptr as *const FieldMatcher)) {
-                        result.push(mutable_fm.clone());
-                    }
-                }
-            }
+            self.collect_arena_transitions(value_to_match, &transition_map, &mut result);
         }
 
-        // Traverse multi-condition NFAs (for lookaround patterns)
-        // For lookaround patterns, we check conditions directly on the full value.
-        // The conditions contain the combined patterns that capture full matching semantics:
-        // - PositiveLookahead("foobar"): "foobar" must match full value
-        // - NegativeLookahead("foobar"): "foobar" must NOT match full value
-        // - Lookbehind conditions are pre-combined with primary during build
-        let multi_condition_nfas = self.multi_condition_nfas.borrow();
-        if !multi_condition_nfas.is_empty() {
-            let mut condition_bufs = self.arena_bufs.borrow_mut();
-
-            for mc_nfa in multi_condition_nfas.iter() {
-                // Verify all conditions against the full value
-                let mut all_conditions_pass = true;
-
-                for condition in &mc_nfa.conditions {
-                    // Traverse the condition automaton on the full value
-                    traverse_arena_nfa(
-                        &condition.arena,
-                        condition.start,
-                        value_to_match,
-                        &mut condition_bufs,
-                    );
-
-                    let condition_matched = !condition_bufs.transitions.is_empty();
-
-                    // Check if condition passes:
-                    // - Positive condition: must match
-                    // - Negative condition: must NOT match
-                    let condition_passes = if condition.is_negative {
-                        !condition_matched
-                    } else {
-                        condition_matched
-                    };
-
-                    if !condition_passes {
-                        all_conditions_pass = false;
-                        break; // Fast-fail: one condition failed, no need to check others
-                    }
-                }
-
-                // Only add transitions if all conditions pass
-                if all_conditions_pass {
-                    let ptr = mc_nfa.field_matcher_ptr;
-                    if let Some(mutable_fm) = transition_map.get(&ptr) {
-                        // Avoid duplicates
-                        if !result.iter().any(|r| Rc::ptr_eq(r, mutable_fm)) {
-                            result.push(mutable_fm.clone());
-                        }
-                    }
-                }
-            }
-        }
+        self.collect_multi_condition_transitions(value_to_match, &transition_map, &mut result);
 
         result
+    }
+
+    /// Convert a numeric value to its Q-number representation when this matcher contains
+    /// numeric automata, so byte-level traversal works on numeric ranges.
+    fn maybe_q_number(
+        &self,
+        value: &[u8],
+        is_number: bool,
+    ) -> Option<crate::numbits::QNumberStack> {
+        if !(self.has_numbers.get() && is_number) {
+            return None;
+        }
+        let s = std::str::from_utf8(value).ok()?;
+        let n = s.parse::<f64>().ok()?;
+        Some(crate::numbits::q_num_stack(n))
+    }
+
+    /// Run main_arena (NFA or DFA) and suffix_arena (backward DFA), pushing each
+    /// matched field-matcher into `result`.
+    fn collect_arena_transitions(
+        &self,
+        value_to_match: &[u8],
+        transition_map: &FxHashMap<*const FieldMatcher, Rc<MutableFieldMatcher<X>>>,
+        result: &mut Vec<Rc<MutableFieldMatcher<X>>>,
+    ) {
+        if let Some((ref arena, start)) = *self.main_arena.borrow() {
+            let mut arena_bufs = self.arena_bufs.borrow_mut();
+            if *self.main_arena_is_nfa.borrow() {
+                traverse_arena_nfa(arena, start, value_to_match, &mut arena_bufs);
+            } else {
+                arena_bufs.transitions.clear();
+                traverse_arena_dfa(arena, start, value_to_match, &mut arena_bufs.transitions);
+            }
+
+            for &ptr in &arena_bufs.transitions {
+                if let Some(mutable_fm) = transition_map.get(&(ptr as *const FieldMatcher)) {
+                    result.push(mutable_fm.clone());
+                }
+            }
+        }
+
+        if let Some((ref arena, start)) = *self.suffix_arena.borrow() {
+            let mut arena_bufs = self.arena_bufs.borrow_mut();
+            arena_bufs.transitions.clear();
+            traverse_arena_dfa_backward(arena, start, value_to_match, &mut arena_bufs.transitions);
+
+            for &ptr in &arena_bufs.transitions {
+                if let Some(mutable_fm) = transition_map.get(&(ptr as *const FieldMatcher)) {
+                    result.push(mutable_fm.clone());
+                }
+            }
+        }
+    }
+
+    /// Verify each multi-condition NFA against the full value (for lookaround patterns)
+    /// and emit its field matcher when every condition passes.
+    fn collect_multi_condition_transitions(
+        &self,
+        value_to_match: &[u8],
+        transition_map: &FxHashMap<*const FieldMatcher, Rc<MutableFieldMatcher<X>>>,
+        result: &mut Vec<Rc<MutableFieldMatcher<X>>>,
+    ) {
+        let multi_condition_nfas = self.multi_condition_nfas.borrow();
+        if multi_condition_nfas.is_empty() {
+            return;
+        }
+
+        let mut condition_bufs = self.arena_bufs.borrow_mut();
+
+        for mc_nfa in multi_condition_nfas.iter() {
+            let mut all_conditions_pass = true;
+
+            for condition in &mc_nfa.conditions {
+                traverse_arena_nfa(
+                    &condition.arena,
+                    condition.start,
+                    value_to_match,
+                    &mut condition_bufs,
+                );
+
+                let condition_matched = !condition_bufs.transitions.is_empty();
+                let condition_passes = if condition.is_negative {
+                    !condition_matched
+                } else {
+                    condition_matched
+                };
+
+                if !condition_passes {
+                    all_conditions_pass = false;
+                    break;
+                }
+            }
+
+            if all_conditions_pass {
+                let ptr = mc_nfa.field_matcher_ptr;
+                if let Some(mutable_fm) = transition_map.get(&ptr) {
+                    // Avoid duplicates if the same field matcher came in via multiple paths.
+                    if !result.iter().any(|r| Rc::ptr_eq(r, mutable_fm)) {
+                        result.push(mutable_fm.clone());
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -1206,7 +1208,7 @@ impl<X: Clone + Eq + std::hash::Hash> CoreMatcher<X> {
     pub fn matches_for_fields(&self, fields: &[EventField]) -> Vec<X> {
         if fields.is_empty() {
             // Still need to check exists:false patterns
-            return self.collect_exists_false_matches(&self.root);
+            return Self::collect_exists_false_matches(&self.root);
         }
 
         let mut matches = MatchSet::new();
@@ -1298,8 +1300,8 @@ impl<X: Clone + Eq + std::hash::Hash> CoreMatcher<X> {
         }
     }
 
-    /// Collect matches from exists:false patterns when there are no fields
-    fn collect_exists_false_matches(&self, state: &Rc<MutableFieldMatcher<X>>) -> Vec<X> {
+    /// Collect matches from exists:false patterns when there are no fields.
+    fn collect_exists_false_matches(state: &Rc<MutableFieldMatcher<X>>) -> Vec<X> {
         let mut result = Vec::new();
         for exists_trans in state.exists_false.borrow().values() {
             result.extend(exists_trans.matches.borrow().iter().cloned());
@@ -1317,7 +1319,7 @@ impl<X: Clone + Eq + std::hash::Hash> CoreMatcher<X> {
         bufs: &mut NfaBuffers,
     ) -> Vec<X> {
         if fields.is_empty() {
-            return self.collect_exists_false_matches(&self.root);
+            return Self::collect_exists_false_matches(&self.root);
         }
 
         let mut matches = MatchSet::new();
@@ -1408,7 +1410,7 @@ impl<X: Clone + Eq + std::hash::Hash> CoreMatcher<X> {
         bufs: &mut NfaBuffers,
     ) -> Vec<X> {
         if fields.is_empty() {
-            return self.collect_exists_false_matches(&self.root);
+            return Self::collect_exists_false_matches(&self.root);
         }
 
         let mut matches = MatchSet::new();

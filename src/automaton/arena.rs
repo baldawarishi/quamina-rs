@@ -72,9 +72,9 @@ impl StateId {
 
 /// A state in the arena-based finite automaton.
 #[derive(Clone, Default)]
-pub struct ArenaFaState {
+pub struct FaState {
     /// The transition table for this state
-    pub table: ArenaSmallTable,
+    pub table: SmallTable,
     /// Field matchers to transition to when this state is reached at end of value.
     /// SmallVec<[_; 1]> avoids heap allocation for the common case (0 or 1 transitions).
     pub field_transitions: SmallVec<[Arc<FieldMatcher>; 1]>,
@@ -89,23 +89,23 @@ pub struct ArenaFaState {
     pub ft_len: u8,
 }
 
-impl std::fmt::Debug for ArenaFaState {
+impl std::fmt::Debug for FaState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ArenaFaState")
+        f.debug_struct("FaState")
             .field("table", &self.table)
             .field("field_transitions_count", &self.field_transitions.len())
             .finish()
     }
 }
 
-impl ArenaFaState {
+impl FaState {
     #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
     #[must_use]
-    pub fn with_table(table: ArenaSmallTable) -> Self {
+    pub fn with_table(table: SmallTable) -> Self {
         Self {
             table,
             field_transitions: SmallVec::new(),
@@ -122,7 +122,7 @@ impl ArenaFaState {
 /// Uses SmallVec to keep small tables (the common case) inline on the stack,
 /// avoiding heap allocation for most states.
 #[derive(Clone, Debug)]
-pub struct ArenaSmallTable {
+pub struct SmallTable {
     /// Upper bounds (exclusive) for each byte range.
     /// SmallVec<[_; 8]> covers most tables inline (typically 1-8 ranges).
     pub ceilings: SmallVec<[u8; 8]>,
@@ -137,13 +137,13 @@ pub struct ArenaSmallTable {
     pub default: StateId,
 }
 
-impl Default for ArenaSmallTable {
+impl Default for SmallTable {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl ArenaSmallTable {
+impl SmallTable {
     /// Create a new empty table.
     #[must_use]
     pub fn new() -> Self {
@@ -252,7 +252,7 @@ impl ArenaSmallTable {
 
 /// Statistics about a `StateArena`'s structure.
 #[derive(Clone, Debug, Default)]
-pub struct ArenaStats {
+pub struct Stats {
     /// Total states in the arena.
     pub state_count: u32,
     /// States with non-trivial transition tables (more than the default catch-all).
@@ -283,7 +283,7 @@ pub struct ArenaStats {
     pub estimated_bytes: usize,
 }
 
-impl std::fmt::Display for ArenaStats {
+impl std::fmt::Display for Stats {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
@@ -317,7 +317,7 @@ impl std::fmt::Display for ArenaStats {
     }
 }
 
-impl ArenaStats {
+impl Stats {
     /// Accumulate another arena's stats into this aggregate.
     pub const fn add(&mut self, other: &Self) {
         self.state_count += other.state_count;
@@ -347,9 +347,12 @@ impl ArenaStats {
 ///
 /// States are allocated contiguously and referenced by `StateId`.
 /// The arena owns all state memory and frees it when dropped.
+// `Arena` suffix is descriptive (this is the state container itself), not a
+// redundant repetition of the module name.
+#[allow(clippy::module_name_repetitions)]
 #[derive(Clone, Default)]
 pub struct StateArena {
-    states: Vec<ArenaFaState>,
+    states: Vec<FaState>,
     /// All epsilon closures concatenated. Each state indexes into this via
     /// `closure_start`/`closure_len`. Populated by `precompute_epsilon_closures()`.
     closure_data: Vec<StateId>,
@@ -394,7 +397,7 @@ impl StateArena {
     /// Estimate the byte size of this arena (state vector capacity * per-state size).
     #[must_use]
     pub const fn estimated_byte_size(&self) -> usize {
-        self.states.capacity() * std::mem::size_of::<ArenaFaState>()
+        self.states.capacity() * std::mem::size_of::<FaState>()
             + self.closure_data.capacity() * std::mem::size_of::<StateId>()
             + self.ft_ptrs.capacity() * std::mem::size_of::<usize>()
             + self.dfa_lookup.capacity() * std::mem::size_of::<StateId>()
@@ -406,7 +409,7 @@ impl StateArena {
     /// `id` must be a valid state ID returned by `alloc()` on this arena.
     #[inline(always)]
     #[allow(unsafe_code)]
-    unsafe fn state_unchecked(&self, id: StateId) -> &ArenaFaState {
+    unsafe fn state_unchecked(&self, id: StateId) -> &FaState {
         // SAFETY: caller guarantees `id` is a valid index from `alloc()` on this arena
         unsafe { self.states.get_unchecked(id.index()) }
     }
@@ -475,7 +478,7 @@ impl StateArena {
         let id = StateId(self.states.len() as u32);
         // Set trivial epsilon closure so states added after
         // precompute_epsilon_closures() are visible during NFA traversal.
-        let state = ArenaFaState {
+        let state = FaState {
             closure_start: self.closure_data.len() as u32,
             closure_len: 1,
             ..Default::default()
@@ -486,9 +489,9 @@ impl StateArena {
     }
 
     /// Allocate a new state with the given table, returning its ID.
-    pub fn alloc_with_table(&mut self, table: ArenaSmallTable) -> StateId {
+    pub fn alloc_with_table(&mut self, table: SmallTable) -> StateId {
         let id = StateId(self.states.len() as u32);
-        let mut state = ArenaFaState::with_table(table);
+        let mut state = FaState::with_table(table);
         state.closure_start = self.closure_data.len() as u32;
         state.closure_len = 1;
         self.closure_data.push(id);
@@ -499,7 +502,7 @@ impl StateArena {
     /// Get a reference to a state by ID.
     #[inline]
     #[must_use]
-    pub fn get(&self, id: StateId) -> Option<&ArenaFaState> {
+    pub fn get(&self, id: StateId) -> Option<&FaState> {
         if id.is_none() {
             None
         } else {
@@ -509,7 +512,7 @@ impl StateArena {
 
     /// Get a mutable reference to a state by ID.
     #[inline]
-    pub fn get_mut(&mut self, id: StateId) -> Option<&mut ArenaFaState> {
+    pub fn get_mut(&mut self, id: StateId) -> Option<&mut FaState> {
         if id.is_none() {
             None
         } else {
@@ -531,10 +534,10 @@ impl StateArena {
 
     /// Compute statistics about this arena's structure.
     #[must_use]
-    pub fn stats(&self) -> ArenaStats {
+    pub fn stats(&self) -> Stats {
         let state_count = self.states.len();
         if state_count == 0 {
-            return ArenaStats::default();
+            return Stats::default();
         }
 
         let mut tables_with_transitions = 0u32;
@@ -586,7 +589,7 @@ impl StateArena {
             self.dfa_lookup.len() / 256
         };
 
-        ArenaStats {
+        Stats {
             state_count: state_count as u32,
             tables_with_transitions,
             total_ceiling_entries,
@@ -724,7 +727,7 @@ impl StateArena {
     /// Build a 256-entry-per-state lookup table for O(1) byte transitions.
     ///
     /// Skipped under Miri: the large array (states × 256) is expensive to
-    /// interpret, and `dstep()` falls back to `ArenaSmallTable::dstep()` when
+    /// interpret, and `dstep()` falls back to `SmallTable::dstep()` when
     /// `dfa_lookup` is empty. The fallback exercises the same transitions
     /// through the same unsafe `get_unchecked` pattern.
     #[cfg(not(miri))]
@@ -753,7 +756,7 @@ impl StateArena {
         self.dfa_lookup = dfa_lookup;
     }
 
-    /// No-op under Miri — `dstep()` falls back to `ArenaSmallTable::dstep()`.
+    /// No-op under Miri — `dstep()` falls back to `SmallTable::dstep()`.
     /// Correctness of the lookup table is verified by
     /// `tests::test_dfa_lookup_matches_smalltable_dstep` in non-Miri builds.
     #[cfg(miri)]
@@ -951,7 +954,7 @@ impl StateArena {
     fn collect_field_transitions(
         nfa_arena: &Self,
         nfa_states: &[StateId],
-        dfa_state: &mut ArenaFaState,
+        dfa_state: &mut FaState,
     ) {
         let mut seen_ptrs: FxHashSet<usize> = FxHashSet::default();
         for &nfa_state in nfa_states {
@@ -969,7 +972,7 @@ impl StateArena {
 }
 
 impl std::ops::Index<StateId> for StateArena {
-    type Output = ArenaFaState;
+    type Output = FaState;
 
     #[inline]
     fn index(&self, id: StateId) -> &Self::Output {
@@ -1236,7 +1239,7 @@ pub(crate) fn traverse_lazy_dfa(lazy_dfa: &mut LazyDfa, val: &[u8], transitions:
 
 /// Buffers for arena NFA traversal (avoid allocation during matching).
 #[derive(Default)]
-pub struct ArenaNfaBuffers {
+pub struct NfaBuffers {
     /// Current active states
     pub current_states: Vec<StateId>,
     /// Next states after transition
@@ -1251,7 +1254,7 @@ pub struct ArenaNfaBuffers {
     seen_states: FxHashMap<StateId, u64>,
 }
 
-impl ArenaNfaBuffers {
+impl NfaBuffers {
     #[must_use]
     pub fn new() -> Self {
         Self::default()
@@ -1292,7 +1295,7 @@ pub const ARENA_VALUE_TERMINATOR: u8 = 0xF5;
 /// Used for ASCII-only negated patterns like `[^x]+` where the exit bytes
 /// are just the negated ASCII characters (not all invalid UTF-8 bytes).
 #[inline]
-fn try_accelerate_arena(table: &ArenaSmallTable, remaining: &[u8]) -> Option<usize> {
+fn try_accelerate_arena(table: &SmallTable, remaining: &[u8]) -> Option<usize> {
     table.accel.as_ref()?.try_accelerate(remaining)
 }
 
@@ -1301,12 +1304,8 @@ fn try_accelerate_arena(table: &ArenaSmallTable, remaining: &[u8]) -> Option<usi
 /// This is the arena equivalent of `traverse_nfa` but uses index-based
 /// state references, allowing true cyclic structures.
 #[inline]
-pub fn traverse_arena_nfa(
-    arena: &StateArena,
-    start: StateId,
-    val: &[u8],
-    bufs: &mut ArenaNfaBuffers,
-) {
+#[allow(clippy::too_many_lines)] // hot loop kept monolithic so the inliner sees the whole stepping path
+pub fn traverse_arena_nfa(arena: &StateArena, start: StateId, val: &[u8], bufs: &mut NfaBuffers) {
     bufs.clear();
     if start.is_none() {
         return;
@@ -1344,7 +1343,7 @@ pub fn traverse_arena_nfa(
 
         // Destructure bufs for split borrows: iterate current_states immutably
         // while pushing to next_states mutably.
-        let ArenaNfaBuffers {
+        let NfaBuffers {
             ref mut current_states,
             ref mut next_states,
             ref mut transitions,
@@ -1440,7 +1439,7 @@ pub fn traverse_arena_nfa(
     }
 
     // Check final states for matches (split borrows to avoid take)
-    let ArenaNfaBuffers {
+    let NfaBuffers {
         ref current_states,
         ref mut transitions,
         ref mut seen_transitions,
@@ -1650,10 +1649,9 @@ pub fn merge_arena_dfas(
         return clone_arena_subset(arena1, start1);
     }
 
-    // Memoization: (state1_id, state2_id) -> merged_state_id in new arena
-    // Use i32 to handle StateId::NONE as -1
-    type MemoKey = (i32, i32);
-    let mut memo: FxHashMap<MemoKey, StateId> = FxHashMap::default();
+    // Memoization: (state1_id, state2_id) -> merged_state_id in new arena.
+    // i32 lets us encode StateId::NONE as -1.
+    let mut memo: FxHashMap<(i32, i32), StateId> = FxHashMap::default();
     let mut new_arena = StateArena::new();
 
     let start =
@@ -1706,7 +1704,7 @@ fn clone_state_recursive(
 
     // Clone table with remapped state IDs
     let old_table = &old_state.table;
-    let mut new_table = ArenaSmallTable {
+    let mut new_table = SmallTable {
         ceilings: old_table.ceilings.clone(),
         steps: SmallVec::with_capacity(old_table.steps.len()),
         epsilons: SmallVec::with_capacity(old_table.epsilons.len()),
@@ -1807,13 +1805,13 @@ fn merge_arena_states_recursive(
 /// Remap a table from one arena to the merged arena.
 fn remap_table_recursive(
     source_arena: &StateArena,
-    table: &ArenaSmallTable,
+    table: &SmallTable,
     _other_arena: &StateArena,
     new_arena: &mut StateArena,
     memo: &mut FxHashMap<(i32, i32), StateId>,
     is_arena1: bool,
-) -> ArenaSmallTable {
-    let mut new_table = ArenaSmallTable {
+) -> SmallTable {
+    let mut new_table = SmallTable {
         ceilings: table.ceilings.clone(),
         steps: SmallVec::with_capacity(table.steps.len()),
         epsilons: SmallVec::with_capacity(table.epsilons.len()),
@@ -1905,12 +1903,12 @@ fn remap_table_recursive(
 /// Merge two arena tables byte-by-byte.
 fn merge_arena_tables(
     arena1: &StateArena,
-    table1: &ArenaSmallTable,
+    table1: &SmallTable,
     arena2: &StateArena,
-    table2: &ArenaSmallTable,
+    table2: &SmallTable,
     new_arena: &mut StateArena,
     memo: &mut FxHashMap<(i32, i32), StateId>,
-) -> ArenaSmallTable {
+) -> SmallTable {
     // Unpack both tables to 256-element arrays for simplicity
     let mut unpacked1 = [StateId::NONE; BYTE_CEILING];
     let mut unpacked2 = [StateId::NONE; BYTE_CEILING];
@@ -1928,7 +1926,7 @@ fn merge_arena_tables(
     }
 
     // Pack result
-    let mut result = ArenaSmallTable::new();
+    let mut result = SmallTable::new();
     result.pack(&merged_unpacked);
 
     // Merge epsilons (for DFA, these should be empty, but handle them anyway)
@@ -1950,8 +1948,8 @@ fn merge_arena_tables(
     result
 }
 
-/// Unpack an ArenaSmallTable into a 256-element array.
-fn unpack_arena_table(table: &ArenaSmallTable, unpacked: &mut [StateId; BYTE_CEILING]) {
+/// Unpack an SmallTable into a 256-element array.
+fn unpack_arena_table(table: &SmallTable, unpacked: &mut [StateId; BYTE_CEILING]) {
     let mut byte_idx = 0usize;
     for (i, &ceiling) in table.ceilings.iter().enumerate() {
         let ceiling = ceiling as usize;
@@ -2007,9 +2005,8 @@ pub fn merge_arena_nfas(
         return clone_arena_subset(arena1, start1);
     }
 
-    // Memoization: (state1_id, state2_id) -> merged_state_id in new arena
-    type MemoKey = (i32, i32);
-    let mut memo: FxHashMap<MemoKey, StateId> = FxHashMap::default();
+    // Memoization: (state1_id, state2_id) -> merged_state_id in new arena.
+    let mut memo: FxHashMap<(i32, i32), StateId> = FxHashMap::default();
     let mut new_arena = StateArena::new();
 
     let start =
@@ -2147,212 +2144,26 @@ fn merge_arena_nfa_states_recursive(
     let s2_has_epsilons = !s2.table.epsilons.is_empty();
 
     // Case 1: Both have spinouts - merge them recursively
-    // The byte-dot self-loop entries are merged by merge_nfa_tables_bytewise
-    // (they recurse back to this merge, hit the memo, and return new_id).
-    // We set default = new_id to mark the merged state as a spinout.
     if s1_has_spinout && s2_has_spinout {
-        let mut combined_table =
-            merge_nfa_tables_bytewise(arena1, &s1.table, arena2, &s2.table, new_arena, memo);
-
-        combined_table.default = new_id;
-
-        // Merge epsilons from both spinners (0 or 1 each)
-        let mut merged_epsilons: SmallVec<[StateId; 2]> = SmallVec::new();
-        for &eps1 in &s1.table.epsilons {
-            let merged = merge_arena_nfa_states_recursive(
-                arena1,
-                eps1,
-                arena2,
-                StateId::NONE,
-                new_arena,
-                memo,
-            );
-            if !merged.is_none() {
-                merged_epsilons.push(merged);
-            }
-        }
-        for &eps2 in &s2.table.epsilons {
-            let merged = merge_arena_nfa_states_recursive(
-                arena1,
-                StateId::NONE,
-                arena2,
-                eps2,
-                new_arena,
-                memo,
-            );
-            if !merged.is_none() {
-                merged_epsilons.push(merged);
-            }
-        }
-        combined_table.epsilons = merged_epsilons;
-
-        let mut field_transitions = s1.field_transitions.clone();
-        field_transitions.extend(s2.field_transitions.iter().cloned());
-
-        new_arena[new_id].table = combined_table;
-        new_arena[new_id].field_transitions = field_transitions;
+        merge_dual_spinout_states(arena1, s1, arena2, s2, new_arena, memo, new_id);
         return new_id;
     }
 
-    // Case 2: Asymmetric spinner merge - one spinout, other has no epsilons
+    // Case 2: Asymmetric spinner merge - one spinout, other has no epsilons.
     // Mirrors Go's asymmetricSpinnerMerge: when a spinout is merged with a
     // non-epsilon state, we can avoid creating splice states by inlining the
     // epsilon-to-spinner relationship into the merged table.
     if (s1_has_spinout && !s2_has_epsilons) || (s2_has_spinout && !s1_has_epsilons) {
-        let (spinner_arena, spinner_id, spinner_table, other_arena, _other_id, other_table) =
-            if s1_has_spinout {
-                (arena1, state1, &s1.table, arena2, state2, &s2.table)
-            } else {
-                (arena2, state2, &s2.table, arena1, state1, &s1.table)
-            };
-
-        // Unpack both tables to 256-element arrays
-        let mut spinner_unpacked = [StateId::NONE; BYTE_CEILING];
-        let mut other_unpacked = [StateId::NONE; BYTE_CEILING];
-        unpack_arena_table(spinner_table, &mut spinner_unpacked);
-        unpack_arena_table(other_table, &mut other_unpacked);
-
-        // For each byte, decide how to merge
-        let mut merged_unpacked = [StateId::NONE; BYTE_CEILING];
-        for i in 0..BYTE_CEILING {
-            let spinner_next = spinner_unpacked[i];
-            let other_next = other_unpacked[i];
-
-            if spinner_next.is_none() {
-                // Illegal UTF-8 byte
-                merged_unpacked[i] = StateId::NONE;
-            } else if other_next.is_none() {
-                // Only spinner has a transition - remap it
-                if spinner_next == spinner_id {
-                    merged_unpacked[i] = new_id; // self-loop maps to combined
-                } else {
-                    // Spinner has a real branch (not self-loop)
-                    merged_unpacked[i] = if s1_has_spinout {
-                        merge_arena_nfa_states_recursive(
-                            spinner_arena,
-                            spinner_next,
-                            other_arena,
-                            StateId::NONE,
-                            new_arena,
-                            memo,
-                        )
-                    } else {
-                        merge_arena_nfa_states_recursive(
-                            other_arena,
-                            StateId::NONE,
-                            spinner_arena,
-                            spinner_next,
-                            new_arena,
-                            memo,
-                        )
-                    };
-                }
-            } else if spinner_next == spinner_id {
-                // Spinner self-loops here AND other has a branch.
-                // Create a state with other's transitions + epsilon back to combined.
-                // This is the key optimization: avoid full merge, just add epsilon.
-                let remapped_other = if s1_has_spinout {
-                    merge_arena_nfa_states_recursive(
-                        spinner_arena,
-                        StateId::NONE,
-                        other_arena,
-                        other_next,
-                        new_arena,
-                        memo,
-                    )
-                } else {
-                    merge_arena_nfa_states_recursive(
-                        other_arena,
-                        other_next,
-                        spinner_arena,
-                        StateId::NONE,
-                        new_arena,
-                        memo,
-                    )
-                };
-                // Add epsilon from the remapped other state back to the combined spinner
-                if !remapped_other.is_none() {
-                    new_arena[remapped_other].table.epsilons.push(new_id);
-                    // Also copy spinner's field transitions to the escape state
-                    let spinner_fts = if s1_has_spinout {
-                        &arena1[state1].field_transitions
-                    } else {
-                        &arena2[state2].field_transitions
-                    };
-                    for ft in spinner_fts {
-                        new_arena[remapped_other].field_transitions.push(ft.clone());
-                    }
-                }
-                merged_unpacked[i] = remapped_other;
-            } else {
-                // Spinner has a real branch (not self-loop) AND other has a branch.
-                // Merge them, then add epsilon back to combined spinner.
-                let merged_branch = if s1_has_spinout {
-                    merge_arena_nfa_states_recursive(
-                        spinner_arena,
-                        spinner_next,
-                        other_arena,
-                        other_next,
-                        new_arena,
-                        memo,
-                    )
-                } else {
-                    merge_arena_nfa_states_recursive(
-                        other_arena,
-                        other_next,
-                        spinner_arena,
-                        spinner_next,
-                        new_arena,
-                        memo,
-                    )
-                };
-                if !merged_branch.is_none() {
-                    new_arena[merged_branch].table.epsilons.push(new_id);
-                }
-                merged_unpacked[i] = merged_branch;
-            }
-        }
-
-        // Pack the merged table
-        let mut combined_table = ArenaSmallTable::new();
-        combined_table.pack(&merged_unpacked);
-        combined_table.default = new_id; // self-loop for the combined spinner
-
-        // Remap spinner's epsilons (0 or 1)
-        let mut merged_epsilons: SmallVec<[StateId; 2]> = SmallVec::new();
-        for &spinner_eps in &spinner_table.epsilons {
-            let merged = if s1_has_spinout {
-                merge_arena_nfa_states_recursive(
-                    spinner_arena,
-                    spinner_eps,
-                    other_arena,
-                    StateId::NONE,
-                    new_arena,
-                    memo,
-                )
-            } else {
-                merge_arena_nfa_states_recursive(
-                    other_arena,
-                    StateId::NONE,
-                    spinner_arena,
-                    spinner_eps,
-                    new_arena,
-                    memo,
-                )
-            };
-            if !merged.is_none() {
-                merged_epsilons.push(merged);
-            }
-        }
-        combined_table.epsilons = merged_epsilons;
-
-        // Combine field transitions
-        let mut field_transitions = s1.field_transitions.clone();
-        field_transitions.extend(s2.field_transitions.iter().cloned());
-
-        new_arena[new_id].table = combined_table;
-        new_arena[new_id].field_transitions = field_transitions;
-        return new_id;
+        return asymmetric_spinner_merge(
+            arena1,
+            state1,
+            arena2,
+            state2,
+            s1_has_spinout,
+            new_arena,
+            memo,
+            new_id,
+        );
     }
 
     // Case 3: Either has epsilons (but not both spinouts) - create splice
@@ -2368,7 +2179,7 @@ fn merge_arena_nfa_states_recursive(
         // collect their real targets directly instead of nesting splices.
         let epsilons = flatten_epsilon_targets(new_arena, &[cloned1, cloned2]);
 
-        new_arena[new_id].table = ArenaSmallTable {
+        new_arena[new_id].table = SmallTable {
             ceilings: smallvec![BYTE_CEILING as u8],
             steps: smallvec![StateId::NONE],
             epsilons,
@@ -2389,6 +2200,250 @@ fn merge_arena_nfa_states_recursive(
     new_arena[new_id].field_transitions = field_transitions;
 
     new_id
+}
+
+/// Merge two spinout states (Case 1 of `merge_arena_nfa_states_recursive`).
+///
+/// Bytewise-merges both tables; the byte-dot self-loops recurse back through
+/// the memo and resolve to `new_id`, marking the merged state as a spinout.
+/// Epsilons (0 or 1 per side) are remapped via one-sided merges.
+fn merge_dual_spinout_states(
+    arena1: &StateArena,
+    s1: &FaState,
+    arena2: &StateArena,
+    s2: &FaState,
+    new_arena: &mut StateArena,
+    memo: &mut FxHashMap<(i32, i32), StateId>,
+    new_id: StateId,
+) {
+    let mut combined_table =
+        merge_nfa_tables_bytewise(arena1, &s1.table, arena2, &s2.table, new_arena, memo);
+    combined_table.default = new_id;
+
+    let mut merged_epsilons: SmallVec<[StateId; 2]> = SmallVec::new();
+    for &eps1 in &s1.table.epsilons {
+        let merged =
+            merge_arena_nfa_states_recursive(arena1, eps1, arena2, StateId::NONE, new_arena, memo);
+        if !merged.is_none() {
+            merged_epsilons.push(merged);
+        }
+    }
+    for &eps2 in &s2.table.epsilons {
+        let merged =
+            merge_arena_nfa_states_recursive(arena1, StateId::NONE, arena2, eps2, new_arena, memo);
+        if !merged.is_none() {
+            merged_epsilons.push(merged);
+        }
+    }
+    combined_table.epsilons = merged_epsilons;
+
+    let mut field_transitions = s1.field_transitions.clone();
+    field_transitions.extend(s2.field_transitions.iter().cloned());
+
+    new_arena[new_id].table = combined_table;
+    new_arena[new_id].field_transitions = field_transitions;
+}
+
+/// Merge a spinout state in one arena with a non-epsilon state in the other, mirroring
+/// Go's `asymmetricSpinnerMerge`. Inlining the spinner's self-loop into the merged byte
+/// table avoids creating splice states for the cross-arena epsilon back-edge.
+// Two arenas + two state ids + flags + outputs naturally hit 8 params; bundling
+// would only add indirection for a single-use helper.
+#[allow(clippy::too_many_arguments)]
+fn asymmetric_spinner_merge(
+    arena1: &StateArena,
+    state1: StateId,
+    arena2: &StateArena,
+    state2: StateId,
+    s1_has_spinout: bool,
+    new_arena: &mut StateArena,
+    memo: &mut FxHashMap<(i32, i32), StateId>,
+    new_id: StateId,
+) -> StateId {
+    let s1 = &arena1[state1];
+    let s2 = &arena2[state2];
+    let (spinner_arena, spinner_id, spinner_table, other_arena, other_table) = if s1_has_spinout {
+        (arena1, state1, &s1.table, arena2, &s2.table)
+    } else {
+        (arena2, state2, &s2.table, arena1, &s1.table)
+    };
+
+    let mut spinner_unpacked = [StateId::NONE; BYTE_CEILING];
+    let mut other_unpacked = [StateId::NONE; BYTE_CEILING];
+    unpack_arena_table(spinner_table, &mut spinner_unpacked);
+    unpack_arena_table(other_table, &mut other_unpacked);
+
+    let mut merged_unpacked = [StateId::NONE; BYTE_CEILING];
+    for i in 0..BYTE_CEILING {
+        merged_unpacked[i] = merge_asymmetric_spinner_byte(
+            spinner_arena,
+            spinner_id,
+            other_arena,
+            spinner_unpacked[i],
+            other_unpacked[i],
+            s1_has_spinout,
+            new_arena,
+            memo,
+            new_id,
+            arena1,
+            state1,
+            arena2,
+            state2,
+        );
+    }
+
+    let mut combined_table = SmallTable::new();
+    combined_table.pack(&merged_unpacked);
+    combined_table.default = new_id; // self-loop for the combined spinner
+
+    // Remap spinner's epsilons (0 or 1).
+    let mut merged_epsilons: SmallVec<[StateId; 2]> = SmallVec::new();
+    for &spinner_eps in &spinner_table.epsilons {
+        let merged = if s1_has_spinout {
+            merge_arena_nfa_states_recursive(
+                spinner_arena,
+                spinner_eps,
+                other_arena,
+                StateId::NONE,
+                new_arena,
+                memo,
+            )
+        } else {
+            merge_arena_nfa_states_recursive(
+                other_arena,
+                StateId::NONE,
+                spinner_arena,
+                spinner_eps,
+                new_arena,
+                memo,
+            )
+        };
+        if !merged.is_none() {
+            merged_epsilons.push(merged);
+        }
+    }
+    combined_table.epsilons = merged_epsilons;
+
+    let mut field_transitions = arena1[state1].field_transitions.clone();
+    field_transitions.extend(arena2[state2].field_transitions.iter().cloned());
+
+    new_arena[new_id].table = combined_table;
+    new_arena[new_id].field_transitions = field_transitions;
+    new_id
+}
+
+/// Resolve one byte slot of the asymmetric spinner merge. Returns the `StateId` to
+/// place in `merged_unpacked[i]`.
+#[allow(clippy::too_many_arguments)]
+fn merge_asymmetric_spinner_byte(
+    spinner_arena: &StateArena,
+    spinner_id: StateId,
+    other_arena: &StateArena,
+    spinner_next: StateId,
+    other_next: StateId,
+    s1_has_spinout: bool,
+    new_arena: &mut StateArena,
+    memo: &mut FxHashMap<(i32, i32), StateId>,
+    new_id: StateId,
+    arena1: &StateArena,
+    state1: StateId,
+    arena2: &StateArena,
+    state2: StateId,
+) -> StateId {
+    if spinner_next.is_none() {
+        // Illegal UTF-8 byte.
+        return StateId::NONE;
+    }
+
+    if other_next.is_none() {
+        // Only the spinner has a transition - remap it.
+        if spinner_next == spinner_id {
+            return new_id; // self-loop maps to combined
+        }
+        return if s1_has_spinout {
+            merge_arena_nfa_states_recursive(
+                spinner_arena,
+                spinner_next,
+                other_arena,
+                StateId::NONE,
+                new_arena,
+                memo,
+            )
+        } else {
+            merge_arena_nfa_states_recursive(
+                other_arena,
+                StateId::NONE,
+                spinner_arena,
+                spinner_next,
+                new_arena,
+                memo,
+            )
+        };
+    }
+
+    if spinner_next == spinner_id {
+        // Spinner self-loops here AND other has a branch. Create a state with the
+        // other's transitions plus an epsilon back to the combined spinner. This is
+        // the key optimization: avoid a full merge, just add an epsilon.
+        let remapped_other = if s1_has_spinout {
+            merge_arena_nfa_states_recursive(
+                spinner_arena,
+                StateId::NONE,
+                other_arena,
+                other_next,
+                new_arena,
+                memo,
+            )
+        } else {
+            merge_arena_nfa_states_recursive(
+                other_arena,
+                other_next,
+                spinner_arena,
+                StateId::NONE,
+                new_arena,
+                memo,
+            )
+        };
+        if !remapped_other.is_none() {
+            new_arena[remapped_other].table.epsilons.push(new_id);
+            // Copy the spinner's field transitions onto the escape state.
+            let spinner_fts = if s1_has_spinout {
+                &arena1[state1].field_transitions
+            } else {
+                &arena2[state2].field_transitions
+            };
+            for ft in spinner_fts {
+                new_arena[remapped_other].field_transitions.push(ft.clone());
+            }
+        }
+        return remapped_other;
+    }
+
+    // Spinner has a real branch (not a self-loop) AND other has a branch. Merge
+    // them, then add an epsilon back to the combined spinner.
+    let merged_branch = if s1_has_spinout {
+        merge_arena_nfa_states_recursive(
+            spinner_arena,
+            spinner_next,
+            other_arena,
+            other_next,
+            new_arena,
+            memo,
+        )
+    } else {
+        merge_arena_nfa_states_recursive(
+            other_arena,
+            other_next,
+            spinner_arena,
+            spinner_next,
+            new_arena,
+            memo,
+        )
+    };
+    if !merged_branch.is_none() {
+        new_arena[merged_branch].table.epsilons.push(new_id);
+    }
+    merged_branch
 }
 
 /// Clone a state and all its reachable states from source arena into target arena.
@@ -2421,7 +2476,7 @@ fn clone_state_into_arena(
 
     // Clone table with remapped state IDs
     let old_table = &old_state.table;
-    let mut new_table = ArenaSmallTable {
+    let mut new_table = SmallTable {
         ceilings: old_table.ceilings.clone(),
         steps: SmallVec::with_capacity(old_table.steps.len()),
         epsilons: SmallVec::with_capacity(old_table.epsilons.len()),
@@ -2455,13 +2510,13 @@ fn clone_state_into_arena(
 /// Remap a table from source arena to the merged arena (NFA version).
 fn remap_nfa_table_recursive(
     source_arena: &StateArena,
-    table: &ArenaSmallTable,
+    table: &SmallTable,
     _other_arena: &StateArena,
     new_arena: &mut StateArena,
     memo: &mut FxHashMap<(i32, i32), StateId>,
     is_arena1: bool,
-) -> ArenaSmallTable {
-    let mut new_table = ArenaSmallTable {
+) -> SmallTable {
+    let mut new_table = SmallTable {
         ceilings: table.ceilings.clone(),
         steps: SmallVec::with_capacity(table.steps.len()),
         epsilons: SmallVec::with_capacity(table.epsilons.len()),
@@ -2553,12 +2608,12 @@ fn remap_nfa_table_recursive(
 /// Merge two NFA tables byte-by-byte.
 fn merge_nfa_tables_bytewise(
     arena1: &StateArena,
-    table1: &ArenaSmallTable,
+    table1: &SmallTable,
     arena2: &StateArena,
-    table2: &ArenaSmallTable,
+    table2: &SmallTable,
     new_arena: &mut StateArena,
     memo: &mut FxHashMap<(i32, i32), StateId>,
-) -> ArenaSmallTable {
+) -> SmallTable {
     // Unpack both tables to 256-element arrays
     let mut unpacked1 = [StateId::NONE; BYTE_CEILING];
     let mut unpacked2 = [StateId::NONE; BYTE_CEILING];
@@ -2576,7 +2631,7 @@ fn merge_nfa_tables_bytewise(
     }
 
     // Pack result
-    let mut result = ArenaSmallTable::new();
+    let mut result = SmallTable::new();
     result.pack(&merged_unpacked);
 
     // Merge epsilons - collect all unique epsilons
@@ -2721,7 +2776,7 @@ fn make_less_arena_fa_step(
         // Any other byte: input > bound (no match)
         if inclusive {
             // On VALUE_TERMINATOR: match (equal case)
-            let start = arena.alloc_with_table(ArenaSmallTable::with_mappings(
+            let start = arena.alloc_with_table(SmallTable::with_mappings(
                 StateId::NONE,
                 &[ARENA_VALUE_TERMINATOR],
                 &[match_state],
@@ -2755,7 +2810,7 @@ fn make_less_arena_fa_step(
 
     // Bytes > bound_byte: no transition (implicit fail)
 
-    let mut table = ArenaSmallTable::new();
+    let mut table = SmallTable::new();
     table.pack(&unpacked);
     arena.alloc_with_table(table)
 }
@@ -2780,7 +2835,7 @@ fn make_greater_arena_fa_step(
         }
         // If inclusive, VALUE_TERMINATOR also matches (equal case)
 
-        let mut table = ArenaSmallTable::new();
+        let mut table = SmallTable::new();
         table.pack(&unpacked);
         return arena.alloc_with_table(table);
     }
@@ -2812,7 +2867,7 @@ fn make_greater_arena_fa_step(
 
     // VALUE_TERMINATOR and bytes < bound_byte: no transition (implicit fail)
 
-    let mut table = ArenaSmallTable::new();
+    let mut table = SmallTable::new();
     table.pack(&unpacked);
     arena.alloc_with_table(table)
 }
@@ -2836,7 +2891,7 @@ fn make_range_arena_fa_step(
         // VALUE_TERMINATOR means we've matched both bounds exactly
         if lower_incl && upper_incl {
             // Both inclusive - accept equal
-            return arena.alloc_with_table(ArenaSmallTable::with_mappings(
+            return arena.alloc_with_table(SmallTable::with_mappings(
                 StateId::NONE,
                 &[ARENA_VALUE_TERMINATOR],
                 &[match_state],
@@ -2878,7 +2933,7 @@ fn make_range_arena_fa_step(
         let mut unpacked = [StateId::NONE; BYTE_CEILING];
         unpacked[lower_byte as usize] = continuation;
 
-        let mut table = ArenaSmallTable::new();
+        let mut table = SmallTable::new();
         table.pack(&unpacked);
         return arena.alloc_with_table(table);
     }
@@ -2908,7 +2963,7 @@ fn make_range_arena_fa_step(
 
     // Bytes > upper_byte: fail (> upper)
 
-    let mut table = ArenaSmallTable::new();
+    let mut table = SmallTable::new();
     table.pack(&unpacked);
     arena.alloc_with_table(table)
 }
@@ -2953,7 +3008,7 @@ fn make_string_arena_fa_step(
 ) -> StateId {
     if index >= val.len() {
         // Final step: transition on VALUE_TERMINATOR to match state
-        return arena.alloc_with_table(ArenaSmallTable::with_mappings(
+        return arena.alloc_with_table(SmallTable::with_mappings(
             StateId::NONE,
             &[ARENA_VALUE_TERMINATOR],
             &[match_state],
@@ -2963,7 +3018,7 @@ fn make_string_arena_fa_step(
     // Recursive step: build rest of chain first, then prepend current byte
     let continuation = make_string_arena_fa_step(val, index + 1, match_state, arena);
 
-    arena.alloc_with_table(ArenaSmallTable::with_mappings(
+    arena.alloc_with_table(SmallTable::with_mappings(
         StateId::NONE,
         &[val[index]],
         &[continuation],
@@ -2975,7 +3030,7 @@ fn make_string_arena_fa_step(
 /// This is O(L) per string where L is the string length, avoiding the O(n²) cost
 /// of repeated `merge_arena_nfas` calls. It walks the existing trie, following
 /// existing transitions where they match and creating new states where they diverge.
-pub fn insert_string_into_arena(
+pub fn insert_string(
     arena: &mut StateArena,
     start: StateId,
     val: &[u8],
@@ -3004,7 +3059,7 @@ pub fn insert_string_into_arena(
                 } else {
                     ARENA_VALUE_TERMINATOR
                 };
-                target = arena.alloc_with_table(ArenaSmallTable::with_mappings(
+                target = arena.alloc_with_table(SmallTable::with_mappings(
                     StateId::NONE,
                     &[b],
                     &[target],
@@ -3048,11 +3103,8 @@ pub fn make_suffix_dfa(
     // Build chain backwards: last byte → ... → first byte → start
     let mut target = match_state;
     for &byte in reversed_bytes.iter().rev() {
-        target = arena.alloc_with_table(ArenaSmallTable::with_mappings(
-            StateId::NONE,
-            &[byte],
-            &[target],
-        ));
+        target =
+            arena.alloc_with_table(SmallTable::with_mappings(StateId::NONE, &[byte], &[target]));
     }
 
     arena.precompute_epsilon_closures();
@@ -3061,9 +3113,9 @@ pub fn make_suffix_dfa(
 
 /// Insert a reversed suffix pattern into an existing suffix DFA trie.
 ///
-/// Like `insert_string_into_arena` but without the ARENA_VALUE_TERMINATOR.
+/// Like `insert_string` but without the ARENA_VALUE_TERMINATOR.
 /// Shares prefix structure with existing patterns in the trie.
-pub fn insert_suffix_into_arena(
+pub fn insert_suffix(
     arena: &mut StateArena,
     start: StateId,
     reversed_bytes: &[u8],
@@ -3081,7 +3133,7 @@ pub fn insert_suffix_into_arena(
             // Build chain backwards for remaining bytes after this one
             let mut target = match_state;
             for &b in reversed_bytes[i + 1..].iter().rev() {
-                target = arena.alloc_with_table(ArenaSmallTable::with_mappings(
+                target = arena.alloc_with_table(SmallTable::with_mappings(
                     StateId::NONE,
                     &[b],
                     &[target],
@@ -3137,7 +3189,7 @@ fn make_prefix_arena_fa_step(
     if index >= prefix.len() {
         // End of prefix: all bytes should transition to match state (default)
         // Use match_state as default for all byte values
-        return arena.alloc_with_table(ArenaSmallTable::with_mappings(
+        return arena.alloc_with_table(SmallTable::with_mappings(
             match_state, // Default transition for all bytes
             &[],
             &[],
@@ -3147,7 +3199,7 @@ fn make_prefix_arena_fa_step(
     // Recursive step: build rest of chain first, then prepend current byte
     let continuation = make_prefix_arena_fa_step(prefix, index + 1, match_state, arena);
 
-    arena.alloc_with_table(ArenaSmallTable::with_mappings(
+    arena.alloc_with_table(SmallTable::with_mappings(
         StateId::NONE,
         &[prefix[index]],
         &[continuation],
@@ -3185,7 +3237,7 @@ pub fn make_shellstyle_arena_fa(
     //   4. Override the spinner's transition for the NEXT byte to go to escape
     //   5. Advance past the next byte (it's consumed as the escape trigger)
     //
-    // The junction gives insert_string_into_arena a clean branch point (dstep
+    // The junction gives insert_string a clean branch point (dstep
     // returns NONE on the junction for any byte), while spinner states have
     // closure size 1 during self-loop, reducing dstep calls by ~2x.
     let start = arena.alloc();
@@ -3196,7 +3248,7 @@ pub fn make_shellstyle_arena_fa(
         let ch = pattern[i];
         if ch == b'*' {
             // Current state becomes an epsilon-only junction before the spinner.
-            // This gives insert_string_into_arena a clean branch point: dstep on
+            // This gives insert_string a clean branch point: dstep on
             // the junction returns NONE for any byte, so exact string paths get
             // their own separate states instead of following the spinner's self-loop.
             let spinner = arena.alloc();
@@ -3281,7 +3333,7 @@ fn build_fa_from_segments(
             }
             ShellstyleSegment::Wildcard => {
                 // Current state becomes an epsilon-only junction before the spinner.
-                // This gives insert_string_into_arena a clean branch point.
+                // This gives insert_string a clean branch point.
                 let spinner = arena.alloc();
                 arena[spinner].table = make_byte_dot_table(spinner);
                 arena[state].table.epsilons.push(spinner);
@@ -3333,8 +3385,8 @@ fn build_fa_from_segments(
 ///
 /// This encodes the wildcard self-loop directly in the transition table,
 /// eliminating the need for a separate spinout check in the traversal loop.
-fn make_byte_dot_table(dest: StateId) -> ArenaSmallTable {
-    let mut table = ArenaSmallTable::new();
+fn make_byte_dot_table(dest: StateId) -> SmallTable {
+    let mut table = SmallTable::new();
     table.ceilings = smallvec![0xC0, 0xC2, ARENA_VALUE_TERMINATOR, BYTE_CEILING as u8];
     table.steps = smallvec![dest, StateId::NONE, dest, StateId::NONE];
     table.default = dest;
@@ -3532,7 +3584,7 @@ fn build_anything_but_step(
         } else if ends_here {
             // Only ends here - fail on VALUE_TERMINATOR, success on other bytes
             let fail_state = arena.alloc(); // Empty state = fail
-            let last_state = arena.alloc_with_table(ArenaSmallTable::with_mappings(
+            let last_state = arena.alloc_with_table(SmallTable::with_mappings(
                 success, // Default: success on any other byte
                 &[ARENA_VALUE_TERMINATOR],
                 &[fail_state], // Fail on terminator
@@ -3544,14 +3596,14 @@ fn build_anything_but_step(
     // Build the start state with default to success
     if special_mappings.is_empty() {
         // No excluded values to track - just default to success
-        return arena.alloc_with_table(ArenaSmallTable::with_mappings(success, &[], &[]));
+        return arena.alloc_with_table(SmallTable::with_mappings(success, &[], &[]));
     }
 
     // Build state with default success and special transitions
     let bytes: Vec<u8> = special_mappings.iter().map(|(b, _)| *b).collect();
     let states: Vec<StateId> = special_mappings.iter().map(|(_, s)| *s).collect();
 
-    arena.alloc_with_table(ArenaSmallTable::with_mappings(success, &bytes, &states))
+    arena.alloc_with_table(SmallTable::with_mappings(success, &bytes, &states))
 }
 
 /// Build an arena-based FA that matches strings case-insensitively.
@@ -3578,7 +3630,7 @@ pub fn make_monocase_arena_fa(val: &[u8], next_field: Arc<FieldMatcher>) -> (Sta
 
     // Empty string case
     let start = if val.is_empty() {
-        arena.alloc_with_table(ArenaSmallTable::with_mappings(
+        arena.alloc_with_table(SmallTable::with_mappings(
             StateId::NONE,
             &[ARENA_VALUE_TERMINATOR],
             &[match_state],
@@ -3618,7 +3670,7 @@ pub fn make_monocase_arena_fa(val: &[u8], next_field: Arc<FieldMatcher>) -> (Sta
 /// Build ASCII-only monocase chain (fallback for invalid UTF-8)
 fn build_monocase_ascii_chain(val: &[u8], match_state: StateId, arena: &mut StateArena) -> StateId {
     // First create the terminator state
-    let term_state = arena.alloc_with_table(ArenaSmallTable::with_mappings(
+    let term_state = arena.alloc_with_table(SmallTable::with_mappings(
         StateId::NONE,
         &[ARENA_VALUE_TERMINATOR],
         &[match_state],
@@ -3640,13 +3692,13 @@ fn build_monocase_ascii_chain(val: &[u8], match_state: StateId, arena: &mut Stat
         let state = if let Some(alt) = alt_byte {
             // Two paths to next state
             if byte < alt {
-                arena.alloc_with_table(ArenaSmallTable::with_mappings(
+                arena.alloc_with_table(SmallTable::with_mappings(
                     StateId::NONE,
                     &[byte, alt],
                     &[current_next, current_next],
                 ))
             } else {
-                arena.alloc_with_table(ArenaSmallTable::with_mappings(
+                arena.alloc_with_table(SmallTable::with_mappings(
                     StateId::NONE,
                     &[alt, byte],
                     &[current_next, current_next],
@@ -3654,7 +3706,7 @@ fn build_monocase_ascii_chain(val: &[u8], match_state: StateId, arena: &mut Stat
             }
         } else {
             // Single path
-            arena.alloc_with_table(ArenaSmallTable::with_mappings(
+            arena.alloc_with_table(SmallTable::with_mappings(
                 StateId::NONE,
                 &[byte],
                 &[current_next],
@@ -3676,7 +3728,7 @@ fn build_monocase_arena_recursive(
 ) -> StateId {
     if idx >= chars.len() {
         // End of string - create state that matches on VALUE_TERMINATOR
-        return arena.alloc_with_table(ArenaSmallTable::with_mappings(
+        return arena.alloc_with_table(SmallTable::with_mappings(
             StateId::NONE,
             &[ARENA_VALUE_TERMINATOR],
             &[match_state],
@@ -3703,13 +3755,13 @@ fn build_monocase_arena_recursive(
             let alt_state = build_arena_fragment(alt_bytes, next_state, arena);
 
             if orig[0] < alt_bytes[0] {
-                arena.alloc_with_table(ArenaSmallTable::with_mappings(
+                arena.alloc_with_table(SmallTable::with_mappings(
                     StateId::NONE,
                     &[orig[0], alt_bytes[0]],
                     &[orig_state, alt_state],
                 ))
             } else {
-                arena.alloc_with_table(ArenaSmallTable::with_mappings(
+                arena.alloc_with_table(SmallTable::with_mappings(
                     StateId::NONE,
                     &[alt_bytes[0], orig[0]],
                     &[alt_state, orig_state],
@@ -3727,7 +3779,7 @@ fn build_monocase_arena_recursive(
             } else if orig_suffix.is_empty() {
                 // Original is done, alternate has more bytes
                 let alt_state = build_arena_fragment(alt_suffix, next_state, arena);
-                arena.alloc_with_table(ArenaSmallTable::with_mappings(
+                arena.alloc_with_table(SmallTable::with_mappings(
                     StateId::NONE,
                     &[alt_suffix[0]],
                     &[alt_state],
@@ -3735,7 +3787,7 @@ fn build_monocase_arena_recursive(
             } else if alt_suffix.is_empty() {
                 // Alternate is done, original has more bytes
                 let orig_state = build_arena_fragment(orig_suffix, next_state, arena);
-                arena.alloc_with_table(ArenaSmallTable::with_mappings(
+                arena.alloc_with_table(SmallTable::with_mappings(
                     StateId::NONE,
                     &[orig_suffix[0]],
                     &[orig_state],
@@ -3746,13 +3798,13 @@ fn build_monocase_arena_recursive(
                 let alt_state = build_arena_fragment(alt_suffix, next_state, arena);
 
                 if orig_suffix[0] < alt_suffix[0] {
-                    arena.alloc_with_table(ArenaSmallTable::with_mappings(
+                    arena.alloc_with_table(SmallTable::with_mappings(
                         StateId::NONE,
                         &[orig_suffix[0], alt_suffix[0]],
                         &[orig_state, alt_state],
                     ))
                 } else {
-                    arena.alloc_with_table(ArenaSmallTable::with_mappings(
+                    arena.alloc_with_table(SmallTable::with_mappings(
                         StateId::NONE,
                         &[alt_suffix[0], orig_suffix[0]],
                         &[alt_state, orig_state],
@@ -3768,7 +3820,7 @@ fn build_monocase_arena_recursive(
             } else {
                 let mut current = diverge_state;
                 for &byte in prefix.iter().rev() {
-                    current = arena.alloc_with_table(ArenaSmallTable::with_mappings(
+                    current = arena.alloc_with_table(SmallTable::with_mappings(
                         StateId::NONE,
                         &[byte],
                         &[current],
@@ -3782,7 +3834,7 @@ fn build_monocase_arena_recursive(
         // Build chain from all bytes (including first) to next_state
         let mut current = next_state;
         for &byte in orig.iter().rev() {
-            current = arena.alloc_with_table(ArenaSmallTable::with_mappings(
+            current = arena.alloc_with_table(SmallTable::with_mappings(
                 StateId::NONE,
                 &[byte],
                 &[current],
@@ -3806,7 +3858,7 @@ fn build_arena_fragment(val: &[u8], end_at: StateId, arena: &mut StateArena) -> 
     // Build chain from last byte back to second byte (skip first byte)
     let mut current = end_at;
     for &byte in val[1..].iter().rev() {
-        current = arena.alloc_with_table(ArenaSmallTable::with_mappings(
+        current = arena.alloc_with_table(SmallTable::with_mappings(
             StateId::NONE,
             &[byte],
             &[current],
@@ -3863,12 +3915,12 @@ fn make_ipv4_cidr_arena_fa(
 
     // Create terminator state: " → VT → match
     // (closing quote before value terminator, since string values retain quotes)
-    let term_state = arena.alloc_with_table(ArenaSmallTable::with_mappings(
+    let term_state = arena.alloc_with_table(SmallTable::with_mappings(
         StateId::NONE,
         &[ARENA_VALUE_TERMINATOR],
         &[match_state],
     ));
-    let close_quote_state = arena.alloc_with_table(ArenaSmallTable::with_mappings(
+    let close_quote_state = arena.alloc_with_table(SmallTable::with_mappings(
         StateId::NONE,
         b"\"",
         &[term_state],
@@ -3902,7 +3954,7 @@ fn make_ipv4_cidr_arena_fa(
 
         // If not first octet, prepend dot
         if octet_idx > 0 {
-            current_state = arena.alloc_with_table(ArenaSmallTable::with_mappings(
+            current_state = arena.alloc_with_table(SmallTable::with_mappings(
                 StateId::NONE,
                 b".",
                 &[octet_start],
@@ -3913,7 +3965,7 @@ fn make_ipv4_cidr_arena_fa(
     }
 
     // Prepend opening quote: " → first_octet
-    let open_quote_start = arena.alloc_with_table(ArenaSmallTable::with_mappings(
+    let open_quote_start = arena.alloc_with_table(SmallTable::with_mappings(
         StateId::NONE,
         b"\"",
         &[current_state],
@@ -3935,12 +3987,12 @@ fn make_ipv6_cidr_arena_fa(
     arena[match_state].field_transitions.push(next_field);
 
     // Create terminator state: " → VT → match
-    let term_state = arena.alloc_with_table(ArenaSmallTable::with_mappings(
+    let term_state = arena.alloc_with_table(SmallTable::with_mappings(
         StateId::NONE,
         &[ARENA_VALUE_TERMINATOR],
         &[match_state],
     ));
-    let close_quote_state = arena.alloc_with_table(ArenaSmallTable::with_mappings(
+    let close_quote_state = arena.alloc_with_table(SmallTable::with_mappings(
         StateId::NONE,
         b"\"",
         &[term_state],
@@ -3974,7 +4026,7 @@ fn make_ipv6_cidr_arena_fa(
 
         // If not first group, prepend colon
         if group_idx > 0 {
-            current_state = arena.alloc_with_table(ArenaSmallTable::with_mappings(
+            current_state = arena.alloc_with_table(SmallTable::with_mappings(
                 StateId::NONE,
                 b":",
                 &[group_start],
@@ -3985,7 +4037,7 @@ fn make_ipv6_cidr_arena_fa(
     }
 
     // Prepend opening quote: " → first_group
-    let open_quote_start = arena.alloc_with_table(ArenaSmallTable::with_mappings(
+    let open_quote_start = arena.alloc_with_table(SmallTable::with_mappings(
         StateId::NONE,
         b"\"",
         &[current_state],
@@ -4063,7 +4115,7 @@ fn build_ipv6_group_range_arena_fa(
 fn build_literal_chain_arena(val: &[u8], continuation: StateId, arena: &mut StateArena) -> StateId {
     let mut current = continuation;
     for &byte in val.iter().rev() {
-        current = arena.alloc_with_table(ArenaSmallTable::with_mappings(
+        current = arena.alloc_with_table(SmallTable::with_mappings(
             StateId::NONE,
             &[byte],
             &[current],
@@ -4104,7 +4156,7 @@ fn build_any_hex_group_arena(continuation: StateId, arena: &mut StateArena) -> S
             targets.push(current);
         }
 
-        arena[next_state].table = ArenaSmallTable::with_mappings(StateId::NONE, &bytes, &targets);
+        arena[next_state].table = SmallTable::with_mappings(StateId::NONE, &bytes, &targets);
 
         // For positions 1, 2, 3 (not 0), add epsilon transition to allow match to end
         // After matching 1-3 digits, we can optionally match more or transition out
@@ -4160,7 +4212,7 @@ mod tests {
 
     #[test]
     fn test_arena_small_table_pack() {
-        let mut table = ArenaSmallTable::new();
+        let mut table = SmallTable::new();
         let mut unpacked = [StateId::NONE; BYTE_CEILING];
 
         // Set 'a' (97) to state 0
@@ -4188,20 +4240,20 @@ mod tests {
             .field_transitions
             .push(field_matcher.clone());
 
-        let match_state = arena.alloc_with_table(ArenaSmallTable::with_mappings(
+        let match_state = arena.alloc_with_table(SmallTable::with_mappings(
             StateId::NONE,
             &[ARENA_VALUE_TERMINATOR],
             &[final_state],
         ));
 
-        let start = arena.alloc_with_table(ArenaSmallTable::with_mappings(
+        let start = arena.alloc_with_table(SmallTable::with_mappings(
             StateId::NONE,
             b"a",
             &[match_state],
         ));
 
         arena.precompute_epsilon_closures();
-        let mut bufs = ArenaNfaBuffers::with_capacity();
+        let mut bufs = NfaBuffers::with_capacity();
 
         // Should match "a"
         let value = b"a";
@@ -4231,7 +4283,7 @@ mod tests {
         let final_state = arena.alloc();
         arena[final_state].field_transitions.push(field_matcher);
 
-        let exit_state = arena.alloc_with_table(ArenaSmallTable::with_mappings(
+        let exit_state = arena.alloc_with_table(SmallTable::with_mappings(
             StateId::NONE,
             &[ARENA_VALUE_TERMINATOR],
             &[final_state],
@@ -4242,8 +4294,7 @@ mod tests {
 
         // start state - matches 'a' or 'b' -> loopback
         let start = arena.alloc_with_table({
-            let mut table =
-                ArenaSmallTable::with_mappings(StateId::NONE, b"ab", &[loopback, loopback]);
+            let mut table = SmallTable::with_mappings(StateId::NONE, b"ab", &[loopback, loopback]);
             // For *, add epsilon to exit (can match zero times)
             table.epsilons.push(exit_state);
             table
@@ -4253,7 +4304,7 @@ mod tests {
         arena[loopback].table.epsilons = smallvec![exit_state, start];
 
         arena.precompute_epsilon_closures();
-        let mut bufs = ArenaNfaBuffers::with_capacity();
+        let mut bufs = NfaBuffers::with_capacity();
 
         // Should match empty string (zero times)
         traverse_arena_nfa(&arena, start, b"", &mut bufs);
@@ -4306,7 +4357,7 @@ mod tests {
         let final_state = arena.alloc();
         arena[final_state].field_transitions.push(field_matcher);
 
-        let exit_state = arena.alloc_with_table(ArenaSmallTable::with_mappings(
+        let exit_state = arena.alloc_with_table(SmallTable::with_mappings(
             StateId::NONE,
             &[ARENA_VALUE_TERMINATOR],
             &[final_state],
@@ -4317,7 +4368,7 @@ mod tests {
 
         // start state - matches 'a' or 'b' -> loopback
         // NO epsilon to exit (must match at least once for +)
-        let start = arena.alloc_with_table(ArenaSmallTable::with_mappings(
+        let start = arena.alloc_with_table(SmallTable::with_mappings(
             StateId::NONE,
             b"ab",
             &[loopback, loopback],
@@ -4327,7 +4378,7 @@ mod tests {
         arena[loopback].table.epsilons = smallvec![exit_state, start];
 
         arena.precompute_epsilon_closures();
-        let mut bufs = ArenaNfaBuffers::with_capacity();
+        let mut bufs = NfaBuffers::with_capacity();
 
         // Should NOT match empty string (+ requires at least one)
         traverse_arena_nfa(&arena, start, b"", &mut bufs);
@@ -4363,7 +4414,7 @@ mod tests {
         let final_state = arena.alloc();
         arena[final_state].field_transitions.push(field_matcher);
 
-        let exit_state = arena.alloc_with_table(ArenaSmallTable::with_mappings(
+        let exit_state = arena.alloc_with_table(SmallTable::with_mappings(
             StateId::NONE,
             &[ARENA_VALUE_TERMINATOR],
             &[final_state],
@@ -4372,7 +4423,7 @@ mod tests {
         let loopback = arena.alloc();
 
         let start = arena.alloc_with_table({
-            let mut table = ArenaSmallTable::with_mappings(StateId::NONE, b"a", &[loopback]);
+            let mut table = SmallTable::with_mappings(StateId::NONE, b"a", &[loopback]);
             table.epsilons.push(exit_state);
             table
         });
@@ -4385,7 +4436,7 @@ mod tests {
 
         // Verify it works
         arena.precompute_epsilon_closures();
-        let mut bufs = ArenaNfaBuffers::with_capacity();
+        let mut bufs = NfaBuffers::with_capacity();
         traverse_arena_nfa(&arena, start, b"aaaaaaaaaa", &mut bufs);
         assert_eq!(bufs.transitions.len(), 1);
     }
@@ -4407,7 +4458,7 @@ mod tests {
         arena[final_state].field_transitions.push(field_matcher);
 
         // Exit state: matches VALUE_TERMINATOR → final
-        let exit_state = arena.alloc_with_table(ArenaSmallTable::with_mappings(
+        let exit_state = arena.alloc_with_table(SmallTable::with_mappings(
             StateId::NONE,
             &[ARENA_VALUE_TERMINATOR],
             &[final_state],
@@ -4418,7 +4469,7 @@ mod tests {
 
         // Start state: transitions on a/b/c → loopback, epsilon to exit (for ?)
         let start = arena.alloc_with_table({
-            let mut table = ArenaSmallTable::with_mappings(StateId::NONE, b"abc", &[loopback; 3]);
+            let mut table = SmallTable::with_mappings(StateId::NONE, b"abc", &[loopback; 3]);
             table.epsilons.push(exit_state);
             table
         });
@@ -4427,7 +4478,7 @@ mod tests {
         arena[loopback].table.epsilons = smallvec![exit_state, start];
 
         arena.precompute_epsilon_closures();
-        let mut bufs = ArenaNfaBuffers::with_capacity();
+        let mut bufs = NfaBuffers::with_capacity();
 
         // A long input of 'a's — without dedup this would explode exponentially
         let long_input: Vec<u8> = std::iter::repeat_n(b'a', 200).collect();
@@ -4467,7 +4518,7 @@ mod tests {
         let final_state = arena.alloc();
         arena[final_state].field_transitions.push(field_matcher);
 
-        let exit_state = arena.alloc_with_table(ArenaSmallTable::with_mappings(
+        let exit_state = arena.alloc_with_table(SmallTable::with_mappings(
             StateId::NONE,
             &[ARENA_VALUE_TERMINATOR],
             &[final_state],
@@ -4485,7 +4536,7 @@ mod tests {
             }
         }
 
-        let mut start_table = ArenaSmallTable::new();
+        let mut start_table = SmallTable::new();
         start_table.pack(&unpacked);
         // Add acceleration info - exit byte is just 'x'
         start_table.accel = Some(super::super::AccelInfo {
@@ -4503,7 +4554,7 @@ mod tests {
         });
 
         arena.precompute_epsilon_closures();
-        let mut bufs = ArenaNfaBuffers::with_capacity();
+        let mut bufs = NfaBuffers::with_capacity();
 
         // Test with a long string where 'x' is at the end
         // The acceleration should skip directly to 'x'
@@ -4538,7 +4589,7 @@ mod tests {
     #[test]
     fn test_try_accelerate_arena() {
         // Test the try_accelerate_arena function directly
-        let mut table = ArenaSmallTable::new();
+        let mut table = SmallTable::new();
 
         // No accel info - should return None
         assert!(try_accelerate_arena(&table, b"hello").is_none());
@@ -4572,12 +4623,12 @@ mod tests {
     }
 
     /// Verify that `StateArena::dstep` via `dfa_lookup` returns the same result
-    /// as `ArenaSmallTable::dstep` for every byte value.
+    /// as `SmallTable::dstep` for every byte value.
     ///
     /// This test is critical because `build_dfa_lookup` is skipped under Miri
     /// (`#[cfg(miri)]` no-op) to avoid a ~165s slowdown from interpreting the
     /// large 256-entry-per-state array on every byte transition. Under Miri,
-    /// `StateArena::dstep` falls back to `ArenaSmallTable::dstep`. This test
+    /// `StateArena::dstep` falls back to `SmallTable::dstep`. This test
     /// ensures the two paths are equivalent in non-Miri builds.
     #[test]
     fn test_dfa_lookup_matches_smalltable_dstep() {
@@ -4597,7 +4648,7 @@ mod tests {
 
         // State 2: no transitions (empty table)
 
-        // Record expected results from ArenaSmallTable::dstep before flattening
+        // Record expected results from SmallTable::dstep before flattening
         let mut expected: Vec<Vec<StateId>> = Vec::new();
         for sid in [s0, s1, s2] {
             let mut row = Vec::new();
@@ -4686,7 +4737,7 @@ mod arena_stats_utility_tests {
 
     #[test]
     fn test_arena_stats_add_sums_and_maxes() {
-        let mut a = ArenaStats {
+        let mut a = Stats {
             state_count: 10,
             tables_with_transitions: 5,
             total_ceiling_entries: 20,
@@ -4702,7 +4753,7 @@ mod arena_stats_utility_tests {
             dfa_lookup_states: 10,
             estimated_bytes: 1000,
         };
-        let b = ArenaStats {
+        let b = Stats {
             state_count: 7,
             tables_with_transitions: 3,
             total_ceiling_entries: 10,
@@ -4742,13 +4793,13 @@ mod arena_stats_utility_tests {
     #[test]
     fn test_arena_stats_add_equal_max_values() {
         // When both sides have equal max, result should still be that value
-        let mut a = ArenaStats {
+        let mut a = Stats {
             max_ceilings: 4,
             max_epsilons: 3,
             max_closure_len: 5,
             ..Default::default()
         };
-        let b = ArenaStats {
+        let b = Stats {
             max_ceilings: 4,
             max_epsilons: 3,
             max_closure_len: 5,
@@ -4770,7 +4821,7 @@ mod arena_stats_utility_tests {
         arena.alloc();
 
         let size_with_states = arena.estimated_byte_size();
-        let expected = arena.states.capacity() * std::mem::size_of::<ArenaFaState>()
+        let expected = arena.states.capacity() * std::mem::size_of::<FaState>()
             + arena.closure_data.capacity() * std::mem::size_of::<StateId>()
             + arena.ft_ptrs.capacity() * std::mem::size_of::<usize>()
             + arena.dfa_lookup.capacity() * std::mem::size_of::<StateId>();
@@ -4790,9 +4841,9 @@ mod arena_stats_utility_tests {
 
     #[test]
     fn test_debug_fmt_state() {
-        let state = ArenaFaState::new();
+        let state = FaState::new();
         let dbg = format!("{state:?}");
-        assert!(dbg.contains("ArenaFaState"));
+        assert!(dbg.contains("FaState"));
         assert!(dbg.contains("field_transitions_count"));
     }
 
@@ -4895,18 +4946,15 @@ mod merge_tests {
         arena[end].field_transitions.push(fm);
 
         // Terminator state (required for VALUE_TERMINATOR handling)
-        let term = arena.alloc_with_table(ArenaSmallTable::with_mappings(
+        let term = arena.alloc_with_table(SmallTable::with_mappings(
             StateId::NONE,
             &[ARENA_VALUE_TERMINATOR],
             &[end],
         ));
 
         // Start state transitions on byte to terminator
-        let start = arena.alloc_with_table(ArenaSmallTable::with_mappings(
-            StateId::NONE,
-            &[byte],
-            &[term],
-        ));
+        let start =
+            arena.alloc_with_table(SmallTable::with_mappings(StateId::NONE, &[byte], &[term]));
 
         (arena, start)
     }
@@ -4934,7 +4982,7 @@ mod merge_tests {
         let (merged, start) = merge_arena_dfas(&arena1, start1, &StateArena::new(), StateId::NONE);
 
         // Should work like arena1
-        let mut bufs = ArenaNfaBuffers::with_capacity();
+        let mut bufs = NfaBuffers::with_capacity();
         traverse_arena_nfa(&merged, start, b"a", &mut bufs);
         assert_eq!(bufs.transitions.len(), 1, "Should match 'a'");
     }
@@ -4950,7 +4998,7 @@ mod merge_tests {
 
         let (merged, start) = merge_arena_dfas(&arena1, start1, &arena2, start2);
 
-        let mut bufs = ArenaNfaBuffers::with_capacity();
+        let mut bufs = NfaBuffers::with_capacity();
 
         // Should match 'a'
         traverse_arena_nfa(&merged, start, b"a", &mut bufs);
@@ -4980,7 +5028,7 @@ mod merge_tests {
 
         let (merged, start) = merge_arena_dfas(&arena1, start1, &arena2, start2);
 
-        let mut bufs = ArenaNfaBuffers::with_capacity();
+        let mut bufs = NfaBuffers::with_capacity();
         traverse_arena_nfa(&merged, start, b"a", &mut bufs);
 
         // Should have both field matchers
@@ -5001,7 +5049,7 @@ mod merge_tests {
 
         let (merged, start) = merge_arena_dfas(&arena1, start1, &arena2, start2);
 
-        let mut bufs = ArenaNfaBuffers::with_capacity();
+        let mut bufs = NfaBuffers::with_capacity();
 
         // Check 'x' has fm1
         traverse_arena_nfa(&merged, start, b"x", &mut bufs);
@@ -5041,8 +5089,8 @@ mod merge_tests {
         let (abc_right, abc_right_start) = merge_arena_dfas(&arena_a, start_a, &bc, bc_start);
 
         // Both should match 'a', 'b', 'c'
-        let mut bufs1 = ArenaNfaBuffers::with_capacity();
-        let mut bufs2 = ArenaNfaBuffers::with_capacity();
+        let mut bufs1 = NfaBuffers::with_capacity();
+        let mut bufs2 = NfaBuffers::with_capacity();
 
         for byte in [b'a', b'b', b'c'] {
             bufs1.clear();
@@ -5077,23 +5125,17 @@ mod merge_tests {
             let end = arena.alloc();
             arena[end].field_transitions.push(fm1);
 
-            let term = arena.alloc_with_table(ArenaSmallTable::with_mappings(
+            let term = arena.alloc_with_table(SmallTable::with_mappings(
                 StateId::NONE,
                 &[ARENA_VALUE_TERMINATOR],
                 &[end],
             ));
 
-            let state_b = arena.alloc_with_table(ArenaSmallTable::with_mappings(
-                StateId::NONE,
-                b"b",
-                &[term],
-            ));
+            let state_b =
+                arena.alloc_with_table(SmallTable::with_mappings(StateId::NONE, b"b", &[term]));
 
-            let start = arena.alloc_with_table(ArenaSmallTable::with_mappings(
-                StateId::NONE,
-                b"a",
-                &[state_b],
-            ));
+            let start =
+                arena.alloc_with_table(SmallTable::with_mappings(StateId::NONE, b"a", &[state_b]));
 
             (arena, start)
         };
@@ -5104,30 +5146,24 @@ mod merge_tests {
             let end = arena.alloc();
             arena[end].field_transitions.push(fm2);
 
-            let term = arena.alloc_with_table(ArenaSmallTable::with_mappings(
+            let term = arena.alloc_with_table(SmallTable::with_mappings(
                 StateId::NONE,
                 &[ARENA_VALUE_TERMINATOR],
                 &[end],
             ));
 
-            let state_c = arena.alloc_with_table(ArenaSmallTable::with_mappings(
-                StateId::NONE,
-                b"c",
-                &[term],
-            ));
+            let state_c =
+                arena.alloc_with_table(SmallTable::with_mappings(StateId::NONE, b"c", &[term]));
 
-            let start = arena.alloc_with_table(ArenaSmallTable::with_mappings(
-                StateId::NONE,
-                b"a",
-                &[state_c],
-            ));
+            let start =
+                arena.alloc_with_table(SmallTable::with_mappings(StateId::NONE, b"a", &[state_c]));
 
             (arena, start)
         };
 
         let (merged, start) = merge_arena_dfas(&arena1, start1, &arena2, start2);
 
-        let mut bufs = ArenaNfaBuffers::with_capacity();
+        let mut bufs = NfaBuffers::with_capacity();
 
         // Should match "ab"
         traverse_arena_nfa(&merged, start, b"ab", &mut bufs);
@@ -5167,11 +5203,13 @@ mod numeric_arena_tests {
 
     /// Helper to test if a Q-number matches against an arena FA
     fn matches_arena(arena: &StateArena, start: StateId, q_num: &[u8]) -> bool {
-        let mut bufs = ArenaNfaBuffers::with_capacity();
+        let mut bufs = NfaBuffers::with_capacity();
         traverse_arena_nfa(arena, start, q_num, &mut bufs);
         !bufs.transitions.is_empty()
     }
 
+    // q50/q100/q150-style locals name the literal Q-number value under test.
+    #[allow(clippy::similar_names)]
     #[test]
     fn test_numeric_less_arena_fa_basic() {
         let next_field = Arc::new(FieldMatcher::new());
@@ -5227,6 +5265,7 @@ mod numeric_arena_tests {
         );
     }
 
+    #[allow(clippy::similar_names)]
     #[test]
     fn test_numeric_greater_arena_fa_basic() {
         let next_field = Arc::new(FieldMatcher::new());
@@ -5276,6 +5315,7 @@ mod numeric_arena_tests {
         );
     }
 
+    #[allow(clippy::similar_names)]
     #[test]
     fn test_numeric_range_arena_fa_two_sided() {
         let next_field = Arc::new(FieldMatcher::new());
@@ -5319,6 +5359,7 @@ mod numeric_arena_tests {
         );
     }
 
+    #[allow(clippy::similar_names)]
     #[test]
     fn test_numeric_range_arena_fa_exclusive_bounds() {
         let next_field = Arc::new(FieldMatcher::new());
@@ -5355,6 +5396,7 @@ mod numeric_arena_tests {
         );
     }
 
+    #[allow(clippy::similar_names)]
     #[test]
     fn test_numeric_arena_fa_edge_cases() {
         let next_field = Arc::new(FieldMatcher::new());
@@ -5446,7 +5488,7 @@ mod numeric_arena_tests {
         let q75 = q_num_from_f64(75.0);
         let q150 = q_num_from_f64(150.0);
 
-        let mut bufs = ArenaNfaBuffers::with_capacity();
+        let mut bufs = NfaBuffers::with_capacity();
 
         // 25 should match (< 50)
         traverse_arena_nfa(&merged, merged_start, &q25, &mut bufs);
@@ -5534,14 +5576,14 @@ mod nfa_merge_tests {
 
     /// Helper to check if a value matches against an arena FA
     fn matches_value(arena: &StateArena, start: StateId, value: &[u8]) -> bool {
-        let mut bufs = ArenaNfaBuffers::with_capacity();
+        let mut bufs = NfaBuffers::with_capacity();
         traverse_arena_nfa(arena, start, value, &mut bufs);
         !bufs.transitions.is_empty()
     }
 
     /// Helper to get field matcher match IDs from traversal
     fn get_match_ids(arena: &StateArena, start: StateId, value: &[u8]) -> Vec<u64> {
-        let mut bufs = ArenaNfaBuffers::with_capacity();
+        let mut bufs = NfaBuffers::with_capacity();
         traverse_arena_nfa(arena, start, value, &mut bufs);
         bufs.transitions
             .iter()
@@ -5565,7 +5607,7 @@ mod nfa_merge_tests {
         arena[match_state].field_transitions.push(fm);
 
         // Create terminator state
-        let term_state = arena.alloc_with_table(ArenaSmallTable::with_mappings(
+        let term_state = arena.alloc_with_table(SmallTable::with_mappings(
             StateId::NONE,
             &[ARENA_VALUE_TERMINATOR],
             &[match_state],
@@ -5581,7 +5623,7 @@ mod nfa_merge_tests {
                 // Build chain for pattern bytes
                 let mut current = term_state;
                 for &byte in pattern.iter().rev() {
-                    let state = arena.alloc_with_table(ArenaSmallTable::with_mappings(
+                    let state = arena.alloc_with_table(SmallTable::with_mappings(
                         StateId::NONE,
                         &[byte],
                         &[current],
@@ -5618,7 +5660,7 @@ mod nfa_merge_tests {
         arena[match_state].field_transitions.push(fm);
 
         // Terminal state (matches VALUE_TERMINATOR)
-        let term_state = arena.alloc_with_table(ArenaSmallTable::with_mappings(
+        let term_state = arena.alloc_with_table(SmallTable::with_mappings(
             StateId::NONE,
             &[ARENA_VALUE_TERMINATOR],
             &[match_state],
@@ -5627,7 +5669,7 @@ mod nfa_merge_tests {
         // Build suffix chain (backwards)
         let mut after_spinout = term_state;
         for &byte in suffix.iter().rev() {
-            let state = arena.alloc_with_table(ArenaSmallTable::with_mappings(
+            let state = arena.alloc_with_table(SmallTable::with_mappings(
                 StateId::NONE,
                 &[byte],
                 &[after_spinout],
@@ -5659,7 +5701,7 @@ mod nfa_merge_tests {
             start
         } else {
             for &byte in prefix.iter().rev() {
-                let state = arena.alloc_with_table(ArenaSmallTable::with_mappings(
+                let state = arena.alloc_with_table(SmallTable::with_mappings(
                     StateId::NONE,
                     &[byte],
                     &[current],
@@ -5685,16 +5727,13 @@ mod nfa_merge_tests {
             let mut arena = StateArena::new();
             let end = arena.alloc();
             arena[end].field_transitions.push(fm2);
-            let term = arena.alloc_with_table(ArenaSmallTable::with_mappings(
+            let term = arena.alloc_with_table(SmallTable::with_mappings(
                 StateId::NONE,
                 &[ARENA_VALUE_TERMINATOR],
                 &[end],
             ));
-            let start = arena.alloc_with_table(ArenaSmallTable::with_mappings(
-                StateId::NONE,
-                b"c",
-                &[term],
-            ));
+            let start =
+                arena.alloc_with_table(SmallTable::with_mappings(StateId::NONE, b"c", &[term]));
             (arena, start)
         };
 
@@ -5810,7 +5849,7 @@ mod nfa_merge_tests {
             arena[match_state].field_transitions.push(fm1);
 
             // Terminal state
-            let term_state = arena.alloc_with_table(ArenaSmallTable::with_mappings(
+            let term_state = arena.alloc_with_table(SmallTable::with_mappings(
                 StateId::NONE,
                 &[ARENA_VALUE_TERMINATOR],
                 &[match_state],
@@ -5820,7 +5859,7 @@ mod nfa_merge_tests {
             let loopback = arena.alloc();
 
             // Start state: matches 'a' or 'b' -> loopback
-            let start = arena.alloc_with_table(ArenaSmallTable::with_mappings(
+            let start = arena.alloc_with_table(SmallTable::with_mappings(
                 StateId::NONE,
                 b"ab",
                 &[loopback, loopback],
@@ -5838,16 +5877,13 @@ mod nfa_merge_tests {
             let mut arena = StateArena::new();
             let end = arena.alloc();
             arena[end].field_transitions.push(fm2);
-            let term = arena.alloc_with_table(ArenaSmallTable::with_mappings(
+            let term = arena.alloc_with_table(SmallTable::with_mappings(
                 StateId::NONE,
                 &[ARENA_VALUE_TERMINATOR],
                 &[end],
             ));
-            let start = arena.alloc_with_table(ArenaSmallTable::with_mappings(
-                StateId::NONE,
-                b"c",
-                &[term],
-            ));
+            let start =
+                arena.alloc_with_table(SmallTable::with_mappings(StateId::NONE, b"c", &[term]));
             (arena, start)
         };
 
@@ -5917,7 +5953,7 @@ mod nfa_merge_tests {
             arena[match_state].field_transitions.push(fm1);
 
             // Terminal state
-            let term_state = arena.alloc_with_table(ArenaSmallTable::with_mappings(
+            let term_state = arena.alloc_with_table(SmallTable::with_mappings(
                 StateId::NONE,
                 &[ARENA_VALUE_TERMINATOR],
                 &[match_state],
@@ -5929,11 +5965,8 @@ mod nfa_merge_tests {
             arena[spinout2].table.epsilons.push(term_state);
 
             // State that matches 'X' -> spinout2
-            let x_state = arena.alloc_with_table(ArenaSmallTable::with_mappings(
-                StateId::NONE,
-                b"X",
-                &[spinout2],
-            ));
+            let x_state =
+                arena.alloc_with_table(SmallTable::with_mappings(StateId::NONE, b"X", &[spinout2]));
 
             // First spinout (before X)
             let spinout1 = arena.alloc();
@@ -5960,7 +5993,7 @@ mod nfa_merge_tests {
             let match_state = arena.alloc();
             arena[match_state].field_transitions.push(fm2);
 
-            let term_state = arena.alloc_with_table(ArenaSmallTable::with_mappings(
+            let term_state = arena.alloc_with_table(SmallTable::with_mappings(
                 StateId::NONE,
                 &[ARENA_VALUE_TERMINATOR],
                 &[match_state],
@@ -5970,11 +6003,8 @@ mod nfa_merge_tests {
             arena[spinout2].table = make_byte_dot_table(spinout2);
             arena[spinout2].table.epsilons.push(term_state);
 
-            let y_state = arena.alloc_with_table(ArenaSmallTable::with_mappings(
-                StateId::NONE,
-                b"Y",
-                &[spinout2],
-            ));
+            let y_state =
+                arena.alloc_with_table(SmallTable::with_mappings(StateId::NONE, b"Y", &[spinout2]));
 
             let spinout1 = arena.alloc();
             arena[spinout1].table = make_byte_dot_table(spinout1);
@@ -6123,7 +6153,7 @@ mod string_arena_tests {
 
     /// Helper to check if a value matches against an arena FA
     fn matches_value(arena: &StateArena, start: StateId, value: &[u8]) -> bool {
-        let mut bufs = ArenaNfaBuffers::with_capacity();
+        let mut bufs = NfaBuffers::with_capacity();
         traverse_arena_nfa(arena, start, value, &mut bufs);
         !bufs.transitions.is_empty()
     }
@@ -6280,7 +6310,7 @@ mod prefix_arena_tests {
 
     /// Helper to check if a value matches against an arena FA
     fn matches_value(arena: &StateArena, start: StateId, value: &[u8]) -> bool {
-        let mut bufs = ArenaNfaBuffers::with_capacity();
+        let mut bufs = NfaBuffers::with_capacity();
         traverse_arena_nfa(arena, start, value, &mut bufs);
         !bufs.transitions.is_empty()
     }
@@ -6428,7 +6458,7 @@ mod shellstyle_arena_tests {
 
     /// Helper to check if a value matches against an arena FA
     fn matches_value(arena: &StateArena, start: StateId, value: &[u8]) -> bool {
-        let mut bufs = ArenaNfaBuffers::with_capacity();
+        let mut bufs = NfaBuffers::with_capacity();
         traverse_arena_nfa(arena, start, value, &mut bufs);
         !bufs.transitions.is_empty()
     }
@@ -6670,7 +6700,7 @@ mod wildcard_arena_tests {
 
     /// Helper to check if a value matches against an arena FA
     fn matches_value(arena: &StateArena, start: StateId, value: &[u8]) -> bool {
-        let mut bufs = ArenaNfaBuffers::with_capacity();
+        let mut bufs = NfaBuffers::with_capacity();
         traverse_arena_nfa(arena, start, value, &mut bufs);
         !bufs.transitions.is_empty()
     }
@@ -6822,7 +6852,7 @@ mod anything_but_arena_tests {
 
     /// Helper to check if a value matches against an arena FA
     fn matches_value(arena: &StateArena, start: StateId, value: &[u8]) -> bool {
-        let mut bufs = ArenaNfaBuffers::with_capacity();
+        let mut bufs = NfaBuffers::with_capacity();
         traverse_arena_nfa(arena, start, value, &mut bufs);
         !bufs.transitions.is_empty()
     }
@@ -6948,7 +6978,7 @@ mod monocase_arena_tests {
 
     /// Helper to check if a value matches against an arena FA
     fn matches_value(arena: &StateArena, start: StateId, value: &[u8]) -> bool {
-        let mut bufs = ArenaNfaBuffers::with_capacity();
+        let mut bufs = NfaBuffers::with_capacity();
         traverse_arena_nfa(arena, start, value, &mut bufs);
         !bufs.transitions.is_empty()
     }
@@ -7159,7 +7189,7 @@ mod cidr_arena_tests {
     use crate::json::CidrPattern;
 
     fn matches_value(arena: &StateArena, start: StateId, value: &[u8]) -> bool {
-        let mut bufs = ArenaNfaBuffers::with_capacity();
+        let mut bufs = NfaBuffers::with_capacity();
         traverse_arena_nfa(arena, start, value, &mut bufs);
         !bufs.transitions.is_empty()
     }
@@ -7328,7 +7358,7 @@ mod kani_arena_proofs {
     use super::*;
 
     /// Prove: dstep returns the correct state for any byte on a real
-    /// ArenaSmallTable with symbolic ceilings, steps, and lookup byte.
+    /// SmallTable with symbolic ceilings, steps, and lookup byte.
     ///
     /// Constructs a 3-entry packed table directly (bypassing pack() which
     /// triggers SmallVec state explosion at 246 iterations). This verifies
@@ -7348,7 +7378,7 @@ mod kani_arena_proofs {
         let s1 = StateId::from_index(kani::any::<u8>() as usize);
         let s2 = StateId::from_index(kani::any::<u8>() as usize);
 
-        let mut table = ArenaSmallTable::new();
+        let mut table = SmallTable::new();
         table.ceilings = smallvec![c0, c1, c2];
         table.steps = smallvec![s0, s1, s2];
 
@@ -7386,7 +7416,7 @@ mod dfa_test_helpers {
     }
 
     pub(super) fn nfa_matches(arena: &StateArena, start: StateId, value: &[u8]) -> bool {
-        let mut bufs = ArenaNfaBuffers::with_capacity();
+        let mut bufs = NfaBuffers::with_capacity();
         traverse_arena_nfa(arena, start, value, &mut bufs);
         !bufs.transitions.is_empty()
     }
@@ -7969,13 +7999,13 @@ mod dfa_accel_tests {
         // Non-negated [abc]+: NFA builder does NOT set AccelInfo
         // → try_compute_accel finds nothing → no lazy DFA acceleration
         let (nfa2, nfa_start2) = build_regexp_nfa("[abc]+");
-        let nfa2_accel_count = nfa2
+        let nfa2_accel = nfa2
             .states
             .iter()
             .filter(|s| s.table.accel.is_some())
             .count();
         assert_eq!(
-            nfa2_accel_count, 0,
+            nfa2_accel, 0,
             "non-negated pattern NFA states should have no AccelInfo"
         );
 

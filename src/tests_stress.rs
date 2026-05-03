@@ -748,12 +748,8 @@ fn test_unicode_field_names_surrogate_pairs() {
     );
 }
 
-#[test]
-#[cfg_attr(miri, ignore)]
-fn test_exercise_matching_comprehensive() {
-    // Based on Go quamina's TestExerciseMatching
-    // Tests many different pattern types against a complex JSON event
-    let event = r#"{
+/// Complex JSON event used by `test_exercise_matching_comprehensive`.
+const EXERCISE_MATCHING_EVENT: &str = r#"{
         "Image": {
             "Width":  800,
             "Height": 600,
@@ -768,93 +764,100 @@ fn test_exercise_matching_comprehensive() {
         }
     }"#;
 
-    // Patterns that SHOULD match
-    let should_match = [
-        (
-            r#"{"Image": {"Title": [{"exists": true}]}}"#,
-            "exists true on Title",
-        ),
-        (
-            r#"{"Foo": [{"exists": false}]}"#,
-            "exists false on missing Foo",
-        ),
-        (r#"{"Image": {"Width": [800]}}"#, "exact number match"),
-        (
-            r#"{"Image": {"Animated": [false], "Thumbnail": {"Height": [125]}}}"#,
-            "nested multi-field",
-        ),
-        (
-            r#"{"Image": {"Width": [800], "Title": [{"exists": true}], "Animated": [false]}}"#,
-            "three fields",
-        ),
-        (
-            r#"{"Image": {"Width": [800], "IDs": [{"exists": true}]}}"#,
-            "exists on array",
-        ),
-        (
-            r#"{"Image": {"Thumbnail": {"Url": [{"shellstyle": "*9943"}]}}}"#,
-            "shellstyle suffix",
-        ),
-        (
-            r#"{"Image": {"Thumbnail": {"Url": [{"shellstyle": "https://www.example.com/*"}]}}}"#,
-            "shellstyle prefix",
-        ),
-        (
-            r#"{"Image": {"Thumbnail": {"Url": [{"shellstyle": "https://www.example.com/*9943"}]}}}"#,
-            "shellstyle infix",
-        ),
-        (
-            r#"{"Image": {"Title": [{"anything-but": ["Pikachu", "Eevee"]}]}}"#,
-            "anything-but",
-        ),
-        (
-            r#"{"Image": {"Thumbnail": {"Url": [{"prefix": "https:"}]}}}"#,
-            "prefix",
-        ),
-        (
-            r#"{"Image": {"Thumbnail": {"Url": ["a", {"prefix": "https:"}]}}}"#,
-            "prefix or literal",
-        ),
-        (
-            r#"{"Image": {"Title": [{"equals-ignore-case": "VIEW FROM 15th FLOOR"}]}}"#,
-            "equals-ignore-case",
-        ),
-        (
-            r#"{"Image": {"Title": [{"regex": "View from .... Floor"}]}}"#,
-            "regex dots",
-        ),
-        (
-            r#"{"Image": {"Title": [{"regex": "View from [0-9][0-9][rtn][dh] Floor"}]}}"#,
-            "regex char class",
-        ),
-        (
-            r#"{"Image": {"Title": [{"regex": "View from 15th (Floor|Storey)"}]}}"#,
-            "regex alternation",
-        ),
-    ];
+/// Patterns that should match `EXERCISE_MATCHING_EVENT`. Each tuple is
+/// (pattern JSON, descriptive label).
+const EXERCISE_MATCHING_SHOULD_MATCH: &[(&str, &str)] = &[
+    (
+        r#"{"Image": {"Title": [{"exists": true}]}}"#,
+        "exists true on Title",
+    ),
+    (
+        r#"{"Foo": [{"exists": false}]}"#,
+        "exists false on missing Foo",
+    ),
+    (r#"{"Image": {"Width": [800]}}"#, "exact number match"),
+    (
+        r#"{"Image": {"Animated": [false], "Thumbnail": {"Height": [125]}}}"#,
+        "nested multi-field",
+    ),
+    (
+        r#"{"Image": {"Width": [800], "Title": [{"exists": true}], "Animated": [false]}}"#,
+        "three fields",
+    ),
+    (
+        r#"{"Image": {"Width": [800], "IDs": [{"exists": true}]}}"#,
+        "exists on array",
+    ),
+    (
+        r#"{"Image": {"Thumbnail": {"Url": [{"shellstyle": "*9943"}]}}}"#,
+        "shellstyle suffix",
+    ),
+    (
+        r#"{"Image": {"Thumbnail": {"Url": [{"shellstyle": "https://www.example.com/*"}]}}}"#,
+        "shellstyle prefix",
+    ),
+    (
+        r#"{"Image": {"Thumbnail": {"Url": [{"shellstyle": "https://www.example.com/*9943"}]}}}"#,
+        "shellstyle infix",
+    ),
+    (
+        r#"{"Image": {"Title": [{"anything-but": ["Pikachu", "Eevee"]}]}}"#,
+        "anything-but",
+    ),
+    (
+        r#"{"Image": {"Thumbnail": {"Url": [{"prefix": "https:"}]}}}"#,
+        "prefix",
+    ),
+    (
+        r#"{"Image": {"Thumbnail": {"Url": ["a", {"prefix": "https:"}]}}}"#,
+        "prefix or literal",
+    ),
+    (
+        r#"{"Image": {"Title": [{"equals-ignore-case": "VIEW FROM 15th FLOOR"}]}}"#,
+        "equals-ignore-case",
+    ),
+    (
+        r#"{"Image": {"Title": [{"regex": "View from .... Floor"}]}}"#,
+        "regex dots",
+    ),
+    (
+        r#"{"Image": {"Title": [{"regex": "View from [0-9][0-9][rtn][dh] Floor"}]}}"#,
+        "regex char class",
+    ),
+    (
+        r#"{"Image": {"Title": [{"regex": "View from 15th (Floor|Storey)"}]}}"#,
+        "regex alternation",
+    ),
+];
 
-    // Patterns that SHOULD NOT match
-    let should_not_match = [
-        (
-            r#"{"Image": {"Animated": [{"exists": false}]}}"#,
-            "exists false on present field",
-        ),
-        (
-            r#"{"Image": {"NotThere": [{"exists": true}]}}"#,
-            "exists true on missing field",
-        ),
-        (
-            r#"{"Image": {"IDs": [{"exists": false}], "Animated": [false]}}"#,
-            "exists false on array",
-        ),
-        (
-            r#"{"Image": {"Thumbnail": {"Url": [{"prefix": "http:"}]}}}"#,
-            "wrong prefix",
-        ),
-    ];
+/// Patterns that should NOT match `EXERCISE_MATCHING_EVENT`.
+const EXERCISE_MATCHING_SHOULD_NOT_MATCH: &[(&str, &str)] = &[
+    (
+        r#"{"Image": {"Animated": [{"exists": false}]}}"#,
+        "exists false on present field",
+    ),
+    (
+        r#"{"Image": {"NotThere": [{"exists": true}]}}"#,
+        "exists true on missing field",
+    ),
+    (
+        r#"{"Image": {"IDs": [{"exists": false}], "Animated": [false]}}"#,
+        "exists false on array",
+    ),
+    (
+        r#"{"Image": {"Thumbnail": {"Url": [{"prefix": "http:"}]}}}"#,
+        "wrong prefix",
+    ),
+];
 
-    // Test each should_match pattern individually
-    for (pattern, desc) in &should_match {
+#[test]
+#[cfg_attr(miri, ignore)]
+fn test_exercise_matching_comprehensive() {
+    // Based on Go quamina's TestExerciseMatching: many different pattern types
+    // against one complex JSON event.
+    let event = EXERCISE_MATCHING_EVENT;
+
+    for (pattern, desc) in EXERCISE_MATCHING_SHOULD_MATCH {
         let q = q!(*desc => pattern);
         assert_has_match!(
             q,
@@ -864,8 +867,7 @@ fn test_exercise_matching_comprehensive() {
         );
     }
 
-    // Test each should_not_match pattern individually
-    for (pattern, desc) in &should_not_match {
+    for (pattern, desc) in EXERCISE_MATCHING_SHOULD_NOT_MATCH {
         let q = q!(*desc => pattern);
         assert_no_match!(
             q,
@@ -874,16 +876,15 @@ fn test_exercise_matching_comprehensive() {
         );
     }
 
-    // Test all patterns together in one matcher
     let mut combined = Quamina::new();
-    for (pattern, desc) in &should_match {
+    for (pattern, desc) in EXERCISE_MATCHING_SHOULD_MATCH {
         combined.add_pattern(*desc, pattern).unwrap();
     }
 
     assert_match_count!(
         combined,
         event,
-        should_match.len(),
+        EXERCISE_MATCHING_SHOULD_MATCH.len(),
         "All should_match patterns should match when combined"
     );
 }
@@ -944,6 +945,24 @@ fn test_concurrent_update_during_matching() {
 
     const UPDATE_INTERVAL: usize = 250;
 
+    // Concurrent updater function - adds unique street patterns
+    fn add_pattern_concurrent(
+        q: Arc<std::sync::RwLock<Quamina<String>>>,
+        idx: usize,
+        tx: mpsc::Sender<String>,
+    ) {
+        let val = format!("CONCURRENT_STREET_{idx}");
+        let pattern = format!(r#"{{"properties": {{"STREET": ["{val}"]}}}}"#);
+
+        {
+            let mut q_write = q.write().unwrap();
+            q_write
+                .add_pattern(val.clone(), &pattern)
+                .expect("add_pattern failed");
+        }
+        let _ = tx.send(val); // Ignore send errors (receiver may be dropped)
+    }
+
     // Load citylots2.json.gz
     let path = "testdata/citylots2.json.gz";
     let file = File::open(path).expect("Failed to open citylots2.json.gz");
@@ -974,24 +993,6 @@ fn test_concurrent_update_during_matching() {
 
     // Channel for tracking added patterns
     let (tx, rx) = mpsc::channel::<String>();
-
-    // Concurrent updater function - adds unique street patterns
-    fn add_pattern_concurrent(
-        q: Arc<std::sync::RwLock<Quamina<String>>>,
-        idx: usize,
-        tx: mpsc::Sender<String>,
-    ) {
-        let val = format!("CONCURRENT_STREET_{idx}");
-        let pattern = format!(r#"{{"properties": {{"STREET": ["{val}"]}}}}"#);
-
-        {
-            let mut q_write = q.write().unwrap();
-            q_write
-                .add_pattern(val.clone(), &pattern)
-                .expect("add_pattern failed");
-        }
-        let _ = tx.send(val); // Ignore send errors (receiver may be dropped)
-    }
 
     // Run matching with concurrent updates
     let mut total_matches = 0usize;

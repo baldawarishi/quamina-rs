@@ -67,6 +67,7 @@ pub fn get_category_ranges(initial: char, detail: Option<char>) -> Option<Vec<Ru
 
 /// Get character ranges for a Unicode block.
 /// Returns None if the block is not recognized.
+#[allow(clippy::too_many_lines)] // exhaustive Unicode block name lookup; one match arm per block
 pub fn get_block_ranges(block_name: &str) -> Option<Vec<RunePair>> {
     // Normalize by removing "Is" prefix if present
     let name = block_name.strip_prefix("Is").unwrap_or(block_name);
@@ -158,10 +159,9 @@ pub fn get_block_ranges(block_name: &str) -> Option<Vec<RunePair>> {
         "SuperscriptsandSubscripts" => Some(vec![rp('\u{2070}', '\u{209F}')]),
         "CurrencySymbols" => Some(vec![rp('\u{20A0}', '\u{20CF}')]),
         "PrivateUseArea" => Some(vec![rp('\u{E000}', '\u{F8FF}')]),
-        // HighSurrogates and LowSurrogates are not valid in Rust as they are UTF-16 surrogates
-        // Instead, we return empty ranges for these blocks (they can't match valid Unicode strings)
-        "HighSurrogates" => Some(vec![]),
-        "LowSurrogates" => Some(vec![]),
+        // HighSurrogates and LowSurrogates are UTF-16 surrogates, not valid
+        // Rust char codepoints — return empty ranges since they cannot match.
+        "HighSurrogates" | "LowSurrogates" => Some(vec![]),
         "Tags" => Some(vec![rp('\u{E0000}', '\u{E007F}')]),
         "SupplementaryPrivateUseArea-A" => Some(vec![rp('\u{F0000}', '\u{FFFFF}')]),
         "SupplementaryPrivateUseArea-B" => Some(vec![rp('\u{100000}', '\u{10FFFF}')]),
@@ -947,6 +947,7 @@ fn category_pf() -> Vec<RunePair> {
 }
 
 /// Po (Punctuation, Other)
+#[allow(clippy::too_many_lines)] // generated Unicode range table
 fn category_po() -> Vec<RunePair> {
     vec![
         rp('!', '!'),
@@ -1243,6 +1244,7 @@ fn category_sk() -> Vec<RunePair> {
 }
 
 /// So (Symbol, Other)
+#[allow(clippy::too_many_lines)] // generated Unicode range table
 fn category_so() -> Vec<RunePair> {
     vec![
         rp('\u{00A6}', '\u{00A6}'),

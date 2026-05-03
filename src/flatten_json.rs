@@ -118,7 +118,7 @@ impl FieldValue<'_> {
 /// flatten calls, following Go's reset() pattern for reduced allocations.
 /// Like Go's flattenJSON, we reuse the fields slice between calls to avoid
 /// reallocating the underlying array.
-pub struct FlattenJsonState {
+pub struct State {
     /// Working array position trail (reused between calls)
     array_trail: ArrayTrailVec,
     /// Reusable fields storage. We use 'static as a placeholder lifetime;
@@ -130,13 +130,13 @@ pub struct FlattenJsonState {
     fields: Vec<Field<'static>>,
 }
 
-impl Default for FlattenJsonState {
+impl Default for State {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl FlattenJsonState {
+impl State {
     /// Create a new reusable flattener state.
     #[must_use]
     pub fn new() -> Self {
@@ -194,7 +194,7 @@ impl FlattenJsonState {
 }
 
 /// Internal context for a single flatten operation.
-/// Borrows the reusable fields vec and array_trail from FlattenJsonState.
+/// Borrows the reusable fields vec and array_trail from State.
 struct FlattenContext<'a, 'b> {
     event: &'a [u8],
     index: usize,
@@ -258,6 +258,7 @@ impl<'a> FlattenContext<'a, '_> {
     }
 
     /// Read a JSON object, recursing into nested objects as needed.
+    #[allow(clippy::too_many_lines)] // single-pass JSON object reader; the state machine reads better as one function
     fn read_object(&mut self, tree: &SegmentsTree) -> Result<(), FlattenError> {
         // index points at {
         self.step()?;
@@ -1073,7 +1074,7 @@ mod tests {
     fn test_simple_object() {
         let event = br#"{"status": "active", "count": 42}"#;
         let tree = make_tree(&["status"]);
-        let mut state = FlattenJsonState::new();
+        let mut state = State::new();
         let fields = state.flatten(event, &tree).unwrap();
 
         assert_eq!(fields.len(), 1);
@@ -1085,7 +1086,7 @@ mod tests {
     fn test_nested_object() {
         let event = br#"{"context": {"user": {"id": "123"}}}"#;
         let tree = make_tree(&["context\nuser\nid"]);
-        let mut state = FlattenJsonState::new();
+        let mut state = State::new();
         let fields = state.flatten(event, &tree).unwrap();
 
         assert_eq!(fields.len(), 1);
@@ -1097,7 +1098,7 @@ mod tests {
     fn test_skips_unused_fields() {
         let event = br#"{"a": 1, "b": 2, "c": 3, "d": 4, "e": 5}"#;
         let tree = make_tree(&["c"]);
-        let mut state = FlattenJsonState::new();
+        let mut state = State::new();
         let fields = state.flatten(event, &tree).unwrap();
 
         assert_eq!(fields.len(), 1);
@@ -1109,7 +1110,7 @@ mod tests {
     fn test_number_value() {
         let event = br#"{"price": 99.99}"#;
         let tree = make_tree(&["price"]);
-        let mut state = FlattenJsonState::new();
+        let mut state = State::new();
         let fields = state.flatten(event, &tree).unwrap();
 
         assert_eq!(fields.len(), 1);
@@ -1121,7 +1122,7 @@ mod tests {
     fn test_array_simple() {
         let event = br#"{"tags": ["a", "b", "c"]}"#;
         let tree = make_tree(&["tags"]);
-        let mut state = FlattenJsonState::new();
+        let mut state = State::new();
         let fields = state.flatten(event, &tree).unwrap();
 
         assert_eq!(fields.len(), 3);
@@ -1136,7 +1137,7 @@ mod tests {
         // With a large object, early termination should stop after finding needed fields
         let event = br#"{"first": 1, "second": 2, "third": 3, "fourth": 4, "fifth": 5}"#;
         let tree = make_tree(&["first"]);
-        let mut state = FlattenJsonState::new();
+        let mut state = State::new();
         let fields = state.flatten(event, &tree).unwrap();
 
         assert_eq!(fields.len(), 1);
@@ -1147,7 +1148,7 @@ mod tests {
     fn test_escape_sequences() {
         let event = br#"{"msg": "hello\nworld"}"#;
         let tree = make_tree(&["msg"]);
-        let mut state = FlattenJsonState::new();
+        let mut state = State::new();
         let fields = state.flatten(event, &tree).unwrap();
 
         assert_eq!(fields.len(), 1);
@@ -1159,7 +1160,7 @@ mod tests {
     fn test_unicode_escape() {
         let event = br#"{"char": "\u0041"}"#;
         let tree = make_tree(&["char"]);
-        let mut state = FlattenJsonState::new();
+        let mut state = State::new();
         let fields = state.flatten(event, &tree).unwrap();
 
         assert_eq!(fields.len(), 1);
@@ -1170,7 +1171,7 @@ mod tests {
     fn test_empty_object() {
         let event = br"{}";
         let tree = make_tree(&["anything"]);
-        let mut state = FlattenJsonState::new();
+        let mut state = State::new();
         let fields = state.flatten(event, &tree).unwrap();
 
         assert_eq!(fields.len(), 0);
@@ -1180,7 +1181,7 @@ mod tests {
     fn test_skip_nested_object() {
         let event = br#"{"skip": {"nested": {"deep": 1}}, "keep": "value"}"#;
         let tree = make_tree(&["keep"]);
-        let mut state = FlattenJsonState::new();
+        let mut state = State::new();
         let fields = state.flatten(event, &tree).unwrap();
 
         assert_eq!(fields.len(), 1);
@@ -1191,7 +1192,7 @@ mod tests {
     fn test_skip_array() {
         let event = br#"{"skip": [1, 2, [3, 4]], "keep": "value"}"#;
         let tree = make_tree(&["keep"]);
-        let mut state = FlattenJsonState::new();
+        let mut state = State::new();
         let fields = state.flatten(event, &tree).unwrap();
 
         assert_eq!(fields.len(), 1);
@@ -1203,7 +1204,7 @@ mod tests {
         // Test that the state can be reused across multiple flatten calls.
         // The Vec storage is reused (capacity preserved), avoiding reallocation.
         let tree = make_tree(&["status"]);
-        let mut state = FlattenJsonState::new();
+        let mut state = State::new();
 
         // First call
         let event1 = br#"{"status": "active"}"#;
@@ -1226,7 +1227,7 @@ mod tests {
     fn test_trailing_garbage_after_close_brace() {
         // Use a non-existent field to force full parse without early termination.
         let tree = make_tree(&["nonexistent"]);
-        let mut state = FlattenJsonState::new();
+        let mut state = State::new();
 
         // Valid: simple object with trailing whitespace
         let result = state.flatten(br#"{"status": "ok"}  "#, &tree);
@@ -1264,7 +1265,7 @@ x"#,
     #[test]
     fn test_whitespace_before_opening_brace() {
         let tree = make_tree(&["x"]);
-        let mut state = FlattenJsonState::new();
+        let mut state = State::new();
 
         // Valid: spaces before open brace
         let result = state.flatten(b"  {\"x\": 1}", &tree);
@@ -1293,7 +1294,7 @@ x"#,
     #[test]
     fn test_error_truncated_object() {
         let tree = make_tree(&["a", "b"]);
-        let mut state = FlattenJsonState::new();
+        let mut state = State::new();
 
         let bad_cases = [
             r#"{"a"#,        // Truncated key
@@ -1314,7 +1315,7 @@ x"#,
     #[test]
     fn test_error_truncated_array() {
         let tree = make_tree(&["a"]);
-        let mut state = FlattenJsonState::new();
+        let mut state = State::new();
 
         let bad_cases = [
             r#"{"a": ["#,    // Just open bracket
@@ -1331,7 +1332,7 @@ x"#,
     #[test]
     fn test_error_truncated_string() {
         let tree = make_tree(&["k"]);
-        let mut state = FlattenJsonState::new();
+        let mut state = State::new();
 
         let bad_cases = [
             r#"{"k": ""#,  // Unterminated string
@@ -1348,7 +1349,7 @@ x"#,
     #[test]
     fn test_error_invalid_value() {
         let tree = make_tree(&["a"]);
-        let mut state = FlattenJsonState::new();
+        let mut state = State::new();
 
         let bad_cases = [
             r#"{"a": xx}"#,    // Invalid value
@@ -1366,7 +1367,7 @@ x"#,
     #[test]
     fn test_error_invalid_json_structure() {
         let tree = make_tree(&["a"]);
-        let mut state = FlattenJsonState::new();
+        let mut state = State::new();
 
         let bad_cases = [
             r#""xx""#,            // Not an object at top level
@@ -1385,7 +1386,7 @@ x"#,
         // Based on Go TestFJErrorCases - need to track nested field "a\nx" to force
         // parsing of nested object (otherwise the object is skipped without validation)
         let tree = make_tree(&["a", "a\nx"]);
-        let mut state = FlattenJsonState::new();
+        let mut state = State::new();
 
         let bad = r#"{"a": { x }}"#; // Invalid: x is not a valid JSON value
         let result = state.flatten(bad.as_bytes(), &tree);
@@ -1399,7 +1400,7 @@ x"#,
     fn test_array_with_booleans_and_null() {
         let event = br#"{"items": [true, false, null, 42]}"#;
         let tree = make_tree(&["items"]);
-        let mut state = FlattenJsonState::new();
+        let mut state = State::new();
         let fields = state.flatten(event, &tree).unwrap();
 
         assert_eq!(fields.len(), 4);
@@ -1414,7 +1415,7 @@ x"#,
         // Nested objects in arrays should get proper array position tracking.
         let event = br#"{"data": [{"id": 1}, {"id": 2}]}"#;
         let tree = make_tree(&["data", "data\nid"]);
-        let mut state = FlattenJsonState::new();
+        let mut state = State::new();
         let fields = state.flatten(event, &tree).unwrap();
 
         assert_eq!(fields.len(), 2);
@@ -1427,7 +1428,7 @@ x"#,
         // Values from different inner arrays must have distinct outer array positions
         let event2 = br#"{"matrix": [[1, 2], [3, 4]]}"#;
         let tree2 = make_tree(&["matrix"]);
-        let mut state2 = FlattenJsonState::new();
+        let mut state2 = State::new();
         let fields2 = state2.flatten(event2, &tree2).unwrap();
         assert_eq!(fields2.len(), 4);
         // Values 1,2 should share one outer array pos; values 3,4 a different one
@@ -1446,7 +1447,7 @@ x"#,
         // Empty array followed by non-empty: empty [] must clean up its trail entry.
         let event3 = br#"{"items": [[], [1, 2]]}"#;
         let tree3 = make_tree(&["items"]);
-        let mut state3 = FlattenJsonState::new();
+        let mut state3 = State::new();
         let fields3 = state3.flatten(event3, &tree3).unwrap();
         assert_eq!(fields3.len(), 2);
         // Values should have exactly 2 levels (outer + inner), not 3
@@ -1464,7 +1465,7 @@ x"#,
         // Strings containing } or ] must be properly skipped, not treated as delimiters.
         let event = br#"{"skip": {"key": "val}ue"}, "keep": "ok"}"#;
         let tree = make_tree(&["keep"]);
-        let mut state = FlattenJsonState::new();
+        let mut state = State::new();
         let fields = state.flatten(event, &tree).unwrap();
         assert_eq!(fields.len(), 1);
         assert_eq!(fields[0].val.as_bytes(), br#""ok""#);
@@ -1488,7 +1489,7 @@ x"#,
         // must be properly skipped. A second outer field prevents double early-termination.
         let event = br#"{"outer": {"wanted": "got", "leftover": "has}brace"}, "after": "ok"}"#;
         let tree = make_tree(&["outer\nwanted", "after"]);
-        let mut state = FlattenJsonState::new();
+        let mut state = State::new();
         let fields = state.flatten(event, &tree).unwrap();
         assert_eq!(fields.len(), 2);
         assert_eq!(fields[0].val.as_bytes(), br#""got""#);
@@ -1508,7 +1509,7 @@ x"#,
         // A skipped string with \" must not end the string at the escaped quote.
         let event = br#"{"skip": "has \" quote", "keep": "ok"}"#;
         let tree = make_tree(&["keep"]);
-        let mut state = FlattenJsonState::new();
+        let mut state = State::new();
         let fields = state.flatten(event, &tree).unwrap();
         assert_eq!(fields.len(), 1);
         assert_eq!(fields[0].val.as_bytes(), br#""ok""#);
@@ -1534,7 +1535,7 @@ x"#,
     #[test]
     fn test_member_name_escape_sequences() {
         // Each JSON escape sequence in a member name must be correctly decoded.
-        let mut state = FlattenJsonState::new();
+        let mut state = State::new();
 
         // \t in member name
         let tree_t = make_tree(&["key\twith\ttab"]);
@@ -1591,7 +1592,7 @@ x"#,
     fn test_unicode_escape_uppercase_hex() {
         // Unicode escapes with uppercase hex digits (A-F) must work.
         let tree = make_tree(&["ch"]);
-        let mut state = FlattenJsonState::new();
+        let mut state = State::new();
 
         // \u00AB uses uppercase A and B
         let event = br#"{"ch": "\u00AB"}"#;
@@ -1614,7 +1615,7 @@ x"#,
     #[test]
     fn test_number_with_exponent_sign() {
         let tree = make_tree(&["val"]);
-        let mut state = FlattenJsonState::new();
+        let mut state = State::new();
 
         let event_plus = br#"{"val": 1e+2}"#;
         let fields = state.flatten(event_plus, &tree).unwrap();
@@ -1633,7 +1634,7 @@ x"#,
     fn test_unicode_escape_2byte_in_name() {
         // \u00E9 = é, 2-byte UTF-8: 0xC3 0xA9
         let tree = make_tree(&["é"]);
-        let mut state = FlattenJsonState::new();
+        let mut state = State::new();
         let event = br#"{"\u00E9": "yes"}"#;
         let fields = state.flatten(event, &tree).unwrap();
         assert_eq!(fields.len(), 1);
@@ -1644,7 +1645,7 @@ x"#,
     fn test_unicode_escape_boundary_0080_in_name() {
         // U+0080 sits at the 1-byte / 2-byte UTF-8 boundary
         let tree = make_tree(&["\u{0080}"]);
-        let mut state = FlattenJsonState::new();
+        let mut state = State::new();
         let event = br#"{"\u0080": "boundary"}"#;
         let fields = state.flatten(event, &tree).unwrap();
         assert_eq!(fields.len(), 1);
@@ -1655,7 +1656,7 @@ x"#,
     fn test_unicode_escape_boundary_0800_in_name() {
         // U+0800 sits at the 2-byte / 3-byte UTF-8 boundary
         let tree = make_tree(&["\u{0800}"]);
-        let mut state = FlattenJsonState::new();
+        let mut state = State::new();
         let event = br#"{"\u0800": "boundary2"}"#;
         let fields = state.flatten(event, &tree).unwrap();
         assert_eq!(fields.len(), 1);
@@ -1666,7 +1667,7 @@ x"#,
     fn test_unicode_escape_3byte_in_name() {
         // \u4E2D = 中, 3-byte UTF-8: 0xE4 0xB8 0xAD
         let tree = make_tree(&["中"]);
-        let mut state = FlattenJsonState::new();
+        let mut state = State::new();
         let event = br#"{"\u4E2D": "ok"}"#;
         let fields = state.flatten(event, &tree).unwrap();
         assert_eq!(fields.len(), 1);
@@ -1677,7 +1678,7 @@ x"#,
     fn test_unicode_escape_surrogate_pair_in_name() {
         // \uD83D\uDE00 = 😀, surrogate pair, 4-byte UTF-8: 0xF0 0x9F 0x98 0x80
         let tree = make_tree(&["😀"]);
-        let mut state = FlattenJsonState::new();
+        let mut state = State::new();
         let event = br#"{"\uD83D\uDE00": "smile"}"#;
         let fields = state.flatten(event, &tree).unwrap();
         assert_eq!(fields.len(), 1);
@@ -1688,7 +1689,7 @@ x"#,
     fn test_unicode_escape_2byte_in_value() {
         // 2-byte unicode escape in a string value
         let tree = make_tree(&["v"]);
-        let mut state = FlattenJsonState::new();
+        let mut state = State::new();
         let event = br#"{"v": "\u00E9"}"#;
         let fields = state.flatten(event, &tree).unwrap();
         assert_eq!(fields.len(), 1);
@@ -1700,7 +1701,7 @@ x"#,
     fn test_unicode_escape_boundary_0080_in_value() {
         // U+0080 sits at the 1-byte / 2-byte UTF-8 boundary
         let tree = make_tree(&["v"]);
-        let mut state = FlattenJsonState::new();
+        let mut state = State::new();
         let event = br#"{"v": "\u0080"}"#;
         let fields = state.flatten(event, &tree).unwrap();
         assert_eq!(fields.len(), 1);
@@ -1712,7 +1713,7 @@ x"#,
     fn test_unicode_escape_boundary_0800_in_value() {
         // U+0800 sits at the 2-byte / 3-byte UTF-8 boundary
         let tree = make_tree(&["v"]);
-        let mut state = FlattenJsonState::new();
+        let mut state = State::new();
         let event = br#"{"v": "\u0800"}"#;
         let fields = state.flatten(event, &tree).unwrap();
         assert_eq!(fields.len(), 1);
@@ -1723,7 +1724,7 @@ x"#,
     #[test]
     fn test_unicode_escape_3byte_in_value() {
         let tree = make_tree(&["v"]);
-        let mut state = FlattenJsonState::new();
+        let mut state = State::new();
         let event = br#"{"v": "\u4E2D"}"#;
         let fields = state.flatten(event, &tree).unwrap();
         assert_eq!(fields.len(), 1);
@@ -1734,7 +1735,7 @@ x"#,
     #[test]
     fn test_unicode_escape_surrogate_pair_in_value() {
         let tree = make_tree(&["v"]);
-        let mut state = FlattenJsonState::new();
+        let mut state = State::new();
         let event = br#"{"v": "\uD83D\uDE00"}"#;
         let fields = state.flatten(event, &tree).unwrap();
         assert_eq!(fields.len(), 1);
@@ -1749,7 +1750,7 @@ x"#,
     fn test_skip_string_with_unicode_escape() {
         // Unicode escapes in skipped strings must not confuse the skip logic
         let tree = make_tree(&["keep"]);
-        let mut state = FlattenJsonState::new();
+        let mut state = State::new();
         let event = br#"{"skip": "\uD83D\uDE00end", "keep": "found"}"#;
         let fields = state.flatten(event, &tree).unwrap();
         assert_eq!(fields.len(), 1);
@@ -1760,7 +1761,7 @@ x"#,
     fn test_unused_field_with_unicode_name() {
         // Field with unicode-escaped name that isn't in the tree must be skipped
         let tree = make_tree(&["wanted"]);
-        let mut state = FlattenJsonState::new();
+        let mut state = State::new();
         let event = br#"{"\uD83D\uDE00": "ignored", "wanted": "yes"}"#;
         let fields = state.flatten(event, &tree).unwrap();
         assert_eq!(fields.len(), 1);
@@ -1772,7 +1773,7 @@ x"#,
         // \uD83D\uDE00 = 😀; pattern uses literal UTF-8, event uses escape.
         // Wrong (low - 0xDC00) arithmetic produces different bytes and fails the lookup.
         let tree = make_tree(&["😀"]);
-        let mut state = FlattenJsonState::new();
+        let mut state = State::new();
         let event = br#"{"\uD83D\uDE00": "match"}"#;
         let fields = state.flatten(event, &tree).unwrap();
         assert_eq!(fields.len(), 1);
@@ -1783,7 +1784,7 @@ x"#,
     fn test_surrogate_pair_codepoint_arithmetic_in_value() {
         // Same arithmetic check for string values rather than field names.
         let tree = make_tree(&["v"]);
-        let mut state = FlattenJsonState::new();
+        let mut state = State::new();
         let event = br#"{"v": "\uD83D\uDE00"}"#;
         let fields = state.flatten(event, &tree).unwrap();
         assert_eq!(fields.len(), 1);
@@ -1799,7 +1800,7 @@ x"#,
         // Array under an unmatched sibling key inside a nested object must be skipped.
         let event = br#"{"outer": {"unused_array": [1, 2, 3], "wanted": 42}}"#;
         let tree = make_tree(&["outer\nwanted"]);
-        let mut state = FlattenJsonState::new();
+        let mut state = State::new();
         let fields = state.flatten(event, &tree).unwrap();
         assert_eq!(fields.len(), 1);
         assert_eq!(fields[0].val.as_bytes(), b"42");
@@ -1810,7 +1811,7 @@ x"#,
         // Null field under a skipped nested object must not be captured.
         let event = br#"{"skipped_object": {"a": null}, "wanted": "ok"}"#;
         let tree = make_tree(&["wanted"]);
-        let mut state = FlattenJsonState::new();
+        let mut state = State::new();
         let fields = state.flatten(event, &tree).unwrap();
         assert_eq!(fields.len(), 1);
         assert_eq!(fields[0].val.as_bytes(), br#""ok""#);
@@ -1820,7 +1821,7 @@ x"#,
     fn test_error_skipping_never_ending_string() {
         // Tests from Go TestFJSkippingErrors
         let tree = make_tree(&["non_existing_value"]);
-        let mut state = FlattenJsonState::new();
+        let mut state = State::new();
 
         let bad_cases = [
             r#"{ "a": { "v": "hello"#, // Block with string that never ends

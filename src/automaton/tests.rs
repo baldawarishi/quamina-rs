@@ -21,16 +21,16 @@ fn test_automaton_value_matcher_string() {
     matcher.add_string_match(b"hello", "p1".to_string());
     matcher.add_string_match(b"world", "p2".to_string());
 
-    let matches = matcher.match_value(b"hello");
-    assert_eq!(matches.len(), 1);
-    assert!(matches.contains(&"p1".to_string()));
+    let pattern_ids = matcher.match_value(b"hello");
+    assert_eq!(pattern_ids.len(), 1);
+    assert!(pattern_ids.contains(&"p1".to_string()));
 
-    let matches = matcher.match_value(b"world");
-    assert_eq!(matches.len(), 1);
-    assert!(matches.contains(&"p2".to_string()));
+    let pattern_ids = matcher.match_value(b"world");
+    assert_eq!(pattern_ids.len(), 1);
+    assert!(pattern_ids.contains(&"p2".to_string()));
 
-    let matches = matcher.match_value(b"foo");
-    assert!(matches.is_empty());
+    let pattern_ids = matcher.match_value(b"foo");
+    assert!(pattern_ids.is_empty());
 }
 
 #[test]
@@ -39,16 +39,16 @@ fn test_automaton_value_matcher_prefix() {
     matcher.add_prefix_match(b"prod-", "p1".to_string());
     matcher.add_prefix_match(b"test-", "p2".to_string());
 
-    let matches = matcher.match_value(b"prod-123");
-    assert_eq!(matches.len(), 1);
-    assert!(matches.contains(&"p1".to_string()));
+    let pattern_ids = matcher.match_value(b"prod-123");
+    assert_eq!(pattern_ids.len(), 1);
+    assert!(pattern_ids.contains(&"p1".to_string()));
 
-    let matches = matcher.match_value(b"test-abc");
-    assert_eq!(matches.len(), 1);
-    assert!(matches.contains(&"p2".to_string()));
+    let pattern_ids = matcher.match_value(b"test-abc");
+    assert_eq!(pattern_ids.len(), 1);
+    assert!(pattern_ids.contains(&"p2".to_string()));
 
-    let matches = matcher.match_value(b"dev-xyz");
-    assert!(matches.is_empty());
+    let pattern_ids = matcher.match_value(b"dev-xyz");
+    assert!(pattern_ids.is_empty());
 }
 
 #[test]
@@ -57,20 +57,20 @@ fn test_automaton_value_matcher_shellstyle_single() {
     let mut matcher: AutomatonValueMatcher<String> = AutomatonValueMatcher::new();
     matcher.add_shellstyle_match(b"*.txt", "p1".to_string());
 
-    let matches = matcher.match_value(b"file.txt");
+    let pattern_ids = matcher.match_value(b"file.txt");
     assert!(
-        matches.contains(&"p1".to_string()),
+        pattern_ids.contains(&"p1".to_string()),
         "file.txt should match *.txt"
     );
 
-    let matches = matcher.match_value(b".txt");
+    let pattern_ids = matcher.match_value(b".txt");
     assert!(
-        matches.contains(&"p1".to_string()),
+        pattern_ids.contains(&"p1".to_string()),
         ".txt should match *.txt"
     );
 
-    let matches = matcher.match_value(b"foo");
-    assert!(matches.is_empty(), "foo should not match *.txt");
+    let pattern_ids = matcher.match_value(b"foo");
+    assert!(pattern_ids.is_empty(), "foo should not match *.txt");
 }
 
 #[test]
@@ -80,8 +80,11 @@ fn test_automaton_value_matcher_shellstyle_multiple() {
     matcher.add_shellstyle_match(b"*.txt", "p1".to_string());
     matcher.add_shellstyle_match(b"test*", "p2".to_string());
 
-    let matches = matcher.match_value(b"random");
-    assert!(matches.is_empty(), "random should not match any pattern");
+    let pattern_ids = matcher.match_value(b"random");
+    assert!(
+        pattern_ids.is_empty(),
+        "random should not match any pattern"
+    );
 }
 
 #[test]
@@ -91,24 +94,24 @@ fn test_automaton_value_matcher_mixed() {
     matcher.add_string_match(b"exact", "exact_match".to_string());
     matcher.add_prefix_match(b"pre-", "prefix_match".to_string());
 
-    let matches = matcher.match_value(b"exact");
-    assert_eq!(matches.len(), 1);
-    assert!(matches.contains(&"exact_match".to_string()));
+    let pattern_ids = matcher.match_value(b"exact");
+    assert_eq!(pattern_ids.len(), 1);
+    assert!(pattern_ids.contains(&"exact_match".to_string()));
 
-    let matches = matcher.match_value(b"pre-fix");
-    assert_eq!(matches.len(), 1);
-    assert!(matches.contains(&"prefix_match".to_string()));
+    let pattern_ids = matcher.match_value(b"pre-fix");
+    assert_eq!(pattern_ids.len(), 1);
+    assert!(pattern_ids.contains(&"prefix_match".to_string()));
 }
 
 // ========================================================================
-// ArenaSmallTable Tests (ported from chain SmallTable tests)
+// SmallTable Tests (ported from chain SmallTable tests)
 // ========================================================================
 
 #[test]
 fn test_arena_small_table_step() {
-    use arena::ArenaSmallTable;
+    use arena::SmallTable;
 
-    let table = ArenaSmallTable::new();
+    let table = SmallTable::new();
 
     // Test that all valid bytes return NONE for empty table
     for b in 0..BYTE_CEILING as u8 {
@@ -126,15 +129,15 @@ fn test_arena_small_table_step() {
 
 #[test]
 fn test_arena_small_table_with_mappings() {
-    use arena::{ArenaSmallTable, StateArena, StateId};
+    use arena::{SmallTable, StateArena, StateId};
     use std::sync::Arc;
 
     let mut arena = StateArena::new();
     let next_field = Arc::new(FieldMatcher::new());
-    let next_state = arena.alloc_with_table(ArenaSmallTable::new());
+    let next_state = arena.alloc_with_table(SmallTable::new());
     arena[next_state].field_transitions.push(next_field);
 
-    let table = ArenaSmallTable::with_mappings(StateId::NONE, b"ab", &[next_state, next_state]);
+    let table = SmallTable::with_mappings(StateId::NONE, b"ab", &[next_state, next_state]);
 
     let (step_a, _) = table.step(b'a');
     assert!(!step_a.is_none(), "byte 'a' should have a transition");
@@ -170,9 +173,9 @@ fn test_core_matcher_single_field_exact() {
     // Create event fields (sorted by path)
     let fields = vec![field("status", "active")];
 
-    let matches = matcher.matches_for_fields(&fields);
-    assert_eq!(matches.len(), 1);
-    assert!(matches.contains(&"p1".to_string()));
+    let pattern_ids = matcher.matches_for_fields(&fields);
+    assert_eq!(pattern_ids.len(), 1);
+    assert!(pattern_ids.contains(&"p1".to_string()));
 }
 
 #[test]
@@ -193,8 +196,8 @@ fn test_core_matcher_single_field_no_match() {
 
     let fields = vec![field("status", "inactive")];
 
-    let matches = matcher.matches_for_fields(&fields);
-    assert!(matches.is_empty());
+    let pattern_ids = matcher.matches_for_fields(&fields);
+    assert!(pattern_ids.is_empty());
 }
 
 #[test]
@@ -214,9 +217,9 @@ fn test_core_matcher_exists_true() {
     // Event with name field present
     let fields = vec![field("name", "anything")];
 
-    let matches = matcher.matches_for_fields(&fields);
+    let pattern_ids = matcher.matches_for_fields(&fields);
     assert_eq!(
-        matches.len(),
+        pattern_ids.len(),
         1,
         "exists:true should match when field exists"
     );
@@ -239,9 +242,9 @@ fn test_core_matcher_exists_false() {
     // Event without name field
     let fields = vec![field("other", "value")];
 
-    let matches = matcher.matches_for_fields(&fields);
+    let pattern_ids = matcher.matches_for_fields(&fields);
     assert_eq!(
-        matches.len(),
+        pattern_ids.len(),
         1,
         "exists:false should match when field is absent"
     );
@@ -271,9 +274,9 @@ fn test_core_matcher_multi_field_and() {
     // Event with both fields matching
     let fields = vec![field("status", "active"), field("type", "user")];
 
-    let matches = matcher.matches_for_fields(&fields);
+    let pattern_ids = matcher.matches_for_fields(&fields);
     assert_eq!(
-        matches.len(),
+        pattern_ids.len(),
         1,
         "multi-field AND should match when all fields match"
     );
@@ -302,9 +305,9 @@ fn test_core_matcher_multi_field_partial_no_match() {
     // Event with only status matching
     let fields = vec![field("status", "active"), field("type", "admin")];
 
-    let matches = matcher.matches_for_fields(&fields);
+    let pattern_ids = matcher.matches_for_fields(&fields);
     assert!(
-        matches.is_empty(),
+        pattern_ids.is_empty(),
         "multi-field AND should not match with partial field match"
     );
 }
@@ -379,9 +382,9 @@ fn test_core_matcher_multiple_patterns() {
     // Should match p1 only
     let fields = vec![field("status", "active")];
 
-    let matches = matcher.matches_for_fields(&fields);
-    assert_eq!(matches.len(), 1);
-    assert!(matches.contains(&"p1".to_string()));
+    let pattern_ids = matcher.matches_for_fields(&fields);
+    assert_eq!(pattern_ids.len(), 1);
+    assert!(pattern_ids.contains(&"p1".to_string()));
 }
 
 // ========================================================================
@@ -415,9 +418,9 @@ fn test_thread_safe_core_matcher_single_field() {
     // Create event fields
     let fields = vec![field("status", "active")];
 
-    let matches = matcher.matches_for_fields(&fields);
-    assert_eq!(matches.len(), 1);
-    assert!(matches.contains(&"p1".to_string()));
+    let pattern_ids = matcher.matches_for_fields(&fields);
+    assert_eq!(pattern_ids.len(), 1);
+    assert!(pattern_ids.contains(&"p1".to_string()));
 }
 
 #[test]
@@ -438,8 +441,8 @@ fn test_thread_safe_core_matcher_no_match() {
 
     let fields = vec![field("status", "inactive")];
 
-    let matches = matcher.matches_for_fields(&fields);
-    assert!(matches.is_empty());
+    let pattern_ids = matcher.matches_for_fields(&fields);
+    assert!(pattern_ids.is_empty());
 }
 
 #[test]
@@ -459,9 +462,9 @@ fn test_thread_safe_core_matcher_exists_true() {
     // Event with name field present
     let fields = vec![field("name", "anything")];
 
-    let matches = matcher.matches_for_fields(&fields);
+    let pattern_ids = matcher.matches_for_fields(&fields);
     assert_eq!(
-        matches.len(),
+        pattern_ids.len(),
         1,
         "exists:true should match when field exists"
     );
@@ -484,9 +487,9 @@ fn test_thread_safe_core_matcher_exists_false() {
     // Event without name field
     let fields = vec![field("other", "value")];
 
-    let matches = matcher.matches_for_fields(&fields);
+    let pattern_ids = matcher.matches_for_fields(&fields);
     assert_eq!(
-        matches.len(),
+        pattern_ids.len(),
         1,
         "exists:false should match when field is absent"
     );
@@ -523,9 +526,9 @@ fn test_thread_safe_core_matcher_multiple_patterns() {
     // Should match p1 only
     let fields = vec![field("status", "active")];
 
-    let matches = matcher.matches_for_fields(&fields);
-    assert_eq!(matches.len(), 1);
-    assert!(matches.contains(&"p1".to_string()));
+    let pattern_ids = matcher.matches_for_fields(&fields);
+    assert_eq!(pattern_ids.len(), 1);
+    assert!(pattern_ids.contains(&"p1".to_string()));
 }
 
 #[test]
@@ -547,15 +550,15 @@ fn test_nfa_buffers_clear() {
     assert!(bufs.arena_bufs.transitions.is_empty());
 }
 
-/// Verify that `ArenaNfaBuffers::clear` (called by `traverse_arena_nfa`) prevents
+/// Verify that `NfaBuffers::clear` (called by `traverse_arena_nfa`) prevents
 /// stale state from leaking across successive match calls.
 ///
 /// `CoreMatcher::matches_for_fields` creates fresh `NfaBuffers` each call, but
 /// `MutableValueMatcher::transition_on` ignores that parameter (`_bufs`) and uses
-/// its own `arena_bufs: RefCell<ArenaNfaBuffers>` which persists across calls.
-/// `traverse_arena_nfa` calls `ArenaNfaBuffers::clear()` at the start of each
+/// its own `arena_bufs: RefCell<NfaBuffers>` which persists across calls.
+/// `traverse_arena_nfa` calls `NfaBuffers::clear()` at the start of each
 /// traversal — without it, stale transitions from one traversal would leak into
-/// the next and produce false matches.
+/// the next and produce false pattern_ids.
 ///
 /// We use a `Shellstyle` pattern (not `Exact`) because `Exact` takes the singleton
 /// fast path in `MutableValueMatcher::transition_on` and never touches `arena_bufs`.
@@ -567,7 +570,7 @@ fn test_arena_nfa_bufs_clear_observable_through_matching() {
 
     let matcher: CoreMatcher<String> = CoreMatcher::new();
 
-    // Shellstyle "r*" matches any value starting with 'r'.
+    // Shellstyle "r*" pattern_ids any value starting with 'r'.
     // This avoids the singleton fast path and routes through the arena NFA.
     matcher
         .add_pattern(
@@ -591,14 +594,14 @@ fn test_arena_nfa_bufs_clear_observable_through_matching() {
 
     // Second match with a non-matching value — must be empty.
     // MutableValueMatcher's persistent arena_bufs still holds transitions from
-    // the "red" traversal. If ArenaNfaBuffers::clear() (called at the start of
+    // the "red" traversal. If NfaBuffers::clear() (called at the start of
     // traverse_arena_nfa) were a no-op, those stale transitions would cause a
     // false match here.
     let fields2 = vec![field("color", "\"blue\"")];
     let matches2 = matcher.matches_for_fields(&fields2);
     assert!(
         matches2.is_empty(),
-        "stale arena NFA buffers should not cause false matches"
+        "stale arena NFA buffers should not cause false pattern_ids"
     );
 }
 

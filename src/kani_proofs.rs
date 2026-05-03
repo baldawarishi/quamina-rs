@@ -5,7 +5,7 @@
 //!
 //! Arena-specific proofs live in src/automaton/arena.rs::kani_arena_proofs
 //! (locality with the code they verify):
-//! - `smalltable_pack_dstep_roundtrip`: ArenaSmallTable pack/dstep roundtrip
+//! - `smalltable_pack_dstep_roundtrip`: SmallTable pack/dstep roundtrip
 //!   (bounded to 3-region tables to keep the proof tractable)
 
 #[cfg(kani)]

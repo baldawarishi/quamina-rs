@@ -28,7 +28,7 @@
 //! ```
 
 use crate::QuaminaError;
-use crate::flatten_json::{ArrayPos, FlattenJsonState};
+use crate::flatten_json::{self, ArrayPos};
 use crate::segments_tree::SegmentsTree;
 use std::any::Any;
 
@@ -207,11 +207,11 @@ impl SegmentsTreeTracker for SegmentsTree {
 
 /// Default JSON flattener.
 ///
-/// This wraps the internal `FlattenJsonState` and implements the `Flattener` trait.
+/// This wraps the internal `flatten_json::State` and implements the `Flattener` trait.
 /// It provides high-performance JSON parsing with field skipping optimization.
 #[derive(Default)]
 pub struct JsonFlattener {
-    state: FlattenJsonState,
+    state: flatten_json::State,
 }
 
 impl JsonFlattener {
@@ -219,7 +219,7 @@ impl JsonFlattener {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            state: FlattenJsonState::new(),
+            state: flatten_json::State::new(),
         }
     }
 }
