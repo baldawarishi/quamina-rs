@@ -255,7 +255,7 @@ fn test_or_within_field() {
     let q = q!("p1" => r#"{"status": ["active", "pending", "review"]}"#);
 
     for status in &["active", "pending", "review"] {
-        let event = format!(r#"{{"status": "{}"}}"#, status);
+        let event = format!(r#"{{"status": "{status}"}}"#);
         assert_matches!(q, event, vec!["p1"]);
     }
 
@@ -346,9 +346,7 @@ fn test_pruner_stats() {
     assert_eq!(q.pruner_stats().filtered(), 0);
 
     // Match - should increment emitted
-    let _ = q
-        .matches_for_event(r#"{"status": "active"}"#.as_bytes())
-        .unwrap();
+    let _ = q.matches_for_event(br#"{"status": "active"}"#).unwrap();
     assert_eq!(q.pruner_stats().emitted(), 1);
     assert_eq!(q.pruner_stats().filtered(), 0);
 
@@ -356,16 +354,12 @@ fn test_pruner_stats() {
     q.delete_patterns(&"p1").unwrap();
 
     // Match active - should increment filtered (was deleted)
-    let _ = q
-        .matches_for_event(r#"{"status": "active"}"#.as_bytes())
-        .unwrap();
+    let _ = q.matches_for_event(br#"{"status": "active"}"#).unwrap();
     assert_eq!(q.pruner_stats().emitted(), 1);
     assert_eq!(q.pruner_stats().filtered(), 1);
 
     // Match pending - should increment emitted
-    let _ = q
-        .matches_for_event(r#"{"status": "pending"}"#.as_bytes())
-        .unwrap();
+    let _ = q.matches_for_event(br#"{"status": "pending"}"#).unwrap();
     assert_eq!(q.pruner_stats().emitted(), 2);
     assert_eq!(q.pruner_stats().filtered(), 1);
 
@@ -500,7 +494,7 @@ fn test_pruner_stats_clone() {
     stats.add_emitted(42);
     stats.add_filtered(17);
 
-    let cloned = stats.clone();
+    let cloned = stats;
     assert_eq!(cloned.emitted(), 42);
     assert_eq!(cloned.filtered(), 17);
 }
@@ -587,11 +581,8 @@ fn test_send_sync() {
 fn test_has_matches() {
     let q = q!("p1" => r#"{"status": ["active"]}"#);
 
-    assert!(q.has_matches(r#"{"status": "active"}"#.as_bytes()).unwrap());
-    assert!(
-        !q.has_matches(r#"{"status": "inactive"}"#.as_bytes())
-            .unwrap()
-    );
+    assert!(q.has_matches(br#"{"status": "active"}"#).unwrap());
+    assert!(!q.has_matches(br#"{"status": "inactive"}"#).unwrap());
 }
 
 #[test]
@@ -602,21 +593,9 @@ fn test_count_matches() {
         "p3" => r#"{"status": ["pending"]}"#
     );
 
-    assert_eq!(
-        q.count_matches(r#"{"status": "active"}"#.as_bytes())
-            .unwrap(),
-        2
-    );
-    assert_eq!(
-        q.count_matches(r#"{"status": "pending"}"#.as_bytes())
-            .unwrap(),
-        1
-    );
-    assert_eq!(
-        q.count_matches(r#"{"status": "deleted"}"#.as_bytes())
-            .unwrap(),
-        0
-    );
+    assert_eq!(q.count_matches(br#"{"status": "active"}"#).unwrap(), 2);
+    assert_eq!(q.count_matches(br#"{"status": "pending"}"#).unwrap(), 1);
+    assert_eq!(q.count_matches(br#"{"status": "deleted"}"#).unwrap(), 0);
 }
 
 #[test]
@@ -653,7 +632,7 @@ fn test_invalid_json_events() {
         (b"", "Empty input"),
         // Non-object at top level
         (br#""string""#, "String at top level"),
-        (br#"[1, 2]"#, "Array at top level"),
+        (br"[1, 2]", "Array at top level"),
         (b"123", "Number at top level"),
         // Malformed JSON
         (br#"{ "a" : }"#, "Missing value"),
@@ -668,7 +647,7 @@ fn test_invalid_json_events() {
     ];
 
     for (event, desc) in bad_events {
-        assert!(q.matches_for_event(event).is_err(), "{} should error", desc);
+        assert!(q.matches_for_event(event).is_err(), "{desc} should error");
     }
 }
 
@@ -729,7 +708,7 @@ fn test_rebuild_zero_filtered_denominator() {
     q.delete_patterns(&"p1").unwrap();
 
     // Matching should not panic with zero patterns
-    let result = q.matches_for_event(r#"{"likes": "tacos"}"#.as_bytes());
+    let result = q.matches_for_event(br#"{"likes": "tacos"}"#);
     assert!(result.is_ok(), "Should not panic with empty matcher");
     assert!(result.unwrap().is_empty(), "No matches expected");
 }
@@ -805,9 +784,7 @@ fn test_builder_combined_options() {
 
     q.add_pattern("p1".to_string(), r#"{"status": ["active"]}"#)
         .unwrap();
-    let matches = q
-        .matches_for_event(r#"{"status": "active"}"#.as_bytes())
-        .unwrap();
+    let matches = q.matches_for_event(br#"{"status": "active"}"#).unwrap();
     assert_eq!(matches, vec!["p1".to_string()]);
     assert!(!q.auto_rebuild_enabled());
 }
@@ -824,13 +801,13 @@ fn test_builder_generic_type() {
     // With i32 as pattern ID
     let mut q = QuaminaBuilder::<i32>::new().build().unwrap();
     q.add_pattern(42, r#"{"x": [1]}"#).unwrap();
-    let matches = q.matches_for_event(r#"{"x": 1}"#.as_bytes()).unwrap();
+    let matches = q.matches_for_event(br#"{"x": 1}"#).unwrap();
     assert_eq!(matches, vec![42]);
 
     // With &str as pattern ID
     let mut q = QuaminaBuilder::<&str>::new().build().unwrap();
     q.add_pattern("test", r#"{"x": [1]}"#).unwrap();
-    let matches = q.matches_for_event(r#"{"x": 1}"#.as_bytes()).unwrap();
+    let matches = q.matches_for_event(br#"{"x": 1}"#).unwrap();
     assert_eq!(matches, vec!["test"]);
 }
 
@@ -859,7 +836,7 @@ impl Flattener for MockFlattener {
     }
 
     fn copy(&self) -> Box<dyn Flattener> {
-        Box::new(MockFlattener {
+        Box::new(Self {
             fields: self.fields.clone(),
         })
     }
@@ -1002,9 +979,7 @@ fn test_json_flattener_through_trait() {
     q.add_pattern("p1".to_string(), r#"{"status": ["active"]}"#)
         .unwrap();
 
-    let matches = q
-        .matches_for_event(r#"{"status": "active"}"#.as_bytes())
-        .unwrap();
+    let matches = q.matches_for_event(br#"{"status": "active"}"#).unwrap();
     assert_eq!(matches, vec!["p1"]);
 }
 
@@ -1103,7 +1078,7 @@ fn test_invalid_pattern_validation() {
     for (pattern, desc) in &invalid_patterns {
         let mut q = Quamina::new();
         let result = q.add_pattern("test", pattern);
-        assert!(result.is_err(), "{} should be rejected: {}", desc, pattern);
+        assert!(result.is_err(), "{desc} should be rejected: {pattern}");
     }
 }
 
@@ -1181,16 +1156,13 @@ fn test_numbits_boundary_values() {
         assert_eq!(
             q[0],
             crate::numbits::Q_NUMBER_PREFIX,
-            "Q-number should start with prefix for value {}",
-            val
+            "Q-number should start with prefix for value {val}"
         );
         // Content bytes (after prefix) must be < 128 (base-128 encoding)
         for &byte in &q[1..] {
             assert!(
                 byte < 128,
-                "Q-number content byte {} >= 128 for value {}",
-                byte,
-                val
+                "Q-number content byte {byte} >= 128 for value {val}"
             );
         }
     }
@@ -1200,7 +1172,7 @@ fn test_numbits_boundary_values() {
         let nb = numbits_from_f64(val);
         let q1 = q_num_from_f64(val);
         let q2 = to_q_number(nb);
-        assert_eq!(q1, q2, "Q-number should match via both paths for {}", val);
+        assert_eq!(q1, q2, "Q-number should match via both paths for {val}");
     }
 }
 
@@ -1236,16 +1208,14 @@ fn test_numbits_to_qnumber_utf8() {
         // Property 1: Non-empty
         assert!(
             !q.is_empty(),
-            "Q-number should be non-empty for value at index {}",
-            i
+            "Q-number should be non-empty for value at index {i}"
         );
 
         // Property 2: First byte is prefix, content bytes < 128
         assert_eq!(
             q[0],
             crate::numbits::Q_NUMBER_PREFIX,
-            "Q-number should start with prefix for value at index {}",
-            i
+            "Q-number should start with prefix for value at index {i}"
         );
         for (j, &byte) in q[1..].iter().enumerate() {
             assert!(
@@ -1260,8 +1230,7 @@ fn test_numbits_to_qnumber_utf8() {
         // Property 3: Content bytes (after prefix) are valid ASCII
         assert!(
             std::str::from_utf8(&q[1..]).is_ok(),
-            "Q-number content should be valid UTF-8 for value at index {}",
-            i
+            "Q-number content should be valid UTF-8 for value at index {i}"
         );
 
         // Property 4: Length bounded (1 prefix + up to 10 content bytes)
@@ -1282,7 +1251,7 @@ fn test_numbits_to_qnumber_utf8() {
 
     for _ in 0..1000 {
         rng_state = rng_state.wrapping_mul(6364136223846793005).wrapping_add(1);
-        let val = ((rng_state as f64) / (u64::MAX as f64)) * 2e100 - 1e100;
+        let val = ((rng_state as f64) / (u64::MAX as f64)).mul_add(2e100, -1e100);
         if val.is_finite() {
             ordered_vals.push(val);
         }
@@ -1295,11 +1264,7 @@ fn test_numbits_to_qnumber_utf8() {
         if prev_val < val {
             assert!(
                 prev_q <= q,
-                "Q-number ordering violated: {} ({:?}) should be <= {} ({:?})",
-                prev_val,
-                prev_q,
-                val,
-                q
+                "Q-number ordering violated: {prev_val} ({prev_q:?}) should be <= {val} ({q:?})"
             );
         }
         prev_val = val;
@@ -1344,14 +1309,14 @@ fn test_condition_cost_ordering() {
     // Create conditions in reverse cost order
     let conditions = vec![
         LookaroundCondition::NegativeLookbehind {
-            pattern: pattern3.clone(),
+            pattern: pattern3,
             byte_length: 1,
         }, // cost 40
         LookaroundCondition::PositiveLookbehind {
-            pattern: pattern2.clone(),
+            pattern: pattern2,
             byte_length: 1,
         }, // cost 30
-        LookaroundCondition::NegativeLookahead(pattern1.clone()), // cost 20
+        LookaroundCondition::NegativeLookahead(pattern1), // cost 20
     ];
 
     let mc = MultiConditionPattern::new(primary, conditions);
@@ -1767,7 +1732,7 @@ fn test_pattern_depth_at_limit() {
     let mut pattern = String::new();
     let mut closing = String::new();
     for i in 0..256 {
-        pattern.push_str(&format!("{{\"f{}\": ", i));
+        pattern.push_str(&format!("{{\"f{i}\": "));
         closing.push('}');
     }
     pattern.push_str("[\"val\"]");
@@ -1786,7 +1751,7 @@ fn test_pattern_depth_exceeds_limit() {
     let mut pattern = String::new();
     let mut closing = String::new();
     for i in 0..257 {
-        pattern.push_str(&format!("{{\"f{}\": ", i));
+        pattern.push_str(&format!("{{\"f{i}\": "));
         closing.push('}');
     }
     pattern.push_str("[\"val\"]");
@@ -1797,18 +1762,15 @@ fn test_pattern_depth_exceeds_limit() {
     let err_msg = format!("{}", result.unwrap_err());
     assert!(
         err_msg.contains("depth"),
-        "Error should mention depth: {}",
-        err_msg
+        "Error should mention depth: {err_msg}"
     );
     assert!(
         err_msg.contains("257"),
-        "Error should mention actual depth 257: {}",
-        err_msg
+        "Error should mention actual depth 257: {err_msg}"
     );
     assert!(
         err_msg.contains("256"),
-        "Error should mention max depth 256: {}",
-        err_msg
+        "Error should mention max depth 256: {err_msg}"
     );
 }
 
@@ -1850,7 +1812,7 @@ fn test_pattern_fields_at_limit() {
     let mut q = Quamina::new();
     let mut fields: Vec<String> = Vec::new();
     for i in 0..256 {
-        fields.push(format!("\"f{}\": [\"v\"]", i));
+        fields.push(format!("\"f{i}\": [\"v\"]"));
     }
     let pattern = format!("{{{}}}", fields.join(", "));
     assert!(
@@ -1868,7 +1830,7 @@ fn test_pattern_fields_at_limit_miri_friendly() {
     let mut q = Quamina::new();
     let mut fields: Vec<String> = Vec::new();
     for i in 0..8 {
-        fields.push(format!("\"f{}\": [\"v\"]", i));
+        fields.push(format!("\"f{i}\": [\"v\"]"));
     }
     let pattern = format!("{{{}}}", fields.join(", "));
     assert!(
@@ -1884,7 +1846,7 @@ fn test_pattern_fields_exceeds_limit() {
     let mut q = Quamina::new();
     let mut fields: Vec<String> = Vec::new();
     for i in 0..257 {
-        fields.push(format!("\"f{}\": [\"v\"]", i));
+        fields.push(format!("\"f{i}\": [\"v\"]"));
     }
     let pattern = format!("{{{}}}", fields.join(", "));
 
@@ -1896,13 +1858,11 @@ fn test_pattern_fields_exceeds_limit() {
     let err_msg = format!("{}", result.unwrap_err());
     assert!(
         err_msg.contains("257"),
-        "Error should mention actual count 257: {}",
-        err_msg
+        "Error should mention actual count 257: {err_msg}"
     );
     assert!(
         err_msg.contains("256"),
-        "Error should mention max count 256: {}",
-        err_msg
+        "Error should mention max count 256: {err_msg}"
     );
 }
 
@@ -1923,8 +1883,7 @@ fn test_pattern_fields_custom_limit() {
     let err_msg = format!("{}", result.unwrap_err());
     assert!(
         err_msg.contains("fields"),
-        "Error should mention fields: {}",
-        err_msg
+        "Error should mention fields: {err_msg}"
     );
 }
 
@@ -1946,7 +1905,7 @@ fn test_arena_budget_exceeded() {
     // Add enough patterns to exceed the tiny budget
     let mut exceeded = false;
     for i in 0..100 {
-        let pattern = format!("{{\"x\": [\"value_that_is_long_enough_{}\"]}}", i);
+        let pattern = format!("{{\"x\": [\"value_that_is_long_enough_{i}\"]}}");
         if q.add_pattern("px", &pattern).is_err() {
             exceeded = true;
             break;
@@ -1960,7 +1919,7 @@ fn test_arena_budget_sufficient() {
     // Default budget (10MB), normal patterns should work fine
     let mut q = Quamina::new();
     for i in 0..50 {
-        let pattern = format!("{{\"field{}\": [\"value{}\"]}}", i, i);
+        let pattern = format!("{{\"field{i}\": [\"value{i}\"]}}");
         assert!(
             q.add_pattern("p1", &pattern).is_ok(),
             "Normal patterns should work within default 10MB budget"
@@ -1977,7 +1936,7 @@ fn test_arena_budget_custom() {
         .unwrap();
 
     for i in 0..20 {
-        let pattern = format!("{{\"field{}\": [\"value{}\"]}}", i, i);
+        let pattern = format!("{{\"field{i}\": [\"value{i}\"]}}");
         assert!(
             q.add_pattern("p1", &pattern).is_ok(),
             "Moderate patterns should work within 1MB budget"
@@ -2001,8 +1960,7 @@ fn test_depth_error_includes_path() {
     let err_msg = format!("{}", result.unwrap_err());
     assert!(
         err_msg.contains("pattern too complex"),
-        "Error should start with 'pattern too complex': {}",
-        err_msg
+        "Error should start with 'pattern too complex': {err_msg}"
     );
 }
 
@@ -2018,14 +1976,12 @@ fn test_field_count_error_includes_count() {
     assert!(result.is_err());
     let err_msg = format!("{}", result.unwrap_err());
     assert!(
-        err_msg.contains("3"),
-        "Error should contain actual field count: {}",
-        err_msg
+        err_msg.contains('3'),
+        "Error should contain actual field count: {err_msg}"
     );
     assert!(
-        err_msg.contains("2"),
-        "Error should contain max field count: {}",
-        err_msg
+        err_msg.contains('2'),
+        "Error should contain max field count: {err_msg}"
     );
 }
 
@@ -2040,11 +1996,10 @@ fn test_arena_error_includes_bytes() {
     let _ = q.add_pattern("p1", r#"{"x": ["a"]}"#);
     let result = q.add_pattern("p2", r#"{"x": ["b"]}"#);
     if let Err(e) = result {
-        let err_msg = format!("{}", e);
+        let err_msg = format!("{e}");
         assert!(
             err_msg.contains("bytes") && err_msg.contains("budget"),
-            "Error should mention bytes and budget: {}",
-            err_msg
+            "Error should mention bytes and budget: {err_msg}"
         );
     }
     // With a 1-byte budget, at least one of the two patterns should fail
@@ -2104,7 +2059,7 @@ fn test_arena_budget_enforced_on_repeated_exact_strings() {
 
     let mut rejected = false;
     for i in 0..500 {
-        let pattern = format!(r#"{{"x": ["long_value_string_number_{}"]}}"#, i);
+        let pattern = format!(r#"{{"x": ["long_value_string_number_{i}"]}}"#);
         if q.add_pattern("p", &pattern).is_err() {
             rejected = true;
             break;
@@ -2132,7 +2087,7 @@ fn test_matcher_correct_after_rejected_pattern() {
     // Keep adding until one is rejected
     let mut rejected = false;
     for i in 0..500 {
-        let pattern = format!(r#"{{"x": ["overflow_value_{}"]}}"#, i);
+        let pattern = format!(r#"{{"x": ["overflow_value_{i}"]}}"#);
         if q.add_pattern("bad", &pattern).is_err() {
             rejected = true;
             break;
@@ -2166,7 +2121,7 @@ fn test_clone_preserves_arena_budget() {
     // The clone should enforce the same budget
     let mut rejected = false;
     for i in 0..500 {
-        let pattern = format!(r#"{{"x": ["clone_test_value_{}"]}}"#, i);
+        let pattern = format!(r#"{{"x": ["clone_test_value_{i}"]}}"#);
         if cloned.add_pattern("b".into(), &pattern).is_err() {
             rejected = true;
             break;
@@ -2189,8 +2144,7 @@ fn test_errors_return_pattern_too_complex_variant() {
     let result = q.add_pattern("deep", r#"{"a": {"b": ["val"]}}"#);
     assert!(
         matches!(result, Err(QuaminaError::PatternTooComplex(_))),
-        "Depth violation must return PatternTooComplex, got {:?}",
-        result
+        "Depth violation must return PatternTooComplex, got {result:?}"
     );
 
     let mut q2 = QuaminaBuilder::<&str>::new()
@@ -2200,8 +2154,7 @@ fn test_errors_return_pattern_too_complex_variant() {
     let result = q2.add_pattern("wide", r#"{"a": ["1"], "b": ["2"]}"#);
     assert!(
         matches!(result, Err(QuaminaError::PatternTooComplex(_))),
-        "Field count violation must return PatternTooComplex, got {:?}",
-        result
+        "Field count violation must return PatternTooComplex, got {result:?}"
     );
 }
 
@@ -2209,25 +2162,25 @@ fn test_errors_return_pattern_too_complex_variant() {
 #[test]
 #[should_panic(expected = "max_pattern_depth must be at least 1")]
 fn test_zero_depth_panics() {
-    QuaminaBuilder::<&str>::new().with_max_pattern_depth(0);
+    let _ = QuaminaBuilder::<&str>::new().with_max_pattern_depth(0);
 }
 
 #[test]
 #[should_panic(expected = "max_fields_per_pattern must be at least 1")]
 fn test_zero_fields_panics() {
-    QuaminaBuilder::<&str>::new().with_max_fields_per_pattern(0);
+    let _ = QuaminaBuilder::<&str>::new().with_max_fields_per_pattern(0);
 }
 
 #[test]
 #[should_panic(expected = "arena_byte_budget must be at least 1")]
 fn test_zero_budget_panics() {
-    QuaminaBuilder::<&str>::new().with_arena_byte_budget(0);
+    let _ = QuaminaBuilder::<&str>::new().with_arena_byte_budget(0);
 }
 
 #[test]
 #[should_panic(expected = "max_states_per_pattern must be at least 1")]
 fn test_zero_states_panics() {
-    QuaminaBuilder::<&str>::new().with_max_states_per_pattern(0);
+    let _ = QuaminaBuilder::<&str>::new().with_max_states_per_pattern(0);
 }
 
 // --- State Count Limit Tests ---
@@ -2271,14 +2224,10 @@ fn test_state_limit_default_allows_normal_patterns() {
     assert_add_ok!(q, "p2", r#"{"a": ["1"], "b": ["2"], "c": ["3"]}"#);
 
     // Verify matching still works
-    let matches = q
-        .matches_for_event(r#"{"status": "active"}"#.as_bytes())
-        .unwrap();
-    assert!(matches.contains(&&"p1"));
-    let matches = q
-        .matches_for_event(r#"{"status": "pending"}"#.as_bytes())
-        .unwrap();
-    assert!(matches.contains(&&"p1"));
+    let matches = q.matches_for_event(br#"{"status": "active"}"#).unwrap();
+    assert!(matches.contains(&"p1"));
+    let matches = q.matches_for_event(br#"{"status": "pending"}"#).unwrap();
+    assert!(matches.contains(&"p1"));
 }
 
 // ============================================================================
@@ -2447,7 +2396,7 @@ fn test_pruner_stats_clone_preserves_values() {
     stats.add_emitted(100);
     stats.add_filtered(50);
 
-    let cloned = stats.clone();
+    let cloned = stats;
     assert_eq!(cloned.emitted(), 100, "clone must preserve emitted");
     assert_eq!(cloned.filtered(), 50, "clone must preserve filtered");
 }
@@ -2881,7 +2830,7 @@ fn test_transform_lookaround_lookbehind_byte_length() {
         LookaroundCondition::PositiveLookbehind { byte_length, .. } => {
             assert_eq!(*byte_length, 3, "abc = 3 bytes");
         }
-        other => panic!("Expected PositiveLookbehind, got {:?}", other),
+        other => panic!("Expected PositiveLookbehind, got {other:?}"),
     }
 
     // (?<!xy)z — lookbehind "xy" has 2 bytes
@@ -2892,7 +2841,7 @@ fn test_transform_lookaround_lookbehind_byte_length() {
         LookaroundCondition::NegativeLookbehind { byte_length, .. } => {
             assert_eq!(*byte_length, 2, "xy = 2 bytes");
         }
-        other => panic!("Expected NegativeLookbehind, got {:?}", other),
+        other => panic!("Expected NegativeLookbehind, got {other:?}"),
     }
 }
 
@@ -2911,7 +2860,7 @@ fn test_transform_lookbehind_single_char_class() {
         LookaroundCondition::PositiveLookbehind { byte_length, .. } => {
             assert_eq!(*byte_length, 1, "[a-z] = 1 byte per char");
         }
-        other => panic!("Expected PositiveLookbehind, got {:?}", other),
+        other => panic!("Expected PositiveLookbehind, got {other:?}"),
     }
 
     // (?<=[a-z]{3})X — char class repeated 3 times → 3 bytes
@@ -2922,7 +2871,7 @@ fn test_transform_lookbehind_single_char_class() {
         LookaroundCondition::PositiveLookbehind { byte_length, .. } => {
             assert_eq!(*byte_length, 3, "[a-z]{{3}} = 3 bytes");
         }
-        other => panic!("Expected PositiveLookbehind, got {:?}", other),
+        other => panic!("Expected PositiveLookbehind, got {other:?}"),
     }
 }
 
@@ -2940,7 +2889,7 @@ fn test_transform_lookbehind_dot_byte_length() {
         LookaroundCondition::PositiveLookbehind { byte_length, .. } => {
             assert_eq!(*byte_length, 4, ". = 4 bytes (UTF-8 max)");
         }
-        other => panic!("Expected PositiveLookbehind, got {:?}", other),
+        other => panic!("Expected PositiveLookbehind, got {other:?}"),
     }
 }
 
@@ -2971,7 +2920,7 @@ fn test_transform_lookbehind_alternation_same_length() {
         LookaroundCondition::PositiveLookbehind { byte_length, .. } => {
             assert_eq!(*byte_length, 2, "ab|cd both = 2 bytes");
         }
-        other => panic!("Expected PositiveLookbehind, got {:?}", other),
+        other => panic!("Expected PositiveLookbehind, got {other:?}"),
     }
 }
 

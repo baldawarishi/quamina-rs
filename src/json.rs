@@ -66,6 +66,7 @@ pub enum CidrPattern {
 
 impl CidrPattern {
     /// Parse a CIDR notation string (e.g., "10.0.0.0/24" or "2001:db8::/32")
+    #[must_use]
     pub fn parse(s: &str) -> Option<Self> {
         let (addr_str, prefix_str) = s.split_once('/')?;
         let prefix_len: u8 = prefix_str.parse().ok()?;
@@ -182,7 +183,7 @@ impl CidrPattern {
         // Zero out bytes after the prefix
         for byte in result
             .iter_mut()
-            .skip(full_bytes + if remaining_bits > 0 { 1 } else { 0 })
+            .skip(full_bytes + usize::from(remaining_bits > 0))
         {
             *byte = 0;
         }
@@ -234,7 +235,8 @@ impl LookaroundCondition {
     /// Returns true if this is a negative condition ((?!...) or (?<!...)).
     /// Negative conditions typically have higher false positive rates during
     /// candidate filtering, so they should be checked after positive conditions.
-    pub fn is_negative(&self) -> bool {
+    #[must_use]
+    pub const fn is_negative(&self) -> bool {
         matches!(
             self,
             Self::NegativeLookahead(_) | Self::NegativeLookbehind { .. }
@@ -242,7 +244,8 @@ impl LookaroundCondition {
     }
 
     /// Returns true if this is a lookbehind condition.
-    pub fn is_lookbehind(&self) -> bool {
+    #[must_use]
+    pub const fn is_lookbehind(&self) -> bool {
         matches!(
             self,
             Self::PositiveLookbehind { .. } | Self::NegativeLookbehind { .. }
@@ -257,7 +260,8 @@ impl LookaroundCondition {
     /// - Negative lookahead: 20 (higher false positive rate)
     /// - Positive lookbehind: 30 (requires position tracking)
     /// - Negative lookbehind: 40 (position tracking + higher FP rate)
-    pub fn cost_estimate(&self) -> u32 {
+    #[must_use]
+    pub const fn cost_estimate(&self) -> u32 {
         match self {
             Self::PositiveLookahead(_) => 10,
             Self::NegativeLookahead(_) => 20,
@@ -292,9 +296,10 @@ pub struct MultiConditionPattern {
 
 impl MultiConditionPattern {
     /// Create a new multi-condition pattern with conditions sorted by cost.
+    #[must_use]
     pub fn new(primary: RegexpRoot, mut conditions: Vec<LookaroundCondition>) -> Self {
         // Sort conditions by cost estimate (cheapest first) for fast-fail
-        conditions.sort_by_key(|c| c.cost_estimate());
+        conditions.sort_by_key(LookaroundCondition::cost_estimate);
         Self {
             primary,
             conditions,
@@ -516,7 +521,7 @@ fn extract_pattern_fields(
         let path = if prefix.is_empty() {
             key.clone()
         } else {
-            format!("{}{}{}", prefix, SEGMENT_SEPARATOR, key)
+            format!("{prefix}{SEGMENT_SEPARATOR}{key}")
         };
         match value {
             Value::Array(arr) => {
@@ -536,8 +541,7 @@ fn extract_pattern_fields(
             }
             _ => {
                 return Err(QuaminaError::InvalidPattern(format!(
-                    "pattern field '{}' must be array or object",
-                    path
+                    "pattern field '{path}' must be array or object"
                 )));
             }
         }
@@ -705,8 +709,7 @@ fn value_to_matcher(value: &Value) -> Result<Matcher, QuaminaError> {
                                             Ok(t) => t,
                                             Err(e) => {
                                                 return Err(QuaminaError::InvalidPattern(format!(
-                                                    "word boundary expansion failed: {}",
-                                                    e
+                                                    "word boundary expansion failed: {e}"
                                                 )));
                                             }
                                         }
@@ -720,8 +723,7 @@ fn value_to_matcher(value: &Value) -> Result<Matcher, QuaminaError> {
                                             Ok(mc) => return Ok(Matcher::MultiCondition(mc)),
                                             Err(e) => {
                                                 return Err(QuaminaError::InvalidPattern(format!(
-                                                    "lookaround transformation failed: {}",
-                                                    e
+                                                    "lookaround transformation failed: {e}"
                                                 )));
                                             }
                                         }
@@ -746,8 +748,7 @@ fn value_to_matcher(value: &Value) -> Result<Matcher, QuaminaError> {
                                 return Ok(Matcher::Cidr(cidr));
                             }
                             return Err(QuaminaError::InvalidPattern(format!(
-                                "invalid CIDR notation: {}",
-                                s
+                                "invalid CIDR notation: {s}"
                             )));
                         }
                         return Err(QuaminaError::InvalidPattern(
@@ -756,8 +757,7 @@ fn value_to_matcher(value: &Value) -> Result<Matcher, QuaminaError> {
                     }
                     _ => {
                         return Err(QuaminaError::InvalidPattern(format!(
-                            "unknown operator '{}'",
-                            key
+                            "unknown operator '{key}'"
                         )));
                     }
                 }
@@ -819,7 +819,7 @@ fn value_to_string(value: &Value) -> String {
         // String values are wrapped in quotes so the automaton can distinguish
         // them from boolean/null literals and numbers with identical bytes.
         // Event values from the flattener retain JSON quotes for strings.
-        Value::String(s) => format!("\"{}\"", s),
+        Value::String(s) => format!("\"{s}\""),
         Value::Number(n) => n.clone(),
         Value::Bool(b) => b.to_string(),
         Value::Null => "null".to_string(),
@@ -840,7 +840,7 @@ fn validate_wildcard(pattern: &str) -> bool {
             '\\' => {
                 // Must have next char and it must be * or \
                 match chars.next() {
-                    Some('*') | Some('\\') => prev_was_star = false,
+                    Some('*' | '\\') => prev_was_star = false,
                     Some(_) | None => return false, // Invalid escape or trailing backslash
                 }
             }
@@ -872,7 +872,7 @@ struct Parser<'a> {
 }
 
 impl<'a> Parser<'a> {
-    fn new(input: &'a str) -> Self {
+    const fn new(input: &'a str) -> Self {
         Self { input, pos: 0 }
     }
 
@@ -882,10 +882,10 @@ impl<'a> Parser<'a> {
             Some('{') => self.parse_object(),
             Some('[') => self.parse_array(),
             Some('"') => self.parse_string().map(Value::String),
-            Some('t') | Some('f') => self.parse_bool(),
+            Some('t' | 'f') => self.parse_bool(),
             Some('n') => self.parse_null(),
             Some(c) if c == '-' || c.is_ascii_digit() => self.parse_number(),
-            Some(c) => Err(QuaminaError::InvalidJson(format!("unexpected char: {}", c))),
+            Some(c) => Err(QuaminaError::InvalidJson(format!("unexpected char: {c}"))),
             None => Err(QuaminaError::InvalidJson("unexpected end".into())),
         }
     }
@@ -1047,12 +1047,12 @@ impl<'a> Parser<'a> {
         if self.peek() == Some('-') {
             self.advance();
         }
-        while self.peek().map(|c| c.is_ascii_digit()).unwrap_or(false) {
+        while self.peek().is_some_and(|c| c.is_ascii_digit()) {
             self.advance();
         }
         if self.peek() == Some('.') {
             self.advance();
-            while self.peek().map(|c| c.is_ascii_digit()).unwrap_or(false) {
+            while self.peek().is_some_and(|c| c.is_ascii_digit()) {
                 self.advance();
             }
         }
@@ -1062,7 +1062,7 @@ impl<'a> Parser<'a> {
             if self.peek() == Some('+') || self.peek() == Some('-') {
                 self.advance();
             }
-            while self.peek().map(|c| c.is_ascii_digit()).unwrap_or(false) {
+            while self.peek().is_some_and(|c| c.is_ascii_digit()) {
                 self.advance();
             }
         }
@@ -1099,7 +1099,7 @@ impl<'a> Parser<'a> {
         }
     }
     fn skip_whitespace(&mut self) {
-        while self.peek().map(|c| c.is_whitespace()).unwrap_or(false) {
+        while self.peek().is_some_and(char::is_whitespace) {
             self.advance();
         }
     }
@@ -1108,7 +1108,7 @@ impl<'a> Parser<'a> {
             self.advance();
             Ok(())
         } else {
-            Err(QuaminaError::InvalidJson(format!("expected '{}'", c)))
+            Err(QuaminaError::InvalidJson(format!("expected '{c}'")))
         }
     }
 }

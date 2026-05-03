@@ -1084,7 +1084,7 @@ pub static REGEXP_SAMPLES: &[RegexpSample] = &[
     // Sample 147
     RegexpSample {
         regex: "~p{Lo}*",
-        matches: &["א𪘀"],
+        matches: &["א𪘀"],
         nomatches: &["ً"],
         valid: true,
     },
@@ -1309,7 +1309,7 @@ pub static REGEXP_SAMPLES: &[RegexpSample] = &[
     RegexpSample {
         regex: "~P{L}*",
         matches: &["_", "⃝"],
-        nomatches: &["aAbB", "A𝞨aa𝟉ǅǅῼʰʰﾟאא𪘀"],
+        nomatches: &["aAbB", "A𝞨aa𝟉ǅǅῼʰʰﾟאא𪘀"],
         valid: true,
     },
     // Sample 180
@@ -1351,7 +1351,7 @@ pub static REGEXP_SAMPLES: &[RegexpSample] = &[
     RegexpSample {
         regex: "~P{Lo}*",
         matches: &["ً"],
-        nomatches: &["א𪘀"],
+        nomatches: &["א𪘀"],
         valid: true,
     },
     // Sample 186

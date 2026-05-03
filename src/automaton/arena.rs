@@ -46,22 +46,26 @@ impl StateId {
 
     /// Create a `StateId` from an index.
     #[inline]
-    pub fn from_index(index: usize) -> Self {
+    #[must_use]
+    pub const fn from_index(index: usize) -> Self {
         Self(index as u32)
     }
 
     #[inline]
-    pub fn is_none(self) -> bool {
+    #[must_use]
+    pub const fn is_none(self) -> bool {
         self.0 == u32::MAX
     }
 
     #[inline]
-    pub fn is_dead(self) -> bool {
+    #[must_use]
+    pub const fn is_dead(self) -> bool {
         self.0 == u32::MAX - 1
     }
 
     #[inline]
-    pub fn index(self) -> usize {
+    #[must_use]
+    pub const fn index(self) -> usize {
         self.0 as usize
     }
 }
@@ -95,10 +99,12 @@ impl std::fmt::Debug for ArenaFaState {
 }
 
 impl ArenaFaState {
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
+    #[must_use]
     pub fn with_table(table: ArenaSmallTable) -> Self {
         Self {
             table,
@@ -139,6 +145,7 @@ impl Default for ArenaSmallTable {
 
 impl ArenaSmallTable {
     /// Create a new empty table.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             ceilings: smallvec![BYTE_CEILING as u8],
@@ -150,14 +157,13 @@ impl ArenaSmallTable {
     }
 
     /// Create a table with specific byte mappings.
+    #[must_use]
     pub fn with_mappings(default: StateId, bytes: &[u8], targets: &[StateId]) -> Self {
         let mut unpacked = [StateId::NONE; BYTE_CEILING];
 
         // Set default for all
         if !default.is_none() {
-            for slot in unpacked.iter_mut() {
-                *slot = default;
-            }
+            unpacked.fill(default);
         }
 
         // Set specific mappings
@@ -204,6 +210,7 @@ impl ArenaSmallTable {
     /// Get the state for a given byte (deterministic step).
     #[inline(always)]
     #[allow(unsafe_code)]
+    #[must_use]
     pub fn dstep(&self, byte: u8) -> StateId {
         let ceilings = self.ceilings.as_slice();
         for (i, &ceiling) in ceilings.iter().enumerate() {
@@ -218,6 +225,7 @@ impl ArenaSmallTable {
 
     /// Get the state and epsilons for a given byte.
     #[inline]
+    #[must_use]
     pub fn step(&self, byte: u8) -> (StateId, &[StateId]) {
         (self.dstep(byte), &self.epsilons)
     }
@@ -286,7 +294,7 @@ impl std::fmt::Display for ArenaStats {
             self.state_count,
             self.tables_with_transitions,
             if self.tables_with_transitions > 0 {
-                self.total_ceiling_entries as f64 / self.tables_with_transitions as f64
+                f64::from(self.total_ceiling_entries) / f64::from(self.tables_with_transitions)
             } else {
                 0.0
             },
@@ -297,7 +305,7 @@ impl std::fmt::Display for ArenaStats {
             self.states_with_closures,
             self.state_count,
             if self.states_with_closures > 0 {
-                self.total_closure_entries as f64 / self.states_with_closures as f64
+                f64::from(self.total_closure_entries) / f64::from(self.states_with_closures)
             } else {
                 0.0
             },
@@ -311,7 +319,7 @@ impl std::fmt::Display for ArenaStats {
 
 impl ArenaStats {
     /// Accumulate another arena's stats into this aggregate.
-    pub fn add(&mut self, other: &Self) {
+    pub const fn add(&mut self, other: &Self) {
         self.state_count += other.state_count;
         self.tables_with_transitions += other.tables_with_transitions;
         self.total_ceiling_entries += other.total_ceiling_entries;
@@ -363,7 +371,8 @@ impl std::fmt::Debug for StateArena {
 }
 
 impl StateArena {
-    pub fn new() -> Self {
+    #[must_use]
+    pub const fn new() -> Self {
         Self {
             states: Vec::new(),
             closure_data: Vec::new(),
@@ -372,6 +381,7 @@ impl StateArena {
         }
     }
 
+    #[must_use]
     pub fn with_capacity(capacity: usize) -> Self {
         Self {
             states: Vec::with_capacity(capacity),
@@ -382,7 +392,8 @@ impl StateArena {
     }
 
     /// Estimate the byte size of this arena (state vector capacity * per-state size).
-    pub fn estimated_byte_size(&self) -> usize {
+    #[must_use]
+    pub const fn estimated_byte_size(&self) -> usize {
         self.states.capacity() * std::mem::size_of::<ArenaFaState>()
             + self.closure_data.capacity() * std::mem::size_of::<StateId>()
             + self.ft_ptrs.capacity() * std::mem::size_of::<usize>()
@@ -403,6 +414,7 @@ impl StateArena {
     /// Get the epsilon closure for a state as a slice.
     #[inline(always)]
     #[allow(unsafe_code)]
+    #[must_use]
     pub fn closure_of(&self, id: StateId) -> &[StateId] {
         // SAFETY: `id` was returned by `alloc()` on this arena, so `state_unchecked` is valid.
         // `closure_start` and `closure_len` are set by `precompute_epsilon_closures()` to
@@ -421,6 +433,7 @@ impl StateArena {
     /// Only valid after `flatten_tables()` has been called.
     #[inline(always)]
     #[allow(unsafe_code)]
+    #[must_use]
     pub fn ft_ptrs_of(&self, id: StateId) -> &[usize] {
         // SAFETY: `id` was returned by `alloc()` on this arena, so `state_unchecked` is valid.
         // `ft_start` and `ft_len` are set by `flatten_tables()` to valid indices within `ft_ptrs`.
@@ -441,8 +454,12 @@ impl StateArena {
     /// array lookup: O(1). Otherwise falls back to SmallVec linear scan.
     #[inline(always)]
     #[allow(unsafe_code)]
+    #[must_use]
     pub fn dstep(&self, id: StateId, byte: u8) -> StateId {
-        if !self.dfa_lookup.is_empty() {
+        if self.dfa_lookup.is_empty() {
+            // Fallback: flat buffers not populated (mutable path)
+            self.states[id.index()].table.dstep(byte)
+        } else {
             // SAFETY: id.index() < states.len(), byte is 0..255,
             // so id.index() * 256 + byte < states.len() * 256 = dfa_lookup.len()
             unsafe {
@@ -450,9 +467,6 @@ impl StateArena {
                     .dfa_lookup
                     .get_unchecked(id.index() * 256 + byte as usize)
             }
-        } else {
-            // Fallback: flat buffers not populated (mutable path)
-            self.states[id.index()].table.dstep(byte)
         }
     }
 
@@ -484,6 +498,7 @@ impl StateArena {
 
     /// Get a reference to a state by ID.
     #[inline]
+    #[must_use]
     pub fn get(&self, id: StateId) -> Option<&ArenaFaState> {
         if id.is_none() {
             None
@@ -503,16 +518,19 @@ impl StateArena {
     }
 
     /// Number of states in the arena.
-    pub fn len(&self) -> usize {
+    #[must_use]
+    pub const fn len(&self) -> usize {
         self.states.len()
     }
 
     /// Check if arena is empty.
-    pub fn is_empty(&self) -> bool {
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
         self.states.is_empty()
     }
 
     /// Compute statistics about this arena's structure.
+    #[must_use]
     pub fn stats(&self) -> ArenaStats {
         let state_count = self.states.len();
         if state_count == 0 {
@@ -555,7 +573,7 @@ impl StateArena {
 
             if state.closure_len > 0 {
                 states_with_closures += 1;
-                total_closure_entries += state.closure_len as u32;
+                total_closure_entries += u32::from(state.closure_len);
                 if state.closure_len > max_closure_len {
                     max_closure_len = state.closure_len;
                 }
@@ -591,6 +609,7 @@ impl StateArena {
     /// Not all regexp FAs are nondeterministic. This can be detected after
     /// building the FA to allow deterministic regexps to use the faster DFA
     /// traversal path.
+    #[must_use]
     pub fn is_nondeterministic(&self) -> bool {
         self.states
             .iter()
@@ -653,7 +672,7 @@ impl StateArena {
                 }
 
                 debug_assert!(
-                    closure_buf.len() <= u16::MAX as usize,
+                    u16::try_from(closure_buf.len()).is_ok(),
                     "epsilon closure exceeds u16::MAX states"
                 );
                 let len = closure_buf.len() as u16;
@@ -744,6 +763,7 @@ impl StateArena {
     ///
     /// Returns `None` if `state_budget` is exceeded (caller should fall back to NFA).
     /// Inspired by Go quamina's `nfa2Dfa` and the two-tier strategy.
+    #[must_use]
     pub fn nfa_to_dfa(&self, start: StateId, state_budget: usize) -> Option<(Self, StateId)> {
         if start.is_none() || self.states.is_empty() {
             return Some((Self::new(), StateId::NONE));
@@ -1232,10 +1252,12 @@ pub struct ArenaNfaBuffers {
 }
 
 impl ArenaNfaBuffers {
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
+    #[must_use]
     pub fn with_capacity() -> Self {
         Self {
             current_states: Vec::with_capacity(16),
@@ -1331,36 +1353,7 @@ pub fn traverse_arena_nfa(
             ref mut seen_states,
         } = *bufs;
 
-        if !arena.ft_ptrs.is_empty() {
-            // Frozen path: use precomputed flat buffers
-            for &state_id in current_states.iter() {
-                let closure = arena.closure_of(state_id);
-
-                if closure.len() == 1 {
-                    for &ptr in arena.ft_ptrs_of(state_id) {
-                        if seen_transitions.insert(ptr) {
-                            transitions.push(ptr);
-                        }
-                    }
-                    let next = arena.dstep(state_id, byte);
-                    if !next.is_none() {
-                        next_states.push(next);
-                    }
-                } else {
-                    for &ec_state_id in closure {
-                        for &ptr in arena.ft_ptrs_of(ec_state_id) {
-                            if seen_transitions.insert(ptr) {
-                                transitions.push(ptr);
-                            }
-                        }
-                        let next = arena.dstep(ec_state_id, byte);
-                        if !next.is_none() {
-                            next_states.push(next);
-                        }
-                    }
-                }
-            }
-        } else {
+        if arena.ft_ptrs.is_empty() {
             // Mutable/test path: read field_transitions directly
             for &state_id in current_states.iter() {
                 let closure = arena.closure_of(state_id);
@@ -1380,6 +1373,35 @@ pub fn traverse_arena_nfa(
                     for &ec_state_id in closure {
                         for ft in &arena[ec_state_id].field_transitions {
                             let ptr = Arc::as_ptr(ft) as usize;
+                            if seen_transitions.insert(ptr) {
+                                transitions.push(ptr);
+                            }
+                        }
+                        let next = arena.dstep(ec_state_id, byte);
+                        if !next.is_none() {
+                            next_states.push(next);
+                        }
+                    }
+                }
+            }
+        } else {
+            // Frozen path: use precomputed flat buffers
+            for &state_id in current_states.iter() {
+                let closure = arena.closure_of(state_id);
+
+                if closure.len() == 1 {
+                    for &ptr in arena.ft_ptrs_of(state_id) {
+                        if seen_transitions.insert(ptr) {
+                            transitions.push(ptr);
+                        }
+                    }
+                    let next = arena.dstep(state_id, byte);
+                    if !next.is_none() {
+                        next_states.push(next);
+                    }
+                } else {
+                    for &ec_state_id in closure {
+                        for &ptr in arena.ft_ptrs_of(ec_state_id) {
                             if seen_transitions.insert(ptr) {
                                 transitions.push(ptr);
                             }
@@ -1424,27 +1446,8 @@ pub fn traverse_arena_nfa(
         ref mut seen_transitions,
         ..
     } = *bufs;
-    if !arena.ft_ptrs.is_empty() {
-        for &state_id in current_states.iter() {
-            let closure = arena.closure_of(state_id);
-            if closure.len() == 1 {
-                for &ptr in arena.ft_ptrs_of(state_id) {
-                    if seen_transitions.insert(ptr) {
-                        transitions.push(ptr);
-                    }
-                }
-            } else {
-                for &ec_state_id in closure {
-                    for &ptr in arena.ft_ptrs_of(ec_state_id) {
-                        if seen_transitions.insert(ptr) {
-                            transitions.push(ptr);
-                        }
-                    }
-                }
-            }
-        }
-    } else {
-        for &state_id in current_states.iter() {
+    if arena.ft_ptrs.is_empty() {
+        for &state_id in current_states {
             let closure = arena.closure_of(state_id);
             if closure.len() == 1 {
                 for ft in &arena[state_id].field_transitions {
@@ -1457,6 +1460,25 @@ pub fn traverse_arena_nfa(
                 for &ec_state_id in closure {
                     for ft in &arena[ec_state_id].field_transitions {
                         let ptr = Arc::as_ptr(ft) as usize;
+                        if seen_transitions.insert(ptr) {
+                            transitions.push(ptr);
+                        }
+                    }
+                }
+            }
+        }
+    } else {
+        for &state_id in current_states {
+            let closure = arena.closure_of(state_id);
+            if closure.len() == 1 {
+                for &ptr in arena.ft_ptrs_of(state_id) {
+                    if seen_transitions.insert(ptr) {
+                        transitions.push(ptr);
+                    }
+                }
+            } else {
+                for &ec_state_id in closure {
+                    for &ptr in arena.ft_ptrs_of(ec_state_id) {
                         if seen_transitions.insert(ptr) {
                             transitions.push(ptr);
                         }
@@ -1580,13 +1602,13 @@ pub fn traverse_arena_dfa_backward(
         current = next;
 
         // Collect field_transitions (suffix match found at this depth)
-        if !arena.ft_ptrs.is_empty() {
-            for &ptr in arena.ft_ptrs_of(current) {
-                transitions.push(ptr);
-            }
-        } else {
+        if arena.ft_ptrs.is_empty() {
             for ft in &arena[current].field_transitions {
                 transitions.push(Arc::as_ptr(ft) as usize);
+            }
+        } else {
+            for &ptr in arena.ft_ptrs_of(current) {
+                transitions.push(ptr);
             }
         }
     }
@@ -1606,6 +1628,7 @@ pub fn traverse_arena_dfa_backward(
 ///
 /// # Returns
 /// A new arena containing the merged DFA and its start state
+#[must_use]
 pub fn merge_arena_dfas(
     arena1: &StateArena,
     start1: StateId,
@@ -1964,6 +1987,7 @@ fn unpack_arena_table(table: &ArenaSmallTable, unpacked: &mut [StateId; BYTE_CEI
 ///
 /// # Returns
 /// A new arena containing the merged NFA and its start state
+#[must_use]
 pub fn merge_arena_nfas(
     arena1: &StateArena,
     start1: StateId,
@@ -2590,6 +2614,7 @@ fn merge_nfa_tables_bytewise(
 ///
 /// # Returns
 /// A new arena containing the FA and its start state
+#[must_use]
 pub fn make_numeric_less_arena_fa(
     bound: f64,
     inclusive: bool,
@@ -2618,6 +2643,7 @@ pub fn make_numeric_less_arena_fa(
 ///
 /// # Returns
 /// A new arena containing the FA and its start state
+#[must_use]
 pub fn make_numeric_greater_arena_fa(
     bound: f64,
     inclusive: bool,
@@ -2650,6 +2676,7 @@ pub fn make_numeric_greater_arena_fa(
 ///
 /// # Returns
 /// A new arena containing the FA and its start state
+#[must_use]
 pub fn make_numeric_range_arena_fa(
     lower: f64,
     lower_incl: bool,
@@ -2700,10 +2727,9 @@ fn make_less_arena_fa_step(
                 &[match_state],
             ));
             return start;
-        } else {
-            // No match for equal case - return a state with no transitions
-            return arena.alloc();
         }
+        // No match for equal case - return a state with no transitions
+        return arena.alloc();
     }
 
     let bound_byte = bound_q[index];
@@ -2815,10 +2841,9 @@ fn make_range_arena_fa_step(
                 &[ARENA_VALUE_TERMINATOR],
                 &[match_state],
             ));
-        } else {
-            // At least one exclusive - reject equal
-            return arena.alloc();
         }
+        // At least one exclusive - reject equal
+        return arena.alloc();
     }
 
     // Only lower done - we've established input >= lower, now just check upper
@@ -2904,6 +2929,7 @@ fn make_range_arena_fa_step(
 ///
 /// # Returns
 /// A new arena containing the FA and its start state
+#[must_use]
 pub fn make_string_arena_fa(val: &[u8], next_field: Arc<FieldMatcher>) -> (StateArena, StateId) {
     let mut arena = StateArena::new();
 
@@ -2965,10 +2991,7 @@ pub fn insert_string_into_arena(
         };
 
         let next = arena[current].table.dstep(byte);
-        if !next.is_none() {
-            // Transition exists, follow it
-            current = next;
-        } else {
+        if next.is_none() {
             // No transition for this byte — create the remaining chain
             let match_state = arena.alloc();
             arena[match_state].field_transitions.push(field_matcher);
@@ -2992,6 +3015,8 @@ pub fn insert_string_into_arena(
             arena[current].table.set_transition(byte, target);
             return;
         }
+        // Transition exists, follow it
+        current = next;
     }
 
     // Full path already exists — add field transition to the terminal state
@@ -3009,6 +3034,7 @@ pub fn insert_string_into_arena(
 ///
 /// # Returns
 /// A new arena containing the suffix DFA and its start state
+#[must_use]
 pub fn make_suffix_dfa(
     reversed_bytes: &[u8],
     next_field: Arc<FieldMatcher>,
@@ -3047,10 +3073,7 @@ pub fn insert_suffix_into_arena(
 
     for (i, &byte) in reversed_bytes.iter().enumerate() {
         let next = arena[current].table.dstep(byte);
-        if !next.is_none() {
-            // Transition exists, follow it
-            current = next;
-        } else {
+        if next.is_none() {
             // No transition — create the remaining chain
             let match_state = arena.alloc();
             arena[match_state].field_transitions.push(field_matcher);
@@ -3069,6 +3092,8 @@ pub fn insert_suffix_into_arena(
             arena[current].table.set_transition(byte, target);
             return;
         }
+        // Transition exists, follow it
+        current = next;
     }
 
     // Full path already exists — add field transition to the terminal state
@@ -3087,6 +3112,7 @@ pub fn insert_suffix_into_arena(
 ///
 /// # Returns
 /// A new arena containing the FA and its start state
+#[must_use]
 pub fn make_prefix_arena_fa(prefix: &[u8], next_field: Arc<FieldMatcher>) -> (StateArena, StateId) {
     let mut arena = StateArena::new();
 
@@ -3139,6 +3165,7 @@ fn make_prefix_arena_fa_step(
 ///
 /// # Returns
 /// A new arena containing the FA and its start state
+#[must_use]
 pub fn make_shellstyle_arena_fa(
     pattern: &[u8],
     next_field: Arc<FieldMatcher>,
@@ -3242,7 +3269,7 @@ fn build_fa_from_segments(
             ShellstyleSegment::Literal(bytes) => {
                 // When preceded by a wildcard, the first byte was already consumed
                 // as the spinner's escape trigger — skip it here.
-                let byte_start = if skip_first_literal_byte { 1 } else { 0 };
+                let byte_start = usize::from(skip_first_literal_byte);
                 skip_first_literal_byte = false;
 
                 for &ch in &bytes[byte_start..] {
@@ -3328,6 +3355,7 @@ fn make_byte_dot_table(dest: StateId) -> ArenaSmallTable {
 ///
 /// # Returns
 /// A new arena containing the FA and its start state
+#[must_use]
 pub fn make_wildcard_arena_fa(
     pattern: &[u8],
     next_field: Arc<FieldMatcher>,
@@ -3400,6 +3428,7 @@ fn parse_wildcard_segments(pattern: &[u8]) -> Vec<ShellstyleSegment> {
 ///
 /// # Returns
 /// A new arena containing the FA and its start state
+#[must_use]
 pub fn make_anything_but_arena_fa(
     excluded: &[Vec<u8>],
     next_field: Arc<FieldMatcher>,
@@ -3461,7 +3490,7 @@ fn build_anything_but_step(
         if has_continuation && ends_here {
             // Both continues and ends - need combined state
             let continuing_vals = vals_with_bytes_remaining.get(&utf8_byte).unwrap();
-            let owned_vals: Vec<Vec<u8>> = continuing_vals.iter().cloned().cloned().collect();
+            let owned_vals: Vec<Vec<u8>> = continuing_vals.iter().copied().cloned().collect();
 
             // Recurse for continuation
             let continuation = build_anything_but_step(&owned_vals, index + 1, success, arena);
@@ -3481,7 +3510,7 @@ fn build_anything_but_step(
             // Also copy default if continuation has one
             if !arena[continuation].table.default.is_none() {
                 // Fill non-sparse positions with continuation's default
-                for slot in combined_unpacked.iter_mut() {
+                for slot in &mut combined_unpacked {
                     if *slot == success {
                         *slot = arena[continuation].table.default;
                     }
@@ -3497,7 +3526,7 @@ fn build_anything_but_step(
         } else if has_continuation {
             // Only continues
             let continuing_vals = vals_with_bytes_remaining.get(&utf8_byte).unwrap();
-            let owned_vals: Vec<Vec<u8>> = continuing_vals.iter().cloned().cloned().collect();
+            let owned_vals: Vec<Vec<u8>> = continuing_vals.iter().copied().cloned().collect();
             let next_state = build_anything_but_step(&owned_vals, index + 1, success, arena);
             special_mappings.push((utf8_byte, next_state));
         } else if ends_here {
@@ -3537,6 +3566,7 @@ fn build_anything_but_step(
 ///
 /// # Returns
 /// A new arena containing the FA and its start state
+#[must_use]
 pub fn make_monocase_arena_fa(val: &[u8], next_field: Arc<FieldMatcher>) -> (StateArena, StateId) {
     use crate::case_folding::case_fold_char;
 
@@ -3561,8 +3591,7 @@ pub fn make_monocase_arena_fa(val: &[u8], next_field: Arc<FieldMatcher>) -> (Sta
                 let next_offset = s[offset..]
                     .chars()
                     .next()
-                    .map(|c| offset + c.len_utf8())
-                    .unwrap_or(val.len());
+                    .map_or(val.len(), |c| offset + c.len_utf8());
                 let orig = val[offset..next_offset].to_vec();
 
                 let alt = case_fold_char(ch).map(|alt_char| {
@@ -3799,6 +3828,7 @@ fn build_arena_fragment(val: &[u8], end_at: StateId, arena: &mut StateArena) -> 
 ///
 /// # Returns
 /// A new arena containing the FA and its start state
+#[must_use]
 pub fn make_cidr_arena_fa(
     cidr: &crate::json::CidrPattern,
     next_field: Arc<FieldMatcher>,
@@ -3864,7 +3894,7 @@ fn make_ipv4_cidr_arena_fa(
             let mask = !0u8 << (8 - constrained_bits);
             let base = network[octet_idx] & mask;
             let range_size = 1u16 << (8 - constrained_bits);
-            (base, (base as u16 + range_size - 1).min(255) as u8)
+            (base, (u16::from(base) + range_size - 1).min(255) as u8)
         };
 
         // Build FA for this octet range
@@ -3924,7 +3954,7 @@ fn make_ipv6_cidr_arena_fa(
         let group_start_bit = group_idx * 16;
         let group_end_bit = group_start_bit + 16;
 
-        let group_value = ((network[byte_idx] as u16) << 8) | (network[byte_idx + 1] as u16);
+        let group_value = (u16::from(network[byte_idx]) << 8) | u16::from(network[byte_idx + 1]);
 
         let (min_val, max_val) = if prefix_len as usize >= group_end_bit {
             (group_value, group_value)
@@ -3935,7 +3965,7 @@ fn make_ipv6_cidr_arena_fa(
             let mask = !0u16 << (16 - constrained_bits);
             let base = group_value & mask;
             let range_size = 1u32 << (16 - constrained_bits);
-            (base, (base as u32 + range_size - 1).min(0xffff) as u16)
+            (base, (u32::from(base) + range_size - 1).min(0xffff) as u16)
         };
 
         // Build FA for this hex group
@@ -4010,7 +4040,7 @@ fn build_ipv6_group_range_arena_fa(
 
     if min_val == max_val {
         // Single value
-        let val_str = format!("{:x}", min_val);
+        let val_str = format!("{min_val:x}");
         return build_literal_chain_arena(val_str.as_bytes(), continuation, arena);
     }
 
@@ -4019,7 +4049,7 @@ fn build_ipv6_group_range_arena_fa(
     let mut value_starts = Vec::new();
 
     for val in min_val..=max_val {
-        let val_str = format!("{:x}", val);
+        let val_str = format!("{val:x}");
         let val_start = build_literal_chain_arena(val_str.as_bytes(), continuation, arena);
         value_starts.push(val_start);
     }
@@ -4199,9 +4229,7 @@ mod tests {
 
         // exit state (has VALUE_TERMINATOR transition to final)
         let final_state = arena.alloc();
-        arena[final_state]
-            .field_transitions
-            .push(field_matcher.clone());
+        arena[final_state].field_transitions.push(field_matcher);
 
         let exit_state = arena.alloc_with_table(ArenaSmallTable::with_mappings(
             StateId::NONE,
@@ -4276,9 +4304,7 @@ mod tests {
 
         // exit state
         let final_state = arena.alloc();
-        arena[final_state]
-            .field_transitions
-            .push(field_matcher.clone());
+        arena[final_state].field_transitions.push(field_matcher);
 
         let exit_state = arena.alloc_with_table(ArenaSmallTable::with_mappings(
             StateId::NONE,
@@ -4378,9 +4404,7 @@ mod tests {
 
         // Final state (has field_transitions to signal a match)
         let final_state = arena.alloc();
-        arena[final_state]
-            .field_transitions
-            .push(field_matcher.clone());
+        arena[final_state].field_transitions.push(field_matcher);
 
         // Exit state: matches VALUE_TERMINATOR → final
         let exit_state = arena.alloc_with_table(ArenaSmallTable::with_mappings(
@@ -4406,7 +4430,7 @@ mod tests {
         let mut bufs = ArenaNfaBuffers::with_capacity();
 
         // A long input of 'a's — without dedup this would explode exponentially
-        let long_input: Vec<u8> = std::iter::repeat(b'a').take(200).collect();
+        let long_input: Vec<u8> = std::iter::repeat_n(b'a', 200).collect();
         traverse_arena_nfa(&arena, start, &long_input, &mut bufs);
         assert_eq!(bufs.transitions.len(), 1, "Should match the long input");
 
@@ -4441,9 +4465,7 @@ mod tests {
 
         // Create exit/final states
         let final_state = arena.alloc();
-        arena[final_state]
-            .field_transitions
-            .push(field_matcher.clone());
+        arena[final_state].field_transitions.push(field_matcher);
 
         let exit_state = arena.alloc_with_table(ArenaSmallTable::with_mappings(
             StateId::NONE,
@@ -4761,15 +4783,15 @@ mod arena_stats_utility_tests {
         let mut arena = StateArena::new();
         arena.alloc();
         arena.alloc();
-        let dbg = format!("{:?}", arena);
+        let dbg = format!("{arena:?}");
         assert!(dbg.contains("states_count"));
-        assert!(dbg.contains("2")); // 2 states
+        assert!(dbg.contains('2')); // 2 states
     }
 
     #[test]
     fn test_debug_fmt_state() {
         let state = ArenaFaState::new();
-        let dbg = format!("{:?}", state);
+        let dbg = format!("{state:?}");
         assert!(dbg.contains("ArenaFaState"));
         assert!(dbg.contains("field_transitions_count"));
     }
@@ -4906,7 +4928,7 @@ mod merge_tests {
     #[test]
     fn test_merge_one_empty_arena() {
         let fm = Arc::new(FieldMatcher::new());
-        let (arena1, start1) = make_single_byte_arena(b'a', fm.clone());
+        let (arena1, start1) = make_single_byte_arena(b'a', fm);
 
         // Merge with empty arena
         let (merged, start) = merge_arena_dfas(&arena1, start1, &StateArena::new(), StateId::NONE);
@@ -4953,8 +4975,8 @@ mod merge_tests {
         let fm2 = Arc::new(FieldMatcher::new());
 
         // Both arenas match 'a' but with different field matchers
-        let (arena1, start1) = make_single_byte_arena(b'a', fm1.clone());
-        let (arena2, start2) = make_single_byte_arena(b'a', fm2.clone());
+        let (arena1, start1) = make_single_byte_arena(b'a', fm1);
+        let (arena2, start2) = make_single_byte_arena(b'a', fm2);
 
         let (merged, start) = merge_arena_dfas(&arena1, start1, &arena2, start2);
 
@@ -4974,8 +4996,8 @@ mod merge_tests {
         let fm1 = Arc::new(FieldMatcher::with_match_id(100));
         let fm2 = Arc::new(FieldMatcher::with_match_id(200));
 
-        let (arena1, start1) = make_single_byte_arena(b'x', fm1.clone());
-        let (arena2, start2) = make_single_byte_arena(b'y', fm2.clone());
+        let (arena1, start1) = make_single_byte_arena(b'x', fm1);
+        let (arena2, start2) = make_single_byte_arena(b'y', fm2);
 
         let (merged, start) = merge_arena_dfas(&arena1, start1, &arena2, start2);
 
@@ -5006,9 +5028,9 @@ mod merge_tests {
         let fm_b = Arc::new(FieldMatcher::with_match_id(2));
         let fm_c = Arc::new(FieldMatcher::with_match_id(3));
 
-        let (arena_a, start_a) = make_single_byte_arena(b'a', fm_a.clone());
-        let (arena_b, start_b) = make_single_byte_arena(b'b', fm_b.clone());
-        let (arena_c, start_c) = make_single_byte_arena(b'c', fm_c.clone());
+        let (arena_a, start_a) = make_single_byte_arena(b'a', fm_a);
+        let (arena_b, start_b) = make_single_byte_arena(b'b', fm_b);
+        let (arena_c, start_c) = make_single_byte_arena(b'c', fm_c);
 
         // (A merge B) merge C
         let (ab, ab_start) = merge_arena_dfas(&arena_a, start_a, &arena_b, start_b);
@@ -5053,7 +5075,7 @@ mod merge_tests {
         let (arena1, start1) = {
             let mut arena = StateArena::new();
             let end = arena.alloc();
-            arena[end].field_transitions.push(fm1.clone());
+            arena[end].field_transitions.push(fm1);
 
             let term = arena.alloc_with_table(ArenaSmallTable::with_mappings(
                 StateId::NONE,
@@ -5080,7 +5102,7 @@ mod merge_tests {
         let (arena2, start2) = {
             let mut arena = StateArena::new();
             let end = arena.alloc();
-            arena[end].field_transitions.push(fm2.clone());
+            arena[end].field_transitions.push(fm2);
 
             let term = arena.alloc_with_table(ArenaSmallTable::with_mappings(
                 StateId::NONE,
@@ -5153,7 +5175,7 @@ mod numeric_arena_tests {
     #[test]
     fn test_numeric_less_arena_fa_basic() {
         let next_field = Arc::new(FieldMatcher::new());
-        let (arena, start) = make_numeric_less_arena_fa(100.0, true, next_field.clone());
+        let (arena, start) = make_numeric_less_arena_fa(100.0, true, next_field);
 
         // Q-numbers for testing
         let q50 = q_num_from_f64(50.0);
@@ -5190,7 +5212,7 @@ mod numeric_arena_tests {
     #[test]
     fn test_numeric_less_arena_fa_exclusive() {
         let next_field = Arc::new(FieldMatcher::new());
-        let (arena, start) = make_numeric_less_arena_fa(100.0, false, next_field.clone());
+        let (arena, start) = make_numeric_less_arena_fa(100.0, false, next_field);
 
         let q99 = q_num_from_f64(99.0);
         let q100 = q_num_from_f64(100.0);
@@ -5208,7 +5230,7 @@ mod numeric_arena_tests {
     #[test]
     fn test_numeric_greater_arena_fa_basic() {
         let next_field = Arc::new(FieldMatcher::new());
-        let (arena, start) = make_numeric_greater_arena_fa(100.0, true, next_field.clone());
+        let (arena, start) = make_numeric_greater_arena_fa(100.0, true, next_field);
 
         let q50 = q_num_from_f64(50.0);
         let q100 = q_num_from_f64(100.0);
@@ -5236,7 +5258,7 @@ mod numeric_arena_tests {
     #[test]
     fn test_numeric_greater_arena_fa_exclusive() {
         let next_field = Arc::new(FieldMatcher::new());
-        let (arena, start) = make_numeric_greater_arena_fa(100.0, false, next_field.clone());
+        let (arena, start) = make_numeric_greater_arena_fa(100.0, false, next_field);
 
         let q100 = q_num_from_f64(100.0);
         let q101 = q_num_from_f64(101.0);
@@ -5258,8 +5280,7 @@ mod numeric_arena_tests {
     fn test_numeric_range_arena_fa_two_sided() {
         let next_field = Arc::new(FieldMatcher::new());
         // Range: 50 <= x <= 150
-        let (arena, start) =
-            make_numeric_range_arena_fa(50.0, true, 150.0, true, next_field.clone());
+        let (arena, start) = make_numeric_range_arena_fa(50.0, true, 150.0, true, next_field);
 
         let q25 = q_num_from_f64(25.0);
         let q50 = q_num_from_f64(50.0);
@@ -5302,8 +5323,7 @@ mod numeric_arena_tests {
     fn test_numeric_range_arena_fa_exclusive_bounds() {
         let next_field = Arc::new(FieldMatcher::new());
         // Range: 50 < x < 150 (exclusive both sides)
-        let (arena, start) =
-            make_numeric_range_arena_fa(50.0, false, 150.0, false, next_field.clone());
+        let (arena, start) = make_numeric_range_arena_fa(50.0, false, 150.0, false, next_field);
 
         let q50 = q_num_from_f64(50.0);
         let q51 = q_num_from_f64(51.0);
@@ -5353,7 +5373,7 @@ mod numeric_arena_tests {
         );
 
         // Test with negative bound
-        let (arena2, start2) = make_numeric_greater_arena_fa(-100.0, true, next_field.clone());
+        let (arena2, start2) = make_numeric_greater_arena_fa(-100.0, true, next_field);
         let q_neg50 = q_num_from_f64(-50.0);
         let q_neg100 = q_num_from_f64(-100.0);
         let q_neg150 = q_num_from_f64(-150.0);
@@ -5377,7 +5397,7 @@ mod numeric_arena_tests {
         let next_field = Arc::new(FieldMatcher::new());
 
         // Range: 1.5 <= x <= 2.5
-        let (arena, start) = make_numeric_range_arena_fa(1.5, true, 2.5, true, next_field.clone());
+        let (arena, start) = make_numeric_range_arena_fa(1.5, true, 2.5, true, next_field);
 
         let q1 = q_num_from_f64(1.0);
         let q1_5 = q_num_from_f64(1.5);
@@ -5414,10 +5434,10 @@ mod numeric_arena_tests {
         let fm2 = Arc::new(FieldMatcher::with_match_id(2));
 
         // FA1: x < 50
-        let (arena1, start1) = make_numeric_less_arena_fa(50.0, false, fm1.clone());
+        let (arena1, start1) = make_numeric_less_arena_fa(50.0, false, fm1);
 
         // FA2: x > 100
-        let (arena2, start2) = make_numeric_greater_arena_fa(100.0, false, fm2.clone());
+        let (arena2, start2) = make_numeric_greater_arena_fa(100.0, false, fm2);
 
         // Merge: should match x < 50 OR x > 100
         let (merged, merged_start) = merge_arena_dfas(&arena1, start1, &arena2, start2);
@@ -5476,36 +5496,30 @@ mod numeric_arena_tests {
                 if val < bound {
                     assert!(
                         matches_less,
-                        "{} should match < {} (Q-number ordering)",
-                        val, bound
+                        "{val} should match < {bound} (Q-number ordering)"
                     );
                     assert!(
                         !matches_greater,
-                        "{} should NOT match > {} (Q-number ordering)",
-                        val, bound
+                        "{val} should NOT match > {bound} (Q-number ordering)"
                     );
                 } else if val > bound {
                     assert!(
                         !matches_less,
-                        "{} should NOT match < {} (Q-number ordering)",
-                        val, bound
+                        "{val} should NOT match < {bound} (Q-number ordering)"
                     );
                     assert!(
                         matches_greater,
-                        "{} should match > {} (Q-number ordering)",
-                        val, bound
+                        "{val} should match > {bound} (Q-number ordering)"
                     );
                 } else {
                     // val == bound, exclusive should not match
                     assert!(
                         !matches_less,
-                        "{} should NOT match < {} (exclusive)",
-                        val, bound
+                        "{val} should NOT match < {bound} (exclusive)"
                     );
                     assert!(
                         !matches_greater,
-                        "{} should NOT match > {} (exclusive)",
-                        val, bound
+                        "{val} should NOT match > {bound} (exclusive)"
                     );
                 }
             }
@@ -5663,14 +5677,14 @@ mod nfa_merge_tests {
     fn test_merge_arena_with_epsilons() {
         // Arena 1: matches "a" OR "b" via epsilon branching
         let fm1 = Arc::new(FieldMatcher::with_match_id(1));
-        let (arena1, start1) = make_epsilon_alternation_arena(&[b"a", b"b"], fm1.clone());
+        let (arena1, start1) = make_epsilon_alternation_arena(&[b"a", b"b"], fm1);
 
         // Arena 2: matches "c" (simple, no epsilons)
         let fm2 = Arc::new(FieldMatcher::with_match_id(2));
         let (arena2, start2) = {
             let mut arena = StateArena::new();
             let end = arena.alloc();
-            arena[end].field_transitions.push(fm2.clone());
+            arena[end].field_transitions.push(fm2);
             let term = arena.alloc_with_table(ArenaSmallTable::with_mappings(
                 StateId::NONE,
                 &[ARENA_VALUE_TERMINATOR],
@@ -5710,11 +5724,11 @@ mod nfa_merge_tests {
     fn test_merge_arena_with_spinout() {
         // Arena 1: matches "a*b" (wildcard pattern)
         let fm1 = Arc::new(FieldMatcher::with_match_id(1));
-        let (arena1, start1) = make_spinout_arena(b"a", b"b", fm1.clone());
+        let (arena1, start1) = make_spinout_arena(b"a", b"b", fm1);
 
         // Arena 2: matches "x*y" (another wildcard pattern)
         let fm2 = Arc::new(FieldMatcher::with_match_id(2));
-        let (arena2, start2) = make_spinout_arena(b"x", b"y", fm2.clone());
+        let (arena2, start2) = make_spinout_arena(b"x", b"y", fm2);
 
         // Merge
         let (merged, merged_start) = merge_arena_nfas(&arena1, start1, &arena2, start2);
@@ -5752,10 +5766,10 @@ mod nfa_merge_tests {
         let fm2 = Arc::new(FieldMatcher::with_match_id(2));
 
         // Arena 1: matches "foo*" (prefix with wildcard)
-        let (arena1, start1) = make_spinout_arena(b"foo", b"", fm1.clone());
+        let (arena1, start1) = make_spinout_arena(b"foo", b"", fm1);
 
         // Arena 2: matches "*bar" (wildcard with suffix)
-        let (arena2, start2) = make_spinout_arena(b"", b"bar", fm2.clone());
+        let (arena2, start2) = make_spinout_arena(b"", b"bar", fm2);
 
         // Merge
         let (merged, merged_start) = merge_arena_nfas(&arena1, start1, &arena2, start2);
@@ -5793,7 +5807,7 @@ mod nfa_merge_tests {
 
             // Match state
             let match_state = arena.alloc();
-            arena[match_state].field_transitions.push(fm1.clone());
+            arena[match_state].field_transitions.push(fm1);
 
             // Terminal state
             let term_state = arena.alloc_with_table(ArenaSmallTable::with_mappings(
@@ -5823,7 +5837,7 @@ mod nfa_merge_tests {
         let (arena2, start2) = {
             let mut arena = StateArena::new();
             let end = arena.alloc();
-            arena[end].field_transitions.push(fm2.clone());
+            arena[end].field_transitions.push(fm2);
             let term = arena.alloc_with_table(ArenaSmallTable::with_mappings(
                 StateId::NONE,
                 &[ARENA_VALUE_TERMINATOR],
@@ -5900,7 +5914,7 @@ mod nfa_merge_tests {
 
             // Match state
             let match_state = arena.alloc();
-            arena[match_state].field_transitions.push(fm1.clone());
+            arena[match_state].field_transitions.push(fm1);
 
             // Terminal state
             let term_state = arena.alloc_with_table(ArenaSmallTable::with_mappings(
@@ -5944,7 +5958,7 @@ mod nfa_merge_tests {
             let mut arena = StateArena::new();
 
             let match_state = arena.alloc();
-            arena[match_state].field_transitions.push(fm2.clone());
+            arena[match_state].field_transitions.push(fm2);
 
             let term_state = arena.alloc_with_table(ArenaSmallTable::with_mappings(
                 StateId::NONE,
@@ -6026,7 +6040,7 @@ mod nfa_merge_tests {
     #[test]
     fn test_merge_arena_nfas_empty_cases() {
         let fm = Arc::new(FieldMatcher::new());
-        let (arena1, start1) = make_epsilon_alternation_arena(&[b"a"], fm.clone());
+        let (arena1, start1) = make_epsilon_alternation_arena(&[b"a"], fm);
 
         // Merge with empty arena
         let (merged, merged_start) =
@@ -6071,7 +6085,7 @@ mod nfa_merge_tests {
         let (a1, s1) = make_epsilon_alternation_arena(&[b"a"], fm.clone());
         let (a2, s2) = make_epsilon_alternation_arena(&[b"b"], fm.clone());
         let (a3, s3) = make_epsilon_alternation_arena(&[b"c"], fm.clone());
-        let (a4, s4) = make_epsilon_alternation_arena(&[b"d"], fm.clone());
+        let (a4, s4) = make_epsilon_alternation_arena(&[b"d"], fm);
 
         // Merge them one by one (simulates adding patterns sequentially)
         let (m12, s12) = merge_arena_nfas(&a1, s1, &a2, s2);
@@ -6117,7 +6131,7 @@ mod string_arena_tests {
     #[test]
     fn test_string_arena_fa_basic() {
         let fm = Arc::new(FieldMatcher::with_match_id(1));
-        let (arena, start) = make_string_arena_fa(b"hello", fm.clone());
+        let (arena, start) = make_string_arena_fa(b"hello", fm);
 
         // Should match exact string
         assert!(
@@ -6153,7 +6167,7 @@ mod string_arena_tests {
     #[test]
     fn test_string_arena_fa_empty_string() {
         let fm = Arc::new(FieldMatcher::with_match_id(1));
-        let (arena, start) = make_string_arena_fa(b"", fm.clone());
+        let (arena, start) = make_string_arena_fa(b"", fm);
 
         // Should match empty string
         assert!(
@@ -6168,7 +6182,7 @@ mod string_arena_tests {
     #[test]
     fn test_string_arena_fa_single_char() {
         let fm = Arc::new(FieldMatcher::with_match_id(1));
-        let (arena, start) = make_string_arena_fa(b"x", fm.clone());
+        let (arena, start) = make_string_arena_fa(b"x", fm);
 
         // Should match single character
         assert!(matches_value(&arena, start, b"x"), "Should match 'x'");
@@ -6186,7 +6200,7 @@ mod string_arena_tests {
     #[test]
     fn test_string_arena_fa_utf8() {
         let fm = Arc::new(FieldMatcher::with_match_id(1));
-        let (arena, start) = make_string_arena_fa("café".as_bytes(), fm.clone());
+        let (arena, start) = make_string_arena_fa("café".as_bytes(), fm);
 
         // Should match UTF-8 string
         assert!(
@@ -6206,8 +6220,8 @@ mod string_arena_tests {
         let fm1 = Arc::new(FieldMatcher::with_match_id(1));
         let fm2 = Arc::new(FieldMatcher::with_match_id(2));
 
-        let (arena1, start1) = make_string_arena_fa(b"foo", fm1.clone());
-        let (arena2, start2) = make_string_arena_fa(b"bar", fm2.clone());
+        let (arena1, start1) = make_string_arena_fa(b"foo", fm1);
+        let (arena2, start2) = make_string_arena_fa(b"bar", fm2);
 
         let (merged, merged_start) = merge_arena_dfas(&arena1, start1, &arena2, start2);
 
@@ -6233,8 +6247,8 @@ mod string_arena_tests {
         let fm1 = Arc::new(FieldMatcher::with_match_id(1));
         let fm2 = Arc::new(FieldMatcher::with_match_id(2));
 
-        let (arena1, start1) = make_string_arena_fa(b"prefix_one", fm1.clone());
-        let (arena2, start2) = make_string_arena_fa(b"prefix_two", fm2.clone());
+        let (arena1, start1) = make_string_arena_fa(b"prefix_one", fm1);
+        let (arena2, start2) = make_string_arena_fa(b"prefix_two", fm2);
 
         let (merged, merged_start) = merge_arena_dfas(&arena1, start1, &arena2, start2);
 
@@ -6274,7 +6288,7 @@ mod prefix_arena_tests {
     #[test]
     fn test_prefix_arena_fa_basic() {
         let fm = Arc::new(FieldMatcher::with_match_id(1));
-        let (arena, start) = make_prefix_arena_fa(b"hello", fm.clone());
+        let (arena, start) = make_prefix_arena_fa(b"hello", fm);
 
         // Should match exact prefix
         assert!(
@@ -6316,7 +6330,7 @@ mod prefix_arena_tests {
     #[test]
     fn test_prefix_arena_fa_empty_prefix() {
         let fm = Arc::new(FieldMatcher::with_match_id(1));
-        let (arena, start) = make_prefix_arena_fa(b"", fm.clone());
+        let (arena, start) = make_prefix_arena_fa(b"", fm);
 
         // Empty prefix should match everything
         assert!(
@@ -6336,7 +6350,7 @@ mod prefix_arena_tests {
     #[test]
     fn test_prefix_arena_fa_single_char() {
         let fm = Arc::new(FieldMatcher::with_match_id(1));
-        let (arena, start) = make_prefix_arena_fa(b"a", fm.clone());
+        let (arena, start) = make_prefix_arena_fa(b"a", fm);
 
         // Should match strings starting with 'a'
         assert!(matches_value(&arena, start, b"a"), "Should match 'a'");
@@ -6353,7 +6367,7 @@ mod prefix_arena_tests {
     #[test]
     fn test_prefix_arena_fa_utf8() {
         let fm = Arc::new(FieldMatcher::with_match_id(1));
-        let (arena, start) = make_prefix_arena_fa("caf".as_bytes(), fm.clone());
+        let (arena, start) = make_prefix_arena_fa(b"caf", fm);
 
         // Should match strings with UTF-8 prefix
         assert!(
@@ -6361,13 +6375,13 @@ mod prefix_arena_tests {
             "Should match 'café'"
         );
         assert!(
-            matches_value(&arena, start, "cafeteria".as_bytes()),
+            matches_value(&arena, start, b"cafeteria"),
             "Should match 'cafeteria'"
         );
 
         // Should NOT match non-prefix
         assert!(
-            !matches_value(&arena, start, "ca".as_bytes()),
+            !matches_value(&arena, start, b"ca"),
             "Should NOT match 'ca'"
         );
     }
@@ -6377,8 +6391,8 @@ mod prefix_arena_tests {
         let fm1 = Arc::new(FieldMatcher::with_match_id(1));
         let fm2 = Arc::new(FieldMatcher::with_match_id(2));
 
-        let (arena1, start1) = make_prefix_arena_fa(b"foo", fm1.clone());
-        let (arena2, start2) = make_prefix_arena_fa(b"bar", fm2.clone());
+        let (arena1, start1) = make_prefix_arena_fa(b"foo", fm1);
+        let (arena2, start2) = make_prefix_arena_fa(b"bar", fm2);
 
         let (merged, merged_start) = merge_arena_dfas(&arena1, start1, &arena2, start2);
 
@@ -6423,7 +6437,7 @@ mod shellstyle_arena_tests {
     fn test_shellstyle_arena_fa_prefix_wildcard() {
         // Pattern: "foo*" - matches "foo" followed by anything
         let fm = Arc::new(FieldMatcher::with_match_id(1));
-        let (arena, start) = make_shellstyle_arena_fa(b"foo*", fm.clone());
+        let (arena, start) = make_shellstyle_arena_fa(b"foo*", fm);
 
         assert!(matches_value(&arena, start, b"foo"), "Should match 'foo'");
         assert!(
@@ -6448,7 +6462,7 @@ mod shellstyle_arena_tests {
     fn test_shellstyle_arena_fa_suffix_wildcard() {
         // Pattern: "*bar" - matches anything followed by "bar"
         let fm = Arc::new(FieldMatcher::with_match_id(1));
-        let (arena, start) = make_shellstyle_arena_fa(b"*bar", fm.clone());
+        let (arena, start) = make_shellstyle_arena_fa(b"*bar", fm);
 
         assert!(matches_value(&arena, start, b"bar"), "Should match 'bar'");
         assert!(
@@ -6473,7 +6487,7 @@ mod shellstyle_arena_tests {
     fn test_shellstyle_arena_fa_infix_wildcard() {
         // Pattern: "foo*bar" - matches "foo" then anything then "bar"
         let fm = Arc::new(FieldMatcher::with_match_id(1));
-        let (arena, start) = make_shellstyle_arena_fa(b"foo*bar", fm.clone());
+        let (arena, start) = make_shellstyle_arena_fa(b"foo*bar", fm);
 
         assert!(
             matches_value(&arena, start, b"foobar"),
@@ -6505,7 +6519,7 @@ mod shellstyle_arena_tests {
     fn test_shellstyle_arena_fa_no_wildcard() {
         // Pattern without wildcard should match exactly
         let fm = Arc::new(FieldMatcher::with_match_id(1));
-        let (arena, start) = make_shellstyle_arena_fa(b"hello", fm.clone());
+        let (arena, start) = make_shellstyle_arena_fa(b"hello", fm);
 
         assert!(
             matches_value(&arena, start, b"hello"),
@@ -6525,7 +6539,7 @@ mod shellstyle_arena_tests {
     fn test_shellstyle_arena_fa_only_wildcard() {
         // Pattern: "*" - matches anything
         let fm = Arc::new(FieldMatcher::with_match_id(1));
-        let (arena, start) = make_shellstyle_arena_fa(b"*", fm.clone());
+        let (arena, start) = make_shellstyle_arena_fa(b"*", fm);
 
         assert!(matches_value(&arena, start, b""), "Should match empty");
         assert!(
@@ -6542,7 +6556,7 @@ mod shellstyle_arena_tests {
     fn test_shellstyle_arena_fa_double_wildcard() {
         // Pattern: "*foo*" - matches anything containing "foo"
         let fm = Arc::new(FieldMatcher::with_match_id(1));
-        let (arena, start) = make_shellstyle_arena_fa(b"*foo*", fm.clone());
+        let (arena, start) = make_shellstyle_arena_fa(b"*foo*", fm);
 
         assert!(matches_value(&arena, start, b"foo"), "Should match 'foo'");
         assert!(
@@ -6579,7 +6593,7 @@ mod shellstyle_arena_tests {
     fn test_shellstyle_arena_fa_foo_bar_multi_star() {
         // Pattern: "*foo*bar*" — from Go PR #500 commit 137fe99
         let fm = Arc::new(FieldMatcher::with_match_id(1));
-        let (arena, start) = make_shellstyle_arena_fa(b"*foo*bar*", fm.clone());
+        let (arena, start) = make_shellstyle_arena_fa(b"*foo*bar*", fm);
 
         assert!(matches_value(&arena, start, b"foobar"));
         assert!(matches_value(&arena, start, b"xfooybar"));
@@ -6595,7 +6609,7 @@ mod shellstyle_arena_tests {
     fn test_shellstyle_arena_fa_five_star() {
         // Pattern: "*a*b*c*d*e*" — from Go PR #500 commit 137fe99
         let fm = Arc::new(FieldMatcher::with_match_id(1));
-        let (arena, start) = make_shellstyle_arena_fa(b"*a*b*c*d*e*", fm.clone());
+        let (arena, start) = make_shellstyle_arena_fa(b"*a*b*c*d*e*", fm);
 
         assert!(matches_value(&arena, start, b"abcde"));
         assert!(matches_value(&arena, start, b"xaxbxcxdxex"));
@@ -6609,7 +6623,7 @@ mod shellstyle_arena_tests {
     fn test_shellstyle_arena_fa_eight_star() {
         // Pattern: "*a*b*c*d*e*f*g*h*" — from Go PR #500 commit 137fe99
         let fm = Arc::new(FieldMatcher::with_match_id(1));
-        let (arena, start) = make_shellstyle_arena_fa(b"*a*b*c*d*e*f*g*h*", fm.clone());
+        let (arena, start) = make_shellstyle_arena_fa(b"*a*b*c*d*e*f*g*h*", fm);
 
         assert!(matches_value(&arena, start, b"abcdefgh"));
         assert!(matches_value(&arena, start, b"xaxbxcxdxexfxgxhx"));
@@ -6622,8 +6636,8 @@ mod shellstyle_arena_tests {
         let fm1 = Arc::new(FieldMatcher::with_match_id(1));
         let fm2 = Arc::new(FieldMatcher::with_match_id(2));
 
-        let (arena1, start1) = make_shellstyle_arena_fa(b"foo*", fm1.clone());
-        let (arena2, start2) = make_shellstyle_arena_fa(b"*bar", fm2.clone());
+        let (arena1, start1) = make_shellstyle_arena_fa(b"foo*", fm1);
+        let (arena2, start2) = make_shellstyle_arena_fa(b"*bar", fm2);
 
         let (merged, merged_start) = merge_arena_nfas(&arena1, start1, &arena2, start2);
 
@@ -6665,7 +6679,7 @@ mod wildcard_arena_tests {
     fn test_wildcard_arena_fa_basic() {
         // Same as shellstyle for basic patterns
         let fm = Arc::new(FieldMatcher::with_match_id(1));
-        let (arena, start) = make_wildcard_arena_fa(b"foo*bar", fm.clone());
+        let (arena, start) = make_wildcard_arena_fa(b"foo*bar", fm);
 
         assert!(
             matches_value(&arena, start, b"foobar"),
@@ -6685,7 +6699,7 @@ mod wildcard_arena_tests {
     fn test_wildcard_arena_fa_escape_star() {
         // Pattern: "foo\*bar" - matches literal "foo*bar"
         let fm = Arc::new(FieldMatcher::with_match_id(1));
-        let (arena, start) = make_wildcard_arena_fa(b"foo\\*bar", fm.clone());
+        let (arena, start) = make_wildcard_arena_fa(b"foo\\*bar", fm);
 
         assert!(
             matches_value(&arena, start, b"foo*bar"),
@@ -6705,7 +6719,7 @@ mod wildcard_arena_tests {
     fn test_wildcard_arena_fa_escape_backslash() {
         // Pattern: "foo\\bar" - matches "foo\bar"
         let fm = Arc::new(FieldMatcher::with_match_id(1));
-        let (arena, start) = make_wildcard_arena_fa(b"foo\\\\bar", fm.clone());
+        let (arena, start) = make_wildcard_arena_fa(b"foo\\\\bar", fm);
 
         assert!(
             matches_value(&arena, start, b"foo\\bar"),
@@ -6721,7 +6735,7 @@ mod wildcard_arena_tests {
     fn test_wildcard_arena_fa_escape_with_wildcard() {
         // Pattern: "foo\\*bar" - matches "foo\" followed by anything then "bar"
         let fm = Arc::new(FieldMatcher::with_match_id(1));
-        let (arena, start) = make_wildcard_arena_fa(b"foo\\\\*bar", fm.clone());
+        let (arena, start) = make_wildcard_arena_fa(b"foo\\\\*bar", fm);
 
         assert!(
             matches_value(&arena, start, b"foo\\bar"),
@@ -6741,7 +6755,7 @@ mod wildcard_arena_tests {
     fn test_wildcard_arena_fa_star_at_end_with_escape() {
         // Pattern: "foo\**" - matches "foo*" followed by anything
         let fm = Arc::new(FieldMatcher::with_match_id(1));
-        let (arena, start) = make_wildcard_arena_fa(b"foo\\**", fm.clone());
+        let (arena, start) = make_wildcard_arena_fa(b"foo\\**", fm);
 
         assert!(matches_value(&arena, start, b"foo*"), "Should match 'foo*'");
         assert!(
@@ -6762,7 +6776,7 @@ mod wildcard_arena_tests {
     fn test_wildcard_arena_fa_no_escape() {
         // Pattern without escape - same as shellstyle
         let fm = Arc::new(FieldMatcher::with_match_id(1));
-        let (arena, start) = make_wildcard_arena_fa(b"hello", fm.clone());
+        let (arena, start) = make_wildcard_arena_fa(b"hello", fm);
 
         assert!(
             matches_value(&arena, start, b"hello"),
@@ -6779,8 +6793,8 @@ mod wildcard_arena_tests {
         let fm1 = Arc::new(FieldMatcher::with_match_id(1));
         let fm2 = Arc::new(FieldMatcher::with_match_id(2));
 
-        let (arena1, start1) = make_wildcard_arena_fa(b"foo\\*", fm1.clone());
-        let (arena2, start2) = make_wildcard_arena_fa(b"bar*", fm2.clone());
+        let (arena1, start1) = make_wildcard_arena_fa(b"foo\\*", fm1);
+        let (arena2, start2) = make_wildcard_arena_fa(b"bar*", fm2);
 
         let (merged, merged_start) = merge_arena_nfas(&arena1, start1, &arena2, start2);
 
@@ -6817,7 +6831,7 @@ mod anything_but_arena_tests {
     fn test_anything_but_arena_fa_single_value() {
         let fm = Arc::new(FieldMatcher::with_match_id(1));
         let excluded = vec![b"foo".to_vec()];
-        let (arena, start) = make_anything_but_arena_fa(&excluded, fm.clone());
+        let (arena, start) = make_anything_but_arena_fa(&excluded, fm);
 
         // Should NOT match excluded value
         assert!(
@@ -6839,7 +6853,7 @@ mod anything_but_arena_tests {
     fn test_anything_but_arena_fa_multiple_values() {
         let fm = Arc::new(FieldMatcher::with_match_id(1));
         let excluded = vec![b"foo".to_vec(), b"bar".to_vec()];
-        let (arena, start) = make_anything_but_arena_fa(&excluded, fm.clone());
+        let (arena, start) = make_anything_but_arena_fa(&excluded, fm);
 
         // Should NOT match excluded values
         assert!(
@@ -6863,7 +6877,7 @@ mod anything_but_arena_tests {
     fn test_anything_but_arena_fa_common_prefix() {
         let fm = Arc::new(FieldMatcher::with_match_id(1));
         let excluded = vec![b"foo".to_vec(), b"foobar".to_vec()];
-        let (arena, start) = make_anything_but_arena_fa(&excluded, fm.clone());
+        let (arena, start) = make_anything_but_arena_fa(&excluded, fm);
 
         // Should NOT match excluded values
         assert!(
@@ -6888,7 +6902,7 @@ mod anything_but_arena_tests {
     fn test_anything_but_arena_fa_empty_excluded() {
         let fm = Arc::new(FieldMatcher::with_match_id(1));
         let excluded: Vec<Vec<u8>> = vec![];
-        let (arena, start) = make_anything_but_arena_fa(&excluded, fm.clone());
+        let (arena, start) = make_anything_but_arena_fa(&excluded, fm);
 
         // Should match everything
         assert!(
@@ -6903,8 +6917,8 @@ mod anything_but_arena_tests {
         let fm1 = Arc::new(FieldMatcher::with_match_id(1));
         let fm2 = Arc::new(FieldMatcher::with_match_id(2));
 
-        let (arena1, start1) = make_anything_but_arena_fa(&[b"foo".to_vec()], fm1.clone());
-        let (arena2, start2) = make_string_arena_fa(b"bar", fm2.clone());
+        let (arena1, start1) = make_anything_but_arena_fa(&[b"foo".to_vec()], fm1);
+        let (arena2, start2) = make_string_arena_fa(b"bar", fm2);
 
         let (merged, merged_start) = merge_arena_nfas(&arena1, start1, &arena2, start2);
 
@@ -6942,7 +6956,7 @@ mod monocase_arena_tests {
     #[test]
     fn test_monocase_arena_fa_single_char() {
         let fm = Arc::new(FieldMatcher::with_match_id(1));
-        let (arena, start) = make_monocase_arena_fa(b"A", fm.clone());
+        let (arena, start) = make_monocase_arena_fa(b"A", fm);
 
         // Should match 'A'
         assert!(matches_value(&arena, start, b"A"), "Should match 'A'");
@@ -6955,7 +6969,7 @@ mod monocase_arena_tests {
     #[test]
     fn test_monocase_arena_fa_two_chars() {
         let fm = Arc::new(FieldMatcher::with_match_id(1));
-        let (arena, start) = make_monocase_arena_fa(b"Ab", fm.clone());
+        let (arena, start) = make_monocase_arena_fa(b"Ab", fm);
 
         // Should match all case variants
         assert!(matches_value(&arena, start, b"Ab"), "Should match 'Ab'");
@@ -6972,7 +6986,7 @@ mod monocase_arena_tests {
     #[test]
     fn test_monocase_arena_fa_three_chars() {
         let fm = Arc::new(FieldMatcher::with_match_id(1));
-        let (arena, start) = make_monocase_arena_fa(b"cat", fm.clone());
+        let (arena, start) = make_monocase_arena_fa(b"cat", fm);
 
         // Should match all case variants
         assert!(matches_value(&arena, start, b"cat"), "Should match 'cat'");
@@ -6983,7 +6997,7 @@ mod monocase_arena_tests {
     #[test]
     fn test_monocase_arena_fa_basic_ascii() {
         let fm = Arc::new(FieldMatcher::with_match_id(1));
-        let (arena, start) = make_monocase_arena_fa(b"Hello", fm.clone());
+        let (arena, start) = make_monocase_arena_fa(b"Hello", fm);
 
         // Should match original case
         assert!(
@@ -7019,7 +7033,7 @@ mod monocase_arena_tests {
     #[test]
     fn test_monocase_arena_fa_empty() {
         let fm = Arc::new(FieldMatcher::with_match_id(1));
-        let (arena, start) = make_monocase_arena_fa(b"", fm.clone());
+        let (arena, start) = make_monocase_arena_fa(b"", fm);
 
         // Empty should match empty
         assert!(matches_value(&arena, start, b""), "Should match empty");
@@ -7032,7 +7046,7 @@ mod monocase_arena_tests {
     fn test_monocase_arena_fa_no_case_chars() {
         // Pattern with no case-sensitive chars
         let fm = Arc::new(FieldMatcher::with_match_id(1));
-        let (arena, start) = make_monocase_arena_fa(b"123", fm.clone());
+        let (arena, start) = make_monocase_arena_fa(b"123", fm);
 
         // Should match exactly
         assert!(matches_value(&arena, start, b"123"), "Should match '123'");
@@ -7047,7 +7061,7 @@ mod monocase_arena_tests {
     #[test]
     fn test_monocase_arena_fa_mixed_ascii() {
         let fm = Arc::new(FieldMatcher::with_match_id(1));
-        let (arena, start) = make_monocase_arena_fa(b"Abc123", fm.clone());
+        let (arena, start) = make_monocase_arena_fa(b"Abc123", fm);
 
         // Should match any case combination
         assert!(
@@ -7075,8 +7089,8 @@ mod monocase_arena_tests {
         let fm1 = Arc::new(FieldMatcher::with_match_id(1));
         let fm2 = Arc::new(FieldMatcher::with_match_id(2));
 
-        let (arena1, start1) = make_monocase_arena_fa(b"Foo", fm1.clone());
-        let (arena2, start2) = make_monocase_arena_fa(b"Bar", fm2.clone());
+        let (arena1, start1) = make_monocase_arena_fa(b"Foo", fm1);
+        let (arena2, start2) = make_monocase_arena_fa(b"Bar", fm2);
 
         let (merged, merged_start) = merge_arena_nfas(&arena1, start1, &arena2, start2);
 
@@ -7111,7 +7125,7 @@ mod monocase_arena_tests {
         let fm = Arc::new(FieldMatcher::with_match_id(1));
         // Pattern: "Σοφα" (Sopha in Greek - without accent, for simpler testing)
         let pattern = "Σοφα".as_bytes();
-        let (arena, start) = make_monocase_arena_fa(pattern, fm.clone());
+        let (arena, start) = make_monocase_arena_fa(pattern, fm);
 
         // Original pattern should match
         assert!(
@@ -7158,7 +7172,7 @@ mod cidr_arena_tests {
             network: [192, 168, 1, 1],
             prefix_len: 32,
         };
-        let (arena, start) = make_cidr_arena_fa(&cidr, fm.clone());
+        let (arena, start) = make_cidr_arena_fa(&cidr, fm);
 
         // IP addresses are JSON strings, so they include surrounding quotes
         assert!(
@@ -7183,7 +7197,7 @@ mod cidr_arena_tests {
             network: [10, 0, 0, 0],
             prefix_len: 24,
         };
-        let (arena, start) = make_cidr_arena_fa(&cidr, fm.clone());
+        let (arena, start) = make_cidr_arena_fa(&cidr, fm);
 
         // Should match any IP in 10.0.0.0/24 (quoted, as JSON strings)
         assert!(
@@ -7218,7 +7232,7 @@ mod cidr_arena_tests {
             network: [172, 16, 0, 0],
             prefix_len: 30,
         };
-        let (arena, start) = make_cidr_arena_fa(&cidr, fm.clone());
+        let (arena, start) = make_cidr_arena_fa(&cidr, fm);
 
         // Should match all 4 addresses (quoted, as JSON strings)
         assert!(
@@ -7259,8 +7273,8 @@ mod cidr_arena_tests {
             prefix_len: 32,
         };
 
-        let (arena1, start1) = make_cidr_arena_fa(&cidr1, fm1.clone());
-        let (arena2, start2) = make_cidr_arena_fa(&cidr2, fm2.clone());
+        let (arena1, start1) = make_cidr_arena_fa(&cidr1, fm1);
+        let (arena2, start2) = make_cidr_arena_fa(&cidr2, fm2);
 
         let (merged, merged_start) = merge_arena_nfas(&arena1, start1, &arena2, start2);
 
@@ -7289,7 +7303,7 @@ mod cidr_arena_tests {
             network: [0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
             prefix_len: 32,
         };
-        let (arena, start) = make_cidr_arena_fa(&cidr, fm.clone());
+        let (arena, start) = make_cidr_arena_fa(&cidr, fm);
 
         // Should match IPs in range (full form, quoted as JSON strings)
         assert!(
@@ -7715,12 +7729,12 @@ mod dfa_accel_tests {
         );
 
         // Lazy DFA should still work and acquire AccelInfo during traversal
-        let mut lazy = LazyDfa::new(nfa.clone(), nfa_start, 10_000);
+        let mut lazy = LazyDfa::new(nfa, nfa_start, 10_000);
 
         // Build a long value: "aaa...ax" (1000 'a's + 'x')
         let long_val: Vec<u8> = std::iter::once(b'"')
             .chain(std::iter::once(b'a'))
-            .chain(std::iter::repeat(b'a').take(1000))
+            .chain(std::iter::repeat_n(b'a', 1000))
             .chain(std::iter::once(b'x'))
             .chain(std::iter::once(b'"'))
             .collect();
@@ -7775,7 +7789,7 @@ mod dfa_accel_tests {
 
         let long_val: Vec<u8> = std::iter::once(b'"')
             .chain(std::iter::once(b'a'))
-            .chain(std::iter::repeat(b'a').take(500))
+            .chain(std::iter::repeat_n(b'a', 500))
             .chain(std::iter::once(b'y'))
             .chain(std::iter::once(b'"'))
             .collect();
@@ -7842,7 +7856,7 @@ mod dfa_accel_tests {
             dfa.flatten_tables();
 
             let long_val: Vec<u8> = std::iter::once(b'"')
-                .chain(std::iter::repeat(b'a').take(1000))
+                .chain(std::iter::repeat_n(b'a', 1000))
                 .chain(std::iter::once(b'"'))
                 .collect();
 
@@ -7936,7 +7950,7 @@ mod dfa_accel_tests {
         let mut lazy = LazyDfa::new(nfa, nfa_start, 10_000);
         let long_val: Vec<u8> = std::iter::once(b'"')
             .chain(std::iter::once(b'a'))
-            .chain(std::iter::repeat(b'a').take(100))
+            .chain(std::iter::repeat_n(b'a', 100))
             .chain(std::iter::once(b'x'))
             .chain(std::iter::once(b'"'))
             .collect();

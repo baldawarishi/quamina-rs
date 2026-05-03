@@ -13,6 +13,10 @@ Style inspired by [ripgrep's CHANGELOG](https://github.com/BurntSushi/ripgrep/bl
 - DFA acceleration: `compute_dfa_accel` detects self-loop states and attaches memchr skip info for SIMD byte skipping on patterns like `[^x]+`
 - Profiling examples for NFA→DFA budget tuning and negated char class acceleration
 
+### Changed
+- Enabled strict clippy lints (`clippy::pedantic`, `clippy::nursery`, `clippy::perf`)
+- Synced Go upstream through commit 48955e9 (CI housekeeping)
+
 ### Fixed
 - `[^x]+` patterns (17K-state Unicode NFA) exceeded the DFA budget and regressed; SIMD acceleration via `AccelInfo::try_accelerate` restores performance (`regexp_negated_1k`: 3.2 µs → 652 ns)
 

@@ -51,19 +51,22 @@ pub struct QNumberStack {
 impl QNumberStack {
     /// Returns the Q-number bytes as a slice.
     #[inline]
+    #[must_use]
     pub fn as_slice(&self) -> &[u8] {
         &self.bytes[..self.len as usize]
     }
 
     /// Returns the length of the Q-number.
     #[inline]
-    pub fn len(&self) -> usize {
+    #[must_use]
+    pub const fn len(&self) -> usize {
         self.len as usize
     }
 
     /// Returns true if the Q-number is empty (should never happen for valid floats).
     #[inline]
-    pub fn is_empty(&self) -> bool {
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
         self.len == 0
     }
 }
@@ -118,6 +121,7 @@ pub(crate) fn to_q_number_stack(nb: u64) -> QNumberStack {
 /// which returns a `Vec<u8>`.
 ///
 /// Both functions produce identical byte sequences.
+#[must_use]
 pub fn q_num_stack(f: f64) -> QNumberStack {
     to_q_number_stack(numbits_from_f64(f))
 }
@@ -129,7 +133,7 @@ pub fn q_num_stack(f: f64) -> QNumberStack {
 ///
 /// Note: This implementation ignores NaN, -0, and infinities because JSON
 /// rules and Quamina's parsers prevent those values from occurring.
-pub(crate) fn numbits_from_f64(f: f64) -> u64 {
+pub(crate) const fn numbits_from_f64(f: f64) -> u64 {
     let u = f.to_bits();
     // Transform without branching:
     // If high bit is 0, xor with sign bit (1 << 63), else negate (xor with !0).
@@ -192,6 +196,7 @@ pub(crate) fn to_q_number(nb: u64) -> Vec<u8> {
 /// which avoids heap allocation.
 ///
 /// Both functions produce identical byte sequences.
+#[must_use]
 pub fn q_num_from_f64(f: f64) -> Vec<u8> {
     to_q_number(numbits_from_f64(f))
 }
@@ -211,7 +216,7 @@ mod tests {
     /// Format a Q-number for debugging.
     fn q_num_to_string(q: &[u8]) -> String {
         q.iter()
-            .map(|b| format!("{:02x}", b))
+            .map(|b| format!("{b:02x}"))
             .collect::<Vec<_>>()
             .join("-")
     }
@@ -308,7 +313,8 @@ mod tests {
         for _ in 0..count {
             rng_state = rng_state.wrapping_mul(6364136223846793005).wrapping_add(1);
             let random_u64 = rng_state;
-            let f = ((random_u64 as f64) / (u64::MAX as f64)) * 2_000_000_000.0 - 1_000_000_000.0;
+            let f = ((random_u64 as f64) / (u64::MAX as f64))
+                .mul_add(2_000_000_000.0, -1_000_000_000.0);
             floats.push(f);
         }
 
@@ -349,8 +355,7 @@ mod tests {
         for bad in bads {
             assert!(
                 q_num_from_bytes(bad.as_bytes()).is_none(),
-                "Should reject: {}",
-                bad
+                "Should reject: {bad}"
             );
         }
     }
@@ -386,11 +391,7 @@ mod tests {
             let nb = numbits_from_f64(b);
             assert!(
                 na < nb,
-                "numbits ordering failed: {} ({}) should be < {} ({})",
-                a,
-                na,
-                b,
-                nb
+                "numbits ordering failed: {a} ({na}) should be < {b} ({nb})"
             );
         }
     }
@@ -442,8 +443,7 @@ mod tests {
             assert_eq!(
                 vec_result.as_slice(),
                 stack_result.as_slice(),
-                "Stack variant differs from Vec for value {}",
-                val
+                "Stack variant differs from Vec for value {val}"
             );
         }
     }
@@ -468,8 +468,7 @@ mod tests {
             assert_eq!(
                 vec_result.as_slice(),
                 stack_result.as_slice(),
-                "Stack variant differs from Vec for value {}",
-                f
+                "Stack variant differs from Vec for value {f}"
             );
         }
     }
@@ -503,8 +502,7 @@ mod tests {
             assert_eq!(
                 q.len(),
                 q.as_slice().len(),
-                "len() disagrees with as_slice().len() for {}",
-                val
+                "len() disagrees with as_slice().len() for {val}"
             );
         }
     }

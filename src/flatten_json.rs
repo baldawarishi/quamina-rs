@@ -52,6 +52,7 @@ impl Field<'_> {
     /// This uses unsafe conversion because JSON field names are guaranteed
     /// to be valid UTF-8 by the JSON specification.
     #[inline]
+    #[must_use]
     pub fn path_str(&self) -> &str {
         // SAFETY: JSON field names are valid UTF-8 per JSON spec (RFC 8259).
         unsafe { std::str::from_utf8_unchecked(&self.path) }
@@ -63,12 +64,14 @@ impl Field<'_> {
     /// can distinguish strings from numbers with identical digit content.
     /// This mirrors Go's design where quotes act as an implicit type tag.
     #[inline]
+    #[must_use]
     pub fn value_bytes(&self) -> &[u8] {
         self.val.as_bytes()
     }
 
     /// Returns the array trail as a slice.
     #[inline]
+    #[must_use]
     pub fn array_trail_slice(&self) -> &[ArrayPos] {
         &self.array_trail
     }
@@ -91,7 +94,7 @@ enum MemberName<'a> {
 }
 
 impl MemberName<'_> {
-    fn as_bytes(&self) -> &[u8] {
+    const fn as_bytes(&self) -> &[u8] {
         match self {
             MemberName::Borrowed(b) => b,
             MemberName::Owned(v) => v.as_slice(),
@@ -100,6 +103,7 @@ impl MemberName<'_> {
 }
 
 impl FieldValue<'_> {
+    #[must_use]
     pub fn as_bytes(&self) -> &[u8] {
         match self {
             FieldValue::Borrowed(s) => s,
@@ -134,6 +138,7 @@ impl Default for FlattenJsonState {
 
 impl FlattenJsonState {
     /// Create a new reusable flattener state.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             array_trail: ArrayTrailVec::new(),
@@ -283,9 +288,8 @@ impl<'a> FlattenContext<'a, '_> {
             if nodes_count == 0 && fields_count == 0 {
                 if tree.is_root() {
                     return Err(FlattenError::EarlyStop);
-                } else {
-                    return self.leave_object();
                 }
+                return self.leave_object();
             }
 
             let ch = self.ch();
@@ -663,11 +667,10 @@ impl<'a> FlattenContext<'a, '_> {
                 return self.read_member_name_with_escapes(start);
             } else if ch <= 0x1f {
                 return Err(FlattenError::Error(
-                    self.error(&format!("illegal byte {:02x} in field name", ch)),
+                    self.error(&format!("illegal byte {ch:02x} in field name")),
                 ));
-            } else {
-                self.index += 1;
             }
+            self.index += 1;
         }
 
         Err(FlattenError::Error(self.error("premature end of event")))
@@ -741,7 +744,7 @@ impl<'a> FlattenContext<'a, '_> {
                 }
             } else if ch <= 0x1f {
                 return Err(FlattenError::Error(
-                    self.error(&format!("illegal byte {:02x} in field name", ch)),
+                    self.error(&format!("illegal byte {ch:02x} in field name")),
                 ));
             } else {
                 name.push(ch);
@@ -766,7 +769,7 @@ impl<'a> FlattenContext<'a, '_> {
                 return self.read_string_with_escapes(val_start);
             } else if ch <= 0x1f {
                 return Err(FlattenError::Error(
-                    self.error(&format!("illegal byte {:02x} in string value", ch)),
+                    self.error(&format!("illegal byte {ch:02x} in string value")),
                 ));
             }
             self.index += 1;
@@ -844,7 +847,7 @@ impl<'a> FlattenContext<'a, '_> {
                 }
             } else if ch <= 0x1f {
                 return Err(FlattenError::Error(
-                    self.error(&format!("illegal byte {:02x} in string value", ch)),
+                    self.error(&format!("illegal byte {ch:02x} in string value")),
                 ));
             } else {
                 val.push(ch);
@@ -873,7 +876,7 @@ impl<'a> FlattenContext<'a, '_> {
                     ));
                 }
             };
-            value = value * 16 + digit as u32;
+            value = value * 16 + u32::from(digit);
             self.index += 1;
         }
         Ok(value)
@@ -911,7 +914,7 @@ impl<'a> FlattenContext<'a, '_> {
                 '?'
             };
             return Err(FlattenError::Error(
-                self.error(&format!("illegal character '{}' in number", ch)),
+                self.error(&format!("illegal character '{ch}' in number")),
             ));
         }
 
@@ -1050,7 +1053,7 @@ const IS_WHITESPACE: [bool; 256] = {
 };
 
 #[inline]
-fn is_whitespace(b: u8) -> bool {
+const fn is_whitespace(b: u8) -> bool {
     IS_WHITESPACE[b as usize]
 }
 
@@ -1165,7 +1168,7 @@ mod tests {
 
     #[test]
     fn test_empty_object() {
-        let event = br#"{}"#;
+        let event = br"{}";
         let tree = make_tree(&["anything"]);
         let mut state = FlattenJsonState::new();
         let fields = state.flatten(event, &tree).unwrap();
@@ -1297,14 +1300,14 @@ x"#,
             r#"{"a""#,       // Missing colon
             r#"{"a":"#,      // Missing value
             r#"{"a": "#,     // Missing value after space
-            r#"{"#,          // Just open brace
+            r"{",            // Just open brace
             r#"{"a": 1"#,    // Missing close brace
             r#"{"a": 2 2}"#, // Double value
         ];
 
         for bad in &bad_cases {
             let result = state.flatten(bad.as_bytes(), &tree);
-            assert!(result.is_err(), "Should reject truncated JSON: {}", bad);
+            assert!(result.is_err(), "Should reject truncated JSON: {bad}");
         }
     }
 
@@ -1321,7 +1324,7 @@ x"#,
 
         for bad in &bad_cases {
             let result = state.flatten(bad.as_bytes(), &tree);
-            assert!(result.is_err(), "Should reject truncated array: {}", bad);
+            assert!(result.is_err(), "Should reject truncated array: {bad}");
         }
     }
 
@@ -1338,7 +1341,7 @@ x"#,
 
         for bad in &bad_cases {
             let result = state.flatten(bad.as_bytes(), &tree);
-            assert!(result.is_err(), "Should reject truncated string: {}", bad);
+            assert!(result.is_err(), "Should reject truncated string: {bad}");
         }
     }
 
@@ -1356,7 +1359,7 @@ x"#,
 
         for bad in &bad_cases {
             let result = state.flatten(bad.as_bytes(), &tree);
-            assert!(result.is_err(), "Should reject invalid value: {}", bad);
+            assert!(result.is_err(), "Should reject invalid value: {bad}");
         }
     }
 
@@ -1373,7 +1376,7 @@ x"#,
 
         for bad in &bad_cases {
             let result = state.flatten(bad.as_bytes(), &tree);
-            assert!(result.is_err(), "Should reject invalid structure: {}", bad);
+            assert!(result.is_err(), "Should reject invalid structure: {bad}");
         }
     }
 
@@ -1388,8 +1391,7 @@ x"#,
         let result = state.flatten(bad.as_bytes(), &tree);
         assert!(
             result.is_err(),
-            "Should reject invalid nested object: {}",
-            bad
+            "Should reject invalid nested object: {bad}"
         );
     }
 
@@ -1832,11 +1834,7 @@ x"#,
 
         for bad in &bad_cases {
             let result = state.flatten(bad.as_bytes(), &tree);
-            assert!(
-                result.is_err(),
-                "Should reject never-ending string: {}",
-                bad
-            );
+            assert!(result.is_err(), "Should reject never-ending string: {bad}");
         }
     }
 }

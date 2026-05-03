@@ -35,7 +35,7 @@ pub(crate) enum SegmentEntry {
 impl SegmentEntry {
     /// Get the leaf path Arc, if this entry has a field component.
     #[inline]
-    pub(crate) fn field(&self) -> Option<&Arc<[u8]>> {
+    pub(crate) const fn field(&self) -> Option<&Arc<[u8]>> {
         match self {
             Self::Field(f) | Self::Both(f, _) => Some(f),
             Self::Node(_) => None,
@@ -44,7 +44,7 @@ impl SegmentEntry {
 
     /// Get the child tree, if this entry has a node component.
     #[inline]
-    pub(crate) fn node(&self) -> Option<&SegmentsTree> {
+    pub(crate) const fn node(&self) -> Option<&SegmentsTree> {
         match self {
             Self::Node(n) | Self::Both(_, n) => Some(n),
             Self::Field(_) => None,
@@ -115,6 +115,7 @@ impl Default for SegmentsTree {
 
 impl SegmentsTree {
     /// Create a new root segments tree
+    #[must_use]
     pub fn new() -> Self {
         Self {
             is_root: true,
@@ -193,7 +194,8 @@ impl SegmentsTree {
 
     /// Check if this is the root node
     #[inline]
-    pub fn is_root(&self) -> bool {
+    #[must_use]
+    pub const fn is_root(&self) -> bool {
         self.is_root
     }
 
@@ -212,39 +214,45 @@ impl SegmentsTree {
 
     /// Check if a segment is used (either as a field or node)
     #[inline]
+    #[must_use]
     pub fn is_segment_used(&self, segment: &[u8]) -> bool {
         self.lookup(segment).is_some()
     }
 
     /// Get a child node for a segment
     #[inline]
+    #[must_use]
     pub fn get(&self, segment: &[u8]) -> Option<&Self> {
         self.lookup(segment).and_then(|e| e.node())
     }
 
     /// Get the full path for a leaf segment as a slice reference
     #[inline]
+    #[must_use]
     pub fn path_for_segment(&self, segment: &[u8]) -> Option<&[u8]> {
         self.lookup(segment)
             .and_then(|e| e.field())
-            .map(|arc| arc.as_ref())
+            .map(std::convert::AsRef::as_ref)
     }
 
     /// Get the full path for a leaf segment as an Arc (O(1) clone)
     #[inline]
+    #[must_use]
     pub fn path_arc_for_segment(&self, segment: &[u8]) -> Option<Arc<[u8]>> {
         self.lookup(segment).and_then(|e| e.field()).cloned()
     }
 
     /// Number of child nodes (non-leaf)
     #[inline]
-    pub fn nodes_count(&self) -> usize {
+    #[must_use]
+    pub const fn nodes_count(&self) -> usize {
         self.node_count
     }
 
     /// Number of leaf fields
     #[inline]
-    pub fn fields_count(&self) -> usize {
+    #[must_use]
+    pub const fn fields_count(&self) -> usize {
         self.field_count
     }
 }

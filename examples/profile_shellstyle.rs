@@ -14,7 +14,7 @@ fn main() {
     ] {
         q.add_pattern(
             letter.to_string(),
-            &format!(r#"{{"STREET": [{{"shellstyle": "{}*"}}]}}"#, letter),
+            &format!(r#"{{"STREET": [{{"shellstyle": "{letter}*"}}]}}"#),
         )
         .unwrap();
     }
@@ -29,7 +29,7 @@ fn main() {
     for (name, shellstyle) in funky_patterns {
         q.add_pattern(
             name.to_string(),
-            &format!(r#"{{"STREET": [{{"shellstyle": "{}"}}]}}"#, shellstyle),
+            &format!(r#"{{"STREET": [{{"shellstyle": "{shellstyle}"}}]}}"#),
         )
         .unwrap();
     }
@@ -45,7 +45,7 @@ fn main() {
     for (name, shellstyle) in cjk_patterns {
         q.add_pattern(
             name.to_string(),
-            &format!(r#"{{"STREET": [{{"shellstyle": "{}"}}]}}"#, shellstyle),
+            &format!(r#"{{"STREET": [{{"shellstyle": "{shellstyle}"}}]}}"#),
         )
         .unwrap();
     }
@@ -60,7 +60,7 @@ fn main() {
     for (name, shellstyle) in emoji_patterns {
         q.add_pattern(
             name.to_string(),
-            &format!(r#"{{"STREET": [{{"shellstyle": "{}"}}]}}"#, shellstyle),
+            &format!(r#"{{"STREET": [{{"shellstyle": "{shellstyle}"}}]}}"#),
         )
         .unwrap();
     }

@@ -14,7 +14,7 @@ fn main() {
 
     // 1000 'a's followed by 'x'
     let long_value = format!("{}x", "a".repeat(1000));
-    let event = format!(r#"{{"value": "{}"}}"#, long_value).into_bytes();
+    let event = format!(r#"{{"value": "{long_value}"}}"#).into_bytes();
 
     let iterations = 1_000_000;
     let start = std::time::Instant::now();
@@ -25,8 +25,5 @@ fn main() {
 
     let elapsed = start.elapsed();
     let ns_per_op = elapsed.as_nanos() / iterations as u128;
-    eprintln!(
-        "{} iterations in {:.2?} ({} ns/op)",
-        iterations, elapsed, ns_per_op,
-    );
+    eprintln!("{iterations} iterations in {elapsed:.2?} ({ns_per_op} ns/op)",);
 }

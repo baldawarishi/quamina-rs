@@ -31,27 +31,24 @@ fn bench_exact_match(c: &mut Criterion) {
     let mut q = Quamina::new();
     q.add_pattern("p1", r#"{"status": ["active"]}"#).unwrap();
 
-    let event = r#"{"status": "active", "id": 123}"#.as_bytes();
+    let event = br#"{"status": "active", "id": 123}"#;
 
     c.bench_function("exact_match", |b| {
-        b.iter(|| q.matches_for_event(black_box(event)).unwrap())
+        b.iter(|| q.matches_for_event(black_box(event)).unwrap());
     });
 }
 
 fn bench_multiple_patterns(c: &mut Criterion) {
     let mut q = Quamina::new();
     for i in 0..100 {
-        q.add_pattern(
-            format!("p{}", i),
-            &format!(r#"{{"status": ["status_{}"]}}"#, i),
-        )
-        .unwrap();
+        q.add_pattern(format!("p{i}"), &format!(r#"{{"status": ["status_{i}"]}}"#))
+            .unwrap();
     }
 
-    let event = r#"{"status": "status_50"}"#.as_bytes();
+    let event = br#"{"status": "status_50"}"#;
 
     c.bench_function("100_patterns", |b| {
-        b.iter(|| q.matches_for_event(black_box(event)).unwrap())
+        b.iter(|| q.matches_for_event(black_box(event)).unwrap());
     });
 }
 
@@ -65,7 +62,7 @@ fn bench_complex_event(c: &mut Criterion) {
             .as_bytes();
 
     c.bench_function("nested_match", |b| {
-        b.iter(|| q.matches_for_event(black_box(event)).unwrap())
+        b.iter(|| q.matches_for_event(black_box(event)).unwrap());
     });
 }
 
@@ -77,45 +74,39 @@ fn bench_regex_match(c: &mut Criterion) {
     )
     .unwrap();
 
-    let event = r#"{"email": "alice@example.com"}"#.as_bytes();
+    let event = br#"{"email": "alice@example.com"}"#;
 
     c.bench_function("regex_match", |b| {
-        b.iter(|| q.matches_for_event(black_box(event)).unwrap())
+        b.iter(|| q.matches_for_event(black_box(event)).unwrap());
     });
 }
 
 fn bench_no_match(c: &mut Criterion) {
     let mut q = Quamina::new();
     for i in 0..100 {
-        q.add_pattern(
-            format!("p{}", i),
-            &format!(r#"{{"status": ["status_{}"]}}"#, i),
-        )
-        .unwrap();
+        q.add_pattern(format!("p{i}"), &format!(r#"{{"status": ["status_{i}"]}}"#))
+            .unwrap();
     }
 
-    let event = r#"{"status": "no_match_here"}"#.as_bytes();
+    let event = br#"{"status": "no_match_here"}"#;
 
     c.bench_function("100_patterns_no_match", |b| {
-        b.iter(|| q.matches_for_event(black_box(event)).unwrap())
+        b.iter(|| q.matches_for_event(black_box(event)).unwrap());
     });
 }
 
 fn bench_has_matches(c: &mut Criterion) {
     let mut q = Quamina::new();
     for i in 0..100 {
-        q.add_pattern(
-            format!("p{}", i),
-            &format!(r#"{{"status": ["status_{}"]}}"#, i),
-        )
-        .unwrap();
+        q.add_pattern(format!("p{i}"), &format!(r#"{{"status": ["status_{i}"]}}"#))
+            .unwrap();
     }
 
     // First pattern matches - early exit
-    let event = r#"{"status": "status_0"}"#.as_bytes();
+    let event = br#"{"status": "status_0"}"#;
 
     c.bench_function("has_matches_early_exit", |b| {
-        b.iter(|| q.has_matches(black_box(event)).unwrap())
+        b.iter(|| q.has_matches(black_box(event)).unwrap());
     });
 }
 
@@ -126,8 +117,8 @@ fn bench_diverse_patterns(c: &mut Criterion) {
     // Add 100 patterns, each using a unique field name
     for i in 0..100 {
         q.add_pattern(
-            format!("p{}", i),
-            &format!(r#"{{"field_{}": ["value_{}"]}}"#, i, i),
+            format!("p{i}"),
+            &format!(r#"{{"field_{i}": ["value_{i}"]}}"#),
         )
         .unwrap();
     }
@@ -136,7 +127,7 @@ fn bench_diverse_patterns(c: &mut Criterion) {
     let event = r#"{"field_50": "value_50", "other": "data"}"#.as_bytes();
 
     c.bench_function("100_diverse_patterns_1_match", |b| {
-        b.iter(|| q.matches_for_event(black_box(event)).unwrap())
+        b.iter(|| q.matches_for_event(black_box(event)).unwrap());
     });
 }
 
@@ -145,8 +136,8 @@ fn bench_diverse_no_match(c: &mut Criterion) {
     let mut q = Quamina::new();
     for i in 0..100 {
         q.add_pattern(
-            format!("p{}", i),
-            &format!(r#"{{"field_{}": ["value_{}"]}}"#, i, i),
+            format!("p{i}"),
+            &format!(r#"{{"field_{i}": ["value_{i}"]}}"#),
         )
         .unwrap();
     }
@@ -155,7 +146,7 @@ fn bench_diverse_no_match(c: &mut Criterion) {
     let event = r#"{"unrelated_field": "some_value"}"#.as_bytes();
 
     c.bench_function("100_diverse_patterns_no_match", |b| {
-        b.iter(|| q.matches_for_event(black_box(event)).unwrap())
+        b.iter(|| q.matches_for_event(black_box(event)).unwrap());
     });
 }
 
@@ -168,7 +159,7 @@ fn bench_flatten_context_fields(c: &mut Criterion) {
     let event = load_status_json();
 
     c.bench_function("flatten_context_fields", |b| {
-        b.iter(|| q.flatten_only(black_box(&event)).unwrap())
+        b.iter(|| q.flatten_only(black_box(&event)).unwrap());
     });
 }
 
@@ -184,7 +175,7 @@ fn bench_flatten_direct_context_fields(c: &mut Criterion) {
         b.iter(|| {
             let fields = flattener.flatten(black_box(&event), &tree).unwrap();
             black_box(fields.len())
-        })
+        });
     });
 }
 
@@ -202,7 +193,7 @@ fn bench_flatten_sort_context_fields(c: &mut Criterion) {
             let fields = flattener.flatten(black_box(&event), &tree).unwrap();
             fields.sort_unstable_by(|a, b| a.path.cmp(&b.path));
             black_box(fields.len())
-        })
+        });
     });
 }
 
@@ -242,7 +233,7 @@ fn bench_match_only_context_fields(c: &mut Criterion) {
     assert_eq!(matches.len(), 1);
 
     c.bench_function("match_only_context_fields", |b| {
-        b.iter(|| automaton.matches_for_fields(black_box(&owned_fields)))
+        b.iter(|| automaton.matches_for_fields(black_box(&owned_fields)));
     });
 }
 
@@ -253,7 +244,7 @@ fn bench_flatten_middle_nested(c: &mut Criterion) {
     let event = load_status_json();
 
     c.bench_function("flatten_middle_nested", |b| {
-        b.iter(|| q.flatten_only(black_box(&event)).unwrap())
+        b.iter(|| q.flatten_only(black_box(&event)).unwrap());
     });
 }
 
@@ -264,7 +255,7 @@ fn bench_flatten_last_field(c: &mut Criterion) {
     let event = load_status_json();
 
     c.bench_function("flatten_last_field", |b| {
-        b.iter(|| q.flatten_only(black_box(&event)).unwrap())
+        b.iter(|| q.flatten_only(black_box(&event)).unwrap());
     });
 }
 
@@ -279,7 +270,7 @@ fn bench_status_context_fields(c: &mut Criterion) {
     assert_eq!(matches.len(), 1);
 
     c.bench_function("status_context_fields", |b| {
-        b.iter(|| q.matches_for_event(black_box(&event)).unwrap())
+        b.iter(|| q.matches_for_event(black_box(&event)).unwrap());
     });
 }
 
@@ -293,7 +284,7 @@ fn bench_status_middle_nested(c: &mut Criterion) {
     assert_eq!(matches.len(), 1);
 
     c.bench_function("status_middle_nested", |b| {
-        b.iter(|| q.matches_for_event(black_box(&event)).unwrap())
+        b.iter(|| q.matches_for_event(black_box(&event)).unwrap());
     });
 }
 
@@ -307,7 +298,7 @@ fn bench_status_last_field(c: &mut Criterion) {
     assert_eq!(matches.len(), 1);
 
     c.bench_function("status_last_field", |b| {
-        b.iter(|| q.matches_for_event(black_box(&event)).unwrap())
+        b.iter(|| q.matches_for_event(black_box(&event)).unwrap());
     });
 }
 
@@ -323,7 +314,7 @@ fn bench_status_all_patterns(c: &mut Criterion) {
     assert_eq!(matches.len(), 3);
 
     c.bench_function("status_all_three_patterns", |b| {
-        b.iter(|| q.matches_for_event(black_box(&event)).unwrap())
+        b.iter(|| q.matches_for_event(black_box(&event)).unwrap());
     });
 }
 
@@ -334,7 +325,7 @@ fn bench_shellstyle_alphabet(c: &mut Criterion) {
     for letter in 'A'..='Z' {
         q.add_pattern(
             letter.to_string(),
-            &format!(r#"{{"name": [{{"shellstyle": "{}*"}}]}}"#, letter),
+            &format!(r#"{{"name": [{{"shellstyle": "{letter}*"}}]}}"#),
         )
         .unwrap();
     }
@@ -342,7 +333,7 @@ fn bench_shellstyle_alphabet(c: &mut Criterion) {
     let event = r#"{"name": "BELVEDERE", "other": "data"}"#.as_bytes();
 
     c.bench_function("shellstyle_26_patterns", |b| {
-        b.iter(|| q.matches_for_event(black_box(event)).unwrap())
+        b.iter(|| q.matches_for_event(black_box(event)).unwrap());
     });
 }
 
@@ -357,7 +348,7 @@ fn bench_shellstyle_multi_match(c: &mut Criterion) {
     ] {
         q.add_pattern(
             letter.to_string(),
-            &format!(r#"{{"STREET": [{{"shellstyle": "{}*"}}]}}"#, letter),
+            &format!(r#"{{"STREET": [{{"shellstyle": "{letter}*"}}]}}"#),
         )
         .unwrap();
     }
@@ -372,7 +363,7 @@ fn bench_shellstyle_multi_match(c: &mut Criterion) {
     for (name, shellstyle) in funky_patterns {
         q.add_pattern(
             name.to_string(),
-            &format!(r#"{{"STREET": [{{"shellstyle": "{}"}}]}}"#, shellstyle),
+            &format!(r#"{{"STREET": [{{"shellstyle": "{shellstyle}"}}]}}"#),
         )
         .unwrap();
     }
@@ -388,7 +379,7 @@ fn bench_shellstyle_multi_match(c: &mut Criterion) {
     for (name, shellstyle) in cjk_patterns {
         q.add_pattern(
             name.to_string(),
-            &format!(r#"{{"STREET": [{{"shellstyle": "{}"}}]}}"#, shellstyle),
+            &format!(r#"{{"STREET": [{{"shellstyle": "{shellstyle}"}}]}}"#),
         )
         .unwrap();
     }
@@ -403,7 +394,7 @@ fn bench_shellstyle_multi_match(c: &mut Criterion) {
     for (name, shellstyle) in emoji_patterns {
         q.add_pattern(
             name.to_string(),
-            &format!(r#"{{"STREET": [{{"shellstyle": "{}"}}]}}"#, shellstyle),
+            &format!(r#"{{"STREET": [{{"shellstyle": "{shellstyle}"}}]}}"#),
         )
         .unwrap();
     }
@@ -463,7 +454,7 @@ fn bench_shellstyle_multi_match(c: &mut Criterion) {
             for event in &events {
                 let _ = q.matches_for_event(black_box(event)).unwrap();
             }
-        })
+        });
     });
 }
 
@@ -472,16 +463,16 @@ fn bench_prefix_patterns(c: &mut Criterion) {
     let mut q = Quamina::new();
     for i in 0..100 {
         q.add_pattern(
-            format!("p{}", i),
-            &format!(r#"{{"path": [{{"prefix": "/api/v{}/users"}}]}}"#, i),
+            format!("p{i}"),
+            &format!(r#"{{"path": [{{"prefix": "/api/v{i}/users"}}]}}"#),
         )
         .unwrap();
     }
 
-    let event = r#"{"path": "/api/v50/users/123"}"#.as_bytes();
+    let event = br#"{"path": "/api/v50/users/123"}"#;
 
     c.bench_function("100_prefix_patterns", |b| {
-        b.iter(|| q.matches_for_event(black_box(event)).unwrap())
+        b.iter(|| q.matches_for_event(black_box(event)).unwrap());
     });
 }
 
@@ -497,7 +488,7 @@ fn bench_anything_but(c: &mut Criterion) {
     let event = r#"{"status": "success", "code": 200}"#.as_bytes();
 
     c.bench_function("anything_but_match", |b| {
-        b.iter(|| q.matches_for_event(black_box(event)).unwrap())
+        b.iter(|| q.matches_for_event(black_box(event)).unwrap());
     });
 }
 
@@ -515,7 +506,7 @@ fn bench_multi_field_and(c: &mut Criterion) {
             .as_bytes();
 
     c.bench_function("multi_field_and_3_fields", |b| {
-        b.iter(|| q.matches_for_event(black_box(event)).unwrap())
+        b.iter(|| q.matches_for_event(black_box(event)).unwrap());
     });
 }
 
@@ -525,10 +516,10 @@ fn bench_numeric_range_single(c: &mut Criterion) {
     q.add_pattern("below_100", r#"{"score": [{"numeric": ["<", 100]}]}"#)
         .unwrap();
 
-    let event = r#"{"score": 50, "name": "test"}"#.as_bytes();
+    let event = br#"{"score": 50, "name": "test"}"#;
 
     c.bench_function("numeric_range_single", |b| {
-        b.iter(|| q.matches_for_event(black_box(event)).unwrap())
+        b.iter(|| q.matches_for_event(black_box(event)).unwrap());
     });
 }
 
@@ -541,10 +532,10 @@ fn bench_numeric_range_two_sided(c: &mut Criterion) {
     )
     .unwrap();
 
-    let event = r#"{"score": 50, "name": "test"}"#.as_bytes();
+    let event = br#"{"score": 50, "name": "test"}"#;
 
     c.bench_function("numeric_range_two_sided", |b| {
-        b.iter(|| q.matches_for_event(black_box(event)).unwrap())
+        b.iter(|| q.matches_for_event(black_box(event)).unwrap());
     });
 }
 
@@ -556,20 +547,17 @@ fn bench_numeric_range_multiple(c: &mut Criterion) {
         let lower = i * 100;
         let upper = (i + 1) * 100;
         q.add_pattern(
-            format!("range_{}", i),
-            &format!(
-                r#"{{"score": [{{"numeric": [">=", {}, "<", {}]}}]}}"#,
-                lower, upper
-            ),
+            format!("range_{i}"),
+            &format!(r#"{{"score": [{{"numeric": [">=", {lower}, "<", {upper}]}}]}}"#),
         )
         .unwrap();
     }
 
     // Event value 550 should match range_5 (500-600)
-    let event = r#"{"score": 550}"#.as_bytes();
+    let event = br#"{"score": 550}"#;
 
     c.bench_function("numeric_range_10_patterns", |b| {
-        b.iter(|| q.matches_for_event(black_box(event)).unwrap())
+        b.iter(|| q.matches_for_event(black_box(event)).unwrap());
     });
 }
 
@@ -587,10 +575,10 @@ fn bench_number_matching(c: &mut Criterion) {
     // Build pattern with 10 exact float values
     let values: String = targets
         .iter()
-        .map(|f| format!("{:.6}", f))
+        .map(|f| format!("{f:.6}"))
         .collect::<Vec<_>>()
         .join(", ");
-    let pattern = format!(r#"{{"x": [{}]}}"#, values);
+    let pattern = format!(r#"{{"x": [{values}]}}"#);
 
     let mut q = Quamina::new();
     q.add_pattern("P", &pattern).unwrap();
@@ -601,11 +589,11 @@ fn bench_number_matching(c: &mut Criterion) {
             if i % 2 == 0 {
                 // Matching event - use one of the target values
                 let val = format!("{:.6}", targets[i % 10]);
-                format!(r#"{{"x": {}}}"#, val).into_bytes()
+                format!(r#"{{"x": {val}}}"#).into_bytes()
             } else {
                 // Non-matching event - use a different random value
                 let val = format!("{:.6}", rng.random::<f64>() + 10.0); // +10 ensures no collision
-                format!(r#"{{"x": {}}}"#, val).into_bytes()
+                format!(r#"{{"x": {val}}}"#).into_bytes()
             }
         })
         .collect();
@@ -616,7 +604,7 @@ fn bench_number_matching(c: &mut Criterion) {
             let event = &events[i % events.len()];
             i += 1;
             q.matches_for_event(black_box(event)).unwrap()
-        })
+        });
     });
 }
 
@@ -626,10 +614,10 @@ fn bench_regexp_plus_short(c: &mut Criterion) {
     q.add_pattern("letters", r#"{"value": [{"regex": "[a-z]+"}]}"#)
         .unwrap();
 
-    let event = r#"{"value": "hello"}"#.as_bytes();
+    let event = br#"{"value": "hello"}"#;
 
     c.bench_function("regexp_plus_short", |b| {
-        b.iter(|| q.matches_for_event(black_box(event)).unwrap())
+        b.iter(|| q.matches_for_event(black_box(event)).unwrap());
     });
 }
 
@@ -641,10 +629,10 @@ fn bench_regexp_plus_long(c: &mut Criterion) {
 
     // 100-character string
     let long_value = "a".repeat(100);
-    let event = format!(r#"{{"value": "{}"}}"#, long_value).into_bytes();
+    let event = format!(r#"{{"value": "{long_value}"}}"#).into_bytes();
 
     c.bench_function("regexp_plus_long", |b| {
-        b.iter(|| q.matches_for_event(black_box(&event)).unwrap())
+        b.iter(|| q.matches_for_event(black_box(&event)).unwrap());
     });
 }
 
@@ -654,10 +642,10 @@ fn bench_regexp_star_empty(c: &mut Criterion) {
     q.add_pattern("maybe_letters", r#"{"value": [{"regex": "[a-z]*"}]}"#)
         .unwrap();
 
-    let event = r#"{"value": ""}"#.as_bytes();
+    let event = br#"{"value": ""}"#;
 
     c.bench_function("regexp_star_empty", |b| {
-        b.iter(|| q.matches_for_event(black_box(event)).unwrap())
+        b.iter(|| q.matches_for_event(black_box(event)).unwrap());
     });
 }
 
@@ -669,10 +657,10 @@ fn bench_regexp_star_long(c: &mut Criterion) {
 
     // 100-character string
     let long_value = "a".repeat(100);
-    let event = format!(r#"{{"value": "{}"}}"#, long_value).into_bytes();
+    let event = format!(r#"{{"value": "{long_value}"}}"#).into_bytes();
 
     c.bench_function("regexp_star_long", |b| {
-        b.iter(|| q.matches_for_event(black_box(&event)).unwrap())
+        b.iter(|| q.matches_for_event(black_box(&event)).unwrap());
     });
 }
 
@@ -683,10 +671,10 @@ fn bench_regexp_complex(c: &mut Criterion) {
     q.add_pattern("complex", r#"{"value": [{"regex": "[a-z]+[0-9]?"}]}"#)
         .unwrap();
 
-    let event = r#"{"value": "hello5"}"#.as_bytes();
+    let event = br#"{"value": "hello5"}"#;
 
     c.bench_function("regexp_complex", |b| {
-        b.iter(|| q.matches_for_event(black_box(event)).unwrap())
+        b.iter(|| q.matches_for_event(black_box(event)).unwrap());
     });
 }
 
@@ -699,10 +687,10 @@ fn bench_regexp_negated_short(c: &mut Criterion) {
         .unwrap();
 
     // String with 'x' at position 10 - memchr should skip to it
-    let event = r#"{"value": "aaaaaaaaaxend"}"#.as_bytes();
+    let event = br#"{"value": "aaaaaaaaaxend"}"#;
 
     c.bench_function("regexp_negated_short", |b| {
-        b.iter(|| q.matches_for_event(black_box(event)).unwrap())
+        b.iter(|| q.matches_for_event(black_box(event)).unwrap());
     });
 }
 
@@ -715,10 +703,10 @@ fn bench_regexp_negated_long(c: &mut Criterion) {
 
     // 100 'a's followed by 'x' - memchr skips to position 100
     let long_value = format!("{}x", "a".repeat(100));
-    let event = format!(r#"{{"value": "{}"}}"#, long_value).into_bytes();
+    let event = format!(r#"{{"value": "{long_value}"}}"#).into_bytes();
 
     c.bench_function("regexp_negated_long", |b| {
-        b.iter(|| q.matches_for_event(black_box(&event)).unwrap())
+        b.iter(|| q.matches_for_event(black_box(&event)).unwrap());
     });
 }
 
@@ -731,10 +719,10 @@ fn bench_regexp_negated_1k(c: &mut Criterion) {
 
     // 1000 'a's followed by 'x' - memchr skips to position 1000
     let long_value = format!("{}x", "a".repeat(1000));
-    let event = format!(r#"{{"value": "{}"}}"#, long_value).into_bytes();
+    let event = format!(r#"{{"value": "{long_value}"}}"#).into_bytes();
 
     c.bench_function("regexp_negated_1k", |b| {
-        b.iter(|| q.matches_for_event(black_box(&event)).unwrap())
+        b.iter(|| q.matches_for_event(black_box(&event)).unwrap());
     });
 }
 
@@ -744,10 +732,10 @@ fn bench_regexp_dot_star(c: &mut Criterion) {
     q.add_pattern("anything", r#"{"value": [{"regex": ".*"}]}"#)
         .unwrap();
 
-    let event = r#"{"value": "hello world 123"}"#.as_bytes();
+    let event = br#"{"value": "hello world 123"}"#;
 
     c.bench_function("regexp_dot_star", |b| {
-        b.iter(|| q.matches_for_event(black_box(event)).unwrap())
+        b.iter(|| q.matches_for_event(black_box(event)).unwrap());
     });
 }
 
@@ -761,11 +749,11 @@ fn bench_unicode_category_letter(c: &mut Criterion) {
 
     // Test with various inputs
     let events = [
-        r#"{"value": "a"}"#.as_bytes().to_vec(),
-        r#"{"value": "Z"}"#.as_bytes().to_vec(),
+        br#"{"value": "a"}"#.to_vec(),
+        br#"{"value": "Z"}"#.to_vec(),
         r#"{"value": "α"}"#.as_bytes().to_vec(),
         r#"{"value": "日"}"#.as_bytes().to_vec(),
-        r#"{"value": "5"}"#.as_bytes().to_vec(), // non-match
+        br#"{"value": "5"}"#.to_vec(), // non-match
     ];
 
     c.bench_function("unicode_category_letter", |b| {
@@ -774,7 +762,7 @@ fn bench_unicode_category_letter(c: &mut Criterion) {
             let event = &events[i % events.len()];
             i += 1;
             q.matches_for_event(black_box(event)).unwrap()
-        })
+        });
     });
 }
 
@@ -785,7 +773,7 @@ fn bench_unicode_category_compile(c: &mut Criterion) {
             let mut q = Quamina::new();
             q.add_pattern("letter", r#"{"value": [{"regex": "~p{L}"}]}"#)
                 .unwrap();
-        })
+        });
     });
 }
 
@@ -796,9 +784,9 @@ fn bench_negated_char_class(c: &mut Criterion) {
         .unwrap();
 
     let events = [
-        r#"{"value": "x"}"#.as_bytes().to_vec(),
+        br#"{"value": "x"}"#.to_vec(),
         r#"{"value": "日"}"#.as_bytes().to_vec(),
-        r#"{"value": "a"}"#.as_bytes().to_vec(), // non-match
+        br#"{"value": "a"}"#.to_vec(), // non-match
     ];
 
     c.bench_function("negated_char_class", |b| {
@@ -807,7 +795,7 @@ fn bench_negated_char_class(c: &mut Criterion) {
             let event = &events[i % events.len()];
             i += 1;
             q.matches_for_event(black_box(event)).unwrap()
-        })
+        });
     });
 }
 
@@ -819,9 +807,9 @@ fn bench_unicode_categories_combined(c: &mut Criterion) {
         .unwrap();
 
     let events = [
-        r#"{"value": "a1"}"#.as_bytes().to_vec(),
+        br#"{"value": "a1"}"#.to_vec(),
         r#"{"value": "日5"}"#.as_bytes().to_vec(),
-        r#"{"value": "12"}"#.as_bytes().to_vec(), // non-match
+        br#"{"value": "12"}"#.to_vec(), // non-match
     ];
 
     c.bench_function("unicode_categories_combined", |b| {
@@ -830,7 +818,7 @@ fn bench_unicode_categories_combined(c: &mut Criterion) {
             let event = &events[i % events.len()];
             i += 1;
             q.matches_for_event(black_box(event)).unwrap()
-        })
+        });
     });
 }
 
@@ -892,7 +880,7 @@ fn bench_arena_nfa_traversal(c: &mut Criterion) {
             bufs.clear();
             traverse_arena_nfa(&arena, start, black_box(&value), &mut bufs);
             black_box(bufs.transitions.len())
-        })
+        });
     });
 }
 
@@ -909,7 +897,7 @@ fn bench_arena_nfa_short(c: &mut Criterion) {
             bufs.clear();
             traverse_arena_nfa(&arena, start, black_box(&value), &mut bufs);
             black_box(bufs.transitions.len())
-        })
+        });
     });
 }
 
@@ -979,7 +967,7 @@ fn bench_pathological_epsilon(c: &mut Criterion) {
             for event in &events {
                 let _ = q.matches_for_event(black_box(event)).unwrap();
             }
-        })
+        });
     });
 }
 
@@ -991,10 +979,10 @@ fn bench_bulk_100x10(c: &mut Criterion) {
     let patterns: Vec<String> = (0..100)
         .map(|i| {
             let values: String = (0..10)
-                .map(|j| format!("\"value_{}_{}\"", i, j))
+                .map(|j| format!("\"value_{i}_{j}\""))
                 .collect::<Vec<_>>()
                 .join(", ");
-            format!(r#"{{"field": [{}]}}"#, values)
+            format!(r#"{{"field": [{values}]}}"#)
         })
         .collect();
     c.bench_function("bulk_100x10", |b| {
@@ -1003,7 +991,7 @@ fn bench_bulk_100x10(c: &mut Criterion) {
             for (i, pattern) in patterns.iter().enumerate() {
                 q.add_pattern(i, pattern).unwrap();
             }
-        })
+        });
     });
 }
 
@@ -1012,10 +1000,10 @@ fn bench_bulk_1000x10(c: &mut Criterion) {
     let patterns: Vec<String> = (0..1000)
         .map(|i| {
             let values: String = (0..10)
-                .map(|j| format!("\"value_{}_{}\"", i, j))
+                .map(|j| format!("\"value_{i}_{j}\""))
                 .collect::<Vec<_>>()
                 .join(", ");
-            format!(r#"{{"field": [{}]}}"#, values)
+            format!(r#"{{"field": [{values}]}}"#)
         })
         .collect();
     c.bench_function("bulk_1000x10", |b| {
@@ -1024,7 +1012,7 @@ fn bench_bulk_1000x10(c: &mut Criterion) {
             for (i, pattern) in patterns.iter().enumerate() {
                 q.add_pattern(i, pattern).unwrap();
             }
-        })
+        });
     });
 }
 
@@ -1033,10 +1021,10 @@ fn bench_bulk_100x100(c: &mut Criterion) {
     let patterns: Vec<String> = (0..100)
         .map(|i| {
             let values: String = (0..100)
-                .map(|j| format!("\"value_{}_{}\"", i, j))
+                .map(|j| format!("\"value_{i}_{j}\""))
                 .collect::<Vec<_>>()
                 .join(", ");
-            format!(r#"{{"field": [{}]}}"#, values)
+            format!(r#"{{"field": [{values}]}}"#)
         })
         .collect();
     c.bench_function("bulk_100x100", |b| {
@@ -1045,7 +1033,7 @@ fn bench_bulk_100x100(c: &mut Criterion) {
             for (i, pattern) in patterns.iter().enumerate() {
                 q.add_pattern(i, pattern).unwrap();
             }
-        })
+        });
     });
 }
 
@@ -1054,13 +1042,10 @@ fn bench_bulk_100x10_multifield(c: &mut Criterion) {
     let patterns: Vec<String> = (0..100)
         .map(|i| {
             let values: String = (0..10)
-                .map(|j| format!("\"value_{}_{}\"", i, j))
+                .map(|j| format!("\"value_{i}_{j}\""))
                 .collect::<Vec<_>>()
                 .join(", ");
-            format!(
-                r#"{{"field1": [{}], "field2": [{}], "field3": [{}]}}"#,
-                values, values, values
-            )
+            format!(r#"{{"field1": [{values}], "field2": [{values}], "field3": [{values}]}}"#)
         })
         .collect();
     c.bench_function("bulk_100x10_multifield", |b| {
@@ -1069,7 +1054,7 @@ fn bench_bulk_100x10_multifield(c: &mut Criterion) {
             for (i, pattern) in patterns.iter().enumerate() {
                 q.add_pattern(i, pattern).unwrap();
             }
-        })
+        });
     });
 }
 
@@ -1081,14 +1066,14 @@ fn bench_bulk_100x10_multifield(c: &mut Criterion) {
 fn bench_10k_patterns_match(c: &mut Criterion) {
     let mut q = Quamina::<usize>::new();
     for i in 0..10_000 {
-        q.add_pattern(i, &format!(r#"{{"status": ["status_{}"]}}"#, i))
+        q.add_pattern(i, &format!(r#"{{"status": ["status_{i}"]}}"#))
             .unwrap();
     }
 
     // Event that matches pattern 5000 (middle of the set)
-    let event_match = r#"{"status": "status_5000"}"#.as_bytes();
+    let event_match = br#"{"status": "status_5000"}"#;
     // Event that doesn't match any pattern
-    let event_no_match = r#"{"status": "no_match"}"#.as_bytes();
+    let event_no_match = br#"{"status": "no_match"}"#;
 
     // Verify
     let matches = q.matches_for_event(event_match).unwrap();
@@ -1096,11 +1081,11 @@ fn bench_10k_patterns_match(c: &mut Criterion) {
     assert_eq!(matches[0], 5000);
 
     c.bench_function("10k_patterns_1_match", |b| {
-        b.iter(|| q.matches_for_event(black_box(event_match)).unwrap())
+        b.iter(|| q.matches_for_event(black_box(event_match)).unwrap());
     });
 
     c.bench_function("10k_patterns_no_match", |b| {
-        b.iter(|| q.matches_for_event(black_box(event_no_match)).unwrap())
+        b.iter(|| q.matches_for_event(black_box(event_no_match)).unwrap());
     });
 }
 
@@ -1109,7 +1094,7 @@ fn bench_10k_patterns_match(c: &mut Criterion) {
 fn bench_10k_diverse_patterns(c: &mut Criterion) {
     let mut q = Quamina::<usize>::new();
     for i in 0..10_000 {
-        q.add_pattern(i, &format!(r#"{{"field_{}": ["value_{}"]}}"#, i, i))
+        q.add_pattern(i, &format!(r#"{{"field_{i}": ["value_{i}"]}}"#))
             .unwrap();
     }
 
@@ -1121,7 +1106,7 @@ fn bench_10k_diverse_patterns(c: &mut Criterion) {
     assert_eq!(matches.len(), 1);
 
     c.bench_function("10k_diverse_patterns_1_match", |b| {
-        b.iter(|| q.matches_for_event(black_box(event)).unwrap())
+        b.iter(|| q.matches_for_event(black_box(event)).unwrap());
     });
 }
 
@@ -1133,35 +1118,35 @@ fn bench_10k_mixed_patterns(c: &mut Criterion) {
     // Add mix of pattern types
     for i in 0..3_334 {
         // Exact match patterns
-        q.add_pattern(i, &format!(r#"{{"type": ["exact_{}"]}}"#, i))
+        q.add_pattern(i, &format!(r#"{{"type": ["exact_{i}"]}}"#))
             .unwrap();
     }
     for i in 3_334..6_667 {
         // Prefix patterns
-        q.add_pattern(i, &format!(r#"{{"path": [{{"prefix": "/api/v{}"}}]}}"#, i))
+        q.add_pattern(i, &format!(r#"{{"path": [{{"prefix": "/api/v{i}"}}]}}"#))
             .unwrap();
     }
     for i in 6_667..10_000 {
         // Numeric patterns
-        q.add_pattern(i, &format!(r#"{{"score": [{{"numeric": ["=", {}]}}]}}"#, i))
+        q.add_pattern(i, &format!(r#"{{"score": [{{"numeric": ["=", {i}]}}]}}"#))
             .unwrap();
     }
 
     // Events for each type
-    let event_exact = r#"{"type": "exact_1000"}"#.as_bytes();
-    let event_prefix = r#"{"path": "/api/v5000/users"}"#.as_bytes();
-    let event_numeric = r#"{"score": 8000}"#.as_bytes();
+    let event_exact = br#"{"type": "exact_1000"}"#;
+    let event_prefix = br#"{"path": "/api/v5000/users"}"#;
+    let event_numeric = br#"{"score": 8000}"#;
 
     c.bench_function("10k_mixed_exact_match", |b| {
-        b.iter(|| q.matches_for_event(black_box(event_exact)).unwrap())
+        b.iter(|| q.matches_for_event(black_box(event_exact)).unwrap());
     });
 
     c.bench_function("10k_mixed_prefix_match", |b| {
-        b.iter(|| q.matches_for_event(black_box(event_prefix)).unwrap())
+        b.iter(|| q.matches_for_event(black_box(event_prefix)).unwrap());
     });
 
     c.bench_function("10k_mixed_numeric_match", |b| {
-        b.iter(|| q.matches_for_event(black_box(event_numeric)).unwrap())
+        b.iter(|| q.matches_for_event(black_box(event_numeric)).unwrap());
     });
 }
 
@@ -1205,7 +1190,7 @@ fn bench_citylots(c: &mut Criterion) {
             let line_index = i % num_lines;
             i += 1;
             q.matches_for_event(black_box(&lines[line_index])).unwrap()
-        })
+        });
     });
 }
 
@@ -1306,7 +1291,7 @@ fn bench_citylots_core(c: &mut Criterion) {
             let line_index = i % num_lines;
             i += 1;
             matcher.matches_for_fields(black_box(&pre_flattened[line_index]))
-        })
+        });
     });
 }
 
@@ -1323,13 +1308,13 @@ fn bench_array_heavy(c: &mut Criterion) {
             if i == 50 {
                 "important".to_string()
             } else {
-                format!("tag{}", i)
+                format!("tag{i}")
             }
         })
-        .map(|t| format!(r#""{}""#, t))
+        .map(|t| format!(r#""{t}""#))
         .collect::<Vec<_>>()
         .join(", ");
-    let event_many_tags = format!(r#"{{"tags": [{}]}}"#, many_tags);
+    let event_many_tags = format!(r#"{{"tags": [{many_tags}]}}"#);
 
     // Verify match
     let matches = q.matches_for_event(event_many_tags.as_bytes()).unwrap();
@@ -1339,7 +1324,7 @@ fn bench_array_heavy(c: &mut Criterion) {
         b.iter(|| {
             q.matches_for_event(black_box(event_many_tags.as_bytes()))
                 .unwrap()
-        })
+        });
     });
 }
 
@@ -1362,7 +1347,7 @@ fn bench_deep_nesting_with_arrays(c: &mut Criterion) {
     assert_eq!(matches.len(), 1);
 
     c.bench_function("deep_nesting_with_arrays", |b| {
-        b.iter(|| q.matches_for_event(black_box(event.as_bytes())).unwrap())
+        b.iter(|| q.matches_for_event(black_box(event.as_bytes())).unwrap());
     });
 }
 
@@ -1378,11 +1363,11 @@ fn bench_state_acceleration(c: &mut Criterion) {
 
     // Long string with X near the end (acceleration should skip most bytes)
     let long_value = "A".repeat(10000) + "X";
-    let event_long = format!(r#"{{"value": "{}"}}"#, long_value);
+    let event_long = format!(r#"{{"value": "{long_value}"}}"#);
 
     // Medium string with X near the end
     let medium_value = "A".repeat(1000) + "X";
-    let event_medium = format!(r#"{{"value": "{}"}}"#, medium_value);
+    let event_medium = format!(r#"{{"value": "{medium_value}"}}"#);
 
     // Short string
     let event_short = r#"{"value": "AAAAAX"}"#;
@@ -1408,21 +1393,21 @@ fn bench_state_acceleration(c: &mut Criterion) {
         b.iter(|| {
             q.matches_for_event(black_box(event_long.as_bytes()))
                 .unwrap()
-        })
+        });
     });
 
     c.bench_function("accel_suffix_1k_chars", |b| {
         b.iter(|| {
             q.matches_for_event(black_box(event_medium.as_bytes()))
                 .unwrap()
-        })
+        });
     });
 
     c.bench_function("accel_suffix_short", |b| {
         b.iter(|| {
             q.matches_for_event(black_box(event_short.as_bytes()))
                 .unwrap()
-        })
+        });
     });
 }
 
@@ -1435,10 +1420,10 @@ fn bench_number_matching_10k(c: &mut Criterion) {
 
     let values: String = targets
         .iter()
-        .map(|f| format!("{:.6}", f))
+        .map(|f| format!("{f:.6}"))
         .collect::<Vec<_>>()
         .join(", ");
-    let pattern = format!(r#"{{"x": [{}]}}"#, values);
+    let pattern = format!(r#"{{"x": [{values}]}}"#);
 
     let mut q = Quamina::new();
     q.add_pattern("P", &pattern).unwrap();
@@ -1448,10 +1433,10 @@ fn bench_number_matching_10k(c: &mut Criterion) {
         .map(|i| {
             if i % 2 == 0 {
                 let val = format!("{:.6}", targets[i % 10]);
-                format!(r#"{{"x": {}}}"#, val).into_bytes()
+                format!(r#"{{"x": {val}}}"#).into_bytes()
             } else {
                 let val = format!("{:.6}", rng.random::<f64>() + 10.0);
-                format!(r#"{{"x": {}}}"#, val).into_bytes()
+                format!(r#"{{"x": {val}}}"#).into_bytes()
             }
         })
         .collect();
@@ -1461,7 +1446,7 @@ fn bench_number_matching_10k(c: &mut Criterion) {
             for event in &events {
                 let _ = q.matches_for_event(black_box(event)).unwrap();
             }
-        })
+        });
     });
 }
 
@@ -1498,7 +1483,7 @@ fn bench_shellstyle_build_time(c: &mut Criterion) {
 
         let star_word = format!("{}*{}", &word[..star_at], &word[star_at..]);
         let expanded_word = format!("{}ÉÉÉÉ{}", &word[..star_at], &word[star_at..]);
-        let pattern = format!(r#"{{"x": [{{"shellstyle": "{}"}}]}}"#, star_word);
+        let pattern = format!(r#"{{"x": [{{"shellstyle": "{star_word}"}}]}}"#);
 
         star_words.push(star_word);
         expanded_words.push(expanded_word);
@@ -1518,7 +1503,7 @@ fn bench_shellstyle_build_time(c: &mut Criterion) {
         .flat_map(|(i, word)| {
             vec![
                 (
-                    format!(r#"{{"x": "{}"}}"#, word).into_bytes(),
+                    format!(r#"{{"x": "{word}"}}"#).into_bytes(),
                     word.to_string(),
                 ),
                 (
@@ -1532,7 +1517,7 @@ fn bench_shellstyle_build_time(c: &mut Criterion) {
     // Verify all events match before benchmarking
     for (event, word) in &events {
         let matches = q.matches_for_event(event).unwrap();
-        assert!(!matches.is_empty(), "no matches for {}", word);
+        assert!(!matches.is_empty(), "no matches for {word}");
     }
 
     // Log arena stats (comparable to Go's matcherStats)
@@ -1543,7 +1528,7 @@ fn bench_shellstyle_build_time(c: &mut Criterion) {
             for (event, _) in &events {
                 let _ = q.matches_for_event(black_box(event)).unwrap();
             }
-        })
+        });
     });
 }
 
@@ -1552,8 +1537,8 @@ fn bench_exists_false(c: &mut Criterion) {
     // 10 exists:false patterns on fields that don't exist in the event
     for i in 0..10 {
         q.add_pattern(
-            format!("p{}", i),
-            &format!(r#"{{"missing_field_{}": [{{"exists": false}}]}}"#, i),
+            format!("p{i}"),
+            &format!(r#"{{"missing_field_{i}": [{{"exists": false}}]}}"#),
         )
         .unwrap();
     }
@@ -1562,7 +1547,7 @@ fn bench_exists_false(c: &mut Criterion) {
     let event = r#"{"a": 1, "b": 2, "c": 3, "d": 4, "e": 5, "f": 6, "g": 7, "h": 8, "i": 9, "j": 10, "k": 11, "l": 12, "m": 13, "n": 14, "o": 15, "p": 16, "q": 17, "r": 18, "s": 19, "t": 20}"#.as_bytes();
 
     c.bench_function("exists_false", |b| {
-        b.iter(|| q.matches_for_event(black_box(event)).unwrap())
+        b.iter(|| q.matches_for_event(black_box(event)).unwrap());
     });
 }
 

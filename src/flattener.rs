@@ -210,6 +210,7 @@ pub struct JsonFlattener {
 
 impl JsonFlattener {
     /// Create a new JSON flattener.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             state: FlattenJsonState::new(),

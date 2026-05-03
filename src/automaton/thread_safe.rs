@@ -39,21 +39,25 @@ use super::small_table::{FieldMatcher, NfaBuffers};
 
 /// Multiplier for eager DFA budget relative to NFA state count.
 /// A typical NFA-to-DFA expansion is well under 8x for real-world patterns.
+#[cfg(not(miri))]
 const EAGER_DFA_BUDGET_MULTIPLIER: usize = 8;
 
 /// Hard cap on eager DFA states. Prevents excessive freeze-time latency for
 /// pathological patterns (e.g. deeply nested quantifiers).
+#[cfg(not(miri))]
 const EAGER_DFA_BUDGET_CAP: usize = 10_000;
 
 /// Multiplier for lazy DFA budget relative to the eager budget.
 /// Gives the lazy tier 10× more DFA state budget than the eager tier,
 /// covering patterns whose DFA is too large for eager but still finite.
+#[cfg(not(miri))]
 const LAZY_DFA_BUDGET_MULTIPLIER: usize = 10;
 
 /// Hard cap on lazy DFA cached states. Matches the eager DFA cap so that
 /// large-NFA patterns (where eager_budget already hits EAGER_DFA_BUDGET_CAP)
 /// get the same ceiling. Empirically, all real-world patterns saturate at
 /// ≤ 32 hot-path states; 10 000 is conservative headroom.
+#[cfg(not(miri))]
 const LAZY_DFA_BUDGET_CAP: usize = 10_000;
 
 /// Compact collection for `transition_on` results, optimized for the common cases.
@@ -61,7 +65,7 @@ const LAZY_DFA_BUDGET_CAP: usize = 10_000;
 /// Most calls return 0 or 1 elements. This enum avoids both heap allocation (unlike Vec)
 /// and the SmallVec discriminant/copy overhead on the empty path. Size: 16 bytes
 /// (same as `Option<Arc<T>>` thanks to niche optimization on the `One` variant).
-pub(crate) enum Transitions<T> {
+pub enum Transitions<T> {
     Empty,
     One(T),
     Many(Vec<T>),
@@ -162,6 +166,7 @@ unsafe impl<X: Clone + Eq + Hash + Send + Sync> Send for FrozenFieldMatcher<X> {
 unsafe impl<X: Clone + Eq + Hash + Send + Sync> Sync for FrozenFieldMatcher<X> {}
 
 impl<X: Clone + Eq + Hash> FrozenFieldMatcher<X> {
+    #[must_use]
     pub fn new() -> Self {
         Self {
             transitions: FxHashMap::default(),
@@ -227,6 +232,7 @@ unsafe impl<X: Clone + Eq + Hash + Send + Sync> Send for FrozenValueMatcher<X> {
 unsafe impl<X: Clone + Eq + Hash + Send + Sync> Sync for FrozenValueMatcher<X> {}
 
 impl<X: Clone + Eq + Hash> FrozenValueMatcher<X> {
+    #[must_use]
     pub fn new() -> Self {
         Self {
             singleton_match: None,
@@ -354,7 +360,7 @@ impl<X: Clone + Eq + Hash> FrozenValueMatcher<X> {
         // - NegativeLookahead("foobar"): "foobar" must NOT match full value
         // - Lookbehind conditions are pre-combined with primary during build
         if !self.multi_condition_nfas.is_empty() {
-            for mc_nfa in self.multi_condition_nfas.iter() {
+            for mc_nfa in &self.multi_condition_nfas {
                 // Verify all conditions against the full value
                 let mut all_conditions_pass = true;
 
@@ -453,12 +459,14 @@ pub struct ThreadSafeCoreMatcher<X: Clone + Eq + Hash + Send + Sync> {
 
 impl<X: Clone + Eq + Hash + Send + Sync> ThreadSafeCoreMatcher<X> {
     /// Create a new ThreadSafeCoreMatcher with default limits.
+    #[must_use]
     pub fn new() -> Self {
         let defaults = crate::PatternLimits::default();
         Self::with_limits(defaults.arena_byte_budget, defaults.max_states_per_pattern)
     }
 
     /// Create a new ThreadSafeCoreMatcher with custom limits.
+    #[must_use]
     pub fn with_limits(arena_byte_budget: usize, max_states_per_pattern: usize) -> Self {
         Self {
             root: ArcSwap::from_pointee(FrozenFieldMatcher::new()),
@@ -576,7 +584,7 @@ impl<X: Clone + Eq + Hash + Send + Sync> ThreadSafeCoreMatcher<X> {
         visited_fm: &mut FxHashSet<usize>,
         visited_vm: &mut FxHashSet<usize>,
     ) {
-        let ptr = fm as *const _ as usize;
+        let ptr = std::ptr::from_ref(fm) as usize;
         if !visited_fm.insert(ptr) {
             return;
         }
@@ -597,7 +605,7 @@ impl<X: Clone + Eq + Hash + Send + Sync> ThreadSafeCoreMatcher<X> {
         visited_fm: &mut FxHashSet<usize>,
         visited_vm: &mut FxHashSet<usize>,
     ) {
-        let ptr = vm as *const _ as usize;
+        let ptr = std::ptr::from_ref(vm) as usize;
         if !visited_vm.insert(ptr) {
             return;
         }
@@ -707,9 +715,10 @@ impl<X: Clone + Eq + Hash + Send + Sync> ThreadSafeCoreMatcher<X> {
         // Three-tier strategy:
         //   Tier 1: Eager DFA — subset construction at freeze time (fast matching)
         //   Tier 2: Lazy DFA — on-demand DFA state caching during matching
-        //   Tier 3: NFA — full NFA traversal with epsilon closure expansion
+        // Tier 3: NFA — full NFA traversal with epsilon closure expansion
         let mut main_arena_is_nfa = *mutable.main_arena_is_nfa.borrow();
         let mut lazy_dfa: Option<Box<Mutex<LazyDfa>>> = None;
+
         let main_arena = mutable
             .main_arena
             .borrow()
@@ -1086,7 +1095,7 @@ struct FrozenMatchSet<X: Clone + Eq> {
 }
 
 impl<X: Clone + Eq> FrozenMatchSet<X> {
-    fn new() -> Self {
+    const fn new() -> Self {
         Self {
             matches: Vec::new(),
         }
@@ -1120,6 +1129,7 @@ pub struct AutomatonValueMatcher<X: Clone + Eq + std::hash::Hash> {
 
 impl<X: Clone + Eq + std::hash::Hash> AutomatonValueMatcher<X> {
     /// Create a new empty value matcher
+    #[must_use]
     pub fn new() -> Self {
         Self {
             arena: None,
@@ -1179,6 +1189,7 @@ impl<X: Clone + Eq + std::hash::Hash> AutomatonValueMatcher<X> {
     }
 
     /// Match a value against all patterns
+    #[must_use]
     pub fn match_value(&self, value: &[u8]) -> Vec<X> {
         let (arena, start) = match &self.arena {
             Some((a, s)) => (a, *s),

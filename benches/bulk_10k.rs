@@ -10,7 +10,7 @@ use quamina::Quamina;
 /// Tests scaling behavior beyond typical workloads.
 fn bench_bulk_10000x1(c: &mut Criterion) {
     let patterns: Vec<String> = (0..10_000)
-        .map(|i| format!(r#"{{"field": ["value_{}"]}}"#, i))
+        .map(|i| format!(r#"{{"field": ["value_{i}"]}}"#))
         .collect();
     c.bench_function("bulk_10000x1", |b| {
         b.iter(|| {
@@ -18,7 +18,7 @@ fn bench_bulk_10000x1(c: &mut Criterion) {
             for (i, pattern) in patterns.iter().enumerate() {
                 q.add_pattern(i, pattern).unwrap();
             }
-        })
+        });
     });
 }
 

@@ -177,7 +177,7 @@ pub fn get_block_ranges(block_name: &str) -> Option<Vec<RunePair>> {
 
 // Helper to create RunePair
 #[inline]
-fn rp(lo: char, hi: char) -> RunePair {
+const fn rp(lo: char, hi: char) -> RunePair {
     RunePair { lo, hi }
 }
 
@@ -1417,7 +1417,7 @@ fn category_co() -> Vec<RunePair> {
 }
 
 /// Cn (Other, Not Assigned) - Simplified, only some ranges
-fn category_cn() -> Vec<RunePair> {
+const fn category_cn() -> Vec<RunePair> {
     // Cn is extremely complex - it's all unassigned code points
     // For now, return empty - this is rarely tested
     vec![]

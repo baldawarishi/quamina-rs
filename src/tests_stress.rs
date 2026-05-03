@@ -46,14 +46,14 @@ fn test_stress_fuzz_strings() {
 
     // Add a pattern for each string
     for pname in &pattern_names {
-        let pattern = format!(r#"{{"a": ["{}"]}}"#, pname);
+        let pattern = format!(r#"{{"a": ["{pname}"]}}"#);
         q.add_pattern(pname.clone(), &pattern)
             .expect("addPattern failed");
     }
 
     // Make sure all patterns match
     for pname in &pattern_names {
-        let event = format!(r#"{{"a": "{}"}}"#, pname);
+        let event = format!(r#"{{"a": "{pname}"}}"#);
         assert_matches!(q, event, vec![pname.clone()]);
     }
 
@@ -68,7 +68,7 @@ fn test_stress_fuzz_strings() {
         }
         should_not_count += 1;
 
-        let event = format!(r#"{{"a": "{}"}}"#, s);
+        let event = format!(r#"{{"a": "{s}"}}"#);
         assert_no_match!(q, event);
     }
 }
@@ -98,14 +98,14 @@ fn test_stress_fuzz_numbers() {
 
     // Add a pattern for each number
     for pname in &pattern_names {
-        let pattern = format!(r#"{{"a": [{}]}}"#, pname);
+        let pattern = format!(r#"{{"a": [{pname}]}}"#);
         q.add_pattern(pname.to_string(), &pattern)
             .expect("addPattern failed");
     }
 
     // Make sure all patterns match
     for pname in &pattern_names {
-        let event = format!(r#"{{"a": {}}}"#, pname);
+        let event = format!(r#"{{"a": {pname}}}"#);
         assert_matches!(q, event, vec![pname.to_string()]);
     }
 
@@ -118,7 +118,7 @@ fn test_stress_fuzz_numbers() {
         }
         should_not_count += 1;
 
-        let event = format!(r#"{{"a": {}}}"#, n);
+        let event = format!(r#"{{"a": {n}}}"#);
         assert_no_match!(q, event);
     }
 }
@@ -168,9 +168,7 @@ fn test_arc_snapshot_isolation() {
     let q_arc = Arc::new(q);
 
     // Can't mutate through Arc, but can read
-    let matches = q_arc
-        .matches_for_event(r#"{"status": "active"}"#.as_bytes())
-        .unwrap();
+    let matches = q_arc.matches_for_event(br#"{"status": "active"}"#).unwrap();
     assert_eq!(matches, vec!["p1".to_string()]);
 
     // Clone for mutation
@@ -181,13 +179,13 @@ fn test_arc_snapshot_isolation() {
 
     // Original Arc doesn't have p2
     let matches = q_arc
-        .matches_for_event(r#"{"status": "pending"}"#.as_bytes())
+        .matches_for_event(br#"{"status": "pending"}"#)
         .unwrap();
     assert!(matches.is_empty());
 
     // Clone has p2
     let matches = q_clone
-        .matches_for_event(r#"{"status": "pending"}"#.as_bytes())
+        .matches_for_event(br#"{"status": "pending"}"#)
         .unwrap();
     assert_eq!(matches, vec!["p2".to_string()]);
 }
@@ -229,9 +227,9 @@ fn test_arc_concurrent_read_write() {
         let handle = thread::spawn(move || {
             for _ in 0..100 {
                 let matches = q_clone
-                    .matches_for_event(r#"{"status": "active"}"#.as_bytes())
+                    .matches_for_event(br#"{"status": "active"}"#)
                     .unwrap();
-                assert!(matches.contains(&"p1".to_string()), "Thread {} failed", i);
+                assert!(matches.contains(&"p1".to_string()), "Thread {i} failed");
             }
         });
         handles.push(handle);
@@ -254,7 +252,7 @@ fn test_arc_pattern_lifecycle() {
 
     // Add initial patterns
     for i in 0..10 {
-        q.add_pattern(format!("p{}", i), &format!(r#"{{"x": [{}]}}"#, i))
+        q.add_pattern(format!("p{i}"), &format!(r#"{{"x": [{i}]}}"#))
             .unwrap();
     }
 
@@ -266,7 +264,7 @@ fn test_arc_pattern_lifecycle() {
         let q_clone = Arc::clone(&q_arc);
         let handle = thread::spawn(move || {
             for i in 0..10 {
-                let event = format!(r#"{{"x": {}}}"#, i);
+                let event = format!(r#"{{"x": {i}}}"#);
                 let matches = q_clone.matches_for_event(event.as_bytes()).unwrap();
                 assert_eq!(matches.len(), 1);
             }
@@ -416,13 +414,13 @@ fn test_memory_cleanup_miri_friendly() {
 
     // Add a few patterns
     for i in 0..5 {
-        q.add_pattern(format!("p{}", i), &format!(r#"{{"x": [{}]}}"#, i))
+        q.add_pattern(format!("p{i}"), &format!(r#"{{"x": [{i}]}}"#))
             .unwrap();
     }
 
     // Delete some patterns
     for i in 0..3 {
-        q.delete_patterns(&format!("p{}", i)).unwrap();
+        q.delete_patterns(&format!("p{i}")).unwrap();
     }
 
     // Rebuild to clean up
@@ -462,7 +460,7 @@ fn test_arc_memory_cleanup() {
 
     // Add many patterns
     for i in 0..100 {
-        q.add_pattern(format!("p{}", i), &format!(r#"{{"x": [{}]}}"#, i))
+        q.add_pattern(format!("p{i}"), &format!(r#"{{"x": [{i}]}}"#))
             .unwrap();
     }
 
@@ -472,14 +470,12 @@ fn test_arc_memory_cleanup() {
     // Clone and drop multiple times
     for _ in 0..10 {
         let q_clone = Arc::clone(&q_arc);
-        let matches = q_clone
-            .matches_for_event(r#"{"x": 50}"#.as_bytes())
-            .unwrap();
+        let matches = q_clone.matches_for_event(br#"{"x": 50}"#).unwrap();
         assert_eq!(matches, vec!["p50".to_string()]);
     }
 
     // Original should still work
-    let matches = q_arc.matches_for_event(r#"{"x": 99}"#.as_bytes()).unwrap();
+    let matches = q_arc.matches_for_event(br#"{"x": 99}"#).unwrap();
     assert_eq!(matches, vec!["p99".to_string()]);
 }
 
@@ -537,14 +533,14 @@ fn verify_bulk_add_correctness(count: usize) {
     let mut q = Quamina::new();
 
     for i in 0..count {
-        let pattern = format!(r#"{{"field{}": ["value{}"]}}"#, i, i);
-        q.add_pattern(format!("p{}", i), &pattern).unwrap();
+        let pattern = format!(r#"{{"field{i}": ["value{i}"]}}"#);
+        q.add_pattern(format!("p{i}"), &pattern).unwrap();
     }
 
     assert_eq!(q.pattern_count(), count);
 
     for i in 0..count {
-        let event = format!(r#"{{"field{}": "value{}"}}"#, i, i);
+        let event = format!(r#"{{"field{i}": "value{i}"}}"#);
         assert_matches!(
             q,
             event,
@@ -607,14 +603,11 @@ fn test_invalid_utf8_dot_rejection() {
     let result = q.matches_for_event(invalid_json);
     // Should either error or safely handle
     // Go behavior: reject invalid UTF-8 in field names
-    match result {
-        Ok(matches) => {
-            // If it doesn't error, it may or may not match depending on implementation
-            assert!(matches.is_empty() || matches == vec!["p1"]);
-        }
-        Err(_) => {
-            // Erroring is also acceptable for invalid UTF-8
-        }
+    if let Ok(matches) = result {
+        // If it doesn't error, it may or may not match depending on implementation
+        assert!(matches.is_empty() || matches == vec!["p1"]);
+    } else {
+        // Erroring is also acceptable for invalid UTF-8
     }
 }
 
@@ -716,7 +709,7 @@ fn test_multiple_shellstyle_citylots_patterns() {
     ];
 
     for (value, expected_patterns) in test_cases {
-        let event = format!(r#"{{"x": "{}"}}"#, value);
+        let event = format!(r#"{{"x": "{value}"}}"#);
 
         if expected_patterns.is_empty() {
             assert_no_match!(q, event);
@@ -988,8 +981,8 @@ fn test_concurrent_update_during_matching() {
         idx: usize,
         tx: mpsc::Sender<String>,
     ) {
-        let val = format!("CONCURRENT_STREET_{}", idx);
-        let pattern = format!(r#"{{"properties": {{"STREET": ["{}"]}}}}"#, val);
+        let val = format!("CONCURRENT_STREET_{idx}");
+        let pattern = format!(r#"{{"properties": {{"STREET": ["{val}"]}}}}"#);
 
         {
             let mut q_write = q.write().unwrap();
@@ -1036,8 +1029,8 @@ fn test_concurrent_update_during_matching() {
 
     // Verify all concurrently added patterns are now in the matcher and work
     let mut verified = 0;
-    for val in rx.iter() {
-        let event = format!(r#"{{"properties": {{"STREET": "{}"}}}}"#, val);
+    for val in &rx {
+        let event = format!(r#"{{"properties": {{"STREET": "{val}"}}}}"#);
 
         let q_read = q.read().unwrap();
         let matches = q_read
@@ -1045,17 +1038,14 @@ fn test_concurrent_update_during_matching() {
             .expect("matches_for_event failed");
         assert!(
             matches.contains(&val),
-            "Concurrent pattern {} not found in matches: {:?}",
-            val,
-            matches
+            "Concurrent pattern {val} not found in matches: {matches:?}"
         );
         verified += 1;
     }
 
     let events_per_sec = lines.len() as f64 / elapsed.as_secs_f64();
     println!(
-        "Concurrent update test: {:.0} events/sec, {} total matches, {} patterns added concurrently, {} verified",
-        events_per_sec, total_matches, sent, verified
+        "Concurrent update test: {events_per_sec:.0} events/sec, {total_matches} total matches, {sent} patterns added concurrently, {verified} verified"
     );
 
     // Key assertions:
@@ -1080,19 +1070,19 @@ fn test_arc_field_matcher_sharing() {
     // All three should match the same event
     let event = r#"{"status": "active"}"#;
     let mut matches = q.matches_for_event(event.as_bytes()).unwrap();
-    matches.sort();
+    matches.sort_unstable();
     assert_eq!(matches, vec!["id1", "id2", "id3"]);
 
     // Delete one, others should still work
     q.delete_patterns(&"id2").unwrap();
     let mut matches2 = q.matches_for_event(event.as_bytes()).unwrap();
-    matches2.sort();
+    matches2.sort_unstable();
     assert_eq!(matches2, vec!["id1", "id3"]);
 
     // Clone and verify sharing survives
     let q2 = q.clone();
     let mut matches3 = q2.matches_for_event(event.as_bytes()).unwrap();
-    matches3.sort();
+    matches3.sort_unstable();
     assert_eq!(matches3, vec!["id1", "id3"]);
 }
 
@@ -1125,10 +1115,10 @@ fn test_pattern_insertion_scales_linearly() {
             .build()
             .unwrap();
         for i in 0..100 {
-            let pattern = format!(r#"{{"key": ["warmup_{}"]}}"#, i);
-            warmup.add_pattern(format!("w{}", i), &pattern).unwrap();
+            let pattern = format!(r#"{{"key": ["warmup_{i}"]}}"#);
+            warmup.add_pattern(format!("w{i}"), &pattern).unwrap();
         }
-        let _ = warmup.matches_for_event(r#"{"key": "warmup_0"}"#.as_bytes());
+        let _ = warmup.matches_for_event(br#"{"key": "warmup_0"}"#);
     }
 
     let mut costs: Vec<(usize, f64)> = Vec::new();
@@ -1140,18 +1130,15 @@ fn test_pattern_insertion_scales_linearly() {
             .unwrap();
         let start = Instant::now();
         for i in 0..n {
-            let pattern = format!(r#"{{"key": ["value_{}"]}}"#, i);
-            q.add_pattern(format!("p{}", i), &pattern).unwrap();
+            let pattern = format!(r#"{{"key": ["value_{i}"]}}"#);
+            q.add_pattern(format!("p{i}"), &pattern).unwrap();
         }
         // Trigger any deferred work (lazy freeze) so total cost is captured
-        let matches = q
-            .matches_for_event(r#"{"key": "value_0"}"#.as_bytes())
-            .unwrap();
+        let matches = q.matches_for_event(br#"{"key": "value_0"}"#).unwrap();
         let elapsed = start.elapsed();
         assert!(
             matches.contains(&"p0".to_string()),
-            "Pattern p0 should match after adding {} patterns",
-            n,
+            "Pattern p0 should match after adding {n} patterns",
         );
         let cost_per_pattern = elapsed.as_secs_f64() / n as f64;
         costs.push((n, cost_per_pattern));
@@ -1247,7 +1234,7 @@ fn test_pathological_correctness() {
     for (event, want) in cases {
         let mut got = q.matches_for_event(event.as_bytes()).unwrap();
         got.sort();
-        let want: Vec<String> = want.iter().map(|s| s.to_string()).collect();
+        let want: Vec<String> = want.iter().map(std::string::ToString::to_string).collect();
         assert_eq!(got, want, "Event: {event}");
     }
 }
@@ -1273,8 +1260,8 @@ fn test_pathological_correctness_miri_friendly() {
 
     for (event, want) in cases {
         let mut got = q.matches_for_event(event.as_bytes()).unwrap();
-        got.sort();
-        let want: Vec<String> = want.iter().map(|s| s.to_string()).collect();
+        got.sort_unstable();
+        let want: Vec<String> = want.iter().map(std::string::ToString::to_string).collect();
         assert_eq!(got, want, "Event: {event}");
     }
 }
