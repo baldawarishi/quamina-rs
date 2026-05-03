@@ -443,7 +443,7 @@ impl<X: Clone + Eq + Hash + Send + Sync> QuaminaBuilder<X> {
         self
     }
 
-    /// Build the Quamina instance
+    /// Build the Quamina instance.
     ///
     /// # Example
     /// ```
@@ -453,6 +453,13 @@ impl<X: Clone + Eq + Hash + Send + Sync> QuaminaBuilder<X> {
     ///     .build()
     ///     .unwrap();
     /// ```
+    ///
+    /// # Errors
+    ///
+    /// The current implementation always returns `Ok`. The fallible signature is
+    /// reserved so future builder options (e.g. validating a custom flattener or
+    /// pattern storage backend) can surface configuration errors without a
+    /// breaking API change.
     pub fn build(self) -> Result<Quamina<X>, QuaminaError> {
         Ok(Quamina {
             automaton: ThreadSafeCoreMatcher::with_limits(
@@ -590,6 +597,18 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
     /// # Ok(())
     /// # }
     /// ```
+    ///
+    /// `add_pattern` is single-threaded; if it is invoked concurrently from
+    /// multiple snapshots created with [`Quamina::clone`] the calls will block
+    /// until any other `add_pattern` in progress finishes.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`QuaminaError::InvalidPattern`] when `pattern_json` is not a
+    /// JSON object, when a leaf is not provided as an array, or when the pattern
+    /// uses unsupported syntax. Returns [`QuaminaError::PatternTooComplex`] when
+    /// the pattern would exceed the configured [`PatternLimits`] (depth, field
+    /// count, state count) or the shared arena byte budget.
     pub fn add_pattern(&mut self, x: X, pattern_json: &str) -> Result<(), QuaminaError> {
         let fields = json::parse_pattern(pattern_json, &self.pattern_limits)?;
 
@@ -630,6 +649,14 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
     /// # Ok(())
     /// # }
     /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns [`QuaminaError::InvalidJson`] when `event` is not a valid JSON
+    /// object, or [`QuaminaError::InvalidUtf8`] when `event` contains invalid
+    /// UTF-8 byte sequences. If a custom [`Flattener`](flattener::Flattener) was
+    /// configured via the builder, it may return any error its
+    /// [`flatten`](flattener::Flattener::flatten) implementation produces.
     pub fn matches_for_event(&self, event: &[u8]) -> Result<Vec<X>, QuaminaError> {
         // Check if we have a custom flattener
         if let Some(ref custom_flattener_mutex) = self.custom_flattener {
@@ -769,6 +796,13 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
     /// # Ok(())
     /// # }
     /// ```
+    ///
+    /// # Errors
+    ///
+    /// The current implementation always returns `Ok`. The fallible signature
+    /// matches the upstream Quamina API and is reserved for future backends
+    /// (such as a [`LivePatternsState`](https://github.com/timbray/quamina#dynamic-pattern-storage)
+    /// store) that may need to surface I/O or storage errors.
     pub fn delete_patterns(&mut self, x: &X) -> Result<(), QuaminaError> {
         // Check if pattern exists
         if !self.pattern_defs.contains_key(x) || self.deleted_patterns.contains(x) {
@@ -795,6 +829,10 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
     /// # Ok(())
     /// # }
     /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns the same errors as [`matches_for_event`](Self::matches_for_event).
     pub fn has_matches(&self, event: &[u8]) -> Result<bool, QuaminaError> {
         // Use matches_for_event and check if non-empty
         // This could be optimized to return early, but for now this is simpler
@@ -813,6 +851,10 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
     /// # Ok(())
     /// # }
     /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns the same errors as [`matches_for_event`](Self::matches_for_event).
     pub fn count_matches(&self, event: &[u8]) -> Result<usize, QuaminaError> {
         Ok(self.matches_for_event(event)?.len())
     }

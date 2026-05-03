@@ -66,8 +66,6 @@ perf = { level = "warn", priority = -1 }
 transmute_ptr_to_ptr = "warn"
 
 # Keep allows for lints that require massive structural/doc rewrites or conflict with performance
-missing_errors_doc = "allow"
-missing_panics_doc = "allow"
 module_name_repetitions = "allow"
 inline_always = "allow"
 too_many_lines = "allow"

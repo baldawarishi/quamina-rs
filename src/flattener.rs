@@ -148,6 +148,12 @@ pub trait Flattener: Send + Sync {
     /// # Returns
     ///
     /// A vector of flattened fields, or an error if parsing fails.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the event bytes cannot be parsed in the format the
+    /// implementation expects (e.g. invalid JSON or invalid UTF-8 byte sequences
+    /// for the default `JsonFlattener`).
     fn flatten(
         &mut self,
         event: &[u8],
