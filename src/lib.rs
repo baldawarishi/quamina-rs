@@ -598,17 +598,15 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
     /// # }
     /// ```
     ///
-    /// `add_pattern` is single-threaded; if it is invoked concurrently from
-    /// multiple snapshots created with [`Quamina::clone`] the calls will block
-    /// until any other `add_pattern` in progress finishes.
-    ///
     /// # Errors
     ///
-    /// Returns [`QuaminaError::InvalidPattern`] when `pattern_json` is not a
-    /// JSON object, when a leaf is not provided as an array, or when the pattern
-    /// uses unsupported syntax. Returns [`QuaminaError::PatternTooComplex`] when
-    /// the pattern would exceed the configured [`PatternLimits`] (depth, field
-    /// count, state count) or the shared arena byte budget.
+    /// Returns [`QuaminaError::InvalidJson`] when `pattern_json` is not
+    /// syntactically valid JSON, [`QuaminaError::InvalidPattern`] when the JSON
+    /// is well-formed but is not a pattern object (e.g. a leaf is not an array,
+    /// or the pattern uses unsupported syntax), and
+    /// [`QuaminaError::PatternTooComplex`] when the pattern would exceed the
+    /// configured [`PatternLimits`] (depth, field count, state count) or the
+    /// shared arena byte budget.
     pub fn add_pattern(&mut self, x: X, pattern_json: &str) -> Result<(), QuaminaError> {
         let fields = json::parse_pattern(pattern_json, &self.pattern_limits)?;
 
@@ -653,10 +651,11 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
     /// # Errors
     ///
     /// Returns [`QuaminaError::InvalidJson`] when `event` is not a valid JSON
-    /// object, or [`QuaminaError::InvalidUtf8`] when `event` contains invalid
-    /// UTF-8 byte sequences. If a custom [`Flattener`](flattener::Flattener) was
-    /// configured via the builder, it may return any error its
-    /// [`flatten`](flattener::Flattener::flatten) implementation produces.
+    /// object (encoding issues such as invalid UTF-8 inside strings surface as
+    /// `InvalidJson` from the parser). If a custom
+    /// [`Flattener`](flattener::Flattener) was configured via the builder, this
+    /// method propagates any [`QuaminaError`] its
+    /// [`flatten`](flattener::Flattener::flatten) implementation returns.
     pub fn matches_for_event(&self, event: &[u8]) -> Result<Vec<X>, QuaminaError> {
         // Check if we have a custom flattener
         if let Some(ref custom_flattener_mutex) = self.custom_flattener {

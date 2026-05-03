@@ -152,8 +152,8 @@ pub trait Flattener: Send + Sync {
     /// # Errors
     ///
     /// Returns an error if the event bytes cannot be parsed in the format the
-    /// implementation expects (e.g. invalid JSON or invalid UTF-8 byte sequences
-    /// for the default `JsonFlattener`).
+    /// implementation expects. The default [`JsonFlattener`] returns
+    /// [`QuaminaError::InvalidJson`] for malformed events.
     fn flatten(
         &mut self,
         event: &[u8],
