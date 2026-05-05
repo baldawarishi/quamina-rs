@@ -87,13 +87,3 @@ missing_fields_in_debug = "allow"
 manual_let_else = "allow"
 assigning_clones = "allow"
 used_underscore_binding = "allow"
-
-# Nursery lints (selectively enabled/configured)
-use_self = "warn"
-derive_partial_eq_without_eq = "warn"
-redundant_clone = "warn"
-unused_peekable = "warn"
-or_fun_call = "warn"
-branches_sharing_code = "warn"
-equatable_if_let = "warn"
-disallowed_types = "warn"
