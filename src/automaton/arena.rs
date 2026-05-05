@@ -32,7 +32,7 @@ use super::sparse_set::SparseSet;
 /// A state identifier - just an index into the arena.
 ///
 /// `StateId` is a u32 because we want it cheap to copy, hash, and store in
-/// the transition tables. That gives us a ceiling of just under 2³² states
+/// the transition tables. That gives us a ceiling of just under 2^32 states
 /// per arena, which is fine: an arena that big would have run out of memory
 /// long before. The conversions between `usize` and `StateId` rely on that
 /// fact instead of checking it on every alloc.
