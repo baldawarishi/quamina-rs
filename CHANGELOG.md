@@ -14,7 +14,8 @@ Style inspired by [ripgrep's CHANGELOG](https://github.com/BurntSushi/ripgrep/bl
 - Profiling examples for NFA→DFA budget tuning and negated char class acceleration
 
 ### Changed
-- Enabled strict clippy lints (`clippy::pedantic`, `clippy::nursery`, `clippy::perf`)
+- Tightened strict clippy lints: removed blanket allows for `module_name_repetitions`, `too_many_lines`, `similar_names`, and related structural/naming lints; refactored hot spots, kept per-item allows on hot loops and generated tables
+- Added `# Errors` sections to public fallible APIs and enabled `missing_errors_doc`
 - Synced Go upstream through commit 48955e9 (CI housekeeping)
 
 ### Fixed
