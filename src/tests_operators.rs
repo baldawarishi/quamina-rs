@@ -32,14 +32,14 @@ fn exercise_multi_patterns(
             .unwrap_or_else(|e| panic!("Failed to add pattern {pattern}: {e:?}"));
     }
 
-    // Verify each pattern matches its expected values
+    // Verify each pattern pattern_ids its expected values
     for (pattern, should_match) in patterns_with_matches {
         for val in *should_match {
             let event = format!(r#"{{"x":"{val}"}}"#);
-            let matches = q.matches_for_event(event.as_bytes()).unwrap();
+            let pattern_ids = q.matches_for_event(event.as_bytes()).unwrap();
             assert!(
-                matches.contains(pattern),
-                "Pattern '{pattern}' should match '{val}', got {matches:?}"
+                pattern_ids.contains(pattern),
+                "Pattern '{pattern}' should match '{val}', got {pattern_ids:?}"
             );
         }
     }
@@ -47,10 +47,10 @@ fn exercise_multi_patterns(
     // Verify none of the should_not_match values match any pattern
     for val in should_not_match_any {
         let event = format!(r#"{{"x":"{val}"}}"#);
-        let matches = q.matches_for_event(event.as_bytes()).unwrap();
+        let pattern_ids = q.matches_for_event(event.as_bytes()).unwrap();
         assert!(
-            matches.is_empty(),
-            "'{val}' should not match any pattern, got {matches:?}"
+            pattern_ids.is_empty(),
+            "'{val}' should not match any pattern, got {pattern_ids:?}"
         );
     }
 }
@@ -252,10 +252,10 @@ fn test_nested_transmap_safety() {
     assert_has_match!(q, r#"{"a": "fooABC", "b": "bazABC"}"#, "P1");
     // Matches P2: a=fox*, b=bar*
     assert_has_match!(q, r#"{"a": "foxDEF", "b": "barDEF"}"#, "P2");
-    // a=foo* matches P0 and P1, b=bar matches only P0
+    // a=foo* pattern_ids P0 and P1, b=bar pattern_ids only P0
     assert_has_match!(q, r#"{"a": "fooXYZ", "b": "bar"}"#, "P0");
     assert_no_has_match!(q, r#"{"a": "fooXYZ", "b": "bar"}"#, "P1");
-    // a=foo* matches P0 and P1, b=baz matches only P1
+    // a=foo* pattern_ids P0 and P1, b=baz pattern_ids only P1
     assert_has_match!(q, r#"{"a": "fooXYZ", "b": "baz"}"#, "P1");
     assert_no_has_match!(q, r#"{"a": "fooXYZ", "b": "baz"}"#, "P0");
     // No match
@@ -265,7 +265,7 @@ fn test_nested_transmap_safety() {
 /// Go lineage: nfa_test.go TestOverlappingShellStyleNesting
 ///
 /// Validates that overlapping shellstyle patterns on multiple fields produce
-/// correct matches when nested NFA traversals occur. The key scenario: field
+/// correct pattern_ids when nested NFA traversals occur. The key scenario: field
 /// "a" has both `*` and `foo*` patterns, which BOTH match `"fooX"`, producing
 /// two separate fieldMatcher transitions. Each of those then traverses field
 /// "b" which also has overlapping `*` and `bar*` patterns. In Go, a naive
@@ -318,17 +318,17 @@ fn test_three_level_nesting() {
     // (unlike Go's randomized map order), but repeated runs still validate
     // that the matching logic is stable.
     for i in 0..100 {
-        let matches = q.matches_for_event(event.as_bytes()).unwrap();
+        let pattern_ids = q.matches_for_event(event.as_bytes()).unwrap();
         assert!(
-            matches.contains(&"deep-1"),
-            "iter {i}: missing deep-1, got {matches:?}"
+            pattern_ids.contains(&"deep-1"),
+            "iter {i}: missing deep-1, got {pattern_ids:?}"
         );
         assert!(
-            matches.contains(&"side"),
-            "iter {i}: missing side, got {matches:?}"
+            pattern_ids.contains(&"side"),
+            "iter {i}: missing side, got {pattern_ids:?}"
         );
         assert!(
-            !matches.contains(&"deep-2"),
+            !pattern_ids.contains(&"deep-2"),
             "iter {i}: unexpected deep-2 (c=catZ should not match cow*)"
         );
     }
@@ -379,12 +379,15 @@ fn test_three_level_nesting_miri_friendly() {
     );
 
     let event = r#"{"a": "fooX", "b": "barY", "c": "catZ", "d": "dogW"}"#;
-    let matches = q.matches_for_event(event.as_bytes()).unwrap();
+    let pattern_ids = q.matches_for_event(event.as_bytes()).unwrap();
     assert!(
-        matches.contains(&"deep-1"),
-        "missing deep-1, got {matches:?}"
+        pattern_ids.contains(&"deep-1"),
+        "missing deep-1, got {pattern_ids:?}"
     );
-    assert!(matches.contains(&"side"), "missing side, got {matches:?}");
+    assert!(
+        pattern_ids.contains(&"side"),
+        "missing side, got {pattern_ids:?}"
+    );
 }
 
 // ============================================================================
@@ -452,7 +455,7 @@ fn test_anything_but_numeric() {
 
 #[test]
 fn test_anything_but_prefix_relationship() {
-    // Tests that anything-but ["foo"] matches "foot" (since "foot" != "foo")
+    // Tests that anything-but ["foo"] pattern_ids "foot" (since "foot" != "foo")
     let q = q!("not_foo" => r#"{"z": [{"anything-but": ["foo"]}]}"#);
     assert_matches!(
         q,
@@ -814,88 +817,88 @@ fn test_lookaround_pattern_add_to_quamina() {
 
 #[test]
 fn test_positive_lookahead_match() {
-    // foo(?=bar) matches the "foo" in "foobar" (zero-width, so only matches "foo" position)
+    // foo(?=bar) pattern_ids the "foo" in "foobar" (zero-width, so only pattern_ids "foo" position)
     let mut q = Quamina::<String>::new();
     let pattern = r#"{"status": [{"regexp": "foo(?=bar)bar"}]}"#;
     q.add_pattern("test".to_string(), pattern).unwrap();
 
     let event = r#"{"status": "foobar"}"#;
-    let matches = q.matches_for_event(event.as_bytes()).unwrap();
+    let pattern_ids = q.matches_for_event(event.as_bytes()).unwrap();
     assert!(
-        matches.contains(&"test".to_string()),
+        pattern_ids.contains(&"test".to_string()),
         "foo(?=bar)bar should match 'foobar'"
     );
 
     let event = r#"{"status": "foobaz"}"#;
-    let matches = q.matches_for_event(event.as_bytes()).unwrap();
+    let pattern_ids = q.matches_for_event(event.as_bytes()).unwrap();
     assert!(
-        !matches.contains(&"test".to_string()),
+        !pattern_ids.contains(&"test".to_string()),
         "foo(?=bar)bar should NOT match 'foobaz'"
     );
 }
 
 #[test]
 fn test_negative_lookahead_match() {
-    // foo(?!bar) matches "foo" not followed by "bar"
+    // foo(?!bar) pattern_ids "foo" not followed by "bar"
     let mut q = Quamina::<String>::new();
     let pattern = r#"{"status": [{"regexp": "foo(?!bar)..."}]}"#;
     q.add_pattern("test".to_string(), pattern).unwrap();
 
     let event = r#"{"status": "foobaz"}"#;
-    let matches = q.matches_for_event(event.as_bytes()).unwrap();
+    let pattern_ids = q.matches_for_event(event.as_bytes()).unwrap();
     assert!(
-        matches.contains(&"test".to_string()),
+        pattern_ids.contains(&"test".to_string()),
         "foo(?!bar)... should match 'foobaz'"
     );
 
     let event = r#"{"status": "foobar"}"#;
-    let matches = q.matches_for_event(event.as_bytes()).unwrap();
+    let pattern_ids = q.matches_for_event(event.as_bytes()).unwrap();
     assert!(
-        !matches.contains(&"test".to_string()),
+        !pattern_ids.contains(&"test".to_string()),
         "foo(?!bar)... should NOT match 'foobar'"
     );
 }
 
 #[test]
 fn test_lookbehind_match() {
-    // (?<=foo)bar matches "bar" preceded by "foo"
+    // (?<=foo)bar pattern_ids "bar" preceded by "foo"
     let mut q = Quamina::<String>::new();
     let pattern = r#"{"status": [{"regexp": "(?<=foo)bar"}]}"#;
     q.add_pattern("test".to_string(), pattern).unwrap();
 
     let event = r#"{"status": "foobar"}"#;
-    let matches = q.matches_for_event(event.as_bytes()).unwrap();
+    let pattern_ids = q.matches_for_event(event.as_bytes()).unwrap();
     assert!(
-        matches.contains(&"test".to_string()),
+        pattern_ids.contains(&"test".to_string()),
         "(?<=foo)bar should match 'foobar'"
     );
 
     let event = r#"{"status": "xxxbar"}"#;
-    let matches = q.matches_for_event(event.as_bytes()).unwrap();
+    let pattern_ids = q.matches_for_event(event.as_bytes()).unwrap();
     assert!(
-        !matches.contains(&"test".to_string()),
+        !pattern_ids.contains(&"test".to_string()),
         "(?<=foo)bar should NOT match 'xxxbar'"
     );
 }
 
 #[test]
 fn test_negative_lookbehind_match() {
-    // (?<!foo)bar matches "bar" not preceded by "foo"
+    // (?<!foo)bar pattern_ids "bar" not preceded by "foo"
     let mut q = Quamina::<String>::new();
     let pattern = r#"{"status": [{"regexp": "(?<!foo)bar"}]}"#;
     q.add_pattern("test".to_string(), pattern).unwrap();
 
     let event = r#"{"status": "xxxbar"}"#;
-    let matches = q.matches_for_event(event.as_bytes()).unwrap();
+    let pattern_ids = q.matches_for_event(event.as_bytes()).unwrap();
     assert!(
-        matches.contains(&"test".to_string()),
+        pattern_ids.contains(&"test".to_string()),
         "(?<!foo)bar should match 'xxxbar'"
     );
 
     let event = r#"{"status": "foobar"}"#;
-    let matches = q.matches_for_event(event.as_bytes()).unwrap();
+    let pattern_ids = q.matches_for_event(event.as_bytes()).unwrap();
     assert!(
-        !matches.contains(&"test".to_string()),
+        !pattern_ids.contains(&"test".to_string()),
         "(?<!foo)bar should NOT match 'foobar'"
     );
 }
@@ -1001,7 +1004,7 @@ fn test_singleton_hit_and_multi_condition_hit_same_value() {
 
 #[test]
 fn test_wb_start_word_char() {
-    // "hello" starts with 'h' (word char) → ~b at start matches
+    // "hello" starts with 'h' (word char) → ~b at start pattern_ids
     let q = q!("test" => r#"{"name": [{"regexp": "~bhello"}]}"#);
     assert_has_match!(q, r#"{"name": "hello"}"#, "test");
 }
@@ -1059,7 +1062,7 @@ fn test_nwb_word_to_nonword_err() {
 
 #[test]
 fn test_nwb_start_nonword() {
-    // ~B at start: `"` is non-word, ' ' is non-word → same class → matches
+    // ~B at start: `"` is non-word, ' ' is non-word → same class → pattern_ids
     let q = q!("test" => r#"{"name": [{"regexp": "~B hello"}]}"#);
     assert_has_match!(q, r#"{"name": " hello"}"#, "test");
 }
@@ -1110,7 +1113,7 @@ fn test_wb_underscore_is_word_char() {
 
 #[test]
 fn test_nwb_underscore_is_word_char() {
-    // '_' and 'a' are both word chars → ~B matches
+    // '_' and 'a' are both word chars → ~B pattern_ids
     let q = q!("test" => r#"{"name": [{"regexp": "a~B_"}]}"#);
     assert_has_match!(q, r#"{"name": "a_"}"#, "test");
 }
@@ -1146,7 +1149,7 @@ fn test_wb_plus_quantifier() {
 
 #[test]
 fn test_wb_optional_quantifier() {
-    // a?~b exercises SplitOrAbsent (quant_min=0): when a? matches 'a',
+    // a?~b exercises SplitOrAbsent (quant_min=0): when a? pattern_ids 'a',
     // the boundary is between 'a' (word) and ' ' (non-word)
     let q = q!("test" => r#"{"v": [{"regexp": "xa?~b "}]}"#);
     assert_has_match!(q, r#"{"v": "xa "}"#, "test");
@@ -1242,9 +1245,9 @@ fn test_exists_false_ordering() {
     for (i, pattern) in should_not_patterns.iter().enumerate() {
         let mut q = Quamina::new();
         q.add_pattern(format!("p{i}"), pattern).unwrap();
-        let matches = q.matches_for_event(event.as_bytes()).unwrap();
+        let pattern_ids = q.matches_for_event(event.as_bytes()).unwrap();
         assert!(
-            matches.is_empty(),
+            pattern_ids.is_empty(),
             "Pattern {i} should NOT match: {pattern}"
         );
     }
@@ -1379,12 +1382,12 @@ fn test_regex_various_patterns() {
         ),
     ];
 
-    for &(name, regex, matches, no_matches) in cases {
+    for &(name, regex, pattern_ids, no_matches) in cases {
         let mut q = Quamina::new();
         let pattern = format!(r#"{{"a": [{{"regex": "{regex}"}}]}}"#);
         q.add_pattern(name, &pattern).unwrap();
 
-        for m in matches {
+        for m in pattern_ids {
             let event = format!(r#"{{"a": "{m}"}}"#);
             assert_has_match!(q, &event, name, &format!("'{regex}' should match '{m}'"));
         }
@@ -1395,132 +1398,130 @@ fn test_regex_various_patterns() {
     }
 }
 
+/// Regexp samples ported from Go's `TestRegexpEnd2End`.
+const END2END_REGEXP_SAMPLES: &[crate::regexp_samples::RegexpSample] = &[
+    crate::regexp_samples::RegexpSample {
+        regex: "(xyz)?a?b",
+        pattern_ids: &["xyzb", "xyzab", "ab", "b"],
+        nomatches: &["xyzc", "c", "xyza"],
+        valid: true,
+    },
+    crate::regexp_samples::RegexpSample {
+        regex: "a|b",
+        pattern_ids: &["a", "b"],
+        nomatches: &["x"],
+        valid: true,
+    },
+    crate::regexp_samples::RegexpSample {
+        regex: "a",
+        pattern_ids: &["a"],
+        nomatches: &["b", ""],
+        valid: true,
+    },
+    crate::regexp_samples::RegexpSample {
+        regex: "a.b",
+        pattern_ids: &["axb", "a.b"],
+        nomatches: &["ab", "axxb"],
+        valid: true,
+    },
+    crate::regexp_samples::RegexpSample {
+        regex: "abc|def",
+        pattern_ids: &["abc", "def"],
+        nomatches: &["x"],
+        valid: true,
+    },
+    crate::regexp_samples::RegexpSample {
+        regex: "[hij]",
+        pattern_ids: &["h", "i", "j"],
+        nomatches: &["x"],
+        valid: true,
+    },
+    crate::regexp_samples::RegexpSample {
+        regex: "a[e-g]x",
+        pattern_ids: &["aex", "afx", "agx"],
+        nomatches: &["ax", "axx"],
+        valid: true,
+    },
+    crate::regexp_samples::RegexpSample {
+        regex: "[ae-gx]",
+        pattern_ids: &["a", "e", "f", "g", "x"],
+        nomatches: &["b"],
+        valid: true,
+    },
+    crate::regexp_samples::RegexpSample {
+        regex: "[-ab]",
+        pattern_ids: &["-", "a", "b"],
+        nomatches: &["c"],
+        valid: true,
+    },
+    crate::regexp_samples::RegexpSample {
+        regex: "[ab-]",
+        pattern_ids: &["-", "a", "b"],
+        nomatches: &["c"],
+        valid: true,
+    },
+    crate::regexp_samples::RegexpSample {
+        regex: "[~[~]]",
+        pattern_ids: &["[", "]"],
+        nomatches: &["a"],
+        valid: true,
+    },
+    // Go also tests [~r~t~n] matching the literal CR/TAB/LF bytes; in JSON those
+    // would be escaped, so we cover the same shape with [~[~]] above.
+    crate::regexp_samples::RegexpSample {
+        regex: "[a-c]|[xz]",
+        pattern_ids: &["a", "b", "c", "x", "z"],
+        nomatches: &["w"],
+        valid: true,
+    },
+    crate::regexp_samples::RegexpSample {
+        regex: "[ac-e]h|p[xy]",
+        pattern_ids: &["ah", "ch", "dh", "eh", "px", "py"],
+        nomatches: &["xp"],
+        valid: true,
+    },
+    crate::regexp_samples::RegexpSample {
+        regex: "[0-9][0-9][rtn][dh]",
+        pattern_ids: &["11th", "23rd", "22nd"],
+        nomatches: &["first", "9th"],
+        valid: true,
+    },
+    crate::regexp_samples::RegexpSample {
+        regex: "a(h|i)z",
+        pattern_ids: &["ahz", "aiz"],
+        nomatches: &["a.z"],
+        valid: true,
+    },
+    crate::regexp_samples::RegexpSample {
+        regex: "a([1-3]|ac)z",
+        pattern_ids: &["a1z", "a2z", "a3z", "aacz"],
+        nomatches: &["a.z", "a0z"],
+        valid: true,
+    },
+    crate::regexp_samples::RegexpSample {
+        regex: "a(h|([x-z]|(1|2)))z",
+        pattern_ids: &["ahz", "axz", "a1z", "a2z"],
+        nomatches: &["a.z"],
+        valid: true,
+    },
+];
+
 #[test]
 #[cfg_attr(miri, ignore)]
 fn test_regexp_end2end() {
-    // Comprehensive regexp tests ported from Go's TestRegexpEnd2End
-    use crate::regexp_samples::RegexpSample;
-
-    let tests = [
-        RegexpSample {
-            regex: "(xyz)?a?b",
-            matches: &["xyzb", "xyzab", "ab", "b"],
-            nomatches: &["xyzc", "c", "xyza"],
-            valid: true,
-        },
-        RegexpSample {
-            regex: "a|b",
-            matches: &["a", "b"],
-            nomatches: &["x"],
-            valid: true,
-        },
-        RegexpSample {
-            regex: "a",
-            matches: &["a"],
-            nomatches: &["b", ""],
-            valid: true,
-        },
-        RegexpSample {
-            regex: "a.b",
-            matches: &["axb", "a.b"],
-            nomatches: &["ab", "axxb"],
-            valid: true,
-        },
-        RegexpSample {
-            regex: "abc|def",
-            matches: &["abc", "def"],
-            nomatches: &["x"],
-            valid: true,
-        },
-        RegexpSample {
-            regex: "[hij]",
-            matches: &["h", "i", "j"],
-            nomatches: &["x"],
-            valid: true,
-        },
-        RegexpSample {
-            regex: "a[e-g]x",
-            matches: &["aex", "afx", "agx"],
-            nomatches: &["ax", "axx"],
-            valid: true,
-        },
-        RegexpSample {
-            regex: "[ae-gx]",
-            matches: &["a", "e", "f", "g", "x"],
-            nomatches: &["b"],
-            valid: true,
-        },
-        RegexpSample {
-            regex: "[-ab]",
-            matches: &["-", "a", "b"],
-            nomatches: &["c"],
-            valid: true,
-        },
-        RegexpSample {
-            regex: "[ab-]",
-            matches: &["-", "a", "b"],
-            nomatches: &["c"],
-            valid: true,
-        },
-        RegexpSample {
-            regex: "[~[~]]",
-            matches: &["[", "]"],
-            nomatches: &["a"],
-            valid: true,
-        },
-        // Note: Go tests [~r~t~n] matching \r, \t, \n literal bytes
-        // In JSON these would be escaped, so we test differently
-        RegexpSample {
-            regex: "[a-c]|[xz]",
-            matches: &["a", "b", "c", "x", "z"],
-            nomatches: &["w"],
-            valid: true,
-        },
-        RegexpSample {
-            regex: "[ac-e]h|p[xy]",
-            matches: &["ah", "ch", "dh", "eh", "px", "py"],
-            nomatches: &["xp"],
-            valid: true,
-        },
-        RegexpSample {
-            regex: "[0-9][0-9][rtn][dh]",
-            matches: &["11th", "23rd", "22nd"],
-            nomatches: &["first", "9th"],
-            valid: true,
-        },
-        RegexpSample {
-            regex: "a(h|i)z",
-            matches: &["ahz", "aiz"],
-            nomatches: &["a.z"],
-            valid: true,
-        },
-        RegexpSample {
-            regex: "a([1-3]|ac)z",
-            matches: &["a1z", "a2z", "a3z", "aacz"],
-            nomatches: &["a.z", "a0z"],
-            valid: true,
-        },
-        RegexpSample {
-            regex: "a(h|([x-z]|(1|2)))z",
-            matches: &["ahz", "axz", "a1z", "a2z"],
-            nomatches: &["a.z"],
-            valid: true,
-        },
-    ];
-
-    // Test each pattern individually
-    for test in &tests {
+    // Each sample, on its own machine, must match every `pattern_ids` value and reject
+    // every `nomatches` value.
+    for test in END2END_REGEXP_SAMPLES {
         let mut q = Quamina::new();
         let pattern = format!(r#"{{"a": [{{"regexp": "{}"}}]}}"#, test.regex);
-        if let Err(e) = q.add_pattern("test", &pattern) {
-            panic!("Failed to add pattern '{}': {}", test.regex, e);
-        }
+        q.add_pattern("test", &pattern)
+            .unwrap_or_else(|e| panic!("Failed to add pattern '{}': {}", test.regex, e));
 
-        for m in test.matches {
+        for m in test.pattern_ids {
             let event = format!(r#"{{"a": "{m}"}}"#);
-            let matches = q.matches_for_event(event.as_bytes()).unwrap();
+            let pattern_ids = q.matches_for_event(event.as_bytes()).unwrap();
             assert!(
-                matches.contains(&"test"),
+                pattern_ids.contains(&"test"),
                 "Pattern '{}' should match '{}', but didn't",
                 test.regex,
                 m
@@ -1529,9 +1530,9 @@ fn test_regexp_end2end() {
 
         for m in test.nomatches {
             let event = format!(r#"{{"a": "{m}"}}"#);
-            let matches = q.matches_for_event(event.as_bytes()).unwrap();
+            let pattern_ids = q.matches_for_event(event.as_bytes()).unwrap();
             assert!(
-                matches.is_empty(),
+                pattern_ids.is_empty(),
                 "Pattern '{}' should NOT match '{}', but did",
                 test.regex,
                 m
@@ -1539,23 +1540,23 @@ fn test_regexp_end2end() {
         }
     }
 
-    // Test merged FA (all patterns together) - like Go does
+    // Mirror Go: load every sample into one merged FA and re-check pattern_ids.
     let mut all_patterns = Quamina::new();
-    for (i, test) in tests.iter().enumerate() {
+    for (i, test) in END2END_REGEXP_SAMPLES.iter().enumerate() {
         let pattern = format!(r#"{{"a": [{{"regexp": "{}"}}]}}"#, test.regex);
         let name = format!("p{i}");
-        if let Err(e) = all_patterns.add_pattern(name, &pattern) {
-            panic!("Failed to add pattern '{}': {}", test.regex, e);
-        }
+        all_patterns
+            .add_pattern(name, &pattern)
+            .unwrap_or_else(|e| panic!("Failed to add pattern '{}': {}", test.regex, e));
     }
 
-    for (i, test) in tests.iter().enumerate() {
+    for (i, test) in END2END_REGEXP_SAMPLES.iter().enumerate() {
         let expected_name = format!("p{i}");
-        for m in test.matches {
+        for m in test.pattern_ids {
             let event = format!(r#"{{"a": "{m}"}}"#);
-            let matches = all_patterns.matches_for_event(event.as_bytes()).unwrap();
+            let pattern_ids = all_patterns.matches_for_event(event.as_bytes()).unwrap();
             assert!(
-                matches.contains(&expected_name),
+                pattern_ids.contains(&expected_name),
                 "Merged FA: Pattern '{}' should match '{}', but didn't",
                 test.regex,
                 m
@@ -1585,7 +1586,7 @@ fn test_multiple_shellstyle_same_field() {
 
     // Test suffix_bc pattern
     assert_has_match!(q, r#"{"x": "abc"}"#, "suffix_bc");
-    // abc also matches ab* prefix pattern
+    // abc also pattern_ids ab* prefix pattern
     assert_has_match!(q, r#"{"x": "abc"}"#, "prefix_ab");
 
     // Test suffix_xc pattern
@@ -1608,14 +1609,14 @@ fn test_anything_but_with_shellstyle() {
     );
 
     // "foo" should match BOTH patterns:
-    // - pFooStar: matches "foo*"
+    // - pFooStar: pattern_ids "foo*"
     // - pAbFoot: "foo" is not "foot"
     assert_match_count!(q, r#"{"z": "foo"}"#, 2);
     assert_has_match!(q, r#"{"z": "foo"}"#, "pFooStar");
     assert_has_match!(q, r#"{"z": "foo"}"#, "pAbFoot");
 
     // "foot" should match only pFooStar:
-    // - pFooStar: matches "foo*"
+    // - pFooStar: pattern_ids "foo*"
     // - pAbFoot: excluded (is "foot")
     assert_match_count!(q, r#"{"z": "foot"}"#, 1);
     assert_has_match!(q, r#"{"z": "foot"}"#, "pFooStar");
@@ -1675,9 +1676,9 @@ fn test_anything_but_wordle_words() {
     // Problem words should NOT match (they're excluded)
     for word in &problem_words {
         let event = format!(r#"{{"a": "{word}"}}"#);
-        let matches = q.matches_for_event(event.as_bytes()).unwrap();
+        let pattern_ids = q.matches_for_event(event.as_bytes()).unwrap();
         assert!(
-            matches.is_empty(),
+            pattern_ids.is_empty(),
             "Problem word '{word}' should be excluded"
         );
     }
@@ -1692,9 +1693,9 @@ fn test_anything_but_wordle_words() {
                 continue;
             }
             let event = format!(r#"{{"a": "{word}"}}"#);
-            let matches = q.matches_for_event(event.as_bytes()).unwrap();
+            let pattern_ids = q.matches_for_event(event.as_bytes()).unwrap();
             assert_eq!(
-                matches.len(),
+                pattern_ids.len(),
                 1,
                 "Wordle word '{word}' should match anything-but pattern"
             );
@@ -1789,7 +1790,7 @@ fn test_wildcard_comprehensive() {
     // Based on Go quamina's exercisePattern tests from wildcard_test.go
     use crate::test_helpers::exercise_wildcard;
 
-    // Test * (matches everything)
+    // Test * (pattern_ids everything)
     exercise_wildcard("*", &["", "*", "h", "hello"], &[]);
 
     // Test *hello (suffix matching)
@@ -1863,7 +1864,7 @@ fn test_wildcard_escape_sequences_comprehensive() {
 
     // Test hel\*o (escaped star = literal *)
     // Pattern: "hel\\\\*o" -> JSON "hel\\*o" -> parsed: hel\*o
-    // In wildcard: hel + \* (escaped star = literal *) + o = matches "hel*o" exactly
+    // In wildcard: hel + \* (escaped star = literal *) + o = pattern_ids "hel*o" exactly
     // Note: event "hel*o" doesn't need escaping as * is not a JSON escape char
     exercise_wildcard("hel\\\\*o", &["hel*o"], &["helo", "hello"]);
 
@@ -1877,9 +1878,9 @@ fn test_wildcard_escape_sequences_comprehensive() {
         &["heo", "helo"],
     );
 
-    // Test he\\llo - matches "he\llo" (escaped backslash in pattern = literal \)
+    // Test he\\llo - pattern_ids "he\llo" (escaped backslash in pattern = literal \)
     // Pattern: "he\\\\\\\\llo" -> JSON "he\\\\llo" -> parsed: he\\llo
-    // In wildcard: he + \\ (escaped backslash = literal \) + llo = matches "he\llo"
+    // In wildcard: he + \\ (escaped backslash = literal \) + llo = pattern_ids "he\llo"
     // Event also needs JSON escaping: "he\\\\llo" -> JSON "he\\llo" -> parsed: "he\llo"
     exercise_wildcard("he\\\\\\\\llo", &["he\\\\llo"], &["hello"]);
 }
@@ -2329,7 +2330,7 @@ fn test_wildcard_multi_patterns_double_exact2() {
 #[test]
 fn test_wildcard_multi_patterns_zero_expansion() {
     // Wildcard expanding to zero characters, combined with overlapping prefix pattern.
-    // Exercises build_fa_from_segments when spinner exit byte matches immediately.
+    // Exercises build_fa_from_segments when spinner exit byte pattern_ids immediately.
     exercise_multi_patterns(
         &["ab", "abXYZ"],
         &[
@@ -2378,7 +2379,7 @@ fn test_wildcard_escape_backslash_wildcard() {
 
     // Should match - values with "he\" prefix and "llo" suffix
     let match_events = [
-        r#"{"x": "he\\llo"}"#,   // he\llo (1 backslash, matches wildcard)
+        r#"{"x": "he\\llo"}"#,   // he\llo (1 backslash, pattern_ids wildcard)
         r#"{"x": "he\\*llo"}"#,  // he\*llo
         r#"{"x": "he\\\\llo"}"#, // he\\llo (2 backslashes)
         r#"{"x": "he\\xxllo"}"#, // he\xxllo
@@ -2577,143 +2578,136 @@ fn test_regexp_samples_exist() {
     );
 }
 
+/// Regexps with `*` that match the empty string — used to suppress false
+/// positives when the negative-match list contains "".
+#[cfg(test)]
+fn regexp_star_samples_matching_empty(regex: &str) -> bool {
+    matches!(
+        regex,
+        "(([~.~~~?~*~+~{~}~[~]~(~)~|]?)*)+"
+            | "[~~~|~.~?~*~+~(~)~{~}~-~[~]~^]*"
+            | "[~*a]*"
+            | "[a-]*"
+            | "[~n~r~t~~~|~.~-~^~?~*~+~{~}~[~]~(~)]*"
+            | "[a~*]*"
+            | "[0-9]*"
+            | "(([a-d]*)|([a-z]*))"
+            | "(([d-f]*)|([c-e]*))"
+            | "(([c-e]*)|([d-f]*))"
+            | "(([a-d]*)|(.*))"
+            | "(([d-f]*)|(.*))"
+            | "(([c-e]*)|(.*))"
+            | "(.*)"
+            | "([^~?])*"
+    )
+}
+
+#[cfg(test)]
+fn regexp_should_skip(re: &str) -> bool {
+    let chars: Vec<char> = re.chars().collect();
+    for i in 0..chars.len().saturating_sub(1) {
+        if chars[i] == '~' && matches!(chars[i + 1], 'b' | 'B') {
+            return true;
+        }
+    }
+    false
+}
+
+#[cfg(test)]
+fn regexp_is_known_extension(re: &str) -> bool {
+    let chars: Vec<char> = re.chars().collect();
+    for i in 0..chars.len() {
+        if i + 1 < chars.len()
+            && chars[i] == '~'
+            && matches!(
+                chars[i + 1],
+                'd' | 'D' | 'w' | 'W' | 's' | 'S' | 'p' | 'P' | 'i' | 'I' | 'c' | 'C'
+            )
+        {
+            return true;
+        }
+        if i + 1 < chars.len() && matches!(chars[i], '*' | '+' | '?' | '}') && chars[i + 1] == '?' {
+            return true;
+        }
+        if i + 2 < chars.len() && chars[i] == '(' && chars[i + 1] == '?' && chars[i + 2] == ':' {
+            return true;
+        }
+    }
+    false
+}
+
+/// Evaluate a single regexp sample's match/non-match expectations and return
+/// the number of validation failures observed.
+#[cfg(test)]
+fn evaluate_regexp_sample(sample: &crate::regexp_samples::RegexpSample) -> usize {
+    use crate::automaton::arena::{ARENA_VALUE_TERMINATOR, NfaBuffers, traverse_arena_nfa};
+    use crate::regexp::{make_regexp_nfa_arena, parse_regexp};
+    use std::sync::Arc;
+
+    let parse_result = parse_regexp(sample.regex);
+    let mut problems = 0;
+
+    if sample.valid {
+        let Ok(tree) = parse_result else {
+            return 0;
+        };
+        let (arena, start, field_matcher) = make_regexp_nfa_arena(tree);
+        let mut bufs = NfaBuffers::new();
+        let fm_ptr = Arc::as_ptr(&field_matcher) as usize;
+
+        let mut traverse = |s: &str| -> bool {
+            let mut value: Vec<u8> = Vec::with_capacity(s.len() + 3);
+            value.push(b'"');
+            value.extend_from_slice(s.as_bytes());
+            value.push(b'"');
+            value.push(ARENA_VALUE_TERMINATOR);
+            bufs.clear();
+            traverse_arena_nfa(&arena, start, &value, &mut bufs);
+            bufs.transitions.contains(&fm_ptr)
+        };
+
+        for should_match in sample.pattern_ids {
+            if !traverse(should_match) && !should_match.is_empty() {
+                problems += 1;
+            }
+        }
+
+        for should_not_match in sample.nomatches {
+            let matched = traverse(should_not_match);
+            if matched
+                && !(should_not_match.is_empty()
+                    && regexp_star_samples_matching_empty(sample.regex))
+                && !should_not_match.is_empty()
+            {
+                problems += 1;
+            }
+        }
+    } else if parse_result.is_ok() && !regexp_is_known_extension(sample.regex) {
+        problems += 1;
+    }
+
+    problems
+}
+
 // MIRI SKIP RATIONALE: Iterates over 992 REGEXP_SAMPLES, building and traversing NFAs for
 // each. Under Miri this takes 8+ minutes and causes the CI job to time out.
 #[test]
 #[cfg_attr(miri, ignore)]
 fn test_regexp_validity() {
-    use crate::automaton::arena::{ARENA_VALUE_TERMINATOR, ArenaNfaBuffers, traverse_arena_nfa};
-    use crate::regexp::{make_regexp_nfa_arena, parse_regexp};
     use crate::regexp_samples::REGEXP_SAMPLES;
-    use std::sync::Arc;
-
-    /// Regexps with * that should match empty string
-    fn star_samples_matching_empty(regex: &str) -> bool {
-        matches!(
-            regex,
-            "(([~.~~~?~*~+~{~}~[~]~(~)~|]?)*)+"
-                | "[~~~|~.~?~*~+~(~)~{~}~-~[~]~^]*"
-                | "[~*a]*"
-                | "[a-]*"
-                | "[~n~r~t~~~|~.~-~^~?~*~+~{~}~[~]~(~)]*"
-                | "[a~*]*"
-                | "[0-9]*"
-                | "(([a-d]*)|([a-z]*))"
-                | "(([d-f]*)|([c-e]*))"
-                | "(([c-e]*)|([d-f]*))"
-                | "(([a-d]*)|(.*))"
-                | "(([d-f]*)|(.*))"
-                | "(([c-e]*)|(.*))"
-                | "(.*)"
-                | "([^~?])*"
-        )
-    }
 
     let mut problems = 0;
-
     for sample in REGEXP_SAMPLES {
-        fn should_skip(re: &str) -> bool {
-            let chars: Vec<char> = re.chars().collect();
-            for i in 0..chars.len().saturating_sub(1) {
-                if chars[i] == '~' {
-                    let next = chars[i + 1];
-                    if matches!(next, 'b' | 'B') {
-                        return true;
-                    }
-                }
-            }
-            false
-        }
-
-        fn is_known_extension(re: &str) -> bool {
-            let chars: Vec<char> = re.chars().collect();
-            for i in 0..chars.len() {
-                if i + 1 < chars.len() && chars[i] == '~' {
-                    let next = chars[i + 1];
-                    if matches!(
-                        next,
-                        'd' | 'D' | 'w' | 'W' | 's' | 'S' | 'p' | 'P' | 'i' | 'I' | 'c' | 'C'
-                    ) {
-                        return true;
-                    }
-                }
-                if i + 1 < chars.len()
-                    && matches!(chars[i], '*' | '+' | '?' | '}')
-                    && chars[i + 1] == '?'
-                {
-                    return true;
-                }
-                if i + 2 < chars.len()
-                    && chars[i] == '('
-                    && chars[i + 1] == '?'
-                    && chars[i + 2] == ':'
-                {
-                    return true;
-                }
-            }
-            false
-        }
-
-        if should_skip(sample.regex) {
+        if regexp_should_skip(sample.regex) {
             continue;
         }
-
-        if sample.matches.iter().any(|s| s.len() > 50)
+        if sample.pattern_ids.iter().any(|s| s.len() > 50)
             || sample.nomatches.iter().any(|s| s.len() > 50)
         {
             continue;
         }
 
-        let parse_result = parse_regexp(sample.regex);
-
-        if sample.valid {
-            if let Ok(tree) = parse_result {
-                let (arena, start, field_matcher) = make_regexp_nfa_arena(tree);
-                let mut bufs = ArenaNfaBuffers::new();
-
-                for should_match in sample.matches {
-                    let mut value: Vec<u8> = Vec::new();
-                    value.push(b'"');
-                    value.extend_from_slice(should_match.as_bytes());
-                    value.push(b'"');
-                    value.push(ARENA_VALUE_TERMINATOR);
-                    bufs.clear();
-                    traverse_arena_nfa(&arena, start, &value, &mut bufs);
-                    let matched = bufs
-                        .transitions
-                        .contains(&(Arc::as_ptr(&field_matcher) as usize));
-                    if !matched && !should_match.is_empty() {
-                        problems += 1;
-                    }
-                }
-
-                for should_not_match in sample.nomatches {
-                    let mut value: Vec<u8> = Vec::new();
-                    value.push(b'"');
-                    value.extend_from_slice(should_not_match.as_bytes());
-                    value.push(b'"');
-                    value.push(ARENA_VALUE_TERMINATOR);
-                    bufs.clear();
-                    traverse_arena_nfa(&arena, start, &value, &mut bufs);
-                    let matched = bufs
-                        .transitions
-                        .contains(&(Arc::as_ptr(&field_matcher) as usize));
-                    if matched
-                        && !(should_not_match.is_empty()
-                            && star_samples_matching_empty(sample.regex))
-                        && !should_not_match.is_empty()
-                    {
-                        problems += 1;
-                    }
-                }
-            }
-        } else if parse_result.is_ok() {
-            let is_extension = is_known_extension(sample.regex);
-            if !is_extension {
-                problems += 1;
-            }
-        }
-
+        problems += evaluate_regexp_sample(sample);
         if problems >= 10 {
             break;
         }
@@ -2729,11 +2723,11 @@ fn test_regexp_validity() {
 #[test]
 #[cfg(miri)]
 fn test_regexp_validity_miri_minimal() {
-    use crate::automaton::arena::{ARENA_VALUE_TERMINATOR, ArenaNfaBuffers, traverse_arena_nfa};
+    use crate::automaton::arena::{ARENA_VALUE_TERMINATOR, NfaBuffers, traverse_arena_nfa};
     use crate::regexp::{make_regexp_nfa_arena, parse_regexp};
     use std::sync::Arc;
 
-    let mut bufs = ArenaNfaBuffers::new();
+    let mut bufs = NfaBuffers::new();
 
     let root = parse_regexp("a|b").unwrap();
     let (arena, start, fm) = make_regexp_nfa_arena(root);
@@ -3077,26 +3071,26 @@ fn test_lookaround_primary_match() {
     let pattern = r#"{"status": [{"regexp": "foo(?=bar)"}]}"#;
     q.add_pattern("lookahead".to_string(), pattern).unwrap();
 
-    // Event with "foobar" - primary "foo" matches and condition "foobar" matches
+    // Event with "foobar" - primary "foo" pattern_ids and condition "foobar" pattern_ids
     let event = r#"{"status": "foobar"}"#;
-    let matches = q.matches_for_event(event.as_bytes()).unwrap();
+    let pattern_ids = q.matches_for_event(event.as_bytes()).unwrap();
     assert!(
-        matches.contains(&"lookahead".to_string()),
+        pattern_ids.contains(&"lookahead".to_string()),
         "foo(?=bar) should match 'foobar'"
     );
 
-    // Event with just "foo" - primary matches but condition fails
+    // Event with just "foo" - primary pattern_ids but condition fails
     let event = r#"{"status": "foo"}"#;
-    let matches = q.matches_for_event(event.as_bytes()).unwrap();
+    let pattern_ids = q.matches_for_event(event.as_bytes()).unwrap();
     assert!(
-        !matches.contains(&"lookahead".to_string()),
+        !pattern_ids.contains(&"lookahead".to_string()),
         "foo(?=bar) should NOT match 'foo' (lookahead fails)"
     );
 }
 
 /// Regression test: lookaround buffer reuse must not carry stale state.
 ///
-/// Mixes lookahead and exact patterns on the same field, then matches
+/// Mixes lookahead and exact patterns on the same field, then pattern_ids
 /// repeatedly. If arena_bufs carries stale transitions between calls,
 /// later iterations will produce wrong results.
 #[test]
@@ -3139,11 +3133,11 @@ fn test_lookaround_buffer_reuse_no_stale_state() {
 fn test_lookaround_multiple_conditions_no_cross_contamination() {
     let mut q = Quamina::<String>::new();
 
-    // Positive lookahead: matches "foobar" but not "foobaz"
+    // Positive lookahead: pattern_ids "foobar" but not "foobaz"
     q.add_pattern("pos".to_string(), r#"{"v": [{"regexp": "foo(?=bar)bar"}]}"#)
         .unwrap();
 
-    // Negative lookahead: matches "foobaz" but not "foobar"
+    // Negative lookahead: pattern_ids "foobaz" but not "foobar"
     q.add_pattern("neg".to_string(), r#"{"v": [{"regexp": "foo(?!bar)baz"}]}"#)
         .unwrap();
 
@@ -3168,7 +3162,7 @@ fn test_lookaround_multiple_conditions_no_cross_contamination() {
 /// Miri-friendly variant of test_lookaround_buffer_reuse_no_stale_state.
 ///
 /// Single iteration to verify buffer clearing between lookahead and exact
-/// pattern matches without the 200-iteration loop.
+/// pattern pattern_ids without the 200-iteration loop.
 #[test]
 fn test_lookaround_buffer_reuse_no_stale_state_miri_friendly() {
     let mut q = Quamina::<String>::new();
@@ -3225,30 +3219,30 @@ fn test_lookaround_multiple_conditions_no_cross_contamination_miri_friendly() {
 #[test]
 fn test_shellstyle_subset_overlap_same_field() {
     // Go's TestWildCardRuler: two shellstyle patterns on the same field where
-    // one's match set is a subset of the other (d*f matches everything d*ff does, plus more)
+    // one's match set is a subset of the other (d*f pattern_ids everything d*ff does, plus more)
     let q = q!(
         "r1" => r#"{"b": [{"shellstyle": "d*f"}]}"#,
         "r2" => r#"{"b": [{"shellstyle": "d*ff"}]}"#
     );
 
-    // "dexeff" matches both: d*f (ends in f) and d*ff (ends in ff)
+    // "dexeff" pattern_ids both: d*f (ends in f) and d*ff (ends in ff)
     assert_has_match!(q, r#"{"b": "dexeff"}"#, "r1");
     assert_has_match!(q, r#"{"b": "dexeff"}"#, "r2");
     assert_match_count!(q, r#"{"b": "dexeff"}"#, 2);
 
-    // "def" matches d*f only (ends in single f, not ff)
+    // "def" pattern_ids d*f only (ends in single f, not ff)
     assert_has_match!(q, r#"{"b": "def"}"#, "r1");
     assert_no_has_match!(q, r#"{"b": "def"}"#, "r2");
 
-    // "df" matches d*f (wildcard matches zero chars)
+    // "df" pattern_ids d*f (wildcard pattern_ids zero chars)
     assert_has_match!(q, r#"{"b": "df"}"#, "r1");
     assert_no_has_match!(q, r#"{"b": "df"}"#, "r2");
 
-    // "dff" matches both: d*f (wildcard matches "f", ending in f) and d*ff (ends in ff)
+    // "dff" pattern_ids both: d*f (wildcard pattern_ids "f", ending in f) and d*ff (ends in ff)
     assert_has_match!(q, r#"{"b": "dff"}"#, "r1");
     assert_has_match!(q, r#"{"b": "dff"}"#, "r2");
 
-    // "hello" matches neither
+    // "hello" pattern_ids neither
     assert_no_match!(q, r#"{"b": "hello"}"#);
 }
 
@@ -3284,7 +3278,7 @@ fn test_equals_ignore_case_length_boundaries() {
 fn test_unicode_category_epsilon_closure() {
     // Tests line 509: `if !eps.is_none()` in instantiate_shell epsilon remapping.
     // Unicode category patterns (e.g., ~p{L}) use cached shells with epsilon transitions.
-    // If epsilon remapping is deleted, epsilon closures have wrong state IDs, breaking matches.
+    // If epsilon remapping is deleted, epsilon closures have wrong state IDs, breaking pattern_ids.
     // This test uses the fact that ~p{L} (Unicode letter category) relies on cached shells
     // with epsilon transitions, so wrong epsilon remapping will cause incorrect matching.
 
@@ -3402,6 +3396,8 @@ fn test_surrogate_boundary_before() {
     assert_no_has_match!(q2, r#"{"text": "a"}"#, "p2");
 }
 
+// `char_d7fb`/`event_d7fb` etc. encode the literal codepoint in the binding name.
+#[allow(clippy::similar_names)]
 #[test]
 fn test_surrogate_boundary_range() {
     // Tests lines 625-626: surrogate range boundary checks with a range that spans the boundary.
@@ -3452,11 +3448,11 @@ fn test_surrogate_boundary_multiple_ranges() {
     q.add_pattern("p2", &pattern_p2)
         .expect("Failed to add pattern p2");
 
-    // p1 matches lowercase letters
+    // p1 pattern_ids lowercase letters
     assert_has_match!(q, r#"{"text": "m"}"#, "p1");
     assert_no_has_match!(q, r#"{"text": "M"}"#, "p1");
 
-    // p2 matches in the surrogate-crossing range
+    // p2 pattern_ids in the surrogate-crossing range
     let event_d7fe = format!(r#"{{"text": "{char_d7fe}"}}"#);
     assert_has_match!(q, &event_d7fe, "p2");
 
@@ -3504,13 +3500,13 @@ fn test_lookbehind_positive_and_negative() {
         "pos_lb" => r#"{"v": [{"regexp": "(?<=pre)fix"}]}"#,
         "neg_lb" => r#"{"v": [{"regexp": "(?<!pre)fix"}]}"#
     );
-    // "prefix" — positive matches, negative does not
+    // "prefix" — positive pattern_ids, negative does not
     assert_has_match!(q, r#"{"v": "prefix"}"#, "pos_lb");
     assert_no_has_match!(q, r#"{"v": "prefix"}"#, "neg_lb");
-    // "suffix" — negative matches, positive does not
+    // "suffix" — negative pattern_ids, positive does not
     assert_has_match!(q, r#"{"v": "suffix"}"#, "neg_lb");
     assert_no_has_match!(q, r#"{"v": "suffix"}"#, "pos_lb");
-    // "fix" alone — negative matches
+    // "fix" alone — negative pattern_ids
     assert_has_match!(q, r#"{"v": "fix"}"#, "neg_lb");
     assert_no_has_match!(q, r#"{"v": "fix"}"#, "pos_lb");
 }
@@ -3693,13 +3689,13 @@ fn test_lookbehind_with_alternation() {
     // (?<=ab|cd)x — lookbehind has 2 branches, both of fixed length 2.
     // Must combine ALL lookbehind branches with the primary pattern.
     let q = q!("p1" => r#"{"v": [{"regexp": "(?<=ab|cd)x"}]}"#);
-    // "abx" — lookbehind branch "ab" matches
+    // "abx" — lookbehind branch "ab" pattern_ids
     assert_has_match!(q, r#"{"v": "abx"}"#, "p1");
-    // "cdx" — lookbehind branch "cd" matches
+    // "cdx" — lookbehind branch "cd" pattern_ids
     assert_has_match!(q, r#"{"v": "cdx"}"#, "p1");
-    // "efx" — neither lookbehind branch matches
+    // "efx" — neither lookbehind branch pattern_ids
     assert_no_match!(q, r#"{"v": "efx"}"#);
-    // "abz" — lookbehind matches but primary doesn't
+    // "abz" — lookbehind pattern_ids but primary doesn't
     assert_no_match!(q, r#"{"v": "abz"}"#);
 }
 

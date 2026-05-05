@@ -176,7 +176,7 @@ fn test_array_element_matching() {
 
 #[test]
 fn test_array_cross_element_matching() {
-    // Test cross-element array matching behavior (matches Go quamina behavior)
+    // Test cross-element array matching behavior (pattern_ids Go quamina behavior)
     // Pattern {"members": {"given": ["Mick"], "surname": ["Strummer"]}}
     // Event: members=[{given: "Joe", surname: "Strummer"}, {given: "Mick", surname: "Jones"}]
     //
@@ -295,7 +295,7 @@ fn test_delete_patterns() {
     // Delete p1
     q.delete_patterns(&"p1").unwrap();
 
-    // p1 no longer matches
+    // p1 no longer pattern_ids
     assert_no_match!(q, r#"{"status": "active"}"#);
 
     // p2 still works
@@ -391,13 +391,13 @@ fn test_should_rebuild_threshold() {
     // Not enough activity yet - should not trigger rebuild
     assert!(!q.should_rebuild());
 
-    // Simulate lots of matches
+    // Simulate lots of pattern_ids
     let event = br#"{"x": "a"}"#;
     for _ in 0..500 {
         let _ = q.matches_for_event(event).unwrap();
     }
 
-    // After 500 matches with 5 patterns, 3 emit, 2 filtered
+    // After 500 pattern_ids with 5 patterns, 3 emit, 2 filtered
     // filtered = 500 * 2 = 1000
     // emitted = 500 * 3 = 1500
     // Total activity = 2500 > 1000 threshold
@@ -413,7 +413,7 @@ fn test_should_rebuild_threshold() {
 }
 
 /// Miri-only: exercises the same rebuild threshold logic with 100 iterations instead of 500.
-/// With 3 patterns (2 deleted, 1 remaining), 100 matches yields:
+/// With 3 patterns (2 deleted, 1 remaining), 100 pattern_ids yields:
 ///   filtered = 100 * 2 = 200, emitted = 100 * 1 = 100, total = 300.
 /// We use 3 patterns total so threshold math still triggers (needs total > 1000 with
 /// ratio > 0.2). We run 400 iterations: filtered=800, emitted=400, total=1200 > 1000,
@@ -710,7 +710,7 @@ fn test_rebuild_zero_filtered_denominator() {
     // Matching should not panic with zero patterns
     let result = q.matches_for_event(br#"{"likes": "tacos"}"#);
     assert!(result.is_ok(), "Should not panic with empty matcher");
-    assert!(result.unwrap().is_empty(), "No matches expected");
+    assert!(result.unwrap().is_empty(), "No pattern_ids expected");
 }
 
 // ============================================================================
@@ -784,8 +784,8 @@ fn test_builder_combined_options() {
 
     q.add_pattern("p1".to_string(), r#"{"status": ["active"]}"#)
         .unwrap();
-    let matches = q.matches_for_event(br#"{"status": "active"}"#).unwrap();
-    assert_eq!(matches, vec!["p1".to_string()]);
+    let pattern_ids = q.matches_for_event(br#"{"status": "active"}"#).unwrap();
+    assert_eq!(pattern_ids, vec!["p1".to_string()]);
     assert!(!q.auto_rebuild_enabled());
 }
 
@@ -801,14 +801,14 @@ fn test_builder_generic_type() {
     // With i32 as pattern ID
     let mut q = QuaminaBuilder::<i32>::new().build().unwrap();
     q.add_pattern(42, r#"{"x": [1]}"#).unwrap();
-    let matches = q.matches_for_event(br#"{"x": 1}"#).unwrap();
-    assert_eq!(matches, vec![42]);
+    let pattern_ids = q.matches_for_event(br#"{"x": 1}"#).unwrap();
+    assert_eq!(pattern_ids, vec![42]);
 
     // With &str as pattern ID
     let mut q = QuaminaBuilder::<&str>::new().build().unwrap();
     q.add_pattern("test", r#"{"x": [1]}"#).unwrap();
-    let matches = q.matches_for_event(br#"{"x": 1}"#).unwrap();
-    assert_eq!(matches, vec!["test"]);
+    let pattern_ids = q.matches_for_event(br#"{"x": 1}"#).unwrap();
+    assert_eq!(pattern_ids, vec!["test"]);
 }
 
 // ============================================================================
@@ -863,8 +863,8 @@ fn test_custom_flattener_basic() {
         .unwrap();
 
     // The custom flattener ignores the event and returns "status": "active"
-    let matches = q.matches_for_event(b"ignored event data").unwrap();
-    assert_eq!(matches, vec!["p1".to_string()]);
+    let pattern_ids = q.matches_for_event(b"ignored event data").unwrap();
+    assert_eq!(pattern_ids, vec!["p1".to_string()]);
 }
 
 #[test]
@@ -886,8 +886,8 @@ fn test_custom_flattener_no_match() {
     q.add_pattern("p1".to_string(), r#"{"status": ["active"]}"#)
         .unwrap();
 
-    let matches = q.matches_for_event(b"ignored").unwrap();
-    assert!(matches.is_empty());
+    let pattern_ids = q.matches_for_event(b"ignored").unwrap();
+    assert!(pattern_ids.is_empty());
 }
 
 #[test]
@@ -908,8 +908,8 @@ fn test_custom_flattener_with_numbers() {
     q.add_pattern("p1".to_string(), r#"{"count": [42]}"#)
         .unwrap();
 
-    let matches = q.matches_for_event(b"ignored").unwrap();
-    assert_eq!(matches, vec!["p1".to_string()]);
+    let pattern_ids = q.matches_for_event(b"ignored").unwrap();
+    assert_eq!(pattern_ids, vec!["p1".to_string()]);
 }
 
 #[test]
@@ -979,8 +979,8 @@ fn test_json_flattener_through_trait() {
     q.add_pattern("p1".to_string(), r#"{"status": ["active"]}"#)
         .unwrap();
 
-    let matches = q.matches_for_event(br#"{"status": "active"}"#).unwrap();
-    assert_eq!(matches, vec!["p1"]);
+    let pattern_ids = q.matches_for_event(br#"{"status": "active"}"#).unwrap();
+    assert_eq!(pattern_ids, vec!["p1"]);
 }
 
 // ============================================================================
@@ -1513,18 +1513,18 @@ fn test_numeric_exact_still_works_with_prefix() {
 
 #[test]
 fn test_empty_matcher_returns_no_matches() {
-    // A brand-new Quamina with no patterns should return empty matches for any event
+    // A brand-new Quamina with no patterns should return empty pattern_ids for any event
     let q = Quamina::<&str>::new();
 
     assert_no_match!(
         q,
         r#"{"status": "active"}"#,
-        "Empty matcher should return no matches"
+        "Empty matcher should return no pattern_ids"
     );
     assert_no_match!(
         q,
         r#"{"a": 1, "b": "hello"}"#,
-        "Empty matcher should return no matches for any event"
+        "Empty matcher should return no pattern_ids for any event"
     );
 }
 
@@ -1611,7 +1611,7 @@ fn test_delete_multi_pattern_id_removes_all() {
     let purged = q.rebuild();
     assert_eq!(purged, 1, "Rebuild should purge 1 deleted ID");
 
-    // After rebuild, still no matches (patterns are permanently gone)
+    // After rebuild, still no pattern_ids (patterns are permanently gone)
     assert_no_match!(
         q,
         r#"{"x": "a"}"#,
@@ -2224,10 +2224,10 @@ fn test_state_limit_default_allows_normal_patterns() {
     assert_add_ok!(q, "p2", r#"{"a": ["1"], "b": ["2"], "c": ["3"]}"#);
 
     // Verify matching still works
-    let matches = q.matches_for_event(br#"{"status": "active"}"#).unwrap();
-    assert!(matches.contains(&"p1"));
-    let matches = q.matches_for_event(br#"{"status": "pending"}"#).unwrap();
-    assert!(matches.contains(&"p1"));
+    let pattern_ids = q.matches_for_event(br#"{"status": "active"}"#).unwrap();
+    assert!(pattern_ids.contains(&"p1"));
+    let pattern_ids = q.matches_for_event(br#"{"status": "pending"}"#).unwrap();
+    assert!(pattern_ids.contains(&"p1"));
 }
 
 // ============================================================================
@@ -2444,9 +2444,9 @@ fn test_builder_with_flattener_is_used() {
     q.add_pattern("p".to_string(), r#"{"k": ["v"]}"#).unwrap();
 
     // Custom flattener makes this work even though "not json" is invalid JSON
-    let matches = q.matches_for_event(b"not json").unwrap();
+    let pattern_ids = q.matches_for_event(b"not json").unwrap();
     assert_eq!(
-        matches,
+        pattern_ids,
         vec!["p".to_string()],
         "custom flattener must be used"
     );
@@ -2575,7 +2575,7 @@ struct StatsWorkload {
     state_count: u32,
     total_closure_entries: u32,
     max_closure_len: u16,
-    matches: [usize; 3], // expected match counts for 3 events
+    pattern_ids: [usize; 3], // expected match counts for 3 events
 }
 
 const STATS_WORKLOADS: &[StatsWorkload] = &[
@@ -2596,7 +2596,7 @@ const STATS_WORKLOADS: &[StatsWorkload] = &[
         state_count: 152,
         total_closure_entries: 335,
         max_closure_len: 31,
-        matches: [3, 2, 7],
+        pattern_ids: [3, 2, 7],
     },
     StatsWorkload {
         name: "20-nested-regexps",
@@ -2626,7 +2626,7 @@ const STATS_WORKLOADS: &[StatsWorkload] = &[
         state_count: 112,
         total_closure_entries: 112,
         max_closure_len: 1,
-        matches: [0, 0, 0],
+        pattern_ids: [0, 0, 0],
     },
     StatsWorkload {
         name: "deeply-nested",
@@ -2642,7 +2642,7 @@ const STATS_WORKLOADS: &[StatsWorkload] = &[
         state_count: 25,
         total_closure_entries: 25,
         max_closure_len: 1,
-        matches: [0, 0, 0],
+        pattern_ids: [0, 0, 0],
     },
     StatsWorkload {
         name: "overlapping-char-classes",
@@ -2664,7 +2664,7 @@ const STATS_WORKLOADS: &[StatsWorkload] = &[
         state_count: 103,
         total_closure_entries: 103,
         max_closure_len: 1,
-        matches: [0, 0, 0],
+        pattern_ids: [0, 0, 0],
     },
     StatsWorkload {
         name: "shell+deep-overlap",
@@ -2683,7 +2683,7 @@ const STATS_WORKLOADS: &[StatsWorkload] = &[
         state_count: 121,
         total_closure_entries: 421,
         max_closure_len: 47,
-        matches: [10, 10, 10],
+        pattern_ids: [10, 10, 10],
     },
 ];
 
@@ -2740,14 +2740,14 @@ fn test_arena_stats_workloads() {
         );
 
         for (ei, event) in events.iter().enumerate() {
-            let matches = q.matches_for_event(event).unwrap();
+            let pattern_ids = q.matches_for_event(event).unwrap();
             assert_eq!(
-                matches.len(),
-                wl.matches[ei],
-                "{}: event[{ei}] expected {} matches, got {}",
+                pattern_ids.len(),
+                wl.pattern_ids[ei],
+                "{}: event[{ei}] expected {} pattern_ids, got {}",
                 wl.name,
-                wl.matches[ei],
-                matches.len()
+                wl.pattern_ids[ei],
+                pattern_ids.len()
             );
         }
     }
@@ -2757,6 +2757,8 @@ fn test_arena_stats_workloads() {
 // Mutation coverage: LookaroundCondition methods & byte length computation
 // ============================================================================
 
+// `pos_la`/`neg_la`/`pos_lb`/`neg_lb` are content-named test fixtures.
+#[allow(clippy::similar_names)]
 #[test]
 fn test_lookaround_condition_is_negative_true() {
     use crate::json::LookaroundCondition;
@@ -2786,6 +2788,8 @@ fn test_lookaround_condition_is_negative_true() {
     assert!(!pos_lb.is_negative());
 }
 
+// `pos_la`/`neg_la`/`pos_lb`/`neg_lb` are content-named test fixtures.
+#[allow(clippy::similar_names)]
 #[test]
 fn test_lookaround_condition_is_lookbehind_true() {
     use crate::json::LookaroundCondition;

@@ -29,9 +29,12 @@ pub use mutable_matcher::{
     MutableValueMatcher,
 };
 
-// Re-export from thread_safe
+// Re-export from thread_safe. The `AutomatonValueMatcher` alias disambiguates
+// the working matcher from `MutableValueMatcher` and `FrozenValueMatcher`
+// siblings at use sites.
 pub use thread_safe::{
-    AutomatonValueMatcher, FrozenFieldMatcher, FrozenValueMatcher, ThreadSafeCoreMatcher,
+    FrozenFieldMatcher, FrozenValueMatcher, ThreadSafeCoreMatcher,
+    ValueMatcher as AutomatonValueMatcher,
 };
 
 #[cfg(test)]

@@ -552,223 +552,15 @@ fn extract_pattern_fields(
 fn value_to_matcher(value: &Value) -> Result<Matcher, QuaminaError> {
     match value {
         Value::Object(obj) => {
-            // Check for operators like {"exists": true} or {"prefix": "str"}
-            if let Some((key, val)) = obj.first() {
-                match key.as_str() {
-                    "exists" => {
-                        if let Value::Bool(b) = val {
-                            return Ok(Matcher::Exists(*b));
-                        }
-                        return Err(QuaminaError::InvalidPattern(
-                            "exists value must be a boolean".into(),
-                        ));
-                    }
-                    "prefix" => {
-                        if let Value::String(s) = val {
-                            return Ok(Matcher::Prefix(s.clone()));
-                        }
-                        return Err(QuaminaError::InvalidPattern(
-                            "prefix value must be a string".into(),
-                        ));
-                    }
-                    "suffix" => {
-                        if let Value::String(s) = val {
-                            return Ok(Matcher::Suffix(s.clone()));
-                        }
-                        return Err(QuaminaError::InvalidPattern(
-                            "suffix value must be a string".into(),
-                        ));
-                    }
-                    "wildcard" => {
-                        if let Value::String(s) = val {
-                            // validate_wildcard checks for:
-                            // - adjacent ** (unescaped wildcards)
-                            // - invalid escape sequences (only \* and \\ are valid)
-                            // - trailing backslash
-                            if !validate_wildcard(s) {
-                                return Err(QuaminaError::InvalidPattern(
-                                    "wildcard pattern has invalid escape sequence or adjacent '**'"
-                                        .into(),
-                                ));
-                            }
-                            return Ok(Matcher::Wildcard(s.clone()));
-                        }
-                        return Err(QuaminaError::InvalidPattern(
-                            "wildcard value must be a string".into(),
-                        ));
-                    }
-                    "shellstyle" => {
-                        if let Value::String(s) = val {
-                            // shellstyle doesn't allow adjacent ** characters
-                            if s.contains("**") {
-                                return Err(QuaminaError::InvalidPattern(
-                                    "shellstyle pattern cannot contain '**'".into(),
-                                ));
-                            }
-                            return Ok(Matcher::Shellstyle(s.clone()));
-                        }
-                        return Err(QuaminaError::InvalidPattern(
-                            "shellstyle value must be a string".into(),
-                        ));
-                    }
-                    "anything-but" => {
-                        // Handle single string: {"anything-but": "foo"}
-                        if let Value::String(s) = val {
-                            return Ok(Matcher::AnythingBut(vec![s.clone()]));
-                        }
-                        // Handle single number: {"anything-but": 123}
-                        if let Value::Number(n) = val {
-                            if let Ok(f) = n.parse::<f64>() {
-                                return Ok(Matcher::AnythingButNumeric(vec![f]));
-                            }
-                            return Err(QuaminaError::InvalidPattern(
-                                "anything-but numeric value is not a valid number".into(),
-                            ));
-                        }
-                        // Handle array: {"anything-but": ["a", "b"]} or {"anything-but": [1, 2]}
-                        if let Value::Array(arr) = val {
-                            if arr.is_empty() {
-                                return Err(QuaminaError::InvalidPattern(
-                                    "anything-but array cannot be empty".into(),
-                                ));
-                            }
-                            // Check if array contains strings or numbers
-                            let strings: Vec<String> = arr
-                                .iter()
-                                .filter_map(|v| match v {
-                                    Value::String(s) => Some(s.clone()),
-                                    _ => None,
-                                })
-                                .collect();
-                            let numbers: Vec<f64> = arr
-                                .iter()
-                                .filter_map(|v| match v {
-                                    Value::Number(n) => n.parse::<f64>().ok(),
-                                    _ => None,
-                                })
-                                .collect();
-                            // Arrays must be homogeneous (all strings or all numbers)
-                            if !strings.is_empty() && !numbers.is_empty() {
-                                return Err(QuaminaError::InvalidPattern(
-                                    "anything-but array must contain only strings or only numbers"
-                                        .into(),
-                                ));
-                            }
-                            if !strings.is_empty() {
-                                return Ok(Matcher::AnythingBut(strings));
-                            }
-                            if !numbers.is_empty() {
-                                return Ok(Matcher::AnythingButNumeric(numbers));
-                            }
-                            return Err(QuaminaError::InvalidPattern(
-                                "anything-but array must contain strings or numbers".into(),
-                            ));
-                        }
-                        return Err(QuaminaError::InvalidPattern(
-                            "anything-but value must be a string, number, or array".into(),
-                        ));
-                    }
-                    "equals-ignore-case" => {
-                        if let Value::String(s) = val {
-                            return Ok(Matcher::EqualsIgnoreCase(s.clone()));
-                        }
-                        return Err(QuaminaError::InvalidPattern(
-                            "equals-ignore-case value must be a string".into(),
-                        ));
-                    }
-                    "numeric" => {
-                        if let Value::Array(arr) = val {
-                            if let Some(cmp) = parse_numeric_comparison(arr) {
-                                return Ok(Matcher::Numeric(cmp));
-                            }
-                            return Err(QuaminaError::InvalidPattern(
-                                "invalid numeric comparison format".into(),
-                            ));
-                        }
-                        return Err(QuaminaError::InvalidPattern(
-                            "numeric value must be an array".into(),
-                        ));
-                    }
-                    "regexp" | "regex" => {
-                        if let Value::String(s) = val {
-                            // Try our custom parser first (automaton-compatible)
-                            match parse_regexp(s) {
-                                Ok(tree) => {
-                                    // Expand word boundaries before other processing
-                                    let tree = if has_word_boundary(&tree) {
-                                        let expanded = expand_word_boundaries(&tree);
-                                        match expanded {
-                                            Ok(t) if t.is_empty() => {
-                                                // No valid alternatives — pattern can never
-                                                // match (e.g., hello~bworld where both sides
-                                                // are word chars). Report as invalid pattern.
-                                                return Err(QuaminaError::InvalidPattern(
-                                                    "word boundary ~b/~B is impossible in this pattern: adjacent characters are in the same word-class".into(),
-                                                ));
-                                            }
-                                            Ok(t) => t,
-                                            Err(e) => {
-                                                return Err(QuaminaError::InvalidPattern(format!(
-                                                    "word boundary expansion failed: {e}"
-                                                )));
-                                            }
-                                        }
-                                    } else {
-                                        tree
-                                    };
-
-                                    // Check if pattern has lookarounds - transform to multi-condition
-                                    if has_top_level_lookaround(&tree) {
-                                        match transform_lookaround_pattern(&tree) {
-                                            Ok(mc) => return Ok(Matcher::MultiCondition(mc)),
-                                            Err(e) => {
-                                                return Err(QuaminaError::InvalidPattern(format!(
-                                                    "lookaround transformation failed: {e}"
-                                                )));
-                                            }
-                                        }
-                                    }
-                                    return Ok(Matcher::ParsedRegexp(tree));
-                                }
-                                Err(e) => {
-                                    return Err(QuaminaError::InvalidPattern(format!(
-                                        "invalid regexp: {}",
-                                        e.message
-                                    )));
-                                }
-                            }
-                        }
-                        return Err(QuaminaError::InvalidPattern(
-                            "regex value must be a string".into(),
-                        ));
-                    }
-                    "cidr" => {
-                        if let Value::String(s) = val {
-                            if let Some(cidr) = CidrPattern::parse(s) {
-                                return Ok(Matcher::Cidr(cidr));
-                            }
-                            return Err(QuaminaError::InvalidPattern(format!(
-                                "invalid CIDR notation: {s}"
-                            )));
-                        }
-                        return Err(QuaminaError::InvalidPattern(
-                            "cidr value must be a string".into(),
-                        ));
-                    }
-                    _ => {
-                        return Err(QuaminaError::InvalidPattern(format!(
-                            "unknown operator '{key}'"
-                        )));
-                    }
-                }
-            }
-            Err(QuaminaError::InvalidPattern(
-                "matcher object cannot be empty".into(),
-            ))
+            let Some((key, val)) = obj.first() else {
+                return Err(QuaminaError::InvalidPattern(
+                    "matcher object cannot be empty".into(),
+                ));
+            };
+            operator_to_matcher(key, val)
         }
         Value::Number(n) => {
-            // For numeric values, store as float for proper comparison
-            // This ensures 35, 35.0, and 3.5e1 all match each other
+            // Numeric values are stored as float so 35, 35.0, and 3.5e1 all compare equal.
             n.parse::<f64>().map_or_else(
                 |_| Ok(Matcher::Exact(value_to_string(value))),
                 |f| Ok(Matcher::NumericExact(f)),
@@ -776,6 +568,192 @@ fn value_to_matcher(value: &Value) -> Result<Matcher, QuaminaError> {
         }
         _ => Ok(Matcher::Exact(value_to_string(value))),
     }
+}
+
+/// Convert one `{operator: value}` pair into a `Matcher`.
+fn operator_to_matcher(key: &str, val: &Value) -> Result<Matcher, QuaminaError> {
+    match key {
+        "exists" => {
+            if let Value::Bool(b) = val {
+                return Ok(Matcher::Exists(*b));
+            }
+            Err(QuaminaError::InvalidPattern(
+                "exists value must be a boolean".into(),
+            ))
+        }
+        "prefix" => {
+            if let Value::String(s) = val {
+                return Ok(Matcher::Prefix(s.clone()));
+            }
+            Err(QuaminaError::InvalidPattern(
+                "prefix value must be a string".into(),
+            ))
+        }
+        "suffix" => {
+            if let Value::String(s) = val {
+                return Ok(Matcher::Suffix(s.clone()));
+            }
+            Err(QuaminaError::InvalidPattern(
+                "suffix value must be a string".into(),
+            ))
+        }
+        "wildcard" => {
+            if let Value::String(s) = val {
+                // validate_wildcard rejects adjacent `**`, invalid escapes, and trailing `\`.
+                if !validate_wildcard(s) {
+                    return Err(QuaminaError::InvalidPattern(
+                        "wildcard pattern has invalid escape sequence or adjacent '**'".into(),
+                    ));
+                }
+                return Ok(Matcher::Wildcard(s.clone()));
+            }
+            Err(QuaminaError::InvalidPattern(
+                "wildcard value must be a string".into(),
+            ))
+        }
+        "shellstyle" => {
+            if let Value::String(s) = val {
+                if s.contains("**") {
+                    return Err(QuaminaError::InvalidPattern(
+                        "shellstyle pattern cannot contain '**'".into(),
+                    ));
+                }
+                return Ok(Matcher::Shellstyle(s.clone()));
+            }
+            Err(QuaminaError::InvalidPattern(
+                "shellstyle value must be a string".into(),
+            ))
+        }
+        "anything-but" => parse_anything_but(val),
+        "equals-ignore-case" => {
+            if let Value::String(s) = val {
+                return Ok(Matcher::EqualsIgnoreCase(s.clone()));
+            }
+            Err(QuaminaError::InvalidPattern(
+                "equals-ignore-case value must be a string".into(),
+            ))
+        }
+        "numeric" => {
+            if let Value::Array(arr) = val {
+                return parse_numeric_comparison(arr)
+                    .map(Matcher::Numeric)
+                    .ok_or_else(|| {
+                        QuaminaError::InvalidPattern("invalid numeric comparison format".into())
+                    });
+            }
+            Err(QuaminaError::InvalidPattern(
+                "numeric value must be an array".into(),
+            ))
+        }
+        "regexp" | "regex" => {
+            if let Value::String(s) = val {
+                return parse_regexp_matcher(s);
+            }
+            Err(QuaminaError::InvalidPattern(
+                "regex value must be a string".into(),
+            ))
+        }
+        "cidr" => {
+            if let Value::String(s) = val {
+                return CidrPattern::parse(s).map(Matcher::Cidr).ok_or_else(|| {
+                    QuaminaError::InvalidPattern(format!("invalid CIDR notation: {s}"))
+                });
+            }
+            Err(QuaminaError::InvalidPattern(
+                "cidr value must be a string".into(),
+            ))
+        }
+        _ => Err(QuaminaError::InvalidPattern(format!(
+            "unknown operator '{key}'"
+        ))),
+    }
+}
+
+/// `{"anything-but": "x"}`, `{"anything-but": 1}`, or `{"anything-but": [...]}`.
+fn parse_anything_but(val: &Value) -> Result<Matcher, QuaminaError> {
+    match val {
+        Value::String(s) => Ok(Matcher::AnythingBut(vec![s.clone()])),
+        Value::Number(n) => n
+            .parse::<f64>()
+            .map(|f| Matcher::AnythingButNumeric(vec![f]))
+            .map_err(|_| {
+                QuaminaError::InvalidPattern(
+                    "anything-but numeric value is not a valid number".into(),
+                )
+            }),
+        Value::Array(arr) => parse_anything_but_array(arr),
+        _ => Err(QuaminaError::InvalidPattern(
+            "anything-but value must be a string, number, or array".into(),
+        )),
+    }
+}
+
+fn parse_anything_but_array(arr: &[Value]) -> Result<Matcher, QuaminaError> {
+    if arr.is_empty() {
+        return Err(QuaminaError::InvalidPattern(
+            "anything-but array cannot be empty".into(),
+        ));
+    }
+    let strings: Vec<String> = arr
+        .iter()
+        .filter_map(|v| match v {
+            Value::String(s) => Some(s.clone()),
+            _ => None,
+        })
+        .collect();
+    let numbers: Vec<f64> = arr
+        .iter()
+        .filter_map(|v| match v {
+            Value::Number(n) => n.parse::<f64>().ok(),
+            _ => None,
+        })
+        .collect();
+    // Arrays must be homogeneous (all strings or all numbers).
+    if !strings.is_empty() && !numbers.is_empty() {
+        return Err(QuaminaError::InvalidPattern(
+            "anything-but array must contain only strings or only numbers".into(),
+        ));
+    }
+    if !strings.is_empty() {
+        return Ok(Matcher::AnythingBut(strings));
+    }
+    if !numbers.is_empty() {
+        return Ok(Matcher::AnythingButNumeric(numbers));
+    }
+    Err(QuaminaError::InvalidPattern(
+        "anything-but array must contain strings or numbers".into(),
+    ))
+}
+
+/// Parse a regexp string and pick the right `Matcher` variant (raw tree or multi-condition).
+fn parse_regexp_matcher(s: &str) -> Result<Matcher, QuaminaError> {
+    let tree = parse_regexp(s)
+        .map_err(|e| QuaminaError::InvalidPattern(format!("invalid regexp: {}", e.message)))?;
+
+    let tree = if has_word_boundary(&tree) {
+        let expanded = expand_word_boundaries(&tree).map_err(|e| {
+            QuaminaError::InvalidPattern(format!("word boundary expansion failed: {e}"))
+        })?;
+        if expanded.is_empty() {
+            // No valid alternatives — pattern can never match (e.g., `hello~bworld`
+            // where both sides are word chars).
+            return Err(QuaminaError::InvalidPattern(
+                "word boundary ~b/~B is impossible in this pattern: adjacent characters are in the same word-class".into(),
+            ));
+        }
+        expanded
+    } else {
+        tree
+    };
+
+    if has_top_level_lookaround(&tree) {
+        let mc = transform_lookaround_pattern(&tree).map_err(|e| {
+            QuaminaError::InvalidPattern(format!("lookaround transformation failed: {e}"))
+        })?;
+        return Ok(Matcher::MultiCondition(mc));
+    }
+
+    Ok(Matcher::ParsedRegexp(tree))
 }
 
 /// Parse numeric comparison like [">", 0, "<=", 100] or [">=", 5]

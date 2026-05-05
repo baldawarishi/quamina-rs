@@ -14,7 +14,7 @@ use std::time::{Duration, Instant};
 
 use quamina::automaton::FieldMatcher;
 use quamina::automaton::arena::{
-    ArenaNfaBuffers, StateArena, StateId, make_cidr_arena_fa, make_shellstyle_arena_fa,
+    NfaBuffers, StateArena, StateId, make_cidr_arena_fa, make_shellstyle_arena_fa,
     make_wildcard_arena_fa, merge_arena_nfas, traverse_arena_dfa, traverse_arena_nfa,
 };
 use quamina::json::CidrPattern;
@@ -288,7 +288,7 @@ fn section1_tier_comparison() {
         let (nfa_build_min, nfa_build_max) = bench(|| {
             let _ = black_box(build_kind_frozen(black_box(case.kind)));
         });
-        let mut nfa_bufs = ArenaNfaBuffers::new();
+        let mut nfa_bufs = NfaBuffers::new();
         let (nfa_match_min, nfa_match_max) = bench(|| {
             for ev in &encoded {
                 traverse_arena_nfa(
@@ -494,7 +494,7 @@ fn section3_merged_performance() {
 
     let mut merged_arena = StateArena::new();
     let mut merged_start = StateId::NONE;
-    let mut nfa_bufs = ArenaNfaBuffers::new();
+    let mut nfa_bufs = NfaBuffers::new();
 
     for (i, (arena, start, label)) in all_arenas.iter().enumerate() {
         let (new_arena, new_start) = merge_arena_nfas(&merged_arena, merged_start, arena, *start);
@@ -559,7 +559,7 @@ fn section4_tradeoff_summary() {
         let (frozen_nfa, nfa_start) = build_kind_frozen(case.kind);
         let nfa_states = frozen_nfa.len();
         let nfa_mem_kb = frozen_nfa.estimated_byte_size() / 1024;
-        let mut nfa_bufs = ArenaNfaBuffers::new();
+        let mut nfa_bufs = NfaBuffers::new();
         let (nfa_ns, _) = bench(|| {
             for ev in &encoded {
                 traverse_arena_nfa(

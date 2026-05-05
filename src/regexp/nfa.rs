@@ -13,10 +13,10 @@ use smallvec::{SmallVec, smallvec};
 
 use crate::automaton::{
     BYTE_CEILING, FieldMatcher,
-    arena::{ARENA_VALUE_TERMINATOR, ArenaSmallTable, StateArena, StateId},
+    arena::{ARENA_VALUE_TERMINATOR, SmallTable, StateArena, StateId},
 };
 
-use super::parser::{QuantifiedAtom, RegexpBranch, RegexpRoot, RuneRange};
+use super::parser::{Branch as RegexpBranch, QuantifiedAtom, Root as RegexpRoot, RuneRange};
 
 // ============================================================================
 // UTF-8 Encoding Constants
@@ -89,7 +89,7 @@ pub fn make_regexp_nfa_arena(root: RegexpRoot) -> (StateArena, StateId, Arc<Fiel
             .push(next_field.clone());
 
         // Create VALUE_TERMINATOR transition state
-        let vt_state = arena.alloc_with_table(ArenaSmallTable::with_mappings(
+        let vt_state = arena.alloc_with_table(SmallTable::with_mappings(
             StateId::NONE,
             &[ARENA_VALUE_TERMINATOR],
             &[match_state],
@@ -97,12 +97,9 @@ pub fn make_regexp_nfa_arena(root: RegexpRoot) -> (StateArena, StateId, Arc<Fiel
 
         // With quotes: start → " → closing_quote → " → vt_state
         // Matches the empty string value "" (two quote bytes)
-        let closing_quote = arena.alloc_with_table(ArenaSmallTable::with_mappings(
-            StateId::NONE,
-            b"\"",
-            &[vt_state],
-        ));
-        let start = arena.alloc_with_table(ArenaSmallTable::with_mappings(
+        let closing_quote =
+            arena.alloc_with_table(SmallTable::with_mappings(StateId::NONE, b"\"", &[vt_state]));
+        let start = arena.alloc_with_table(SmallTable::with_mappings(
             StateId::NONE,
             b"\"",
             &[closing_quote],
@@ -119,24 +116,21 @@ pub fn make_regexp_nfa_arena(root: RegexpRoot) -> (StateArena, StateId, Arc<Fiel
             .push(next_field.clone());
 
         // Create VALUE_TERMINATOR transition state
-        let vt_state = arena.alloc_with_table(ArenaSmallTable::with_mappings(
+        let vt_state = arena.alloc_with_table(SmallTable::with_mappings(
             StateId::NONE,
             &[ARENA_VALUE_TERMINATOR],
             &[match_state],
         ));
 
         // Add trailing quote: regexp content → " → VALUE_TERMINATOR → match
-        let next_step = arena.alloc_with_table(ArenaSmallTable::with_mappings(
-            StateId::NONE,
-            b"\"",
-            &[vt_state],
-        ));
+        let next_step =
+            arena.alloc_with_table(SmallTable::with_mappings(StateId::NONE, b"\"", &[vt_state]));
 
         // Build the NFA from branches
         let branch_start = make_arena_nfa_from_branches(&root, &mut arena, next_step);
 
         // Wrap with leading quote at the top level only
-        let start = arena.alloc_with_table(ArenaSmallTable::with_mappings(
+        let start = arena.alloc_with_table(SmallTable::with_mappings(
             StateId::NONE,
             b"\"",
             &[branch_start],
@@ -315,6 +309,9 @@ fn make_arena_atom_fa(qa: &QuantifiedAtom, arena: &mut StateArena, next: StateId
 /// If provided, the filter is called with the pre-filled ASCII unpacked array to
 /// exclude specific bytes (e.g., word chars for `~W`).
 #[allow(clippy::type_complexity)]
+// `target_e0`/`ed`/`f0`/`f4` name UTF-8 lead-byte handlers; the suffixes
+// match the codepoint range each guards.
+#[allow(clippy::similar_names)]
 fn make_utf8_char_fa(
     arena: &mut StateArena,
     dest: StateId,
@@ -322,7 +319,7 @@ fn make_utf8_char_fa(
 ) -> StateId {
     // Continuation byte states for multi-byte UTF-8 sequences
     let s_last = arena.alloc_with_table({
-        let mut table = ArenaSmallTable::new();
+        let mut table = SmallTable::new();
         let mut unpacked = [StateId::NONE; BYTE_CEILING];
         unpacked[0x80..0xC0].fill(dest);
         table.pack(&unpacked);
@@ -330,7 +327,7 @@ fn make_utf8_char_fa(
     });
 
     let s_last_inter = arena.alloc_with_table({
-        let mut table = ArenaSmallTable::new();
+        let mut table = SmallTable::new();
         let mut unpacked = [StateId::NONE; BYTE_CEILING];
         unpacked[0x80..0xC0].fill(s_last);
         table.pack(&unpacked);
@@ -338,7 +335,7 @@ fn make_utf8_char_fa(
     });
 
     let s_first_inter = arena.alloc_with_table({
-        let mut table = ArenaSmallTable::new();
+        let mut table = SmallTable::new();
         let mut unpacked = [StateId::NONE; BYTE_CEILING];
         unpacked[0x80..0xC0].fill(s_last_inter);
         table.pack(&unpacked);
@@ -347,7 +344,7 @@ fn make_utf8_char_fa(
 
     // Lead byte handler states for restricted continuation ranges
     let target_e0 = arena.alloc_with_table({
-        let mut table = ArenaSmallTable::new();
+        let mut table = SmallTable::new();
         let mut unpacked = [StateId::NONE; BYTE_CEILING];
         unpacked[0xA0..0xC0].fill(s_last);
         table.pack(&unpacked);
@@ -355,7 +352,7 @@ fn make_utf8_char_fa(
     });
 
     let target_ed = arena.alloc_with_table({
-        let mut table = ArenaSmallTable::new();
+        let mut table = SmallTable::new();
         let mut unpacked = [StateId::NONE; BYTE_CEILING];
         unpacked[0x80..0xA0].fill(s_last);
         table.pack(&unpacked);
@@ -363,7 +360,7 @@ fn make_utf8_char_fa(
     });
 
     let target_f0 = arena.alloc_with_table({
-        let mut table = ArenaSmallTable::new();
+        let mut table = SmallTable::new();
         let mut unpacked = [StateId::NONE; BYTE_CEILING];
         unpacked[0x90..0xC0].fill(s_last_inter);
         table.pack(&unpacked);
@@ -371,7 +368,7 @@ fn make_utf8_char_fa(
     });
 
     let target_f4 = arena.alloc_with_table({
-        let mut table = ArenaSmallTable::new();
+        let mut table = SmallTable::new();
         let mut unpacked = [StateId::NONE; BYTE_CEILING];
         unpacked[0x80..0x90].fill(s_last_inter);
         table.pack(&unpacked);
@@ -400,7 +397,7 @@ fn make_utf8_char_fa(
         unpacked[0xF1..0xF4].fill(s_first_inter);
         unpacked[0xF4] = target_f4;
 
-        let mut table = ArenaSmallTable::new();
+        let mut table = SmallTable::new();
         table.pack(&unpacked);
         table
     })
@@ -440,13 +437,13 @@ pub fn make_nonword_char_fa(arena: &mut StateArena, dest: StateId) -> StateId {
 
 /// A cached "shell" FA for a Unicode property (e.g., `~p{L}`, `~p{Nd}`).
 ///
-/// The shell contains a set of `ArenaSmallTable`s built from the property's
+/// The shell contains a set of `SmallTable`s built from the property's
 /// rune ranges, with a placeholder destination at local index 0. To use the
 /// shell, `instantiate_shell` clones the tables into a real `StateArena`,
 /// remapping the placeholder to the actual next state.
 struct CachedShell {
     /// Tables indexed by local ID; table at index 0 is the placeholder destination.
-    tables: Vec<ArenaSmallTable>,
+    tables: Vec<SmallTable>,
     /// Local index of the root state in `tables`.
     root: u32,
 }
@@ -589,7 +586,7 @@ fn arena_table_from_rune_tree_node(arena: &mut StateArena, node: &ArenaRuneTreeN
         }
     }
 
-    let mut table = ArenaSmallTable::new();
+    let mut table = SmallTable::new();
     table.pack(&unpacked);
     arena.alloc_with_table(table)
 }

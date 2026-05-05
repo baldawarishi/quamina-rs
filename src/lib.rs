@@ -32,7 +32,6 @@ pub use crate::flatten_json::ArrayPos;
 pub use crate::flattener::{Flattener, JsonFlattener, OwnedField, SegmentsTreeTracker};
 
 use automaton::{NfaBuffers, ThreadSafeCoreMatcher};
-use flatten_json::FlattenJsonState;
 use json::Matcher;
 use parking_lot::Mutex;
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -44,7 +43,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 thread_local! {
     /// Thread-local JSON flattener state, avoiding per-call Mutex overhead.
-    static TL_FLATTENER: RefCell<FlattenJsonState> = RefCell::new(FlattenJsonState::new());
+    static TL_FLATTENER: RefCell<flatten_json::State> = RefCell::new(flatten_json::State::new());
     /// Thread-local NFA traversal buffers, avoiding per-call Mutex overhead.
     static TL_NFA_BUFS: RefCell<NfaBuffers> = RefCell::new(NfaBuffers::new());
 }
@@ -881,7 +880,7 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
     /// Returns stats covering state counts, table sizes, epsilon transitions,
     /// closure sizes, and flattened buffer usage. Useful for diagnostics and
     /// verifying optimization effectiveness.
-    pub fn arena_stats(&self) -> automaton::arena::ArenaStats {
+    pub fn arena_stats(&self) -> automaton::arena::Stats {
         self.automaton.arena_stats()
     }
 

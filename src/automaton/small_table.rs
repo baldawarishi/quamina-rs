@@ -97,14 +97,14 @@ impl FieldMatcher {
 #[derive(Default)]
 pub struct NfaBuffers {
     /// Reusable buffers for arena-based NFA traversal
-    pub arena_bufs: super::arena::ArenaNfaBuffers,
+    pub arena_bufs: super::arena::NfaBuffers,
 }
 
 impl NfaBuffers {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            arena_bufs: super::arena::ArenaNfaBuffers::new(),
+            arena_bufs: super::arena::NfaBuffers::new(),
         }
     }
 

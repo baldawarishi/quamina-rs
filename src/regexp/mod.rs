@@ -16,12 +16,14 @@
 mod nfa;
 mod parser;
 
-// Re-export public API
+// Re-export public API. Bare names live inside their submodule (e.g.
+// `parser::Root`); the `Regexp*` / `*regexp` aliases below mirror long-stable
+// Go upstream names and are what external callers see.
 pub use nfa::{clear_fa_shell_cache, make_regexp_nfa_arena, regexp_has_plus_star};
 pub use parser::{
-    LookaroundType, QuantifiedAtom, REGEXP_QUANTIFIER_MAX, RUNE_MAX, RegexpBranch, RegexpError,
-    RegexpRoot, RunePair, RuneRange, collect_lookarounds, expand_word_boundaries,
-    has_top_level_lookaround, has_word_boundary, parse_regexp,
+    Branch as RegexpBranch, Error as RegexpError, LookaroundType, QuantifiedAtom,
+    REGEXP_QUANTIFIER_MAX, RUNE_MAX, Root as RegexpRoot, RunePair, RuneRange, collect_lookarounds,
+    expand_word_boundaries, has_top_level_lookaround, has_word_boundary, parse as parse_regexp,
 };
 
 // Crate-internal items are accessible via their original modules:
@@ -319,9 +321,7 @@ mod tests {
 
     #[test]
     fn test_nfa_empty_pattern() {
-        use crate::automaton::arena::{
-            ARENA_VALUE_TERMINATOR, ArenaNfaBuffers, traverse_arena_nfa,
-        };
+        use crate::automaton::arena::{ARENA_VALUE_TERMINATOR, NfaBuffers, traverse_arena_nfa};
 
         // Test that empty regexp NFA matches ONLY empty string
         let root = parse_regexp("").unwrap();
@@ -329,7 +329,7 @@ mod tests {
 
         // Test with empty value (just quotes + VALUE_TERMINATOR)
         let empty_value = vec![b'"', b'"', ARENA_VALUE_TERMINATOR];
-        let mut bufs = ArenaNfaBuffers::new();
+        let mut bufs = NfaBuffers::new();
         traverse_arena_nfa(&arena, start, &empty_value, &mut bufs);
         assert!(
             !bufs.transitions.is_empty(),
@@ -352,14 +352,12 @@ mod tests {
 
     #[test]
     fn test_nfa_simple_singleton() {
-        use crate::automaton::arena::{
-            ARENA_VALUE_TERMINATOR, ArenaNfaBuffers, traverse_arena_nfa,
-        };
+        use crate::automaton::arena::{ARENA_VALUE_TERMINATOR, NfaBuffers, traverse_arena_nfa};
 
         // First verify basic non-quantified matching works
         let root = parse_regexp("[abc]").unwrap();
         let (arena, start, field_matcher) = make_regexp_nfa_arena(root);
-        let mut bufs = ArenaNfaBuffers::new();
+        let mut bufs = NfaBuffers::new();
 
         let value_a = vec![b'"', b'a', b'"', ARENA_VALUE_TERMINATOR];
         bufs.clear();
@@ -377,14 +375,12 @@ mod tests {
     #[test]
     #[cfg_attr(miri, ignore)]
     fn test_nfa_plus_quantifier() {
-        use crate::automaton::arena::{
-            ARENA_VALUE_TERMINATOR, ArenaNfaBuffers, traverse_arena_nfa,
-        };
+        use crate::automaton::arena::{ARENA_VALUE_TERMINATOR, NfaBuffers, traverse_arena_nfa};
 
         // Test that [abc]+ matches one or more of a, b, c
         let root = parse_regexp("[abc]+").unwrap();
         let (arena, start, field_matcher) = make_regexp_nfa_arena(root);
-        let mut bufs = ArenaNfaBuffers::new();
+        let mut bufs = NfaBuffers::new();
 
         // Should match "a"
         let value_a = vec![b'"', b'a', b'"', ARENA_VALUE_TERMINATOR];
@@ -435,14 +431,12 @@ mod tests {
     #[test]
     #[cfg_attr(miri, ignore)]
     fn test_nfa_star_quantifier() {
-        use crate::automaton::arena::{
-            ARENA_VALUE_TERMINATOR, ArenaNfaBuffers, traverse_arena_nfa,
-        };
+        use crate::automaton::arena::{ARENA_VALUE_TERMINATOR, NfaBuffers, traverse_arena_nfa};
 
         // Test that [abc]* matches zero or more of a, b, c
         let root = parse_regexp("[abc]*").unwrap();
         let (arena, start, field_matcher) = make_regexp_nfa_arena(root);
-        let mut bufs = ArenaNfaBuffers::new();
+        let mut bufs = NfaBuffers::new();
 
         // Should match empty string (zero times)
         let empty = vec![b'"', b'"', ARENA_VALUE_TERMINATOR];
@@ -506,14 +500,12 @@ mod tests {
 
     #[test]
     fn test_nfa_range_exact() {
-        use crate::automaton::arena::{
-            ARENA_VALUE_TERMINATOR, ArenaNfaBuffers, traverse_arena_nfa,
-        };
+        use crate::automaton::arena::{ARENA_VALUE_TERMINATOR, NfaBuffers, traverse_arena_nfa};
 
         // Test a{3} - exactly 3 'a's (I-Regexp semantics: {n} means exactly n)
         let root = parse_regexp("a{3}").unwrap();
         let (arena, start, field_matcher) = make_regexp_nfa_arena(root);
-        let mut bufs = ArenaNfaBuffers::new();
+        let mut bufs = NfaBuffers::new();
 
         // Should NOT match "aa"
         let value_aa = vec![b'"', b'a', b'a', b'"', ARENA_VALUE_TERMINATOR];
@@ -548,16 +540,16 @@ mod tests {
         );
     }
 
+    // `value_aaaa`/`value_5a` name fixtures by their literal content.
+    #[allow(clippy::similar_names)]
     #[test]
     fn test_nfa_range_bounded() {
-        use crate::automaton::arena::{
-            ARENA_VALUE_TERMINATOR, ArenaNfaBuffers, traverse_arena_nfa,
-        };
+        use crate::automaton::arena::{ARENA_VALUE_TERMINATOR, NfaBuffers, traverse_arena_nfa};
 
         // Test a{2,4} - between 2 and 4 'a's
         let root = parse_regexp("a{2,4}").unwrap();
         let (arena, start, field_matcher) = make_regexp_nfa_arena(root);
-        let mut bufs = ArenaNfaBuffers::new();
+        let mut bufs = NfaBuffers::new();
 
         // Should NOT match "a"
         let value_a = vec![b'"', b'a', b'"', ARENA_VALUE_TERMINATOR];
@@ -623,14 +615,12 @@ mod tests {
 
     #[test]
     fn test_nfa_range_with_class() {
-        use crate::automaton::arena::{
-            ARENA_VALUE_TERMINATOR, ArenaNfaBuffers, traverse_arena_nfa,
-        };
+        use crate::automaton::arena::{ARENA_VALUE_TERMINATOR, NfaBuffers, traverse_arena_nfa};
 
         // Test [abc]{2,3}
         let root = parse_regexp("[abc]{2,3}").unwrap();
         let (arena, start, field_matcher) = make_regexp_nfa_arena(root);
-        let mut bufs = ArenaNfaBuffers::new();
+        let mut bufs = NfaBuffers::new();
 
         // Should NOT match "a"
         let value_a = vec![b'"', b'a', b'"', ARENA_VALUE_TERMINATOR];
@@ -677,14 +667,12 @@ mod tests {
 
     #[test]
     fn test_nfa_range_zero_min() {
-        use crate::automaton::arena::{
-            ARENA_VALUE_TERMINATOR, ArenaNfaBuffers, traverse_arena_nfa,
-        };
+        use crate::automaton::arena::{ARENA_VALUE_TERMINATOR, NfaBuffers, traverse_arena_nfa};
 
         // Test a{0,2} - between 0 and 2 'a's
         let root = parse_regexp("a{0,2}").unwrap();
         let (arena, start, field_matcher) = make_regexp_nfa_arena(root);
-        let mut bufs = ArenaNfaBuffers::new();
+        let mut bufs = NfaBuffers::new();
 
         // Should match empty string
         let empty = vec![b'"', b'"', ARENA_VALUE_TERMINATOR];
@@ -832,9 +820,7 @@ mod tests {
 
     #[test]
     fn test_toxic_stack_arena() {
-        use crate::automaton::arena::{
-            ARENA_VALUE_TERMINATOR, ArenaNfaBuffers, traverse_arena_nfa,
-        };
+        use crate::automaton::arena::{ARENA_VALUE_TERMINATOR, NfaBuffers, traverse_arena_nfa};
 
         // Port of Go's TestToxicStack using arena-based NFA
         // Pattern: (([~.~~~?~*~+~{~}~[~]~(~)~|]?)*)+"
@@ -855,7 +841,7 @@ mod tests {
         value.push(b'"');
         value.push(ARENA_VALUE_TERMINATOR);
 
-        let mut bufs = ArenaNfaBuffers::new();
+        let mut bufs = NfaBuffers::new();
         traverse_arena_nfa(&arena, start, &value, &mut bufs);
         assert!(
             bufs.transitions
@@ -865,17 +851,15 @@ mod tests {
     }
 
     /// Miri-friendly test for arena NFA paths. Uses positive character classes
-    /// which are fast, while still exercising ArenaSmallTable construction and traverse_arena_nfa.
+    /// which are fast, while still exercising SmallTable construction and traverse_arena_nfa.
     #[test]
     fn test_nfa_positive_class_miri_friendly() {
-        use crate::automaton::arena::{
-            ARENA_VALUE_TERMINATOR, ArenaNfaBuffers, traverse_arena_nfa,
-        };
+        use crate::automaton::arena::{ARENA_VALUE_TERMINATOR, NfaBuffers, traverse_arena_nfa};
 
         // Test various positive character class patterns
         let root = parse_regexp("[a-z]").unwrap();
         let (arena, start, field_matcher) = make_regexp_nfa_arena(root);
-        let mut bufs = ArenaNfaBuffers::new();
+        let mut bufs = NfaBuffers::new();
 
         // Should match lowercase letters
         for ch in b"abc" {
@@ -926,14 +910,12 @@ mod tests {
     #[test]
     #[cfg_attr(miri, ignore)]
     fn test_negated_class_nfa() {
-        use crate::automaton::arena::{
-            ARENA_VALUE_TERMINATOR, ArenaNfaBuffers, traverse_arena_nfa,
-        };
+        use crate::automaton::arena::{ARENA_VALUE_TERMINATOR, NfaBuffers, traverse_arena_nfa};
 
         // Test [^abc] - matches any character except a, b, c
         let root = parse_regexp("[^abc]").unwrap();
         let (arena, start, field_matcher) = make_regexp_nfa_arena(root);
-        let mut bufs = ArenaNfaBuffers::new();
+        let mut bufs = NfaBuffers::new();
 
         // Should NOT match "a", "b", "c"
         for ch in b"abc" {
@@ -968,9 +950,7 @@ mod tests {
     #[test]
     #[cfg_attr(miri, ignore)]
     fn test_star_matches_empty() {
-        use crate::automaton::arena::{
-            ARENA_VALUE_TERMINATOR, ArenaNfaBuffers, traverse_arena_nfa,
-        };
+        use crate::automaton::arena::{ARENA_VALUE_TERMINATOR, NfaBuffers, traverse_arena_nfa};
 
         // Patterns with * should match empty string
         let star_patterns = vec!["[a-z]*", "[0-9]*", ".*", "([abc]*)"];
@@ -978,7 +958,7 @@ mod tests {
         for pattern in star_patterns {
             let root = parse_regexp(pattern).unwrap();
             let (arena, start, field_matcher) = make_regexp_nfa_arena(root);
-            let mut bufs = ArenaNfaBuffers::new();
+            let mut bufs = NfaBuffers::new();
 
             let empty = vec![b'"', b'"', ARENA_VALUE_TERMINATOR];
             bufs.clear();
@@ -997,13 +977,11 @@ mod tests {
     #[test]
     #[cfg_attr(miri, ignore)]
     fn test_star_matches_empty_miri_friendly() {
-        use crate::automaton::arena::{
-            ARENA_VALUE_TERMINATOR, ArenaNfaBuffers, traverse_arena_nfa,
-        };
+        use crate::automaton::arena::{ARENA_VALUE_TERMINATOR, NfaBuffers, traverse_arena_nfa};
 
         let root = parse_regexp("[a-z]*").unwrap();
         let (arena, start, field_matcher) = make_regexp_nfa_arena(root);
-        let mut bufs = ArenaNfaBuffers::new();
+        let mut bufs = NfaBuffers::new();
 
         let empty = vec![b'"', b'"', ARENA_VALUE_TERMINATOR];
         bufs.clear();
@@ -1017,9 +995,7 @@ mod tests {
 
     #[test]
     fn test_arena_nfa_email_pattern() {
-        use crate::automaton::arena::{
-            ARENA_VALUE_TERMINATOR, ArenaNfaBuffers, traverse_arena_nfa,
-        };
+        use crate::automaton::arena::{ARENA_VALUE_TERMINATOR, NfaBuffers, traverse_arena_nfa};
 
         // Test the pattern from the failing test
         let pattern = "[a-z]+@example~.com";
@@ -1034,7 +1010,7 @@ mod tests {
         // Build arena NFA
         let (arena, start, field_matcher) = make_regexp_nfa_arena(root);
 
-        let mut bufs = ArenaNfaBuffers::with_capacity();
+        let mut bufs = NfaBuffers::with_capacity();
 
         // Test: "alice@example.com" should match
         let mut value = Vec::new();
@@ -1053,16 +1029,14 @@ mod tests {
 
     #[test]
     fn test_arena_nfa_plus_simple() {
-        use crate::automaton::arena::{
-            ARENA_VALUE_TERMINATOR, ArenaNfaBuffers, traverse_arena_nfa,
-        };
+        use crate::automaton::arena::{ARENA_VALUE_TERMINATOR, NfaBuffers, traverse_arena_nfa};
 
         // Test simple [a-z]+ pattern with arena
         let pattern = "[a-z]+";
         let root = parse_regexp(pattern).unwrap();
         let (arena, start, field_matcher) = make_regexp_nfa_arena(root);
 
-        let mut bufs = ArenaNfaBuffers::with_capacity();
+        let mut bufs = NfaBuffers::with_capacity();
 
         // Test: "abc" should match
         let mut value = Vec::new();
@@ -1083,16 +1057,14 @@ mod tests {
     /// Negated classes (including [^abc]) expand to full Unicode range and are too slow for Miri.
     #[test]
     fn test_arena_nfa_star_plus_miri_friendly() {
-        use crate::automaton::arena::{
-            ARENA_VALUE_TERMINATOR, ArenaNfaBuffers, traverse_arena_nfa,
-        };
+        use crate::automaton::arena::{ARENA_VALUE_TERMINATOR, NfaBuffers, traverse_arena_nfa};
 
         // Helper to test if a pattern matches a string
         fn matches(pattern: &str, input: &str) -> bool {
             let root =
                 parse_regexp(pattern).unwrap_or_else(|_| panic!("Failed to parse: {pattern}"));
             let (arena, start, field_matcher) = make_regexp_nfa_arena(root);
-            let mut bufs = ArenaNfaBuffers::with_capacity();
+            let mut bufs = NfaBuffers::with_capacity();
 
             let mut value: Vec<u8> = Vec::new();
             value.push(b'"');
@@ -1150,20 +1122,38 @@ mod tests {
     #[test]
     #[cfg_attr(miri, ignore)]
     fn test_negated_category_star_edge_cases() {
-        use crate::automaton::arena::{ArenaNfaBuffers, traverse_arena_nfa};
+        use crate::automaton::arena::{ARENA_VALUE_TERMINATOR, NfaBuffers, traverse_arena_nfa};
 
         // Helper to test if a pattern matches a string
         fn matches(pattern: &str, input: &str) -> bool {
             let root =
                 parse_regexp(pattern).unwrap_or_else(|_| panic!("Failed to parse: {pattern}"));
             let (arena, start, field_matcher) = make_regexp_nfa_arena(root);
-            let mut bufs = ArenaNfaBuffers::with_capacity();
+            let mut bufs = NfaBuffers::with_capacity();
 
             // Wrap input in quotes (NFA now always expects leading/trailing ")
             let mut value: Vec<u8> = Vec::new();
             value.push(b'"');
             value.extend_from_slice(input.as_bytes());
             value.push(b'"');
+            traverse_arena_nfa(&arena, start, &value, &mut bufs);
+
+            bufs.transitions
+                .contains(&(Arc::as_ptr(&field_matcher) as usize))
+        }
+
+        fn matches_with_vt(pattern: &str, input: &str) -> bool {
+            let root =
+                parse_regexp(pattern).unwrap_or_else(|_| panic!("Failed to parse: {pattern}"));
+            let (arena, start, field_matcher) = make_regexp_nfa_arena(root);
+            let mut bufs = NfaBuffers::with_capacity();
+
+            // Add quotes and VALUE_TERMINATOR to input (like test_regexp_validity does)
+            let mut value: Vec<u8> = Vec::new();
+            value.push(b'"');
+            value.extend_from_slice(input.as_bytes());
+            value.push(b'"');
+            value.push(ARENA_VALUE_TERMINATOR);
             traverse_arena_nfa(&arena, start, &value, &mut bufs);
 
             bufs.transitions
@@ -1212,26 +1202,6 @@ mod tests {
             "~p{{Lo}}* should match Hebrew + CJK"
         );
 
-        // Test with VALUE_TERMINATOR appended (matching test_regexp_validity behavior)
-        use crate::automaton::arena::ARENA_VALUE_TERMINATOR;
-        fn matches_with_vt(pattern: &str, input: &str) -> bool {
-            let root =
-                parse_regexp(pattern).unwrap_or_else(|_| panic!("Failed to parse: {pattern}"));
-            let (arena, start, field_matcher) = make_regexp_nfa_arena(root);
-            let mut bufs = ArenaNfaBuffers::with_capacity();
-
-            // Add quotes and VALUE_TERMINATOR to input (like test_regexp_validity does)
-            let mut value: Vec<u8> = Vec::new();
-            value.push(b'"');
-            value.extend_from_slice(input.as_bytes());
-            value.push(b'"');
-            value.push(ARENA_VALUE_TERMINATOR);
-            traverse_arena_nfa(&arena, start, &value, &mut bufs);
-
-            bufs.transitions
-                .contains(&(Arc::as_ptr(&field_matcher) as usize))
-        }
-
         // These should also pass with VALUE_TERMINATOR appended
         assert!(
             matches_with_vt("~p{Lo}*", "א𪘀"),
@@ -1253,7 +1223,7 @@ mod tests {
     #[test]
     #[cfg_attr(miri, ignore)] // Arena NFA construction for negated classes too slow under miri
     fn test_negated_single_char_ascii_fast_path() {
-        use crate::automaton::arena::{ArenaNfaBuffers, traverse_arena_nfa};
+        use crate::automaton::arena::{NfaBuffers, traverse_arena_nfa};
 
         // Pattern [^x]+ - ASCII-only negated, so WILL have acceleration
         let pattern = "[^x]+";
@@ -1273,7 +1243,7 @@ mod tests {
         assert_eq!(accel.exit_bytes[0], b'x', "Exit byte should be 'x'");
 
         // Verify the pattern still works correctly
-        let mut bufs = ArenaNfaBuffers::with_capacity();
+        let mut bufs = NfaBuffers::with_capacity();
         traverse_arena_nfa(&arena, start, b"\"abc\"", &mut bufs);
         assert!(
             bufs.transitions
@@ -1353,9 +1323,7 @@ mod tests {
 
     #[test]
     fn test_range_quantifier_equivalence_question() {
-        use crate::automaton::arena::{
-            ARENA_VALUE_TERMINATOR, ArenaNfaBuffers, traverse_arena_nfa,
-        };
+        use crate::automaton::arena::{ARENA_VALUE_TERMINATOR, NfaBuffers, traverse_arena_nfa};
 
         // a{0,1} should be equivalent to a?
         let root_range = parse_regexp("a{0,1}").unwrap();
@@ -1364,7 +1332,7 @@ mod tests {
         let (arena_range, start_range, fm_range) = make_regexp_nfa_arena(root_range);
         let (arena_qm, start_qm, fm_qm) = make_regexp_nfa_arena(root_qm);
 
-        let mut bufs = ArenaNfaBuffers::new();
+        let mut bufs = NfaBuffers::new();
         let test_cases = vec![
             (vec![b'"', b'"', ARENA_VALUE_TERMINATOR], true, "empty"),
             (vec![b'"', b'a', b'"', ARENA_VALUE_TERMINATOR], true, "a"),
@@ -1406,9 +1374,7 @@ mod tests {
     #[test]
     #[cfg_attr(miri, ignore)]
     fn test_range_quantifier_equivalence_plus() {
-        use crate::automaton::arena::{
-            ARENA_VALUE_TERMINATOR, ArenaNfaBuffers, traverse_arena_nfa,
-        };
+        use crate::automaton::arena::{ARENA_VALUE_TERMINATOR, NfaBuffers, traverse_arena_nfa};
 
         // a{1,} should be equivalent to a+ (but capped at REGEXP_QUANTIFIER_MAX)
         let root_range = parse_regexp("a{1,}").unwrap();
@@ -1417,7 +1383,7 @@ mod tests {
         let (arena_range, start_range, fm_range) = make_regexp_nfa_arena(root_range);
         let (arena_plus, start_plus, fm_plus) = make_regexp_nfa_arena(root_plus);
 
-        let mut bufs = ArenaNfaBuffers::new();
+        let mut bufs = NfaBuffers::new();
         let test_cases = vec![
             (vec![b'"', b'"', ARENA_VALUE_TERMINATOR], false, "empty"),
             (vec![b'"', b'a', b'"', ARENA_VALUE_TERMINATOR], true, "a"),
@@ -1464,9 +1430,7 @@ mod tests {
     #[test]
     #[cfg_attr(miri, ignore)]
     fn test_range_quantifier_equivalence_star() {
-        use crate::automaton::arena::{
-            ARENA_VALUE_TERMINATOR, ArenaNfaBuffers, traverse_arena_nfa,
-        };
+        use crate::automaton::arena::{ARENA_VALUE_TERMINATOR, NfaBuffers, traverse_arena_nfa};
 
         // a{0,} should be equivalent to a* (but capped at REGEXP_QUANTIFIER_MAX)
         let root_range = parse_regexp("a{0,}").unwrap();
@@ -1475,7 +1439,7 @@ mod tests {
         let (arena_range, start_range, fm_range) = make_regexp_nfa_arena(root_range);
         let (arena_star, start_star, fm_star) = make_regexp_nfa_arena(root_star);
 
-        let mut bufs = ArenaNfaBuffers::new();
+        let mut bufs = NfaBuffers::new();
         let test_cases = vec![
             (vec![b'"', b'"', ARENA_VALUE_TERMINATOR], true, "empty"),
             (vec![b'"', b'a', b'"', ARENA_VALUE_TERMINATOR], true, "a"),
@@ -1518,11 +1482,9 @@ mod tests {
     #[test]
     #[cfg_attr(miri, ignore)]
     fn test_range_quantifier_equivalence_miri_friendly() {
-        use crate::automaton::arena::{
-            ARENA_VALUE_TERMINATOR, ArenaNfaBuffers, traverse_arena_nfa,
-        };
+        use crate::automaton::arena::{ARENA_VALUE_TERMINATOR, NfaBuffers, traverse_arena_nfa};
 
-        let mut bufs = ArenaNfaBuffers::new();
+        let mut bufs = NfaBuffers::new();
 
         // Star equivalence: a{0,} should behave like a*
         let root_range = parse_regexp("a{0,}").unwrap();
@@ -1579,14 +1541,12 @@ mod tests {
 
     #[test]
     fn test_range_quantifier_exact_one() {
-        use crate::automaton::arena::{
-            ARENA_VALUE_TERMINATOR, ArenaNfaBuffers, traverse_arena_nfa,
-        };
+        use crate::automaton::arena::{ARENA_VALUE_TERMINATOR, NfaBuffers, traverse_arena_nfa};
 
         // a{1} means exactly 1 'a' (I-Regexp semantics: {n} means exactly n)
         let root = parse_regexp("a{1}").unwrap();
         let (arena, start, field_matcher) = make_regexp_nfa_arena(root);
-        let mut bufs = ArenaNfaBuffers::new();
+        let mut bufs = NfaBuffers::new();
 
         let test_cases = vec![
             (vec![b'"', b'"', ARENA_VALUE_TERMINATOR], false, "empty"),
@@ -1616,14 +1576,12 @@ mod tests {
 
     #[test]
     fn test_range_quantifier_exact_zero() {
-        use crate::automaton::arena::{
-            ARENA_VALUE_TERMINATOR, ArenaNfaBuffers, traverse_arena_nfa,
-        };
+        use crate::automaton::arena::{ARENA_VALUE_TERMINATOR, NfaBuffers, traverse_arena_nfa};
 
         // a{0,0} should only match empty string
         let root = parse_regexp("a{0,0}").unwrap();
         let (arena, start, field_matcher) = make_regexp_nfa_arena(root);
-        let mut bufs = ArenaNfaBuffers::new();
+        let mut bufs = NfaBuffers::new();
 
         let test_cases = vec![
             (vec![b'"', b'"', ARENA_VALUE_TERMINATOR], true, "empty"),
@@ -1653,14 +1611,12 @@ mod tests {
 
     #[test]
     fn test_range_quantifier_with_dot() {
-        use crate::automaton::arena::{
-            ARENA_VALUE_TERMINATOR, ArenaNfaBuffers, traverse_arena_nfa,
-        };
+        use crate::automaton::arena::{ARENA_VALUE_TERMINATOR, NfaBuffers, traverse_arena_nfa};
 
         // .{2,4} - any 2-4 characters
         let root = parse_regexp(".{2,4}").unwrap();
         let (arena, start, field_matcher) = make_regexp_nfa_arena(root);
-        let mut bufs = ArenaNfaBuffers::new();
+        let mut bufs = NfaBuffers::new();
 
         let test_cases = vec![
             (vec![b'"', b'"', ARENA_VALUE_TERMINATOR], false, "empty"),
@@ -1714,14 +1670,12 @@ mod tests {
 
     #[test]
     fn test_range_quantifier_with_group() {
-        use crate::automaton::arena::{
-            ARENA_VALUE_TERMINATOR, ArenaNfaBuffers, traverse_arena_nfa,
-        };
+        use crate::automaton::arena::{ARENA_VALUE_TERMINATOR, NfaBuffers, traverse_arena_nfa};
 
         // (ab){2,3} - "ab" repeated 2-3 times
         let root = parse_regexp("(ab){2,3}").unwrap();
         let (arena, start, field_matcher) = make_regexp_nfa_arena(root);
-        let mut bufs = ArenaNfaBuffers::new();
+        let mut bufs = NfaBuffers::new();
 
         let test_cases = vec![
             (vec![b'"', b'"', ARENA_VALUE_TERMINATOR], false, "empty"),
@@ -1787,14 +1741,12 @@ mod tests {
 
     #[test]
     fn test_range_quantifier_larger_values() {
-        use crate::automaton::arena::{
-            ARENA_VALUE_TERMINATOR, ArenaNfaBuffers, traverse_arena_nfa,
-        };
+        use crate::automaton::arena::{ARENA_VALUE_TERMINATOR, NfaBuffers, traverse_arena_nfa};
 
         // a{5,10} - between 5 and 10 'a's
         let root = parse_regexp("a{5,10}").unwrap();
         let (arena, start, field_matcher) = make_regexp_nfa_arena(root);
-        let mut bufs = ArenaNfaBuffers::new();
+        let mut bufs = NfaBuffers::new();
 
         // Test boundary cases
         let test_cases: Vec<(usize, bool)> = vec![
@@ -1888,14 +1840,12 @@ mod tests {
     #[test]
     #[cfg_attr(miri, ignore)]
     fn test_xml_escapes_nfa() {
-        use crate::automaton::arena::{
-            ARENA_VALUE_TERMINATOR, ArenaNfaBuffers, traverse_arena_nfa,
-        };
+        use crate::automaton::arena::{ARENA_VALUE_TERMINATOR, NfaBuffers, traverse_arena_nfa};
 
         // Test ~i matches initial name chars
         let root = parse_regexp("~i").unwrap();
         let (arena, start, field_matcher) = make_regexp_nfa_arena(root);
-        let mut bufs = ArenaNfaBuffers::new();
+        let mut bufs = NfaBuffers::new();
 
         // Should match 'a' (letter)
         let value = vec![b'"', b'a', b'"', ARENA_VALUE_TERMINATOR];
@@ -1996,14 +1946,12 @@ mod tests {
 
     #[test]
     fn test_multi_char_escapes_nfa() {
-        use crate::automaton::arena::{
-            ARENA_VALUE_TERMINATOR, ArenaNfaBuffers, traverse_arena_nfa,
-        };
+        use crate::automaton::arena::{ARENA_VALUE_TERMINATOR, NfaBuffers, traverse_arena_nfa};
 
         // Test ~d matches digits
         let root = parse_regexp("~d").unwrap();
         let (arena, start, field_matcher) = make_regexp_nfa_arena(root);
-        let mut bufs = ArenaNfaBuffers::new();
+        let mut bufs = NfaBuffers::new();
 
         // Should match "5"
         let value = vec![b'"', b'5', b'"', ARENA_VALUE_TERMINATOR];
@@ -2120,14 +2068,12 @@ mod tests {
     #[test]
     #[cfg_attr(miri, ignore)]
     fn test_multi_char_escape_with_quantifier() {
-        use crate::automaton::arena::{
-            ARENA_VALUE_TERMINATOR, ArenaNfaBuffers, traverse_arena_nfa,
-        };
+        use crate::automaton::arena::{ARENA_VALUE_TERMINATOR, NfaBuffers, traverse_arena_nfa};
 
         // Test ~d+ matches one or more digits
         let root = parse_regexp("~d+").unwrap();
         let (arena, start, field_matcher) = make_regexp_nfa_arena(root);
-        let mut bufs = ArenaNfaBuffers::new();
+        let mut bufs = NfaBuffers::new();
 
         // Should match "123"
         let value = vec![b'"', b'1', b'2', b'3', b'"', ARENA_VALUE_TERMINATOR];
@@ -2169,14 +2115,12 @@ mod tests {
     #[test]
     #[cfg(miri)]
     fn test_multi_char_escape_quantifier_miri_minimal() {
-        use crate::automaton::arena::{
-            ARENA_VALUE_TERMINATOR, ArenaNfaBuffers, traverse_arena_nfa,
-        };
+        use crate::automaton::arena::{ARENA_VALUE_TERMINATOR, NfaBuffers, traverse_arena_nfa};
 
         // ~d{1} = exactly one digit — exercises escape expansion + range quantifier path
         let root = parse_regexp("~d{1}").unwrap();
         let (arena, start, fm) = make_regexp_nfa_arena(root);
-        let mut bufs = ArenaNfaBuffers::new();
+        let mut bufs = NfaBuffers::new();
 
         bufs.clear();
         traverse_arena_nfa(
@@ -2264,9 +2208,7 @@ mod tests {
     #[test]
     #[cfg_attr(miri, ignore)]
     fn test_shell_caching_nfa_correctness() {
-        use crate::automaton::arena::{
-            ARENA_VALUE_TERMINATOR, ArenaNfaBuffers, traverse_arena_nfa,
-        };
+        use crate::automaton::arena::{ARENA_VALUE_TERMINATOR, NfaBuffers, traverse_arena_nfa};
 
         // Test that cached patterns produce correct results
         // Build ~p{L} twice - second should use cache
@@ -2276,7 +2218,7 @@ mod tests {
         let (arena1, start1, fm1) = make_regexp_nfa_arena(root1);
         let (arena2, start2, fm2) = make_regexp_nfa_arena(root2);
 
-        let mut bufs = ArenaNfaBuffers::new();
+        let mut bufs = NfaBuffers::new();
 
         // Both should match "A"
         let value = vec![b'"', b'A', b'"', ARENA_VALUE_TERMINATOR];
@@ -2314,9 +2256,7 @@ mod tests {
     #[test]
     #[cfg_attr(miri, ignore)]
     fn test_shell_caching_independent_categories() {
-        use crate::automaton::arena::{
-            ARENA_VALUE_TERMINATOR, ArenaNfaBuffers, traverse_arena_nfa,
-        };
+        use crate::automaton::arena::{ARENA_VALUE_TERMINATOR, NfaBuffers, traverse_arena_nfa};
 
         clear_fa_shell_cache();
 
@@ -2327,7 +2267,7 @@ mod tests {
         let (arena_l, start_l, fm_l) = make_regexp_nfa_arena(root_l);
         let (arena_nd, start_nd, fm_nd) = make_regexp_nfa_arena(root_nd);
 
-        let mut bufs = ArenaNfaBuffers::new();
+        let mut bufs = NfaBuffers::new();
 
         // "A" is a letter but not a digit
         let value_a = vec![b'"', b'A', b'"', ARENA_VALUE_TERMINATOR];
@@ -2365,9 +2305,7 @@ mod tests {
     #[test]
     #[cfg_attr(miri, ignore)]
     fn test_shell_caching_negated_independent() {
-        use crate::automaton::arena::{
-            ARENA_VALUE_TERMINATOR, ArenaNfaBuffers, traverse_arena_nfa,
-        };
+        use crate::automaton::arena::{ARENA_VALUE_TERMINATOR, NfaBuffers, traverse_arena_nfa};
 
         clear_fa_shell_cache();
 
@@ -2378,7 +2316,7 @@ mod tests {
         let (arena_pos, start_pos, fm_pos) = make_regexp_nfa_arena(root_pos);
         let (arena_neg, start_neg, fm_neg) = make_regexp_nfa_arena(root_neg);
 
-        let mut bufs = ArenaNfaBuffers::new();
+        let mut bufs = NfaBuffers::new();
 
         // "A" is a letter: should match ~p{L}, NOT match ~P{L}
         let value_a = vec![b'"', b'A', b'"', ARENA_VALUE_TERMINATOR];
@@ -2729,16 +2667,14 @@ mod tests {
 
     #[test]
     fn test_zero_quantifier() {
-        use crate::automaton::arena::{
-            ARENA_VALUE_TERMINATOR, ArenaNfaBuffers, traverse_arena_nfa,
-        };
+        use crate::automaton::arena::{ARENA_VALUE_TERMINATOR, NfaBuffers, traverse_arena_nfa};
 
         // {0,0} means match zero times — the atom is skipped entirely.
         // Pattern "a{0}b" should match "b" (the 'a' is matched zero times).
         let root = parse_regexp("a{0}b").unwrap();
         let (arena, start, _fm) = make_regexp_nfa_arena(root);
 
-        let mut bufs = ArenaNfaBuffers::with_capacity();
+        let mut bufs = NfaBuffers::with_capacity();
 
         // "b" should match (a is skipped)
         let mut value = Vec::from(b"\"b\"".as_slice());
@@ -2762,15 +2698,13 @@ mod tests {
     #[test]
     #[cfg_attr(miri, ignore)]
     fn test_clear_fa_shell_cache_works() {
-        use crate::automaton::arena::{
-            ARENA_VALUE_TERMINATOR, ArenaNfaBuffers, traverse_arena_nfa,
-        };
+        use crate::automaton::arena::{ARENA_VALUE_TERMINATOR, NfaBuffers, traverse_arena_nfa};
 
         // Build an NFA with a character range to populate the shell cache
         let root = parse_regexp("[a-z]+").unwrap();
         let (arena, start, _fm) = make_regexp_nfa_arena(root);
 
-        let mut bufs = ArenaNfaBuffers::with_capacity();
+        let mut bufs = NfaBuffers::with_capacity();
         let mut value = Vec::from(b"\"hello\"".as_slice());
         value.push(ARENA_VALUE_TERMINATOR);
         traverse_arena_nfa(&arena, start, &value, &mut bufs);
@@ -2798,9 +2732,7 @@ mod tests {
     #[test]
     #[cfg_attr(miri, ignore)]
     fn test_shell_instantiation_with_epsilons() {
-        use crate::automaton::arena::{
-            ARENA_VALUE_TERMINATOR, ArenaNfaBuffers, traverse_arena_nfa,
-        };
+        use crate::automaton::arena::{ARENA_VALUE_TERMINATOR, NfaBuffers, traverse_arena_nfa};
 
         // Clear cache to ensure fresh shell building
         clear_fa_shell_cache();
@@ -2813,7 +2745,7 @@ mod tests {
         let root2 = parse_regexp("~d+").unwrap();
         let (arena2, start2, _fm2) = make_regexp_nfa_arena(root2);
 
-        let mut bufs = ArenaNfaBuffers::with_capacity();
+        let mut bufs = NfaBuffers::with_capacity();
 
         // Both should match digits
         let mut value = Vec::from(b"\"42\"".as_slice());
@@ -2862,14 +2794,58 @@ mod tests {
     #[cfg_attr(miri, ignore)]
     fn test_shell_cache_instantiate_epsilon_remap() {
         use crate::automaton::arena::{
-            ARENA_VALUE_TERMINATOR, ArenaNfaBuffers, traverse_arena_nfa,
+            ARENA_VALUE_TERMINATOR, NfaBuffers, StateArena, StateId, traverse_arena_nfa,
         };
+
+        // Build a quoted JSON value (e.g. `"x"`) terminated for arena traversal.
+        fn quoted_value(content: &str) -> Vec<u8> {
+            let mut v = Vec::with_capacity(content.len() + 3);
+            v.push(b'"');
+            v.extend_from_slice(content.as_bytes());
+            v.push(b'"');
+            v.push(ARENA_VALUE_TERMINATOR);
+            v
+        }
+
+        // Run `value` against both the cold-built and the cache-hit NFA and
+        // assert each has the expected match outcome.
+        // Comparing two NFAs requires (arena, start, fm_ptr) for each side plus
+        // shared buffers and assertion metadata; the parameter count is intrinsic.
+        #[allow(clippy::too_many_arguments)]
+        fn check_both(
+            arena1: &StateArena,
+            start1: StateId,
+            fm1_ptr: usize,
+            arena2: &StateArena,
+            start2: StateId,
+            fm2_ptr: usize,
+            bufs: &mut NfaBuffers,
+            value: &[u8],
+            expect_match: bool,
+            label: &str,
+        ) {
+            bufs.clear();
+            traverse_arena_nfa(arena1, start1, value, bufs);
+            assert_eq!(
+                bufs.transitions.contains(&fm1_ptr),
+                expect_match,
+                "first NFA: {label}"
+            );
+
+            bufs.clear();
+            traverse_arena_nfa(arena2, start2, value, bufs);
+            assert_eq!(
+                bufs.transitions.contains(&fm2_ptr),
+                expect_match,
+                "cached NFA: {label}"
+            );
+        }
 
         clear_fa_shell_cache();
 
-        // ~p{L}? matches an optional Unicode letter. The `?` quantifier adds
+        // `~p{L}?` matches an optional Unicode letter. The `?` quantifier adds
         // an epsilon from the atom root to the next state (skip path).
-        // ~p{L} has cache_key "L", so the second build uses instantiate_shell.
+        // `~p{L}` has cache_key "L", so the second build uses instantiate_shell.
         // Suffix "x" ensures we can distinguish match vs skip.
         let root1 = parse_regexp("~p{L}?x").unwrap();
         let (arena1, start1, fm1) = make_regexp_nfa_arena(root1);
@@ -2877,123 +2853,42 @@ mod tests {
         let root2 = parse_regexp("~p{L}?x").unwrap();
         let (arena2, start2, fm2) = make_regexp_nfa_arena(root2);
 
-        let mut bufs = ArenaNfaBuffers::with_capacity();
+        let mut bufs = NfaBuffers::with_capacity();
         let fm1_ptr = std::sync::Arc::as_ptr(&fm1) as usize;
         let fm2_ptr = std::sync::Arc::as_ptr(&fm2) as usize;
 
-        // Helper to check if a specific field matcher is in the transitions
-        let has_match =
-            |bufs: &ArenaNfaBuffers, ptr: usize| -> bool { bufs.transitions.contains(&ptr) };
+        // Match cases: epsilon skip, ASCII letter, then 2-, 3- and 4-byte UTF-8.
+        for (content, label) in [
+            ("x", "'x' matches via epsilon skip"),
+            ("Ax", "'Ax' matches via ~p{L} then 'x'"),
+            ("éx", "'éx' matches with 2-byte UTF-8 letter"),
+            ("中x", "'中x' matches with 3-byte UTF-8 letter"),
+            ("\u{20000}x", "U+20000 x matches with 4-byte UTF-8 letter"),
+        ] {
+            let val = quoted_value(content);
+            check_both(
+                &arena1, start1, fm1_ptr, &arena2, start2, fm2_ptr, &mut bufs, &val, true, label,
+            );
+        }
 
-        // 1) "x" should match (epsilon skip over ~p{L}? then literal 'x')
-        let mut val = Vec::from(b"\"x\"".as_slice());
-        val.push(ARENA_VALUE_TERMINATOR);
-
-        traverse_arena_nfa(&arena1, start1, &val, &mut bufs);
-        assert!(
-            has_match(&bufs, fm1_ptr),
-            "first NFA: 'x' should match via epsilon skip"
+        // Non-letter must NOT match: digit '5' is not `~p{L}`.
+        let val = quoted_value("5x");
+        check_both(
+            &arena1,
+            start1,
+            fm1_ptr,
+            &arena2,
+            start2,
+            fm2_ptr,
+            &mut bufs,
+            &val,
+            false,
+            "'5x' should not match (digit is not ~p{L})",
         );
 
-        bufs.clear();
-        traverse_arena_nfa(&arena2, start2, &val, &mut bufs);
-        assert!(
-            has_match(&bufs, fm2_ptr),
-            "cached NFA: 'x' should match via epsilon skip"
-        );
-
-        // 2) "Ax" should match (ASCII letter 'A' matches ~p{L}, then 'x')
-        bufs.clear();
-        let mut val = Vec::from(b"\"Ax\"".as_slice());
-        val.push(ARENA_VALUE_TERMINATOR);
-
-        traverse_arena_nfa(&arena1, start1, &val, &mut bufs);
-        assert!(has_match(&bufs, fm1_ptr), "first NFA: 'Ax' should match");
-
-        bufs.clear();
-        traverse_arena_nfa(&arena2, start2, &val, &mut bufs);
-        assert!(has_match(&bufs, fm2_ptr), "cached NFA: 'Ax' should match");
-
-        // 3) Multi-byte UTF-8: "é" (U+00E9, 2 bytes: 0xC3 0xA9) followed by 'x'
-        //    This exercises internal state remapping in instantiate_shell.
-        bufs.clear();
-        let mut val = b"\"".to_vec();
-        val.extend_from_slice("é".as_bytes()); // 0xC3 0xA9
-        val.push(b'x');
-        val.push(b'"');
-        val.push(ARENA_VALUE_TERMINATOR);
-
-        traverse_arena_nfa(&arena1, start1, &val, &mut bufs);
-        assert!(
-            has_match(&bufs, fm1_ptr),
-            "first NFA: 'éx' should match (2-byte UTF-8)"
-        );
-
-        bufs.clear();
-        traverse_arena_nfa(&arena2, start2, &val, &mut bufs);
-        assert!(
-            has_match(&bufs, fm2_ptr),
-            "cached NFA: 'éx' should match (2-byte UTF-8)"
-        );
-
-        // 4) 3-byte UTF-8: "中" (U+4E2D, 3 bytes) followed by 'x'
-        bufs.clear();
-        let mut val = b"\"".to_vec();
-        val.extend_from_slice("中".as_bytes());
-        val.push(b'x');
-        val.push(b'"');
-        val.push(ARENA_VALUE_TERMINATOR);
-
-        traverse_arena_nfa(&arena1, start1, &val, &mut bufs);
-        assert!(
-            has_match(&bufs, fm1_ptr),
-            "first NFA: '中x' should match (3-byte UTF-8)"
-        );
-
-        bufs.clear();
-        traverse_arena_nfa(&arena2, start2, &val, &mut bufs);
-        assert!(
-            has_match(&bufs, fm2_ptr),
-            "cached NFA: '中x' should match (3-byte UTF-8)"
-        );
-
-        // 5) 4-byte UTF-8: U+20000 (CJK Extension B, 4 bytes) followed by 'x'
-        bufs.clear();
-        let mut val = b"\"".to_vec();
-        val.extend_from_slice("\u{20000}".as_bytes());
-        val.push(b'x');
-        val.push(b'"');
-        val.push(ARENA_VALUE_TERMINATOR);
-
-        traverse_arena_nfa(&arena1, start1, &val, &mut bufs);
-        assert!(
-            has_match(&bufs, fm1_ptr),
-            "first NFA: U+20000 x should match (4-byte UTF-8)"
-        );
-
-        bufs.clear();
-        traverse_arena_nfa(&arena2, start2, &val, &mut bufs);
-        assert!(
-            has_match(&bufs, fm2_ptr),
-            "cached NFA: U+20000 x should match (4-byte UTF-8)"
-        );
-
-        // 6) Non-letter followed by 'x' should NOT match (digit '5' is not ~p{L})
-        bufs.clear();
-        let mut val = Vec::from(b"\"5x\"".as_slice());
-        val.push(ARENA_VALUE_TERMINATOR);
-
-        traverse_arena_nfa(&arena2, start2, &val, &mut bufs);
-        assert!(
-            !has_match(&bufs, fm2_ptr),
-            "cached NFA: '5x' should NOT match"
-        );
-
-        // 7) Verify the instantiated NFA has epsilon transitions on the root
-        //    (from the `?` quantifier). This confirms epsilons are present in
-        //    the arena states produced by the cache-hit path.
+        // Verify the instantiated NFA has epsilon transitions on the root (from
+        // the `?` quantifier) — confirms epsilons survive the cache-hit path.
         let root_state = &arena2[start2];
-        // start2 is the leading-quote state; walk past it to find the ~p{L}? root
         let inner = root_state.table.dstep(b'"');
         assert!(
             !inner.is_none(),
@@ -3002,16 +2897,15 @@ mod tests {
         let inner_state = &arena2[inner];
         assert!(
             !inner_state.table.epsilons.is_empty(),
-            "the ~p{{L}}? atom root should have epsilon transitions (from ? quantifier) \
-             even when instantiated from shell cache"
+            "the ~p{{L}}? atom root should carry epsilon transitions even from the shell cache"
         );
 
-        // 8) Verify epsilon target is valid (points to a real state, not stale local ID)
+        // Each epsilon target must point at a real state (not a stale local ID).
         for &eps in &inner_state.table.epsilons {
             assert!(!eps.is_none(), "epsilon target should not be NONE");
             assert!(
                 eps.index() < arena2.len(),
-                "epsilon target {} should be a valid state index (arena has {} states)",
+                "epsilon target {} out of range (arena has {} states)",
                 eps.index(),
                 arena2.len()
             );

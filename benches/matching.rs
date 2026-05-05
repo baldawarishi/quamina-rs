@@ -8,11 +8,10 @@ use criterion::{Criterion, criterion_group, criterion_main};
 use flate2::read::GzDecoder;
 use quamina::Quamina;
 use quamina::automaton::arena::{
-    ARENA_VALUE_TERMINATOR, ArenaNfaBuffers, ArenaSmallTable, StateArena, StateId,
-    traverse_arena_nfa,
+    ARENA_VALUE_TERMINATOR, NfaBuffers, SmallTable, StateArena, StateId, traverse_arena_nfa,
 };
 use quamina::automaton::{EventField, FieldMatcher, ThreadSafeCoreMatcher};
-use quamina::flatten_json::FlattenJsonState;
+use quamina::flatten_json;
 use quamina::json::Matcher;
 use quamina::segments_tree::SegmentsTree;
 use std::io::{BufRead, BufReader};
@@ -168,7 +167,7 @@ fn bench_flatten_direct_context_fields(c: &mut Criterion) {
     let mut tree = SegmentsTree::new();
     tree.add("context\nuser_id");
     tree.add("context\nfriends_count");
-    let mut flattener = FlattenJsonState::new();
+    let mut flattener = flatten_json::State::new();
     let event = load_status_json();
 
     c.bench_function("flatten_direct_context_fields", |b| {
@@ -185,7 +184,7 @@ fn bench_flatten_sort_context_fields(c: &mut Criterion) {
     let mut tree = SegmentsTree::new();
     tree.add("context\nuser_id");
     tree.add("context\nfriends_count");
-    let mut flattener = FlattenJsonState::new();
+    let mut flattener = flatten_json::State::new();
     let event = load_status_json();
 
     c.bench_function("flatten_sort_context_fields", |b| {
@@ -208,7 +207,7 @@ fn bench_match_only_context_fields(c: &mut Criterion) {
     let segments_tree = q.segments_tree();
 
     // Pre-flatten and sort, then convert to owned EventField
-    let mut flattener = FlattenJsonState::new();
+    let mut flattener = flatten_json::State::new();
     let fields = flattener.flatten(&event, segments_tree).unwrap();
     fields.sort_unstable_by(|a, b| a.path.cmp(&b.path));
     let owned_fields: Vec<EventField> = fields
@@ -836,7 +835,7 @@ fn build_arena_nfa_plus() -> (StateArena, StateId, Arc<FieldMatcher>) {
         .push(field_matcher.clone());
 
     // exit state: VALUE_TERMINATOR -> final_state
-    let exit_state = arena.alloc_with_table(ArenaSmallTable::with_mappings(
+    let exit_state = arena.alloc_with_table(SmallTable::with_mappings(
         StateId::NONE,
         &[ARENA_VALUE_TERMINATOR],
         &[final_state],
@@ -852,11 +851,7 @@ fn build_arena_nfa_plus() -> (StateArena, StateId, Arc<FieldMatcher>) {
         bytes.push(b);
         targets.push(loopback);
     }
-    let start = arena.alloc_with_table(ArenaSmallTable::with_mappings(
-        StateId::NONE,
-        &bytes,
-        &targets,
-    ));
+    let start = arena.alloc_with_table(SmallTable::with_mappings(StateId::NONE, &bytes, &targets));
 
     // Set up loopback: epsilon to exit AND back to start (CYCLE!)
     arena[loopback].table.epsilons = smallvec::smallvec![exit_state, start];
@@ -870,7 +865,7 @@ fn build_arena_nfa_plus() -> (StateArena, StateId, Arc<FieldMatcher>) {
 /// Benchmark: Arena-based NFA traversal for [a-z]+ pattern
 fn bench_arena_nfa_traversal(c: &mut Criterion) {
     let (arena, start, _field_matcher) = build_arena_nfa_plus();
-    let mut bufs = ArenaNfaBuffers::with_capacity();
+    let mut bufs = NfaBuffers::with_capacity();
 
     // Test with 100-character string
     let value: Vec<u8> = (0..100).map(|_| b'a').collect();
@@ -887,7 +882,7 @@ fn bench_arena_nfa_traversal(c: &mut Criterion) {
 /// Benchmark: Arena-based NFA traversal with short string
 fn bench_arena_nfa_short(c: &mut Criterion) {
     let (arena, start, _field_matcher) = build_arena_nfa_plus();
-    let mut bufs = ArenaNfaBuffers::with_capacity();
+    let mut bufs = NfaBuffers::with_capacity();
 
     // Test with 5-character string
     let value: Vec<u8> = (0..5).map(|_| b'a').collect();
@@ -1259,7 +1254,7 @@ fn bench_citylots_core(c: &mut Criterion) {
 
     // Pre-flatten all lines to avoid flattening overhead in the benchmark
     let lines = load_citylots_lines();
-    let mut flattener = FlattenJsonState::new();
+    let mut flattener = flatten_json::State::new();
     let pre_flattened: Vec<Vec<EventField>> = lines
         .iter()
         .map(|line| {

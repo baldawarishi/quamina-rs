@@ -12,13 +12,13 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use quamina::flatten_json::FlattenJsonState;
+use quamina::flatten_json;
 use quamina::segments_tree::SegmentsTree;
 
 fuzz_target!(|data: &[u8]| {
     // Create a fresh flattener state for each input.
     // Using a fresh state ensures we test initialization paths too.
-    let mut state = FlattenJsonState::new();
+    let mut state = flatten_json::State::new();
 
     // Empty tree: the flattener will extract all fields it encounters.
     // This maximizes code coverage since no fields are skipped.

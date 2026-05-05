@@ -4,7 +4,7 @@
 //! - `FrozenFieldMatcher`: Immutable field matcher for concurrent reads
 //! - `FrozenValueMatcher`: Immutable value matcher for concurrent reads
 //! - `ThreadSafeCoreMatcher`: Thread-safe wrapper with lock-free matching
-//! - `AutomatonValueMatcher`: A working value matcher that uses automata
+//! - `ValueMatcher`: A working value matcher that uses automata
 //!
 //! # Safety
 //! This module contains unsafe Send/Sync implementations. FrozenFieldMatcher and
@@ -24,9 +24,9 @@ use arc_swap::ArcSwap;
 use parking_lot::Mutex;
 
 use super::arena::{
-    ArenaNfaBuffers, ArenaStats, LazyDfa, StateArena, StateId, make_prefix_arena_fa,
-    make_shellstyle_arena_fa, make_string_arena_fa, merge_arena_nfas, traverse_arena_dfa,
-    traverse_arena_dfa_backward, traverse_arena_nfa, traverse_lazy_dfa,
+    LazyDfa, NfaBuffers as ArenaNfaBuffers, StateArena, StateId, Stats as ArenaStats,
+    make_prefix_arena_fa, make_shellstyle_arena_fa, make_string_arena_fa, merge_arena_nfas,
+    traverse_arena_dfa, traverse_arena_dfa_backward, traverse_arena_nfa, traverse_lazy_dfa,
 };
 use super::mutable_matcher::{
     EventField, EventFieldRef, MultiConditionNfa, MutableFieldMatcher, MutableValueMatcher,
@@ -249,6 +249,7 @@ impl<X: Clone + Eq + Hash> FrozenValueMatcher<X> {
 
     /// Transition on a value during matching
     #[inline]
+    #[allow(clippy::too_many_lines)] // frozen-path hot loop; splitting hides the DFA fast-path from the inliner
     pub(crate) fn transition_on(
         &self,
         value: &[u8],
@@ -572,41 +573,41 @@ impl<X: Clone + Eq + Hash + Send + Sync> ThreadSafeCoreMatcher<X> {
         self.ensure_frozen();
         let root = self.root.load();
         let mut stats = ArenaStats::default();
-        let mut visited_fm: FxHashSet<usize> = FxHashSet::default();
-        let mut visited_vm: FxHashSet<usize> = FxHashSet::default();
-        Self::collect_fm_stats(&root, &mut stats, &mut visited_fm, &mut visited_vm);
+        let mut field_seen: FxHashSet<usize> = FxHashSet::default();
+        let mut value_seen: FxHashSet<usize> = FxHashSet::default();
+        Self::collect_fm_stats(&root, &mut stats, &mut field_seen, &mut value_seen);
         stats
     }
 
     fn collect_fm_stats(
         fm: &FrozenFieldMatcher<X>,
         stats: &mut ArenaStats,
-        visited_fm: &mut FxHashSet<usize>,
-        visited_vm: &mut FxHashSet<usize>,
+        field_seen: &mut FxHashSet<usize>,
+        value_seen: &mut FxHashSet<usize>,
     ) {
         let ptr = std::ptr::from_ref(fm) as usize;
-        if !visited_fm.insert(ptr) {
+        if !field_seen.insert(ptr) {
             return;
         }
         for vm in fm.transitions.values() {
-            Self::collect_vm_stats(vm, stats, visited_fm, visited_vm);
+            Self::collect_vm_stats(vm, stats, field_seen, value_seen);
         }
         for fm_next in fm.exists_true.values() {
-            Self::collect_fm_stats(fm_next, stats, visited_fm, visited_vm);
+            Self::collect_fm_stats(fm_next, stats, field_seen, value_seen);
         }
         for fm_next in fm.exists_false.values() {
-            Self::collect_fm_stats(fm_next, stats, visited_fm, visited_vm);
+            Self::collect_fm_stats(fm_next, stats, field_seen, value_seen);
         }
     }
 
     fn collect_vm_stats(
         vm: &FrozenValueMatcher<X>,
         stats: &mut ArenaStats,
-        visited_fm: &mut FxHashSet<usize>,
-        visited_vm: &mut FxHashSet<usize>,
+        field_seen: &mut FxHashSet<usize>,
+        value_seen: &mut FxHashSet<usize>,
     ) {
         let ptr = std::ptr::from_ref(vm) as usize;
-        if !visited_vm.insert(ptr) {
+        if !value_seen.insert(ptr) {
             return;
         }
         if let Some((ref arena, _)) = vm.main_arena {
@@ -623,10 +624,10 @@ impl<X: Clone + Eq + Hash + Send + Sync> ThreadSafeCoreMatcher<X> {
         }
         // Walk transition_map to reach nested FrozenFieldMatchers
         for fm_next in vm.transition_map.values() {
-            Self::collect_fm_stats(fm_next, stats, visited_fm, visited_vm);
+            Self::collect_fm_stats(fm_next, stats, field_seen, value_seen);
         }
         if let Some(ref fm_next) = vm.singleton_transition {
-            Self::collect_fm_stats(fm_next, stats, visited_fm, visited_vm);
+            Self::collect_fm_stats(fm_next, stats, field_seen, value_seen);
         }
     }
 
@@ -710,7 +711,7 @@ impl<X: Clone + Eq + Hash + Send + Sync> ThreadSafeCoreMatcher<X> {
 
         // Copy the main_arena (unified arena for all pattern types).
         // Re-freeze table buffers to pick up any in-place modifications
-        // (e.g. insert_string_into_arena) since the last precompute.
+        // (e.g. arena::insert_string) since the last precompute.
         //
         // Three-tier strategy:
         //   Tier 1: Eager DFA — subset construction at freeze time (fast matching)
@@ -799,7 +800,7 @@ impl<X: Clone + Eq + Hash + Send + Sync> ThreadSafeCoreMatcher<X> {
         let root = self.root.load();
 
         if fields.is_empty() {
-            return self.collect_exists_false_matches(&root);
+            return Self::collect_exists_false_matches(&root);
         }
 
         let mut matches = FrozenMatchSet::new();
@@ -880,7 +881,7 @@ impl<X: Clone + Eq + Hash + Send + Sync> ThreadSafeCoreMatcher<X> {
         }
     }
 
-    fn collect_exists_false_matches(&self, state: &Arc<FrozenFieldMatcher<X>>) -> Vec<X> {
+    fn collect_exists_false_matches(state: &Arc<FrozenFieldMatcher<X>>) -> Vec<X> {
         let mut result = Vec::new();
         for exists_trans in state.exists_false.values() {
             result.extend(exists_trans.matches.iter().cloned());
@@ -902,7 +903,7 @@ impl<X: Clone + Eq + Hash + Send + Sync> ThreadSafeCoreMatcher<X> {
         let root = self.root.load();
 
         if fields.is_empty() {
-            return self.collect_exists_false_matches(&root);
+            return Self::collect_exists_false_matches(&root);
         }
 
         let mut matches = FrozenMatchSet::new();
@@ -996,7 +997,7 @@ impl<X: Clone + Eq + Hash + Send + Sync> ThreadSafeCoreMatcher<X> {
         let root = self.root.load();
 
         if fields.is_empty() {
-            return self.collect_exists_false_matches(&root);
+            return Self::collect_exists_false_matches(&root);
         }
 
         let mut matches = FrozenMatchSet::new();
@@ -1117,7 +1118,7 @@ impl<X: Clone + Eq> FrozenMatchSet<X> {
 /// This demonstrates how automaton-based value matching works.
 /// Values are matched by traversing the automaton on the value bytes.
 #[derive(Clone, Default)]
-pub struct AutomatonValueMatcher<X: Clone + Eq + std::hash::Hash> {
+pub struct ValueMatcher<X: Clone + Eq + std::hash::Hash> {
     /// The arena-based automaton (arena, start_state)
     arena: Option<(StateArena, StateId)>,
     /// Map from match ID to pattern identifiers
@@ -1127,7 +1128,7 @@ pub struct AutomatonValueMatcher<X: Clone + Eq + std::hash::Hash> {
     next_match_id: u64,
 }
 
-impl<X: Clone + Eq + std::hash::Hash> AutomatonValueMatcher<X> {
+impl<X: Clone + Eq + std::hash::Hash> ValueMatcher<X> {
     /// Create a new empty value matcher
     #[must_use]
     pub fn new() -> Self {
@@ -1261,9 +1262,9 @@ mod tests {
             array_trail: vec![],
             is_number: false,
         }];
-        let matches = matcher.matches_for_fields(&fields);
+        let pattern_ids = matcher.matches_for_fields(&fields);
 
-        assert_eq!(matches, vec!["p1".to_string()]);
+        assert_eq!(pattern_ids, vec!["p1".to_string()]);
     }
 
     /// Test that `matches_for_fields` correctly detects array trail conflicts.
@@ -1307,10 +1308,10 @@ mod tests {
                 is_number: false,
             },
         ];
-        let matches = matcher.matches_for_fields(&conflicting);
+        let pattern_ids = matcher.matches_for_fields(&conflicting);
         assert!(
-            matches.is_empty(),
-            "Fields from different array positions should conflict: {matches:?}"
+            pattern_ids.is_empty(),
+            "Fields from different array positions should conflict: {pattern_ids:?}"
         );
 
         // Fields from the same position in the same array → no conflict → match
@@ -1328,8 +1329,8 @@ mod tests {
                 is_number: false,
             },
         ];
-        let matches = matcher.matches_for_fields(&compatible);
-        assert_eq!(matches, vec!["p1".to_string()]);
+        let pattern_ids = matcher.matches_for_fields(&compatible);
+        assert_eq!(pattern_ids, vec!["p1".to_string()]);
 
         // Fields from different arrays → no conflict → match
         let different_arrays = vec![
@@ -1346,8 +1347,8 @@ mod tests {
                 is_number: false,
             },
         ];
-        let matches = matcher.matches_for_fields(&different_arrays);
-        assert_eq!(matches, vec!["p1".to_string()]);
+        let pattern_ids = matcher.matches_for_fields(&different_arrays);
+        assert_eq!(pattern_ids, vec!["p1".to_string()]);
     }
 
     /// Test that `matches_for_fields_ref` correctly handles exists:false patterns.
@@ -1372,9 +1373,9 @@ mod tests {
             array_trail: &[],
             is_number: false,
         }];
-        let matches = matcher.matches_for_fields_ref(&fields_without, &mut bufs);
+        let pattern_ids = matcher.matches_for_fields_ref(&fields_without, &mut bufs);
         assert_eq!(
-            matches,
+            pattern_ids,
             vec!["p1".to_string()],
             "exists:false should match when field is absent"
         );
@@ -1386,10 +1387,10 @@ mod tests {
             array_trail: &[],
             is_number: false,
         }];
-        let matches = matcher.matches_for_fields_ref(&fields_with, &mut bufs);
+        let pattern_ids = matcher.matches_for_fields_ref(&fields_with, &mut bufs);
         assert!(
-            matches.is_empty(),
-            "exists:false should not match when field is present: {matches:?}"
+            pattern_ids.is_empty(),
+            "exists:false should not match when field is present: {pattern_ids:?}"
         );
     }
 
@@ -1421,8 +1422,8 @@ mod tests {
             array_trail: &[],
             is_number: false,
         }];
-        let matches = matcher.matches_for_fields_ref(&fields_match, &mut bufs);
-        assert_eq!(matches, vec!["p1".to_string()]);
+        let pattern_ids = matcher.matches_for_fields_ref(&fields_match, &mut bufs);
+        assert_eq!(pattern_ids, vec!["p1".to_string()]);
 
         // status=active, "gone" present → no match
         let fields_no_match = vec![
@@ -1439,12 +1440,12 @@ mod tests {
                 is_number: false,
             },
         ];
-        let matches = matcher.matches_for_fields_ref(&fields_no_match, &mut bufs);
-        assert!(matches.is_empty());
+        let pattern_ids = matcher.matches_for_fields_ref(&fields_no_match, &mut bufs);
+        assert!(pattern_ids.is_empty());
     }
 
     // =========================================================================
-    // Mutation coverage: try_to_match*, add_pattern, AutomatonValueMatcher,
+    // Mutation coverage: try_to_match*, add_pattern, ValueMatcher,
     // ensure_frozen, collect_fm_stats / collect_vm_stats
     // =========================================================================
 
@@ -1910,11 +1911,11 @@ mod tests {
         );
     }
 
-    // -- AutomatonValueMatcher --
+    // -- ValueMatcher --
 
     #[test]
     fn test_automaton_value_matcher_string_match() {
-        let mut avm: AutomatonValueMatcher<String> = AutomatonValueMatcher::new();
+        let mut avm: ValueMatcher<String> = ValueMatcher::new();
         avm.add_string_match(b"hello", "p1".to_string());
         avm.add_string_match(b"world", "p2".to_string());
 
@@ -1925,7 +1926,7 @@ mod tests {
 
     #[test]
     fn test_automaton_value_matcher_prefix_match() {
-        let mut avm: AutomatonValueMatcher<String> = AutomatonValueMatcher::new();
+        let mut avm: ValueMatcher<String> = ValueMatcher::new();
         avm.add_prefix_match(b"foo", "p1".to_string());
         avm.add_prefix_match(b"bar", "p2".to_string());
 
@@ -1940,7 +1941,7 @@ mod tests {
         // - replace with (): match_value returns empty
         // - += → *=: both patterns get ID=1, second overwrites first → wrong match
         // - += → -=: second call attempts 0-1 which panics in debug mode
-        let mut avm: AutomatonValueMatcher<String> = AutomatonValueMatcher::new();
+        let mut avm: ValueMatcher<String> = ValueMatcher::new();
         avm.add_shellstyle_match(b"hello", "p1".to_string());
         avm.add_shellstyle_match(b"world", "p2".to_string());
 
@@ -1952,9 +1953,9 @@ mod tests {
     #[test]
     fn test_automaton_value_matcher_multi_count() {
         // Three patterns exercise `next_match_id += 1`.
-        // With `+= → *=` all IDs stay at 1 (pattern_map last-wins → wrong matches).
+        // With `+= → *=` all IDs stay at 1 (pattern_map last-wins → wrong pattern_ids).
         // With `+= → -=` the second call wraps usize::MAX and panics in debug.
-        let mut avm: AutomatonValueMatcher<u32> = AutomatonValueMatcher::new();
+        let mut avm: ValueMatcher<u32> = ValueMatcher::new();
         avm.add_string_match(b"x", 10);
         avm.add_string_match(b"y", 20);
         avm.add_string_match(b"z", 30);
