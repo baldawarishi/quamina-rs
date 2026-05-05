@@ -147,16 +147,18 @@ impl CidrPattern {
             // Fill left part
             for (i, part) in left.iter().enumerate() {
                 let val = u16::from_str_radix(part, 16).ok()?;
-                addr[i * 2] = (val >> 8) as u8;
-                addr[i * 2 + 1] = val as u8;
+                let [hi, lo] = val.to_be_bytes();
+                addr[i * 2] = hi;
+                addr[i * 2 + 1] = lo;
             }
 
             // Fill right part (from the end)
             let right_start = 8 - right.len();
             for (i, part) in right.iter().enumerate() {
                 let val = u16::from_str_radix(part, 16).ok()?;
-                addr[(right_start + i) * 2] = (val >> 8) as u8;
-                addr[(right_start + i) * 2 + 1] = val as u8;
+                let [hi, lo] = val.to_be_bytes();
+                addr[(right_start + i) * 2] = hi;
+                addr[(right_start + i) * 2 + 1] = lo;
             }
         } else {
             // Full address
@@ -166,8 +168,9 @@ impl CidrPattern {
             }
             for (i, part) in parts.iter().enumerate() {
                 let val = u16::from_str_radix(part, 16).ok()?;
-                addr[i * 2] = (val >> 8) as u8;
-                addr[i * 2 + 1] = val as u8;
+                let [hi, lo] = val.to_be_bytes();
+                addr[i * 2] = hi;
+                addr[i * 2 + 1] = lo;
             }
         }
 
@@ -454,7 +457,11 @@ fn compute_branch_byte_length(branch: &RegexpBranch) -> Result<usize, String> {
         if atom.quant_min != atom.quant_max {
             return Err("variable quantifier in lookbehind not supported".into());
         }
-        let count = atom.quant_min as usize;
+        // Quantifier counts come out of the parser non-negative; if a stray
+        // negative ever reaches here we'd rather raise a clear error than
+        // wrap into an enormous usize.
+        let count = usize::try_from(atom.quant_min)
+            .map_err(|_| "negative quantifier count in lookbehind".to_owned())?;
 
         // Compute per-atom byte length
         let atom_len = if atom.is_dot {

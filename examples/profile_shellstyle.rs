@@ -93,7 +93,7 @@ fn main() {
     let events = sample_events();
 
     // Run many iterations for good profiling data
-    let iterations = 100_000;
+    let iterations: u128 = 100_000;
     let start = std::time::Instant::now();
 
     for _ in 0..iterations {
@@ -103,15 +103,19 @@ fn main() {
     }
 
     let elapsed = start.elapsed();
-    let total_ops = iterations * events.len();
-    let ns_per_op = elapsed.as_nanos() / total_ops as u128;
+    let events_count = u128::try_from(events.len()).expect("events.len() fits in u128");
+    let total_ops = iterations * events_count;
+    let ns_per_op = elapsed.as_nanos() / total_ops;
+    // µs/iter with one decimal of resolution, computed in integer space.
+    let tenths_us_per_iter = elapsed.as_nanos() * 10 / iterations / 1_000;
     eprintln!(
-        "{} iterations × {} events = {} ops in {:.2?} ({} ns/op, {:.1} µs/iter)",
+        "{} iterations × {} events = {} ops in {:.2?} ({} ns/op, {}.{} µs/iter)",
         iterations,
         events.len(),
         total_ops,
         elapsed,
         ns_per_op,
-        elapsed.as_micros() as f64 / iterations as f64,
+        tenths_us_per_iter / 10,
+        tenths_us_per_iter % 10,
     );
 }

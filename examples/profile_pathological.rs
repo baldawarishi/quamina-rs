@@ -46,7 +46,7 @@ fn main() {
         r#"{"val": "aaaaaab"}"#.into(),
     ];
 
-    let iterations = 500_000;
+    let iterations: u128 = 500_000;
     let start = std::time::Instant::now();
 
     for _ in 0..iterations {
@@ -56,15 +56,20 @@ fn main() {
     }
 
     let elapsed = start.elapsed();
-    let total_ops = iterations * events.len();
-    let ns_per_op = elapsed.as_nanos() / total_ops as u128;
+    let events_count = u128::try_from(events.len()).expect("events.len() fits in u128");
+    let total_ops = iterations * events_count;
+    let ns_per_op = elapsed.as_nanos() / total_ops;
+    // ns_per_iter * 1000 / 1000 → integer microseconds with one decimal of
+    // resolution by scaling by 10 first (i.e., "12.3 us/iter" without f64).
+    let tenths_us_per_iter = elapsed.as_nanos() * 10 / iterations / 1_000;
     eprintln!(
-        "{} iterations x {} events = {} ops in {:.2?} ({} ns/op, {:.1} us/iter)",
+        "{} iterations x {} events = {} ops in {:.2?} ({} ns/op, {}.{} us/iter)",
         iterations,
         events.len(),
         total_ops,
         elapsed,
         ns_per_op,
-        elapsed.as_micros() as f64 / iterations as f64,
+        tenths_us_per_iter / 10,
+        tenths_us_per_iter % 10,
     );
 }

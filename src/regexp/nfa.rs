@@ -205,9 +205,12 @@ fn make_one_arena_branch_fa(
             // No quantifier - simple FA
             current_next = make_arena_atom_fa(qa, arena, current_next);
         } else {
-            // General {n,m} quantifier
-            let n = qa.quant_min as usize;
-            let m = qa.quant_max as usize;
+            // General {n,m} quantifier. The parser only ever stores
+            // non-negative counts here; if that ever stops being true we'd
+            // rather panic than silently turn a stray -1 into a 4-billion-
+            // iteration loop.
+            let n = usize::try_from(qa.quant_min).expect("quant_min must be non-negative");
+            let m = usize::try_from(qa.quant_max).expect("quant_max must be non-negative");
 
             // Special case: {0,0} means match zero times - pure epsilon transition
             if n == 0 && m == 0 {
@@ -266,10 +269,13 @@ fn create_arena_plus_star_loop(
     // Only ASCII-only negated patterns can be accelerated.
     // Unicode patterns have too many exit bytes (68+) for memchr to help.
     let accel = qa.ascii_negated_bytes.as_ref().map(|bytes| {
-        // ASCII-only negated pattern: use the negated bytes as exit bytes directly
+        // ASCII-only negated pattern: feed the negated bytes straight in
+        // as exit bytes. `detect_ascii_negated_bytes` already declines
+        // anything with more than 3 entries, so neither the `try_from`
+        // nor the indexed write can overflow.
         let mut accel = crate::automaton::AccelInfo {
             exit_bytes: [0; 3],
-            len: bytes.len() as u8,
+            len: u8::try_from(bytes.len()).expect("ascii_negated_bytes is bounded to 3"),
         };
         for (i, &b) in bytes.iter().enumerate() {
             accel.exit_bytes[i] = b;
@@ -471,7 +477,8 @@ fn build_shell(rr: &RuneRange) -> CachedShell {
 
     CachedShell {
         tables,
-        root: root_id.index() as u32,
+        root: u32::try_from(root_id.index())
+            .expect("shell arenas have far fewer than u32::MAX states"),
     }
 }
 

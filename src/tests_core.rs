@@ -1192,10 +1192,13 @@ fn test_numbits_to_qnumber_utf8() {
             .wrapping_mul(6364136223846793005)
             .wrapping_add(1442695040888963407);
 
-        // Generate a random f64 in a wide range
+        // Generate a random f64 in a wide range. We build the mantissa via
+        // the standard IEEE-754 trick: stuff 52 random bits into a known
+        // exponent of 1.0, giving a uniform [1.0, 2.0); subtracting 1.0
+        // yields a uniform [0.0, 1.0) without any lossy `as f64` casts.
         let sign = if rng_state & 1 == 0 { 1.0 } else { -1.0 };
-        let exp = ((rng_state >> 1) % 600) as i32 - 300; // -300 to +299
-        let mantissa = ((rng_state >> 10) as f64) / (1u64 << 54) as f64;
+        let exp = i32::try_from((rng_state >> 1) % 600).expect("range mod 600 fits in i32") - 300;
+        let mantissa = f64::from_bits((rng_state >> 12) | 0x3FF0_0000_0000_0000) - 1.0;
         let val = sign * (1.0 + mantissa) * 10f64.powi(exp);
 
         // Skip if not finite (shouldn't happen with our construction, but be safe)
@@ -1251,7 +1254,9 @@ fn test_numbits_to_qnumber_utf8() {
 
     for _ in 0..1000 {
         rng_state = rng_state.wrapping_mul(6364136223846793005).wrapping_add(1);
-        let val = ((rng_state as f64) / (u64::MAX as f64)).mul_add(2e100, -1e100);
+        // Same IEEE-754 mantissa trick as above for a uniform [0.0, 1.0).
+        let unit = f64::from_bits((rng_state >> 12) | 0x3FF0_0000_0000_0000) - 1.0;
+        let val = unit.mul_add(2e100, -1e100);
         if val.is_finite() {
             ordered_vals.push(val);
         }

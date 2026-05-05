@@ -430,8 +430,10 @@ fn branch_fixed_length(branch: &Branch) -> Option<usize> {
             0 // Empty atom
         };
 
-        // Multiply by quantifier
-        total += atom_len * (atom.quant_min as usize);
+        // Multiply by quantifier. The parser doesn't produce negative
+        // counts here, but if that ever changed we'd rather call the
+        // length unknown (None) than wrap a -1 into a giant usize.
+        total += atom_len * usize::try_from(atom.quant_min).ok()?;
     }
     Some(total)
 }

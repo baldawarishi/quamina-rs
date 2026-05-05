@@ -29,7 +29,7 @@ fmt:
 [group('dev')]
 check:
     cargo check
-    cargo clippy -- -D warnings
+    cargo clippy --all-targets --all-features -- -D warnings
     cargo fmt -- --check
 
 # Run matching benchmarks (optional filter)

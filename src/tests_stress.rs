@@ -1044,7 +1044,12 @@ fn test_concurrent_update_during_matching() {
         verified += 1;
     }
 
-    let events_per_sec = lines.len() as f64 / elapsed.as_secs_f64();
+    // Integer throughput: events × 1s / elapsed_ns. u128 leaves plenty of
+    // headroom for the multiplication and avoids any f64 conversion.
+    let events_per_sec = u128::try_from(lines.len())
+        .ok()
+        .and_then(|n| n.checked_mul(1_000_000_000))
+        .map_or(0, |numer| numer / elapsed.as_nanos().max(1));
     println!(
         "Concurrent update test: {events_per_sec:.0} events/sec, {total_matches} total matches, {sent} patterns added concurrently, {verified} verified"
     );
@@ -1122,7 +1127,7 @@ fn test_pattern_insertion_scales_linearly() {
         let _ = warmup.matches_for_event(br#"{"key": "warmup_0"}"#);
     }
 
-    let mut costs: Vec<(usize, f64)> = Vec::new();
+    let mut costs: Vec<(usize, u128)> = Vec::new();
 
     for &n in layers {
         let mut q = QuaminaBuilder::new()
@@ -1141,8 +1146,11 @@ fn test_pattern_insertion_scales_linearly() {
             matches.contains(&"p0".to_string()),
             "Pattern p0 should match after adding {n} patterns",
         );
-        let cost_per_pattern = elapsed.as_secs_f64() / n as f64;
-        costs.push((n, cost_per_pattern));
+        // Per-pattern cost in nanoseconds; integer math sidesteps any f64
+        // conversion. `n` is always >= 1 in this loop.
+        let cost_per_pattern_ns =
+            elapsed.as_nanos() / u128::try_from(n).expect("n is small and non-negative");
+        costs.push((n, cost_per_pattern_ns));
     }
 
     // Compare per-pattern cost between consecutive layers.
@@ -1151,19 +1159,26 @@ fn test_pattern_insertion_scales_linearly() {
     for i in 1..costs.len() {
         let (small_n, small_cost) = costs[i - 1];
         let (large_n, large_cost) = costs[i];
-        let ratio = large_cost / small_cost.max(1e-9);
+        // Equivalent to `large_cost / small_cost > 6.0` but in integer space.
+        // `small_cost.max(1)` guards against a zero-elapsed division on
+        // ultra-fast first iterations.
+        let denom = small_cost.max(1);
+        let too_steep = large_cost > denom.saturating_mul(6);
+        // Ratio expressed in tenths so we can print "5.4x" without f64.
+        let ratio_tenths = large_cost.saturating_mul(10) / denom;
+        let small_us_tenths = small_cost / 100; // ns → 0.1µs units
+        let large_us_tenths = large_cost / 100;
         assert!(
-            ratio < 6.0,
-            "Pattern insertion scales poorly between n={} and n={}: {:.1}x \
-             (n={}={:.4}ms/pattern, n={}={:.4}ms/pattern). \
+            !too_steep,
+            "Pattern insertion scales poorly between n={small_n} and n={large_n}: \
+             {}.{}x (n={small_n}={}.{}µs/pattern, n={large_n}={}.{}µs/pattern). \
              This suggests O(n²) regression.",
-            small_n,
-            large_n,
-            ratio,
-            small_n,
-            small_cost * 1000.0,
-            large_n,
-            large_cost * 1000.0,
+            ratio_tenths / 10,
+            ratio_tenths % 10,
+            small_us_tenths / 10,
+            small_us_tenths % 10,
+            large_us_tenths / 10,
+            large_us_tenths % 10,
         );
     }
 }

@@ -707,35 +707,7 @@ impl<'a> FlattenContext<'a, '_> {
                     b't' => name.push(b'\t'),
                     b'u' => {
                         self.index += 1;
-                        let code = self.read_hex_4()?;
-                        if code < 0x80 {
-                            name.push(code as u8);
-                        } else if code < 0x800 {
-                            name.push(0xC0 | ((code >> 6) as u8));
-                            name.push(0x80 | ((code & 0x3F) as u8));
-                        } else if (0xD800..=0xDBFF).contains(&code) {
-                            // High surrogate - check for low surrogate
-                            if self.index + 5 < self.event.len()
-                                && self.event[self.index] == b'\\'
-                                && self.event[self.index + 1] == b'u'
-                            {
-                                self.index += 2;
-                                let low = self.read_hex_4()?;
-                                if (0xDC00..=0xDFFF).contains(&low) {
-                                    let full = 0x10000 + ((code - 0xD800) << 10) + (low - 0xDC00);
-                                    name.push(0xF0 | ((full >> 18) as u8));
-                                    name.push(0x80 | (((full >> 12) & 0x3F) as u8));
-                                    name.push(0x80 | (((full >> 6) & 0x3F) as u8));
-                                    name.push(0x80 | ((full & 0x3F) as u8));
-                                    // Don't decrement here - the decrement at end of b'u' case handles it
-                                }
-                            }
-                        } else {
-                            name.push(0xE0 | ((code >> 12) as u8));
-                            name.push(0x80 | (((code >> 6) & 0x3F) as u8));
-                            name.push(0x80 | ((code & 0x3F) as u8));
-                        }
-                        self.index -= 1;
+                        self.read_unicode_escape(&mut name)?;
                     }
                     _ => {
                         return Err(FlattenError::Error(
@@ -809,38 +781,9 @@ impl<'a> FlattenContext<'a, '_> {
                     b'r' => val.push(b'\r'),
                     b't' => val.push(b'\t'),
                     b'u' => {
-                        // Unicode escape - parse 4 hex digits
+                        // Unicode escape - parse 4 hex digits.
                         self.index += 1;
-                        let code = self.read_hex_4()?;
-                        // Simple case: BMP character
-                        if code < 0x80 {
-                            val.push(code as u8);
-                        } else if code < 0x800 {
-                            val.push(0xC0 | ((code >> 6) as u8));
-                            val.push(0x80 | ((code & 0x3F) as u8));
-                        } else if (0xD800..=0xDBFF).contains(&code) {
-                            // High surrogate - check for low surrogate
-                            if self.index + 5 < self.event.len()
-                                && self.event[self.index] == b'\\'
-                                && self.event[self.index + 1] == b'u'
-                            {
-                                self.index += 2;
-                                let low = self.read_hex_4()?;
-                                if (0xDC00..=0xDFFF).contains(&low) {
-                                    let full = 0x10000 + ((code - 0xD800) << 10) + (low - 0xDC00);
-                                    val.push(0xF0 | ((full >> 18) as u8));
-                                    val.push(0x80 | (((full >> 12) & 0x3F) as u8));
-                                    val.push(0x80 | (((full >> 6) & 0x3F) as u8));
-                                    val.push(0x80 | ((full & 0x3F) as u8));
-                                    // Don't decrement here - the decrement at end of b'u' case handles it
-                                }
-                            }
-                        } else {
-                            val.push(0xE0 | ((code >> 12) as u8));
-                            val.push(0x80 | (((code >> 6) & 0x3F) as u8));
-                            val.push(0x80 | ((code & 0x3F) as u8));
-                        }
-                        self.index -= 1; // will be incremented at end of loop
+                        self.read_unicode_escape(&mut val)?;
                     }
                     _ => {
                         return Err(FlattenError::Error(self.error("malformed escape in text")));
@@ -857,6 +800,70 @@ impl<'a> FlattenContext<'a, '_> {
         }
 
         Err(FlattenError::Error(self.error("premature end of event")))
+    }
+
+    /// Decode a `\uXXXX` escape (we've already stepped past the `u`) and
+    /// append its UTF-8 bytes to `out`. JSON allows any 4-hex code unit,
+    /// which includes the UTF-16 surrogate halves; if the next bytes are
+    /// also a `\u` we try to assemble a surrogate pair, otherwise we have
+    /// to do something with the lone half.
+    ///
+    /// The interesting cases:
+    ///
+    ///   - high surrogate + low surrogate: combine into the supplementary
+    ///     code point and let `char::encode_utf8` emit the 4-byte sequence.
+    ///   - high surrogate followed by anything else: drop it. The Go
+    ///     flattener does the same; we still consume the hex digits.
+    ///   - lone low surrogate (`U+DC00..U+DFFF`): `char::from_u32` rejects
+    ///     this, but the Go flattener emits the 3-byte WTF-8 form. We do
+    ///     the same so byte-for-byte round-tripping holds for inputs that
+    ///     contain it.
+    ///   - everything else: encode via `char::encode_utf8`, same 1-3 bytes
+    ///     the old hand-rolled code produced.
+    ///
+    /// On return `self.index` sits on the last hex digit we consumed; the
+    /// caller's outer `index += 1` advances past it, so don't decrement.
+    fn read_unicode_escape(&mut self, out: &mut Vec<u8>) -> Result<(), FlattenError> {
+        let code = self.read_hex_4()?;
+
+        if (0xD800..=0xDBFF).contains(&code) {
+            // High surrogate — try to consume the matching low surrogate.
+            if self.index + 5 < self.event.len()
+                && self.event[self.index] == b'\\'
+                && self.event[self.index + 1] == b'u'
+            {
+                self.index += 2;
+                let low = self.read_hex_4()?;
+                if (0xDC00..=0xDFFF).contains(&low) {
+                    let full = 0x10000 + ((code - 0xD800) << 10) + (low - 0xDC00);
+                    if let Some(c) = char::from_u32(full) {
+                        let mut buf = [0u8; 4];
+                        out.extend_from_slice(c.encode_utf8(&mut buf).as_bytes());
+                    }
+                }
+            }
+        } else if let Some(c) = char::from_u32(code) {
+            let mut buf = [0u8; 4];
+            out.extend_from_slice(c.encode_utf8(&mut buf).as_bytes());
+        } else {
+            // `read_hex_4` only returns 0..=0xFFFF, and we've already taken
+            // the high-surrogate path above, so the only thing that can
+            // make `char::from_u32` give up is a lone low surrogate. Emit
+            // it as 3-byte WTF-8 by hand. Each masked piece is statically
+            // bounded so the `try_from`s never actually fail.
+            debug_assert!(
+                (0xDC00..=0xDFFF).contains(&code),
+                "char::from_u32 only fails for surrogates within u16 range"
+            );
+            out.push(0xE0 | u8::try_from(code >> 12).expect("code >> 12 fits in 4 bits"));
+            out.push(
+                0x80 | u8::try_from((code >> 6) & 0x3F).expect("masked to 6 bits, fits in u8"),
+            );
+            out.push(0x80 | u8::try_from(code & 0x3F).expect("masked to 6 bits, fits in u8"));
+        }
+
+        self.index -= 1;
+        Ok(())
     }
 
     /// Read 4 hex digits for a \uXXXX escape.
@@ -1744,6 +1751,21 @@ x"#,
             fields[0].val.as_bytes(),
             &[b'"', 0xF0, 0x9F, 0x98, 0x80, b'"']
         );
+    }
+
+    #[test]
+    fn test_unicode_escape_lone_low_surrogate_in_value() {
+        // A `\uDEAD` not preceded by a high surrogate isn't a valid Unicode
+        // scalar, so `char::from_u32` rejects it. The flattener falls back
+        // to emitting the WTF-8 3-byte form, matching the upstream Go
+        // flattener so byte-for-byte round-tripping holds.
+        let tree = make_tree(&["v"]);
+        let mut state = State::new();
+        let event = br#"{"v": "\uDEAD"}"#;
+        let fields = state.flatten(event, &tree).unwrap();
+        assert_eq!(fields.len(), 1);
+        // U+DEAD as 3-byte WTF-8: 0xED 0xBA 0xAD
+        assert_eq!(fields[0].val.as_bytes(), &[b'"', 0xED, 0xBA, 0xAD, b'"']);
     }
 
     #[test]

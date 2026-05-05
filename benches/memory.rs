@@ -36,9 +36,11 @@ impl MemoryStats {
         let stats = dhat::HeapStats::get();
         Self {
             name: name.to_string(),
-            total_bytes: stats.total_bytes as usize,
+            total_bytes: usize::try_from(stats.total_bytes)
+                .expect("dhat total_bytes fits in usize on this target"),
             max_bytes: stats.max_bytes,
-            total_allocs: stats.total_blocks as usize,
+            total_allocs: usize::try_from(stats.total_blocks)
+                .expect("dhat total_blocks fits in usize on this target"),
             max_allocs: stats.max_blocks,
         }
     }
