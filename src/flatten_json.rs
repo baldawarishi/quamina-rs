@@ -823,6 +823,7 @@ impl<'a> FlattenContext<'a, '_> {
     ///
     /// On return `self.index` sits on the last hex digit we consumed; the
     /// caller's outer `index += 1` advances past it, so don't decrement.
+    #[inline]
     fn read_unicode_escape(&mut self, out: &mut Vec<u8>) -> Result<(), FlattenError> {
         let code = self.read_hex_4()?;
 
