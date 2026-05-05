@@ -105,10 +105,12 @@ pub(crate) fn to_q_number_stack(nb: u64) -> QNumberStack {
         nb >>= 7;
     }
 
-    // Total length = 1 (prefix) + content_len
+    // Total length = prefix + content. `content_len` is bounded by
+    // MAX_BYTES_IN_ENCODING - 1 (i.e. 10), so the sum never overflows u8.
     QNumberStack {
         bytes,
-        len: (1 + content_len) as u8,
+        len: u8::try_from(1 + content_len)
+            .expect("Q-number length bounded by MAX_BYTES_IN_ENCODING"),
     }
 }
 
@@ -135,11 +137,15 @@ pub fn q_num_stack(f: f64) -> QNumberStack {
 /// rules and Quamina's parsers prevent those values from occurring.
 pub(crate) const fn numbits_from_f64(f: f64) -> u64 {
     let u = f.to_bits();
-    // Transform without branching:
-    // If high bit is 0, xor with sign bit (1 << 63), else negate (xor with !0).
-    // Using a sign extending right shift was proposed by Raph Levien in
-    // https://mastodon.online/@raph/113071041069390831
-    let mask = ((u as i64 >> 63) as u64) | (1 << 63);
+    // Branchless transform: if the high bit is 0, XOR with the sign bit
+    // (1 << 63); if it's 1, negate (XOR with !0). Raph Levien spotted that
+    // a sign-extending right shift gives us the right mask for free —
+    // see https://mastodon.online/@raph/113071041069390831 .
+    //
+    // `cast_signed` / `cast_unsigned` reinterpret the bits without changing
+    // the value, so the `>> 63` between them is the arithmetic shift that
+    // turns into a single instruction.
+    let mask = (u.cast_signed() >> 63).cast_unsigned() | (1 << 63);
     u ^ mask
 }
 
@@ -312,9 +318,10 @@ mod tests {
 
         for _ in 0..count {
             rng_state = rng_state.wrapping_mul(6364136223846793005).wrapping_add(1);
-            let random_u64 = rng_state;
-            let f = ((random_u64 as f64) / (u64::MAX as f64))
-                .mul_add(2_000_000_000.0, -1_000_000_000.0);
+            // Stuff 52 random bits into a 1.0-exponent and subtract 1.0 to
+            // get a uniform [0.0, 1.0) without any lossy `as f64` cast.
+            let unit = f64::from_bits((rng_state >> 12) | 0x3FF0_0000_0000_0000) - 1.0;
+            let f = unit.mul_add(2_000_000_000.0, -1_000_000_000.0);
             floats.push(f);
         }
 

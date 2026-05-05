@@ -69,7 +69,10 @@ fn bench<F: FnMut()>(mut f: F) -> (u64, u64) {
         for _ in 0..iters {
             f();
         }
-        *s = t.elapsed().as_nanos() as u64 / iters;
+        // ns/iter, computed in u128 to avoid u128→u64 truncation, then
+        // narrowed back via try_from once we know the value is small.
+        let ns_per_iter = t.elapsed().as_nanos() / u128::from(iters);
+        *s = u64::try_from(ns_per_iter).expect("per-iter ns easily fits in u64");
     }
     let min = *samples.iter().min().unwrap();
     let max = *samples.iter().max().unwrap();
@@ -78,9 +81,11 @@ fn bench<F: FnMut()>(mut f: F) -> (u64, u64) {
 
 /// Format a `(min, max)` pair.  Flag with `!` when jitter exceeds 10%.
 fn fmt_ns(min: u64, max: u64) -> String {
-    let jitter = max as f64 / min as f64;
-    if jitter > 1.10 {
-        format!("{}ns!({:.0}%)", min, (jitter - 1.0) * 100.0)
+    // Integer percent: (max - min) * 100 / min. `min` is non-zero in
+    // practice; guard with `.max(1)` so divide-by-zero never panics.
+    let jitter_pct = max.saturating_sub(min).saturating_mul(100) / min.max(1);
+    if jitter_pct > 10 {
+        format!("{min}ns!({jitter_pct}%)")
     } else {
         format!("{min}ns")
     }
@@ -327,12 +332,16 @@ fn section1_tier_comparison() {
                     );
                 }
             });
+            // Speedup as integer tenths (e.g. "5.4x") computed without f64.
+            // Guard against divide-by-zero when DFA timing rounds to 0ns.
+            let speedup_tenths = nfa_match_min.saturating_mul(10) / dfa_match_min.max(1);
             println!(
-                "  EagerDFA build: {:>12}  match(warm): {:>14}  mem: {:>3} KB  ({:.1}x faster than NFA)",
+                "  EagerDFA build: {:>12}  match(warm): {:>14}  mem: {:>3} KB  ({}.{}x faster than NFA)",
                 fmt_ns(dfa_build_min, dfa_build_max),
                 fmt_ns(dfa_match_min, dfa_match_max),
                 dfa_mem_kb,
-                nfa_match_min as f64 / dfa_match_min as f64,
+                speedup_tenths / 10,
+                speedup_tenths % 10,
             );
         } else {
             println!("  EagerDFA not convertible at budget {eb}");

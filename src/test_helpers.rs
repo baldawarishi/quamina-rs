@@ -1,5 +1,18 @@
 //! Shared test helper macros and functions to reduce duplication across test modules.
 
+/// Adapter the test macros run an event through on the way into
+/// `matches_for_event`. We want tests to keep writing events as raw string
+/// literals like `r#"{"x": 1}"#`, but calling `.as_bytes()` directly inside
+/// a macro upsets clippy, and the byte-string literal alternative ruins the
+/// readability of every test. Bouncing through this fn sidesteps the warning
+/// without forcing every test to learn to spell `br#"..."#`.
+#[doc(hidden)]
+#[inline]
+#[must_use]
+pub fn event_bytes<E: AsRef<[u8]> + ?Sized>(event: &E) -> &[u8] {
+    event.as_ref()
+}
+
 /// Create a `Quamina` matcher pre-loaded with one or more patterns.
 ///
 /// ```ignore
@@ -21,11 +34,15 @@ macro_rules! q {
 /// ```
 macro_rules! assert_matches {
     ($q:expr, $event:expr, $expected:expr) => {{
-        let matches = $q.matches_for_event($event.as_bytes()).unwrap();
+        let matches = $q
+            .matches_for_event($crate::test_helpers::event_bytes(&$event))
+            .unwrap();
         assert_eq!(matches, $expected, "Event: {}", $event);
     }};
     ($q:expr, $event:expr, $expected:expr, $msg:expr) => {{
-        let matches = $q.matches_for_event($event.as_bytes()).unwrap();
+        let matches = $q
+            .matches_for_event($crate::test_helpers::event_bytes(&$event))
+            .unwrap();
         assert_eq!(matches, $expected, "{} (event: {})", $msg, $event);
     }};
 }
@@ -38,11 +55,15 @@ macro_rules! assert_matches {
 /// ```
 macro_rules! assert_no_match {
     ($q:expr, $event:expr) => {{
-        let matches = $q.matches_for_event($event.as_bytes()).unwrap();
+        let matches = $q
+            .matches_for_event($crate::test_helpers::event_bytes(&$event))
+            .unwrap();
         assert!(matches.is_empty(), "Expected no match for: {}", $event);
     }};
     ($q:expr, $event:expr, $msg:expr) => {{
-        let matches = $q.matches_for_event($event.as_bytes()).unwrap();
+        let matches = $q
+            .matches_for_event($crate::test_helpers::event_bytes(&$event))
+            .unwrap();
         assert!(matches.is_empty(), "{} (event: {})", $msg, $event);
     }};
 }
@@ -54,7 +75,9 @@ macro_rules! assert_no_match {
 /// ```
 macro_rules! assert_has_match {
     ($q:expr, $event:expr, $name:expr) => {{
-        let matches = $q.matches_for_event($event.as_bytes()).unwrap();
+        let matches = $q
+            .matches_for_event($crate::test_helpers::event_bytes(&$event))
+            .unwrap();
         assert!(
             matches.contains(&$name),
             "Expected {:?} in matches for {}, got {:?}",
@@ -64,7 +87,9 @@ macro_rules! assert_has_match {
         );
     }};
     ($q:expr, $event:expr, $name:expr, $msg:expr) => {{
-        let matches = $q.matches_for_event($event.as_bytes()).unwrap();
+        let matches = $q
+            .matches_for_event($crate::test_helpers::event_bytes(&$event))
+            .unwrap();
         assert!(
             matches.contains(&$name),
             "{}: expected {:?} in matches for {}, got {:?}",
@@ -83,7 +108,9 @@ macro_rules! assert_has_match {
 /// ```
 macro_rules! assert_no_has_match {
     ($q:expr, $event:expr, $name:expr) => {{
-        let matches = $q.matches_for_event($event.as_bytes()).unwrap();
+        let matches = $q
+            .matches_for_event($crate::test_helpers::event_bytes(&$event))
+            .unwrap();
         assert!(
             !matches.contains(&$name),
             "Expected {:?} NOT in matches for {}, got {:?}",
@@ -101,7 +128,9 @@ macro_rules! assert_no_has_match {
 /// ```
 macro_rules! assert_match_count {
     ($q:expr, $event:expr, $count:expr) => {{
-        let matches = $q.matches_for_event($event.as_bytes()).unwrap();
+        let matches = $q
+            .matches_for_event($crate::test_helpers::event_bytes(&$event))
+            .unwrap();
         assert_eq!(
             matches.len(),
             $count,
@@ -112,7 +141,9 @@ macro_rules! assert_match_count {
         );
     }};
     ($q:expr, $event:expr, $count:expr, $msg:expr) => {{
-        let matches = $q.matches_for_event($event.as_bytes()).unwrap();
+        let matches = $q
+            .matches_for_event($crate::test_helpers::event_bytes(&$event))
+            .unwrap();
         assert_eq!(
             matches.len(),
             $count,

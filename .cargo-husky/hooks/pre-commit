@@ -16,8 +16,8 @@ TEST_OUTPUT=$(cargo test --lib -- --skip stress --skip citylots --skip regexp_va
 }
 echo "$TEST_OUTPUT" | grep -E '^test result:'
 
-echo '+cargo clippy -- -D warnings'
-cargo clippy -- -D warnings
+echo '+cargo clippy --all-targets --all-features -- -D warnings'
+cargo clippy --all-targets --all-features -- -D warnings
 
 echo '+cargo fmt -- --check'
 cargo fmt -- --check

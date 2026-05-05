@@ -100,9 +100,12 @@ impl PrunerStats {
             return false;
         }
 
-        // Trigger rebuild when filtered/emitted > 0.2
-        let ratio = filtered as f64 / emitted as f64;
-        ratio > 0.2
+        // Rebuild when filtered/emitted > 0.2, which we'd rather check
+        // without an f64 detour: 5*filtered > emitted is the same condition
+        // in integers. `checked_mul` returning None means filtered is so
+        // huge (≥ 2^61) we're well overdue for a rebuild anyway, so we
+        // treat it as "yes, rebuild".
+        filtered.checked_mul(5).is_none_or(|fx5| fx5 > emitted)
     }
 }
 

@@ -26,12 +26,16 @@ use std::sync::Arc;
 use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::{SmallVec, smallvec};
 
-use super::small_table::{AccelInfo, BYTE_CEILING, FieldMatcher};
+use super::small_table::{AccelInfo, BYTE_CEILING, BYTE_CEILING_U8, FieldMatcher};
 use super::sparse_set::SparseSet;
 
 /// A state identifier - just an index into the arena.
 ///
-/// This can be freely copied and allows cyclic references.
+/// `StateId` is a u32 because we want it cheap to copy, hash, and store in
+/// the transition tables. That gives us a ceiling of just under 2^32 states
+/// per arena, which is fine: an arena that big would have run out of memory
+/// long before. The conversions between `usize` and `StateId` rely on that
+/// fact instead of checking it on every alloc.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub struct StateId(u32);
 
@@ -39,14 +43,20 @@ impl StateId {
     /// Special sentinel value for "no state" / null reference.
     pub const NONE: Self = Self(u32::MAX);
 
-    /// Sentinel for "transition computed and known dead" in the lazy DFA table.
-    /// Distinct from NONE ("not yet computed") so dead transitions are O(1)
-    /// without re-deriving on every call.
+    /// Sentinel for "transition computed and known dead" in the lazy DFA
+    /// table. Distinct from NONE ("not yet computed") so a known-dead
+    /// transition is O(1) instead of being re-derived on every call.
     pub const DEAD: Self = Self(u32::MAX - 1);
 
-    /// Create a `StateId` from an index.
+    /// Build a `StateId` from a `usize` index. `const` so we can construct
+    /// `StateId` arrays and table sentinels at compile time; the truncating
+    /// cast can't overflow in practice (see the type doc).
     #[inline]
     #[must_use]
+    #[allow(
+        clippy::cast_possible_truncation,
+        reason = "StateId encodes a u32-bounded index; arenas can't reach 2^32 states"
+    )]
     pub const fn from_index(index: usize) -> Self {
         Self(index as u32)
     }
@@ -68,6 +78,35 @@ impl StateId {
     pub const fn index(self) -> usize {
         self.0 as usize
     }
+}
+
+/// Narrow a state-count-style `usize` into a `u32`. State counts live
+/// under the same u32 ceiling that `StateId` enforces (see the type doc
+/// on `StateId`); an arena big enough to violate it would have run out
+/// of memory long before.
+///
+/// # Panics
+/// Panics if `count` exceeds `u32::MAX`. In practice unreachable.
+#[inline]
+fn state_count_u32(count: usize, what: &'static str) -> u32 {
+    u32::try_from(count)
+        .unwrap_or_else(|_| panic!("arena {what} exceeds u32::MAX (arena overflow)"))
+}
+
+/// Narrow a flattened-buffer offset (`closure_data`, `ft_ptrs`, …) into a
+/// `u32`. These buffers grow as the *sum* of per-state contents, so they
+/// aren't strictly bounded by `state_count`. In practice each per-state
+/// contribution is small (closures are typically 1-8 entries, field
+/// transitions 0-1) so the offsets fit comfortably; we centralise the
+/// narrowing here so a single point catches it if that assumption ever
+/// breaks.
+///
+/// # Panics
+/// Panics if `offset` exceeds `u32::MAX`. In practice unreachable.
+#[inline]
+fn buffer_offset_u32(offset: usize, what: &'static str) -> u32 {
+    u32::try_from(offset)
+        .unwrap_or_else(|_| panic!("arena {what} exceeds u32::MAX (buffer overflow)"))
 }
 
 /// A state in the arena-based finite automaton.
@@ -148,7 +187,7 @@ impl SmallTable {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            ceilings: smallvec![BYTE_CEILING as u8],
+            ceilings: smallvec![BYTE_CEILING_U8],
             steps: smallvec![StateId::NONE],
             epsilons: SmallVec::new(),
             accel: None,
@@ -185,14 +224,17 @@ impl SmallTable {
         let mut current = unpacked[0];
         for (i, &state_id) in unpacked.iter().enumerate() {
             if state_id != current {
-                self.ceilings.push(i as u8);
+                // `unpacked` has at most BYTE_CEILING (0xF6) entries, so
+                // `i` always fits in u8; `try_from` just keeps it explicit.
+                self.ceilings
+                    .push(u8::try_from(i).expect("unpacked index bounded by BYTE_CEILING"));
                 self.steps.push(current);
                 current = state_id;
             }
         }
 
         // Final entry
-        self.ceilings.push(BYTE_CEILING as u8);
+        self.ceilings.push(BYTE_CEILING_U8);
         self.steps.push(current);
 
         // Note: `default` is not recomputed here. Callers that need it
@@ -474,12 +516,17 @@ impl StateArena {
     }
 
     /// Allocate a new default state, returning its ID.
+    ///
+    /// # Panics
+    /// Panics if the arena's state count or `closure_data` length would
+    /// exceed `u32::MAX`. In practice unreachable: the machine would run
+    /// out of memory long before either counter saturates.
     pub fn alloc(&mut self) -> StateId {
-        let id = StateId(self.states.len() as u32);
+        let id = StateId::from_index(self.states.len());
         // Set trivial epsilon closure so states added after
         // precompute_epsilon_closures() are visible during NFA traversal.
         let state = FaState {
-            closure_start: self.closure_data.len() as u32,
+            closure_start: buffer_offset_u32(self.closure_data.len(), "closure_data length"),
             closure_len: 1,
             ..Default::default()
         };
@@ -489,10 +536,14 @@ impl StateArena {
     }
 
     /// Allocate a new state with the given table, returning its ID.
+    ///
+    /// # Panics
+    /// Panics if the arena's state count or `closure_data` length would
+    /// exceed `u32::MAX`. In practice unreachable; see [`Self::alloc`].
     pub fn alloc_with_table(&mut self, table: SmallTable) -> StateId {
-        let id = StateId(self.states.len() as u32);
+        let id = StateId::from_index(self.states.len());
         let mut state = FaState::with_table(table);
-        state.closure_start = self.closure_data.len() as u32;
+        state.closure_start = buffer_offset_u32(self.closure_data.len(), "closure_data length");
         state.closure_len = 1;
         self.closure_data.push(id);
         self.states.push(state);
@@ -551,22 +602,28 @@ impl StateArena {
         let mut states_with_closures = 0u32;
 
         for state in &self.states {
-            // Table stats: count states that have non-trivial transitions
-            // (more than just the default catch-all entry)
+            // We only count states with non-trivial transitions (i.e.
+            // more than the default catch-all entry). Per-state table
+            // sizes are bounded by `BYTE_CEILING` (246), so the narrowing
+            // to u16 and u32 here can't actually fail at runtime; we route
+            // through `try_from` only to keep the casts explicit.
             let nc = state.table.ceilings.len();
             if nc > 1 {
                 tables_with_transitions += 1;
-                total_ceiling_entries += nc as u32;
-                if nc > max_ceilings as usize {
-                    max_ceilings = nc as u16;
+                total_ceiling_entries +=
+                    u32::try_from(nc).expect("ceiling count bounded by BYTE_CEILING");
+                let nc_u16 = u16::try_from(nc).expect("ceiling count bounded by BYTE_CEILING");
+                if nc_u16 > max_ceilings {
+                    max_ceilings = nc_u16;
                 }
             }
 
             let ne = state.table.epsilons.len();
             if ne > 0 {
-                total_epsilons += ne as u32;
-                if ne > max_epsilons as usize {
-                    max_epsilons = ne as u16;
+                total_epsilons += u32::try_from(ne).expect("epsilon count bounded by BYTE_CEILING");
+                let ne_u16 = u16::try_from(ne).expect("epsilon count bounded by BYTE_CEILING");
+                if ne_u16 > max_epsilons {
+                    max_epsilons = ne_u16;
                 }
             }
 
@@ -590,19 +647,19 @@ impl StateArena {
         };
 
         Stats {
-            state_count: state_count as u32,
+            state_count: state_count_u32(state_count, "state count"),
             tables_with_transitions,
             total_ceiling_entries,
             max_ceilings,
             total_epsilons,
             max_epsilons,
             states_with_field_transitions,
-            closure_data_len: self.closure_data.len() as u32,
+            closure_data_len: buffer_offset_u32(self.closure_data.len(), "closure_data length"),
             states_with_closures,
             total_closure_entries,
             max_closure_len,
-            ft_ptrs_len: self.ft_ptrs.len() as u32,
-            dfa_lookup_states: dfa_lookup_states as u32,
+            ft_ptrs_len: buffer_offset_u32(self.ft_ptrs.len(), "ft_ptrs length"),
+            dfa_lookup_states: state_count_u32(dfa_lookup_states, "dfa_lookup state count"),
             estimated_bytes: self.estimated_byte_size(),
         }
     }
@@ -642,7 +699,7 @@ impl StateArena {
 
         for state_idx in 0..arena_len {
             let state_id = StateId::from_index(state_idx);
-            let start = closure_data.len() as u32;
+            let start = buffer_offset_u32(closure_data.len(), "closure_data length");
 
             if self.states[state_idx].table.epsilons.is_empty() {
                 // DFA state: closure is just [self]
@@ -674,11 +731,8 @@ impl StateArena {
                     }
                 }
 
-                debug_assert!(
-                    u16::try_from(closure_buf.len()).is_ok(),
-                    "epsilon closure exceeds u16::MAX states"
-                );
-                let len = closure_buf.len() as u16;
+                let len = u16::try_from(closure_buf.len())
+                    .expect("epsilon closure exceeds u16::MAX states");
                 closure_data.extend_from_slice(&closure_buf);
                 self.states[state_idx].closure_start = start;
                 self.states[state_idx].closure_len = len;
@@ -718,8 +772,13 @@ impl StateArena {
             for ft in &state.field_transitions {
                 ft_ptrs.push(Arc::as_ptr(ft) as usize);
             }
-            self.states[state_idx].ft_start = ft_start as u32;
-            self.states[state_idx].ft_len = ft_len as u8;
+            self.states[state_idx].ft_start = buffer_offset_u32(ft_start, "ft_start offset");
+            // `ft_len` is u8 because we expect 0 or 1 field transitions per
+            // state in practice (the SmallVec is sized for that). Anything
+            // approaching 256 would mean something else has already gone
+            // very wrong.
+            self.states[state_idx].ft_len =
+                u8::try_from(ft_len).expect("per-state field_transitions.len() fits in u8");
         }
         self.ft_ptrs = ft_ptrs;
     }
@@ -922,15 +981,19 @@ impl StateArena {
             let mut exit_count = 0u8;
             let mut exit_bytes = [0u8; 3];
 
+            // We only walk the ASCII slice (0x00..0x80), so `byte` always
+            // fits in u8 — `try_from` here is just paranoia.
             for (byte, &target) in unpacked[..0x80].iter().enumerate() {
                 if target == state_id {
                     has_self_loop = true;
                 } else {
-                    // Exit byte: either a real transition or a rejection (NONE).
-                    // Both are valid — memchr skips to this byte; if NONE, the
-                    // traversal exits early, which is the correct rejection behavior.
+                    // An exit byte is either a real transition or a
+                    // rejection (NONE). Either way, memchr can skip
+                    // straight to it: if it's NONE, traversal exits
+                    // early, which is the correct rejection behaviour.
                     if exit_count < 3 {
-                        exit_bytes[exit_count as usize] = byte as u8;
+                        exit_bytes[exit_count as usize] =
+                            u8::try_from(byte).expect("ASCII range bounded above by 0x80");
                     }
                     exit_count += 1;
                 }
@@ -1651,7 +1714,7 @@ pub fn merge_arena_dfas(
 
     // Memoization: (state1_id, state2_id) -> merged_state_id in new arena.
     // i32 lets us encode StateId::NONE as -1.
-    let mut memo: FxHashMap<(i32, i32), StateId> = FxHashMap::default();
+    let mut memo: FxHashMap<(StateId, StateId), StateId> = FxHashMap::default();
     let mut new_arena = StateArena::new();
 
     let start =
@@ -1741,20 +1804,11 @@ fn merge_arena_states_recursive(
     arena2: &StateArena,
     state2: StateId,
     new_arena: &mut StateArena,
-    memo: &mut FxHashMap<(i32, i32), StateId>,
+    memo: &mut FxHashMap<(StateId, StateId), StateId>,
 ) -> StateId {
-    // Convert to memo key (using -1 for NONE)
-    let key1 = if state1.is_none() {
-        -1
-    } else {
-        state1.0 as i32
-    };
-    let key2 = if state2.is_none() {
-        -1
-    } else {
-        state2.0 as i32
-    };
-    let key = (key1, key2);
+    // Memo by `(StateId, StateId)`. `StateId::NONE` already encodes the
+    // "no state on this side" key without needing a separate sentinel.
+    let key = (state1, state2);
 
     // Check memo
     if let Some(&cached) = memo.get(&key) {
@@ -1808,7 +1862,7 @@ fn remap_table_recursive(
     table: &SmallTable,
     _other_arena: &StateArena,
     new_arena: &mut StateArena,
-    memo: &mut FxHashMap<(i32, i32), StateId>,
+    memo: &mut FxHashMap<(StateId, StateId), StateId>,
     is_arena1: bool,
 ) -> SmallTable {
     let mut new_table = SmallTable {
@@ -1907,7 +1961,7 @@ fn merge_arena_tables(
     arena2: &StateArena,
     table2: &SmallTable,
     new_arena: &mut StateArena,
-    memo: &mut FxHashMap<(i32, i32), StateId>,
+    memo: &mut FxHashMap<(StateId, StateId), StateId>,
 ) -> SmallTable {
     // Unpack both tables to 256-element arrays for simplicity
     let mut unpacked1 = [StateId::NONE; BYTE_CEILING];
@@ -2006,7 +2060,7 @@ pub fn merge_arena_nfas(
     }
 
     // Memoization: (state1_id, state2_id) -> merged_state_id in new arena.
-    let mut memo: FxHashMap<(i32, i32), StateId> = FxHashMap::default();
+    let mut memo: FxHashMap<(StateId, StateId), StateId> = FxHashMap::default();
     let mut new_arena = StateArena::new();
 
     let start =
@@ -2086,20 +2140,11 @@ fn merge_arena_nfa_states_recursive(
     arena2: &StateArena,
     state2: StateId,
     new_arena: &mut StateArena,
-    memo: &mut FxHashMap<(i32, i32), StateId>,
+    memo: &mut FxHashMap<(StateId, StateId), StateId>,
 ) -> StateId {
-    // Convert to memo key (using -1 for NONE)
-    let key1 = if state1.is_none() {
-        -1
-    } else {
-        state1.0 as i32
-    };
-    let key2 = if state2.is_none() {
-        -1
-    } else {
-        state2.0 as i32
-    };
-    let key = (key1, key2);
+    // Memo by `(StateId, StateId)`. `StateId::NONE` already encodes the
+    // "no state on this side" key without needing a separate sentinel.
+    let key = (state1, state2);
 
     // Check memo
     if let Some(&cached) = memo.get(&key) {
@@ -2180,7 +2225,7 @@ fn merge_arena_nfa_states_recursive(
         let epsilons = flatten_epsilon_targets(new_arena, &[cloned1, cloned2]);
 
         new_arena[new_id].table = SmallTable {
-            ceilings: smallvec![BYTE_CEILING as u8],
+            ceilings: smallvec![BYTE_CEILING_U8],
             steps: smallvec![StateId::NONE],
             epsilons,
             accel: None,
@@ -2213,7 +2258,7 @@ fn merge_dual_spinout_states(
     arena2: &StateArena,
     s2: &FaState,
     new_arena: &mut StateArena,
-    memo: &mut FxHashMap<(i32, i32), StateId>,
+    memo: &mut FxHashMap<(StateId, StateId), StateId>,
     new_id: StateId,
 ) {
     let mut combined_table =
@@ -2257,7 +2302,7 @@ fn asymmetric_spinner_merge(
     state2: StateId,
     s1_has_spinout: bool,
     new_arena: &mut StateArena,
-    memo: &mut FxHashMap<(i32, i32), StateId>,
+    memo: &mut FxHashMap<(StateId, StateId), StateId>,
     new_id: StateId,
 ) -> StateId {
     let s1 = &arena1[state1];
@@ -2343,7 +2388,7 @@ fn merge_asymmetric_spinner_byte(
     other_next: StateId,
     s1_has_spinout: bool,
     new_arena: &mut StateArena,
-    memo: &mut FxHashMap<(i32, i32), StateId>,
+    memo: &mut FxHashMap<(StateId, StateId), StateId>,
     new_id: StateId,
     arena1: &StateArena,
     state1: StateId,
@@ -2513,7 +2558,7 @@ fn remap_nfa_table_recursive(
     table: &SmallTable,
     _other_arena: &StateArena,
     new_arena: &mut StateArena,
-    memo: &mut FxHashMap<(i32, i32), StateId>,
+    memo: &mut FxHashMap<(StateId, StateId), StateId>,
     is_arena1: bool,
 ) -> SmallTable {
     let mut new_table = SmallTable {
@@ -2612,7 +2657,7 @@ fn merge_nfa_tables_bytewise(
     arena2: &StateArena,
     table2: &SmallTable,
     new_arena: &mut StateArena,
-    memo: &mut FxHashMap<(i32, i32), StateId>,
+    memo: &mut FxHashMap<(StateId, StateId), StateId>,
 ) -> SmallTable {
     // Unpack both tables to 256-element arrays
     let mut unpacked1 = [StateId::NONE; BYTE_CEILING];
@@ -2859,7 +2904,7 @@ fn make_greater_arena_fa_step(
 
     // Bytes > bound_byte: input > bound, MATCH
     // But exclude VALUE_TERMINATOR - it means input is shorter, so input < bound
-    for b in (bound_byte + 1)..(BYTE_CEILING as u8) {
+    for b in (bound_byte + 1)..(BYTE_CEILING_U8) {
         if b != ARENA_VALUE_TERMINATOR {
             unpacked[b as usize] = match_state;
         }
@@ -3387,7 +3432,7 @@ fn build_fa_from_segments(
 /// eliminating the need for a separate spinout check in the traversal loop.
 fn make_byte_dot_table(dest: StateId) -> SmallTable {
     let mut table = SmallTable::new();
-    table.ceilings = smallvec![0xC0, 0xC2, ARENA_VALUE_TERMINATOR, BYTE_CEILING as u8];
+    table.ceilings = smallvec![0xC0, 0xC2, ARENA_VALUE_TERMINATOR, BYTE_CEILING_U8];
     table.steps = smallvec![dest, StateId::NONE, dest, StateId::NONE];
     table.default = dest;
     table
@@ -4892,16 +4937,16 @@ mod arena_stats_utility_tests {
         let s3 = arena.alloc();
 
         // s0: 2 ceilings (non-trivial), 0 epsilons
-        arena[s0].table.ceilings = smallvec![b'a', BYTE_CEILING as u8];
+        arena[s0].table.ceilings = smallvec![b'a', BYTE_CEILING_U8];
         arena[s0].table.steps = smallvec![s1, StateId::NONE];
 
         // s1: 3 ceilings (non-trivial), 1 epsilon
-        arena[s1].table.ceilings = smallvec![b'a', b'b', BYTE_CEILING as u8];
+        arena[s1].table.ceilings = smallvec![b'a', b'b', BYTE_CEILING_U8];
         arena[s1].table.steps = smallvec![s0, s2, StateId::NONE];
         arena[s1].table.epsilons.push(s3);
 
         // s2: 4 ceilings (non-trivial), 2 epsilons
-        arena[s2].table.ceilings = smallvec![b'a', b'b', b'c', BYTE_CEILING as u8];
+        arena[s2].table.ceilings = smallvec![b'a', b'b', b'c', BYTE_CEILING_U8];
         arena[s2].table.steps = smallvec![s0, s1, s3, StateId::NONE];
         arena[s2].table.epsilons.push(s0);
         arena[s2].table.epsilons.push(s1);

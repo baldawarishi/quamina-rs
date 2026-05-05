@@ -11,9 +11,16 @@ use std::sync::Arc;
 
 use rustc_hash::FxHashMap;
 
-/// Maximum byte value we handle. UTF-8 bytes 0xF5-0xFF can't appear in valid strings.
-/// We use 0xF5 as a value terminator.
+/// Maximum byte value we handle.
+///
+/// UTF-8 bytes 0xF5-0xFF can't appear in valid strings, and we steal 0xF5
+/// as a value terminator, so 0xF6 and up never occur. Exposed in both
+/// widths because some call sites want to index a 256-entry array (so
+/// `usize`) while others want to slot the value straight into a `u8`
+/// table entry; an explicit second constant beats scattering `as u8`
+/// casts across the module.
 pub const BYTE_CEILING: usize = 0xF6;
+pub const BYTE_CEILING_U8: u8 = 0xF6;
 
 /// Marks the end of a value being matched. This simplifies handling of exact matches
 /// vs prefix matches - we always add this terminator to both the pattern and the value.

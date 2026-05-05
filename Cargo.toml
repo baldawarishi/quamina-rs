@@ -65,12 +65,10 @@ nursery = { level = "warn", priority = -1 }
 perf = { level = "warn", priority = -1 }
 transmute_ptr_to_ptr = "warn"
 
-# Keep allows for lints that require massive structural/doc rewrites or conflict with performance
+# Remaining allows are for lints that conflict with performance choices
+# (inline-always on hot paths) or stylistic preferences we've consciously
+# kept (literal grouping, doc-comment markdown, etc.).
 inline_always = "allow"
-cast_possible_truncation = "allow"
-cast_possible_wrap = "allow"
-cast_precision_loss = "allow"
-cast_sign_loss = "allow"
 doc_markdown = "allow"
 unreadable_literal = "allow"
 option_if_let_else = "allow"
@@ -89,14 +87,3 @@ missing_fields_in_debug = "allow"
 manual_let_else = "allow"
 assigning_clones = "allow"
 used_underscore_binding = "allow"
-string_lit_as_bytes = "allow"
-
-# Nursery lints (selectively enabled/configured)
-use_self = "warn"
-derive_partial_eq_without_eq = "warn"
-redundant_clone = "warn"
-unused_peekable = "warn"
-or_fun_call = "warn"
-branches_sharing_code = "warn"
-equatable_if_let = "warn"
-disallowed_types = "warn"

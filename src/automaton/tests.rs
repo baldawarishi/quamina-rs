@@ -114,7 +114,7 @@ fn test_arena_small_table_step() {
     let table = SmallTable::new();
 
     // Test that all valid bytes return NONE for empty table
-    for b in 0..BYTE_CEILING as u8 {
+    for b in 0..BYTE_CEILING_U8 {
         let (s, eps) = table.step(b);
         assert!(
             s.is_none(),
