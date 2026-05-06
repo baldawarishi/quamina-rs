@@ -249,7 +249,24 @@ impl SmallTable {
         self.pack(&unpacked);
     }
 
-    /// Get the state for a given byte (deterministic step).
+    /// Returns the destination state for `byte`, or `StateId::NONE` if no
+    /// transition applies.
+    ///
+    /// This is the white-hot center of NFA stepping: a linear scan over a
+    /// SmallVec that is almost always 1–8 entries long. Epsilon transitions
+    /// are *not* consulted here — they're precomputed once into
+    /// `StateArena::closure_data` and iterated separately by the traversal
+    /// loop. Returning a `StateId` (a `u32` newtype) keeps the call
+    /// allocation-free; upstream Go originally threaded a `*stepOut` struct
+    /// through this path and discovered the struct was escaping to the heap
+    /// once per match (see upstream `e33139f`). Our value-typed return has
+    /// no equivalent: the result lives in a register.
+    ///
+    /// Forbidden UTF-8 lead bytes (`0xC0`, `0xC1`, `0xF5..=0xFF`) are
+    /// encoded directly into the table via `make_byte_dot_table` and the
+    /// `BYTE_CEILING` packing in `pack`, so this method just falls off the
+    /// end of `ceilings` and returns `StateId::NONE` for them — no separate
+    /// forbidden-byte map lookup.
     #[inline(always)]
     #[allow(unsafe_code)]
     #[must_use]
@@ -263,13 +280,6 @@ impl SmallTable {
             }
         }
         StateId::NONE
-    }
-
-    /// Get the state and epsilons for a given byte.
-    #[inline]
-    #[must_use]
-    pub fn step(&self, byte: u8) -> (StateId, &[StateId]) {
-        (self.dstep(byte), &self.epsilons)
     }
 
     /// Iterate over sparse transitions (byte, state) pairs that differ from the default.
@@ -493,10 +503,21 @@ impl StateArena {
         }
     }
 
-    /// Fast deterministic step using 256-entry lookup table.
+    /// Returns the destination state reached from `id` on `byte`, using the
+    /// flattened 256-entry-per-state lookup table when available.
     ///
-    /// When `dfa_lookup` is populated (after `flatten_tables()`), this is a single
-    /// array lookup: O(1). Otherwise falls back to SmallVec linear scan.
+    /// After `flatten_tables()` has run, this is a single indexed load —
+    /// `dfa_lookup[id * 256 + byte]` — which beats the SmallTable linear
+    /// scan by ~21% on `pathological_epsilon`. Before flattening (the
+    /// mutable build path and tests) it falls back to `SmallTable::dstep`,
+    /// which produces the same result but pays the linear-scan cost.
+    ///
+    /// Like `SmallTable::dstep`, this is allocation-free by construction:
+    /// the caller's `next_states` buffer is the only growing collection in
+    /// the traversal loop, and the closure walk reads from
+    /// `closure_data`, not from a per-step temporary. Upstream Go's
+    /// `e33139f` removed a `*stepOut` heap escape from the analogous path;
+    /// our `StateId` return type means there's no struct to escape.
     #[inline(always)]
     #[allow(unsafe_code)]
     #[must_use]
@@ -4270,6 +4291,58 @@ mod tests {
         assert_eq!(table.dstep(b'a'), StateId(0));
         assert_eq!(table.dstep(b'b'), StateId(1));
         assert!(table.dstep(b'c').is_none());
+    }
+
+    /// Forbidden UTF-8 lead bytes — `0xC0`, `0xC1`, and `0xF5..=0xFF` — must
+    /// never produce a transition. Upstream Go covers this with
+    /// `TestDodgeBadUTF8` (a single byte on a one-mapping table) and
+    /// `TestMakeByteDotFA` (the byte-dot wildcard table). We do both at
+    /// once: build a small table with a literal mapping for `'a'`, then
+    /// confirm `dstep` returns `NONE` for every forbidden byte.
+    #[test]
+    fn test_dstep_rejects_forbidden_utf8() {
+        let s = StateId(0);
+        let table = SmallTable::with_mappings(StateId::NONE, b"a", &[s]);
+
+        assert_eq!(table.dstep(b'a'), s, "valid byte should still transition");
+        for byte in [0xC0_u8, 0xC1] {
+            assert!(
+                table.dstep(byte).is_none(),
+                "forbidden byte {byte:#04x} must not transition"
+            );
+        }
+        for byte in 0xF5_u8..=0xFF {
+            assert!(
+                table.dstep(byte).is_none(),
+                "forbidden byte {byte:#04x} must not transition"
+            );
+        }
+    }
+
+    /// Exhaustive sweep of `make_byte_dot_table`: every forbidden byte must
+    /// return `NONE`, every other byte must self-loop to `dest`. Mirrors
+    /// upstream's `TestMakeByteDotFA` but covers the full byte range so a
+    /// regression in the ceiling layout shows up immediately.
+    #[test]
+    fn test_make_byte_dot_table_forbidden_bytes() {
+        let dest = StateId(7);
+        let table = make_byte_dot_table(dest);
+
+        for byte in 0..=255_u32 {
+            // BYTE_CEILING_U8 is 0xF6; 0xF5 is the value terminator, also forbidden.
+            #[allow(clippy::cast_possible_truncation)]
+            let b = byte as u8;
+            let forbidden = matches!(b, 0xC0 | 0xC1) || b >= 0xF5;
+            let got = table.dstep(b);
+            if forbidden {
+                assert!(
+                    got.is_none(),
+                    "byte {b:#04x} is forbidden but transitioned to {got:?}"
+                );
+            } else {
+                assert_eq!(got, dest, "byte {b:#04x} should self-loop to dest");
+            }
+        }
     }
 
     #[test]
