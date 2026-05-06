@@ -12,11 +12,13 @@ Style inspired by [ripgrep's CHANGELOG](https://github.com/BurntSushi/ripgrep/bl
 - NFA→DFA subset construction at freeze time: regexp patterns with epsilon transitions are eagerly converted to DFA (budget: 8× NFA states, max 10k), with a lazy DFA fallback for patterns exceeding the eager budget (`regexp_plus_long`: 1259→501 ns, `regexp_star_long`: 1125→459 ns, `pathological_epsilon`: 6.08→2.00 µs)
 - DFA acceleration: `compute_dfa_accel` detects self-loop states and attaches memchr skip info for SIMD byte skipping on patterns like `[^x]+`
 - Profiling examples for NFA→DFA budget tuning and negated char class acceleration
+- Allocation-free integration test for `traverse_arena_nfa` (counting global allocator, gated off Miri), expanded `dstep` hot-path documentation, and forbidden UTF-8 byte coverage tests (#100)
 
 ### Changed
 - Tightened strict clippy lints: removed blanket allows for `module_name_repetitions`, `too_many_lines`, `similar_names`, and related structural/naming lints; refactored hot spots, kept per-item allows on hot loops and generated tables
 - Added `# Errors` sections to public fallible APIs and enabled `missing_errors_doc`
-- Synced Go upstream through commit 48955e9 (CI housekeeping)
+- Removed unused `SmallTable::step` wrapper; `dstep` is the only stepping entry point
+- Synced Go upstream through commit e33139f
 
 ### Fixed
 - `[^x]+` patterns (17K-state Unicode NFA) exceeded the DFA budget and regressed; SIMD acceleration via `AccelInfo::try_accelerate` restores performance (`regexp_negated_1k`: 3.2 µs → 652 ns)
