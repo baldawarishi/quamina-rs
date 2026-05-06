@@ -115,16 +115,15 @@ fn test_arena_small_table_step() {
 
     // Test that all valid bytes return NONE for empty table
     for b in 0..BYTE_CEILING_U8 {
-        let (s, eps) = table.step(b);
         assert!(
-            s.is_none(),
+            table.dstep(b).is_none(),
             "byte {b} should have no transition in empty table"
         );
-        assert!(
-            eps.is_empty(),
-            "byte {b} should have no epsilons in empty table"
-        );
     }
+    assert!(
+        table.epsilons.is_empty(),
+        "empty table should have no epsilons"
+    );
 }
 
 #[test]
@@ -139,14 +138,18 @@ fn test_arena_small_table_with_mappings() {
 
     let table = SmallTable::with_mappings(StateId::NONE, b"ab", &[next_state, next_state]);
 
-    let (step_a, _) = table.step(b'a');
-    assert!(!step_a.is_none(), "byte 'a' should have a transition");
-
-    let (step_b, _) = table.step(b'b');
-    assert!(!step_b.is_none(), "byte 'b' should have a transition");
-
-    let (step_c, _) = table.step(b'c');
-    assert!(step_c.is_none(), "byte 'c' should have no transition");
+    assert!(
+        !table.dstep(b'a').is_none(),
+        "byte 'a' should have a transition"
+    );
+    assert!(
+        !table.dstep(b'b').is_none(),
+        "byte 'b' should have a transition"
+    );
+    assert!(
+        table.dstep(b'c').is_none(),
+        "byte 'c' should have no transition"
+    );
 }
 
 // ========================================================================
