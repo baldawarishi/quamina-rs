@@ -16,7 +16,7 @@
 use std::hash::Hash;
 use std::rc::Rc;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
@@ -445,8 +445,12 @@ pub struct ThreadSafeCoreMatcher<X: Clone + Eq + Hash + Send + Sync> {
     /// When true, the next match operation will freeze before reading.
     /// This avoids O(n²) cost from freezing after every add_pattern.
     needs_freeze: AtomicBool,
-    /// Arena byte budget for pattern complexity limiting
-    arena_byte_budget: usize,
+    /// Shared arena byte budget for pattern complexity limiting.
+    ///
+    /// All `MutableValueMatcher`s built under this matcher hold an `Arc` clone of this
+    /// atomic, so a single `set_memory_budget` call is observed by every matcher in the
+    /// tree. A value of 0 disables the budget check (matches Go's "0 = unlimited").
+    arena_byte_budget: Arc<AtomicUsize>,
     /// Maximum field-matcher states during add_pattern (prevents 2^N blowup)
     max_states_per_pattern: usize,
 }
@@ -473,8 +477,90 @@ impl<X: Clone + Eq + Hash + Send + Sync> ThreadSafeCoreMatcher<X> {
             root: ArcSwap::from_pointee(FrozenFieldMatcher::new()),
             build_lock: Mutex::new(BuildState::new()),
             needs_freeze: AtomicBool::new(false),
-            arena_byte_budget,
+            arena_byte_budget: Arc::new(AtomicUsize::new(arena_byte_budget)),
             max_states_per_pattern,
+        }
+    }
+
+    /// Read the currently configured memory budget (0 = unlimited).
+    #[must_use]
+    pub fn memory_budget(&self) -> usize {
+        self.arena_byte_budget.load(Ordering::Relaxed)
+    }
+
+    /// Replace the shared memory budget. A value of 0 disables the budget
+    /// check; the change is observed by every matcher in the tree on its next
+    /// arena update.
+    pub fn set_memory_budget(&self, budget: usize) {
+        self.arena_byte_budget.store(budget, Ordering::Relaxed);
+    }
+
+    /// Walk the mutable matcher DAG and sum the estimated byte size of every
+    /// distinct arena. The DAG is deduplicated by `MutableValueMatcher` identity
+    /// so arenas reachable via multiple field paths are only counted once.
+    ///
+    /// Acquires `build_lock`, so this contends with `add_pattern` callers.
+    #[must_use]
+    pub fn current_memory_usage(&self) -> usize {
+        let build_state = self.build_lock.lock();
+        let mut field_seen: FxHashSet<*const MutableFieldMatcher<X>> = FxHashSet::default();
+        let mut value_seen: FxHashSet<*const MutableValueMatcher<X>> = FxHashSet::default();
+        let mut total: usize = 0;
+        Self::walk_field_matcher(
+            &build_state.root,
+            &mut field_seen,
+            &mut value_seen,
+            &mut total,
+        );
+        total
+    }
+
+    fn walk_field_matcher(
+        fm: &Rc<MutableFieldMatcher<X>>,
+        field_seen: &mut FxHashSet<*const MutableFieldMatcher<X>>,
+        value_seen: &mut FxHashSet<*const MutableValueMatcher<X>>,
+        total: &mut usize,
+    ) {
+        if !field_seen.insert(Rc::as_ptr(fm)) {
+            return;
+        }
+        for vm in fm.transitions.borrow().values() {
+            Self::walk_value_matcher(vm, field_seen, value_seen, total);
+        }
+        for next in fm.exists_true.borrow().values() {
+            Self::walk_field_matcher(next, field_seen, value_seen, total);
+        }
+        for next in fm.exists_false.borrow().values() {
+            Self::walk_field_matcher(next, field_seen, value_seen, total);
+        }
+    }
+
+    fn walk_value_matcher(
+        vm: &Rc<MutableValueMatcher<X>>,
+        field_seen: &mut FxHashSet<*const MutableFieldMatcher<X>>,
+        value_seen: &mut FxHashSet<*const MutableValueMatcher<X>>,
+        total: &mut usize,
+    ) {
+        if !value_seen.insert(Rc::as_ptr(vm)) {
+            return;
+        }
+        if let Some((arena, _)) = vm.main_arena.borrow().as_ref() {
+            *total += arena.estimated_byte_size();
+        }
+        if let Some((arena, _)) = vm.suffix_arena.borrow().as_ref() {
+            *total += arena.estimated_byte_size();
+        }
+        for mc in vm.multi_condition_nfas.borrow().iter() {
+            *total += mc.primary_arena.estimated_byte_size();
+            for cond in &mc.conditions {
+                *total += cond.arena.estimated_byte_size();
+            }
+        }
+        for next in vm.transition_map.borrow().values() {
+            Self::walk_field_matcher(next, field_seen, value_seen, total);
+        }
+        if let Some(ref next) = *vm.singleton_transition.borrow() {
+            Self::walk_field_matcher(next, field_seen, value_seen, total);
         }
     }
 
@@ -536,7 +622,8 @@ impl<X: Clone + Eq + Hash + Send + Sync> ThreadSafeCoreMatcher<X> {
                         next_states.push(next);
                     }
                     _ => {
-                        let nexts = state.add_transition(path, matchers, self.arena_byte_budget)?;
+                        let nexts =
+                            state.add_transition(path, matchers, &self.arena_byte_budget)?;
                         next_states.extend(nexts);
                     }
                 }

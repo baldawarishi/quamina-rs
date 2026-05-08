@@ -8,6 +8,7 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
@@ -154,14 +155,14 @@ impl<X: Clone + Eq + std::hash::Hash> MutableFieldMatcher<X> {
         &self,
         path: &str,
         matchers: &[crate::json::Matcher],
-        arena_byte_budget: usize,
+        arena_byte_budget: &Arc<AtomicUsize>,
     ) -> Result<Vec<Rc<Self>>, crate::QuaminaError> {
         use crate::json::Matcher;
 
         let mut transitions = self.transitions.borrow_mut();
-        let vm = transitions
-            .entry(path.to_string())
-            .or_insert_with(|| Rc::new(MutableValueMatcher::with_budget(arena_byte_budget)));
+        let vm = transitions.entry(path.to_string()).or_insert_with(|| {
+            Rc::new(MutableValueMatcher::with_budget(arena_byte_budget.clone()))
+        });
 
         // Check if all matchers are Exact strings - use bulk optimization
         // Note: Exact values are pre-quoted for strings in json.rs value_to_string()
@@ -230,8 +231,13 @@ pub struct MutableValueMatcher<X: Clone + Eq + std::hash::Hash> {
     /// Separate DFA trie for suffix patterns, traversed backward (right-to-left).
     /// Contains reversed suffix bytes; uses traverse_arena_dfa_backward at match time.
     pub(crate) suffix_arena: RefCell<Option<(StateArena, StateId)>>,
-    /// Arena byte budget for pattern complexity limiting
-    pub(crate) arena_byte_budget: usize,
+    /// Shared arena byte budget for pattern complexity limiting.
+    ///
+    /// All value matchers in a single matcher tree share the same `Arc<AtomicUsize>`,
+    /// allowing the budget to be inspected and adjusted at runtime via the
+    /// `Quamina::get_memory_budget` / `set_memory_budget` APIs. A value of `0` means
+    /// the budget check is disabled (matching upstream Go's "0 = unlimited" convention).
+    pub(crate) arena_byte_budget: Arc<AtomicUsize>,
 }
 
 impl<X: Clone + Eq + std::hash::Hash> Default for MutableValueMatcher<X> {
@@ -243,22 +249,12 @@ impl<X: Clone + Eq + std::hash::Hash> Default for MutableValueMatcher<X> {
 impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
     #[must_use]
     pub fn new() -> Self {
-        Self {
-            singleton_match: RefCell::new(None),
-            singleton_transition: RefCell::new(None),
-            has_numbers: Cell::new(false),
-            transition_map: RefCell::new(FxHashMap::default()),
-            multi_condition_nfas: RefCell::new(Vec::new()),
-            arena_bufs: RefCell::new(ArenaNfaBuffers::new()),
-            main_arena: RefCell::new(None),
-            main_arena_is_nfa: RefCell::new(false),
-            suffix_arena: RefCell::new(None),
-            arena_byte_budget: usize::MAX,
-        }
+        // Standalone matchers run without a budget (0 = unlimited).
+        Self::with_budget(Arc::new(AtomicUsize::new(0)))
     }
 
     #[must_use]
-    pub fn with_budget(budget: usize) -> Self {
+    pub fn with_budget(budget: Arc<AtomicUsize>) -> Self {
         Self {
             singleton_match: RefCell::new(None),
             singleton_transition: RefCell::new(None),
@@ -274,11 +270,12 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
     }
 
     /// Check whether the given arena size exceeds the budget.
+    /// A budget of 0 means unlimited (matches upstream Go convention).
     fn check_budget(&self, size: usize) -> Result<(), crate::QuaminaError> {
-        if size > self.arena_byte_budget {
+        let budget = self.arena_byte_budget.load(Ordering::Relaxed);
+        if budget != 0 && size > budget {
             return Err(crate::QuaminaError::PatternTooComplex(format!(
-                "automaton byte size ({} bytes) exceeds budget ({} bytes)",
-                size, self.arena_byte_budget
+                "automaton byte size ({size} bytes) exceeds budget ({budget} bytes)"
             )));
         }
         Ok(())
@@ -309,12 +306,12 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
             let (merged, merged_start) =
                 merge_arena_nfas(&existing_arena, existing_start, &new_arena, new_start);
             let merged_size = merged.estimated_byte_size();
-            if merged_size > self.arena_byte_budget {
+            let budget = self.arena_byte_budget.load(Ordering::Relaxed);
+            if budget != 0 && merged_size > budget {
                 // Restore existing arena on failure
                 *main = Some((existing_arena, existing_start));
                 return Err(crate::QuaminaError::PatternTooComplex(format!(
-                    "automaton byte size ({} bytes) exceeds budget ({} bytes)",
-                    merged_size, self.arena_byte_budget
+                    "automaton byte size ({merged_size} bytes) exceeds budget ({budget} bytes)"
                 )));
             }
             *main = Some((merged, merged_start));
@@ -1134,8 +1131,8 @@ impl<X: Clone + Eq + std::hash::Hash> MatchSet<X> {
 pub struct CoreMatcher<X: Clone + Eq + std::hash::Hash> {
     /// Root field matcher - the start state of the automaton
     root: Rc<MutableFieldMatcher<X>>,
-    /// Arena byte budget for pattern complexity limiting
-    arena_byte_budget: usize,
+    /// Shared arena byte budget for pattern complexity limiting (0 = unlimited).
+    arena_byte_budget: Arc<AtomicUsize>,
 }
 
 impl<X: Clone + Eq + std::hash::Hash> CoreMatcher<X> {
@@ -1144,7 +1141,9 @@ impl<X: Clone + Eq + std::hash::Hash> CoreMatcher<X> {
     pub fn new() -> Self {
         Self {
             root: Rc::new(MutableFieldMatcher::new()),
-            arena_byte_budget: crate::PatternLimits::default().arena_byte_budget,
+            arena_byte_budget: Arc::new(AtomicUsize::new(
+                crate::PatternLimits::default().arena_byte_budget,
+            )),
         }
     }
 
@@ -1185,7 +1184,8 @@ impl<X: Clone + Eq + std::hash::Hash> CoreMatcher<X> {
                     }
                     _ => {
                         // Value matcher transition
-                        let nexts = state.add_transition(path, matchers, self.arena_byte_budget)?;
+                        let nexts =
+                            state.add_transition(path, matchers, &self.arena_byte_budget)?;
                         next_states.extend(nexts);
                     }
                 }
