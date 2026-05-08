@@ -928,6 +928,11 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
     /// convention); any other value caps subsequent pattern construction.
     /// Patterns already built are not affected.
     ///
+    /// The new budget applies to the next [`add_pattern`](Self::add_pattern)
+    /// call — each `add_pattern` snapshots the budget at the start of the
+    /// build, so a `set_memory_budget` invocation racing with an in-flight
+    /// `add_pattern` won't change the budget for that build.
+    ///
     /// `set_memory_budget` only takes `&self`, so it can be called
     /// concurrently with matching, but not with `add_pattern` (which takes
     /// `&mut self`).

@@ -445,12 +445,13 @@ pub struct ThreadSafeCoreMatcher<X: Clone + Eq + Hash + Send + Sync> {
     /// When true, the next match operation will freeze before reading.
     /// This avoids O(n²) cost from freezing after every add_pattern.
     needs_freeze: AtomicBool,
-    /// Shared arena byte budget for pattern complexity limiting.
+    /// Arena byte budget for pattern complexity limiting (0 = unlimited).
     ///
-    /// All `MutableValueMatcher`s built under this matcher hold an `Arc` clone of this
-    /// atomic, so a single `set_memory_budget` call is observed by every matcher in the
-    /// tree. A value of 0 disables the budget check (matches Go's "0 = unlimited").
-    arena_byte_budget: Arc<AtomicUsize>,
+    /// `add_pattern` snapshots this once at the top of the build, so concurrent
+    /// `set_memory_budget` calls take effect on the *next* `add_pattern`, not
+    /// mid-build. This matches upstream Go's semantics and lets the inner build
+    /// code thread a plain `usize` instead of touching the atomic per arena update.
+    arena_byte_budget: AtomicUsize,
     /// Maximum field-matcher states during add_pattern (prevents 2^N blowup)
     max_states_per_pattern: usize,
 }
@@ -477,7 +478,7 @@ impl<X: Clone + Eq + Hash + Send + Sync> ThreadSafeCoreMatcher<X> {
             root: ArcSwap::from_pointee(FrozenFieldMatcher::new()),
             build_lock: Mutex::new(BuildState::new()),
             needs_freeze: AtomicBool::new(false),
-            arena_byte_budget: Arc::new(AtomicUsize::new(arena_byte_budget)),
+            arena_byte_budget: AtomicUsize::new(arena_byte_budget),
             max_states_per_pattern,
         }
     }
@@ -596,6 +597,10 @@ impl<X: Clone + Eq + Hash + Send + Sync> ThreadSafeCoreMatcher<X> {
         // Acquire build lock
         let build_state = self.build_lock.lock();
 
+        // Snapshot the budget once; the inner build code threads this `usize`
+        // through instead of touching the atomic per arena update.
+        let budget = self.arena_byte_budget.load(Ordering::Relaxed);
+
         // Sort fields lexically by path (like Go)
         let mut sorted_fields: Vec<_> = pattern_fields.to_vec();
         sorted_fields.sort_by(|a, b| a.0.cmp(&b.0));
@@ -622,8 +627,7 @@ impl<X: Clone + Eq + Hash + Send + Sync> ThreadSafeCoreMatcher<X> {
                         next_states.push(next);
                     }
                     _ => {
-                        let nexts =
-                            state.add_transition(path, matchers, &self.arena_byte_budget)?;
+                        let nexts = state.add_transition(path, matchers, budget)?;
                         next_states.extend(nexts);
                     }
                 }
