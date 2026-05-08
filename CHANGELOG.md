@@ -13,15 +13,12 @@ Style inspired by [ripgrep's CHANGELOG](https://github.com/BurntSushi/ripgrep/bl
 - DFA acceleration: `compute_dfa_accel` detects self-loop states and attaches memchr skip info for SIMD byte skipping on patterns like `[^x]+`
 - Profiling examples for NFA→DFA budget tuning and negated char class acceleration
 - Allocation-free integration test for `traverse_arena_nfa` (counting global allocator, gated off Miri), expanded `dstep` hot-path documentation, and forbidden UTF-8 byte coverage tests (#100)
-- `Quamina::get_memory_budget` and `Quamina::set_memory_budget` for inspecting and adjusting the arena byte budget at runtime; budget is shared across all matchers in a tree via `Arc<AtomicUsize>`, and current usage is computed by deduplicating the matcher DAG so shared sub-graphs are counted once. A budget of 0 disables the check (matches upstream Go's "0 = unlimited" convention). Ports upstream PR #516.
 
 ### Changed
 - Tightened strict clippy lints: removed blanket allows for `module_name_repetitions`, `too_many_lines`, `similar_names`, and related structural/naming lints; refactored hot spots, kept per-item allows on hot loops and generated tables
 - Added `# Errors` sections to public fallible APIs and enabled `missing_errors_doc`
 - Removed unused `SmallTable::step` wrapper; `dstep` is the only stepping entry point
-- `Clone`, `rebuild`, and `clear` now carry over the live memory budget instead of resetting to the builder's initial value, matching upstream `coreMatcher` semantics
-- `MutableValueMatcher::new()` now defaults to a 0 budget (unlimited) instead of `usize::MAX`, aligning standalone matchers with the new "0 = unlimited" convention; behaviour is unchanged in practice
-- Synced Go upstream through commit 53515a0
+- Synced Go upstream through commit e33139f
 
 ### Fixed
 - `[^x]+` patterns (17K-state Unicode NFA) exceeded the DFA budget and regressed; SIMD acceleration via `AccelInfo::try_accelerate` restores performance (`regexp_negated_1k`: 3.2 µs → 652 ns)
