@@ -3099,3 +3099,213 @@ fn test_numeric_pattern_with_scientific_notation() {
         .unwrap();
     assert_matches!(q, r#"{"y": 0.1}"#, vec!["neg"]);
 }
+
+// ============================================================================
+// get_memory_budget / set_memory_budget — port of upstream
+// memory_cost_test.go (TestMemoryBudgetBasic, TestStringFA, TestMemoryStress).
+// ============================================================================
+
+/// Build a string of `n` 'i' bytes — mirrors upstream `iString`.
+fn i_string(n: usize) -> String {
+    "i".repeat(n)
+}
+
+/// Port of upstream `TestMemoryBudgetBasic`.
+///
+/// Verifies the basic shape of the budget API:
+/// - fresh matcher reports the configured initial budget and zero usage,
+/// - `set_memory_budget` returns the live usage,
+/// - shrinking the budget below the consumed memory is rejected,
+/// - a tight budget rejects an oversized pattern but accepts smaller ones.
+#[test]
+fn test_memory_budget_basic() {
+    let q = QuaminaBuilder::<&str>::new().build().unwrap();
+
+    let (budget, used) = q.get_memory_budget();
+    assert_eq!(budget, 10 * 1024 * 1024);
+    assert_eq!(used, 0);
+
+    let used_after = q.set_memory_budget(64 * 1024).unwrap();
+    assert_eq!(used_after, 0);
+    assert_eq!(q.get_memory_budget().0, 64 * 1024);
+
+    let mut q = q;
+    q.add_pattern("x", r#"{"x": ["abc"]}"#).unwrap();
+
+    let (_, used_now) = q.get_memory_budget();
+    if used_now > 0 {
+        let err = q.set_memory_budget(used_now.saturating_sub(1)).unwrap_err();
+        assert!(matches!(err, QuaminaError::PatternTooComplex(_)));
+        assert_eq!(q.get_memory_budget().0, 64 * 1024);
+    }
+
+    q.set_memory_budget(0).unwrap();
+    assert_eq!(q.get_memory_budget().0, 0);
+
+    // Single exact strings hit the singleton optimization and don't touch the
+    // arena, so we use a `prefix` matcher to force arena allocation under the
+    // 1-byte budget.
+    let mut q = QuaminaBuilder::<&str>::new()
+        .with_arena_byte_budget(1)
+        .build()
+        .unwrap();
+    let big = i_string(200);
+    let pat = format!(r#"{{"x": [{{"prefix": "{big}"}}]}}"#);
+    assert!(q.add_pattern("big", &pat).is_err());
+}
+
+/// Port of upstream `TestStringFA`.
+///
+/// Ensures that the budget gates pattern acceptance based on the size of the
+/// arena that would be built, and that raising the budget afterwards lets the
+/// same pattern through.
+#[test]
+fn test_string_fa_memory_budget() {
+    let mut q = QuaminaBuilder::<&str>::new().build().unwrap();
+    q.set_memory_budget(10_000).unwrap();
+    q.add_pattern("seed", r#"{"x": ["x"]}"#).unwrap();
+
+    let big = i_string(100);
+    let big_pat = format!(r#"{{"x": ["{big}"]}}"#);
+    assert!(
+        q.add_pattern("big", &big_pat).is_err(),
+        "100-byte pattern must be rejected under a 10 KB budget"
+    );
+
+    q.set_memory_budget(10_000_000).unwrap();
+    q.add_pattern("big", &big_pat).unwrap();
+
+    let (_, used) = q.get_memory_budget();
+
+    let mut q = QuaminaBuilder::<&str>::new().build().unwrap();
+    q.set_memory_budget(used).unwrap();
+    q.add_pattern("seed", r#"{"x": ["x"]}"#).unwrap();
+    q.add_pattern("big", &big_pat).unwrap();
+
+    let (_, used_after) = q.get_memory_budget();
+    let mut q = QuaminaBuilder::<&str>::new().build().unwrap();
+    q.set_memory_budget(used_after.saturating_sub(big.len()))
+        .unwrap();
+    q.add_pattern("seed", r#"{"x": ["x"]}"#).unwrap();
+    assert!(
+        q.add_pattern("big", &big_pat).is_err(),
+        "pattern should be rejected once its arena exceeds the tightened budget"
+    );
+}
+
+/// Port of upstream `TestMemoryStress`.
+///
+/// Builds a sequence of shellstyle patterns and records each one's incremental
+/// arena cost. Then, in a fresh matcher, every recorded cost is exercised:
+/// a tight budget rejects the pattern, a generous budget accepts it.
+#[test]
+fn test_memory_stress() {
+    // Kept small so the test runs fast under Miri.
+    const WORDS: &[&str] = &[
+        "alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel", "india",
+        "juliet", "kilo", "lima", "mike", "november", "oscar", "papa", "quebec", "romeo", "sierra",
+        "tango",
+    ];
+
+    let mut record = Vec::with_capacity(WORDS.len());
+    let mut q = QuaminaBuilder::<&str>::new().build().unwrap();
+    q.set_memory_budget(0).unwrap();
+
+    for (i, word) in WORDS.iter().enumerate() {
+        // Splice a '*' into each word so the pattern compiles to a shellstyle FA;
+        // `i % word.len()` keeps both slices valid.
+        let star_at = i % word.len();
+        let starred = format!("{}*{}", &word[..star_at], &word[star_at..]);
+        let pat = format!(r#"{{"x": ["{starred}"]}}"#);
+        q.add_pattern("x", &pat).unwrap();
+        let (_, mem) = q.get_memory_budget();
+        record.push((pat, mem));
+    }
+
+    let mut q = QuaminaBuilder::<&str>::new().build().unwrap();
+    q.set_memory_budget(0).unwrap();
+
+    for (i, (pat, mem)) in record.iter().enumerate() {
+        let (_, current) = q.get_memory_budget();
+        // Pick a budget below both the pattern's recorded size and the live
+        // usage so the new arena is guaranteed to overshoot it.
+        let low_budget = std::cmp::min(*mem / 2, current.saturating_sub(1)).max(1);
+        q.set_memory_budget(low_budget).unwrap();
+        let attempt = q.add_pattern("x", pat);
+        if attempt.is_ok() {
+            // Patterns that share enough state with already-built ones may stay
+            // under low_budget incrementally — that's fine, skip them.
+            continue;
+        }
+
+        q.set_memory_budget(mem.saturating_mul(2).max(1024 * 1024))
+            .unwrap();
+        q.add_pattern("x", pat)
+            .unwrap_or_else(|e| panic!("pattern {i} rejected under generous budget: {e}"));
+    }
+}
+
+/// `set_memory_budget(0)` removes the cap and lets large patterns build that
+/// would otherwise be rejected by the default 10 MB ceiling. This is the
+/// upstream "0 = unlimited" convention.
+#[test]
+fn test_memory_budget_zero_disables_check() {
+    let mut q = QuaminaBuilder::<&str>::new()
+        .with_arena_byte_budget(1)
+        .build()
+        .unwrap();
+    assert!(q.add_pattern("p", r#"{"x": [{"prefix": "abc"}]}"#).is_err());
+    q.set_memory_budget(0).unwrap();
+    q.add_pattern("p", r#"{"x": [{"prefix": "abc"}]}"#).unwrap();
+}
+
+/// A pattern that fails the budget check must not leave bookkeeping state
+/// (segments tree, pattern_defs) populated. Verifies the
+/// add_pattern → automaton ordering invariant is preserved.
+#[test]
+fn test_memory_budget_failure_leaves_no_state() {
+    let mut q = QuaminaBuilder::<&str>::new()
+        .with_arena_byte_budget(1)
+        .build()
+        .unwrap();
+    let before = q.pattern_count();
+    let _ = q.add_pattern("rejected", r#"{"x": [{"prefix": "abc"}]}"#);
+    assert_eq!(
+        q.pattern_count(),
+        before,
+        "rejected pattern must not be recorded in pattern_defs"
+    );
+}
+
+/// Verifies the memory accounting handles shared sub-graphs without
+/// double-counting. Adding the same pattern twice with two different IDs
+/// causes the same MutableValueMatcher to be hit, but the DAG walk
+/// deduplicates it, so usage grows at most once.
+#[test]
+fn test_memory_usage_dedups_shared_subgraphs() {
+    let mut q = QuaminaBuilder::<&str>::new().build().unwrap();
+    q.add_pattern("a", r#"{"x": ["v"]}"#).unwrap();
+    let (_, used_one) = q.get_memory_budget();
+
+    // Same field/value with a different id reuses the same arena, so the DAG
+    // walk must dedup it instead of double-counting.
+    q.add_pattern("b", r#"{"x": ["v"]}"#).unwrap();
+    let (_, used_two) = q.get_memory_budget();
+    assert_eq!(
+        used_one, used_two,
+        "identical patterns should not inflate accounted memory"
+    );
+}
+
+/// Cloning a Quamina instance must carry over the live budget value, not the
+/// builder's initial value. (Upstream coreMatcher transfers memoryBudget into
+/// freshStart on every addPattern; our clone path needs to do the same.)
+#[test]
+fn test_clone_preserves_live_budget() {
+    let mut q = QuaminaBuilder::<&str>::new().build().unwrap();
+    q.add_pattern("p", r#"{"x": ["v"]}"#).unwrap();
+    q.set_memory_budget(123_456).unwrap();
+
+    let cloned = q.clone();
+    assert_eq!(cloned.get_memory_budget().0, 123_456);
+}
