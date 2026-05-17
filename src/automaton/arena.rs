@@ -5047,6 +5047,133 @@ mod arena_stats_utility_tests {
         arena[s0].table.epsilons.push(s1);
         assert!(arena.is_nondeterministic());
     }
+
+    #[test]
+    fn test_stats_add_max_epsilons_other_larger() {
+        // Stats::add must take the LARGER max_epsilons when the incoming
+        // side is bigger. Catches the `>`→`==` mutation on the
+        // max_epsilons guard (existing tests only cover other <= self).
+        let mut a = Stats {
+            max_epsilons: 1,
+            ..Default::default()
+        };
+        let b = Stats {
+            max_epsilons: 5,
+            ..Default::default()
+        };
+        a.add(&b);
+        assert_eq!(a.max_epsilons, 5);
+    }
+
+    #[test]
+    fn test_estimated_byte_size_with_flattened_buffers() {
+        // estimated_byte_size must add the ft_ptrs and dfa_lookup terms
+        // with `+` and scale them with `*`. When both buffers are empty
+        // (as in test_estimated_byte_size) those terms are 0 and the
+        // `+`→`-`, `+`→`*`, `*`→`/` mutations on them are invisible.
+        let mut arena = StateArena::new();
+        arena.alloc();
+        arena.ft_ptrs = vec![1usize, 2, 3, 4, 5, 6, 7];
+        arena.dfa_lookup = vec![StateId::NONE; 11];
+        assert!(arena.ft_ptrs.capacity() > 0);
+        assert!(arena.dfa_lookup.capacity() > 0);
+        let expected = arena.states.capacity() * std::mem::size_of::<FaState>()
+            + arena.closure_data.capacity() * std::mem::size_of::<StateId>()
+            + arena.ft_ptrs.capacity() * std::mem::size_of::<usize>()
+            + arena.dfa_lookup.capacity() * std::mem::size_of::<StateId>();
+        assert_eq!(arena.estimated_byte_size(), expected);
+    }
+
+    #[test]
+    fn test_alloc_sets_per_state_closure() {
+        // Each alloc() records a distinct closure_start offset into
+        // closure_data. Deleting the closure_start field defaults every
+        // state to offset 0, so closure_of() returns state 0's id for all.
+        let mut arena = StateArena::new();
+        let s0 = arena.alloc();
+        let s1 = arena.alloc();
+        let s2 = arena.alloc();
+        assert_eq!(arena.closure_of(s0), &[s0]);
+        assert_eq!(arena.closure_of(s1), &[s1]);
+        assert_eq!(arena.closure_of(s2), &[s2]);
+    }
+
+    #[test]
+    fn test_precompute_epsilon_closures_skips_out_of_range_target() {
+        // The `idx < seen.capacity()` guard in precompute_epsilon_closures
+        // defends against an epsilon whose target index equals the arena
+        // length (one past the last valid state). `<`→`<=` would call
+        // SparseSet::insert(capacity), panicking on an out-of-bounds
+        // sparse[] access.
+        let mut arena = StateArena::new();
+        let s0 = arena.alloc();
+        let s1 = arena.alloc();
+        // Valid epsilon s0 -> s1, plus a dangling epsilon to index == len.
+        let dangling = StateId::from_index(arena.len());
+        arena[s0].table.epsilons.push(s1);
+        arena[s0].table.epsilons.push(dangling);
+        // Must not panic; the dangling target is skipped.
+        arena.precompute_epsilon_closures();
+        let c = arena.closure_of(s0);
+        assert!(c.contains(&s0));
+        assert!(c.contains(&s1));
+        assert_eq!(c.len(), 2);
+    }
+
+    #[test]
+    fn test_lazy_dfa_conflicting_nfa_accel_not_accelerated() {
+        // try_compute_accel must BAIL (set no accel) when a lazy-DFA state
+        // aggregates NFA states whose AccelInfo conflicts. Replacing the
+        // match guard with `true` makes it adopt the first NFA state's
+        // accel instead, so the conflicting state wrongly gets accelerated.
+        let mut arena = StateArena::new();
+        let s0 = arena.alloc();
+        let s1 = arena.alloc();
+        let s2 = arena.alloc();
+        // s0 epsilon-forks to s1 and s2 (so the start DFA state spans both).
+        arena[s0].table.epsilons.push(s1);
+        arena[s0].table.epsilons.push(s2);
+        // s1 and s2 each self-loop on 'a' but advertise DIFFERENT exit bytes.
+        arena[s1].table.set_transition(b'a', s1);
+        arena[s1].table.accel = Some(AccelInfo {
+            exit_bytes: [b'x', 0, 0],
+            len: 1,
+        });
+        arena[s2].table.set_transition(b'a', s2);
+        arena[s2].table.accel = Some(AccelInfo {
+            exit_bytes: [b'y', 0, 0],
+            len: 1,
+        });
+        arena.precompute_epsilon_closures();
+
+        let mut lazy = LazyDfa::new(arena, s0, 100);
+        let mut transitions = Vec::new();
+        traverse_lazy_dfa(&mut lazy, b"aaaa", &mut transitions);
+
+        let accel_count = lazy.states.iter().filter(|s| s.accel.is_some()).count();
+        assert_eq!(
+            accel_count, 0,
+            "state with conflicting NFA accel must not be accelerated"
+        );
+    }
+
+    #[test]
+    fn test_stats_total_ceiling_entries_accumulates() {
+        // total_ceiling_entries must SUM ceiling counts across non-trivial
+        // tables. The `+=`→`*=` mutation would pin the running total at 0.
+        let mut arena = StateArena::new();
+        let s0 = arena.alloc();
+        let s1 = arena.alloc();
+        let s2 = arena.alloc();
+        // s0: 2 ceilings, s1: 3 ceilings, s2: trivial (1 ceiling, uncounted)
+        arena[s0].table.ceilings = smallvec![b'a', BYTE_CEILING_U8];
+        arena[s0].table.steps = smallvec![s1, StateId::NONE];
+        arena[s1].table.ceilings = smallvec![b'a', b'b', BYTE_CEILING_U8];
+        arena[s1].table.steps = smallvec![s0, s2, StateId::NONE];
+        let stats = arena.stats();
+        assert_eq!(stats.tables_with_transitions, 2);
+        assert_eq!(stats.total_ceiling_entries, 5); // 2 + 3
+    }
 }
 
 #[cfg(test)]

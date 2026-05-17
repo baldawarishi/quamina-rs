@@ -3711,3 +3711,38 @@ fn test_lookbehind_alternation_with_primary_alternation() {
     assert_no_match!(q, r#"{"v": "cx"}"#);
     assert_no_match!(q, r#"{"v": "az"}"#);
 }
+
+// ============================================================================
+// Mutation gap closers (Issue #41) — src/automaton/thread_safe.rs
+// ============================================================================
+
+#[test]
+fn test_mut_numeric_pattern_rejects_string_value() {
+    // FrozenValueMatcher::transition_on gates Q-number conversion with
+    // `self.has_numbers && is_number`. With `&&` -> `||`, a STRING value
+    // "42" (is_number == false) against a numeric pattern (has_numbers ==
+    // true) would be Q-encoded and spuriously match the numeric FA.
+    let q = q!("n" => r#"{"x": [{"numeric": ["=", 42]}]}"#);
+    assert_matches!(q, r#"{"x": 42}"#, vec!["n"], "numeric 42 must match");
+    assert_no_match!(
+        q,
+        r#"{"x": "42"}"#,
+        "string \"42\" must NOT match a numeric pattern"
+    );
+}
+
+#[test]
+fn test_mut_memory_usage_accumulates_suffix_and_lookaround() {
+    // walk_value_matcher sums estimated_byte_size() of suffix_arena (line
+    // 552), multi-condition primary arena (555) and condition arenas (557)
+    // with `+=`. Mutating any to `-=`/`*=` corrupts current_memory_usage().
+    let q = q!(
+        "suf" => r#"{"x": [{"suffix": "lo"}]}"#,
+        "la"  => r#"{"y": [{"regexp": "foo(?=bar)bar"}]}"#
+    );
+    let (_, used) = q.get_memory_budget();
+    assert_eq!(
+        used, 5568,
+        "memory usage must equal exact sum of arena byte sizes, got {used}"
+    );
+}

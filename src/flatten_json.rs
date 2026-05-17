@@ -1861,4 +1861,92 @@ x"#,
             assert!(result.is_err(), "Should reject never-ending string: {bad}");
         }
     }
+
+    // --- Mutation gap closers (Issue #41) ---
+
+    #[test]
+    fn test_mut_skip_string_value_truncated_trailing_backslash() {
+        // Unused string value whose final byte is a lone backslash with no
+        // closing quote. skip_string_value's escape guard
+        // `ch == b'\\' && self.index + 1 < self.event.len()` (line 637): if the
+        // `<` becomes `<=` or the `+ 1` becomes `- 1`/`* 1`, the guard passes
+        // when index+1 == len and `self.event[self.index + 1]` panics.
+        let event = b"{\"a\":\"x\\";
+        let tree = make_tree(&["other"]);
+        let mut state = State::new();
+        let result = state.flatten(event, &tree);
+        assert!(
+            result.is_err(),
+            "truncated unused string must error, not panic"
+        );
+    }
+
+    #[test]
+    fn test_mut_leave_object_truncated_to_eof() {
+        // Early termination triggers leave_object on a non-root subtree; the
+        // remaining bytes run to EOF without a closing brace. leave_object's
+        // `while self.index < self.event.len()` (line 588): with `<=` the loop
+        // body runs once more at index == len and `self.event[self.index]`
+        // panics.
+        let event = b"{\"outer\":{\"wanted\":1,\"junk\":\"zz\"";
+        let tree = make_tree(&["outer\nwanted"]);
+        let mut state = State::new();
+        let result = state.flatten(event, &tree);
+        assert!(
+            result.is_err(),
+            "truncated trailing object content must error, not panic"
+        );
+    }
+
+    #[test]
+    fn test_mut_member_name_escapes_truncated_to_eof() {
+        // Field name containing an escape, then a content byte, then EOF with
+        // no closing quote. read_member_name_with_escapes loop guard
+        // `while self.index < self.event.len()` (line 689): `<=` indexes
+        // `self.event[len]` and panics.
+        let event = b"{\"ke\\ny";
+        let tree = make_tree(&["x"]);
+        let mut state = State::new();
+        let result = state.flatten(event, &tree);
+        assert!(
+            result.is_err(),
+            "truncated escaped field name must error, not panic"
+        );
+    }
+
+    #[test]
+    fn test_mut_unused_string_skipped_leniently() {
+        // An UNUSED top-level string value containing a raw control byte must
+        // be skipped via the lenient skip_string_value, selected by
+        // `self.skipping > 0 || !member_is_used` (line 349). If `||` becomes
+        // `&&`, an unused field at skipping == 0 instead goes through the
+        // strict read_string_value, which rejects the control byte.
+        let event = b"{\"a\":\"\x01\",\"x\":\"ok\"}";
+        let tree = make_tree(&["x"]);
+        let mut state = State::new();
+        let fields = state
+            .flatten(event, &tree)
+            .expect("unused control-char string must be skipped, not strictly parsed");
+        assert_eq!(fields.len(), 1);
+        assert_eq!(fields[0].path.as_ref(), b"x");
+        assert_eq!(fields[0].val.as_bytes(), b"\"ok\"");
+    }
+
+    #[test]
+    fn test_mut_unused_array_skipped_via_skip_block() {
+        // An UNUSED array whose element is a string containing a raw control
+        // byte must be skipped via the lenient skip_block, selected by
+        // `self.skipping > 0` in the `[` branch (line 390). If `>` becomes `<`,
+        // the unused array is instead parsed via the strict read_array, which
+        // rejects the control byte.
+        let event = b"{\"u\":[\"\x01\"],\"x\":\"ok\"}";
+        let tree = make_tree(&["x"]);
+        let mut state = State::new();
+        let fields = state
+            .flatten(event, &tree)
+            .expect("unused control-char array must be skipped, not strictly parsed");
+        assert_eq!(fields.len(), 1);
+        assert_eq!(fields[0].path.as_ref(), b"x");
+        assert_eq!(fields[0].val.as_bytes(), b"\"ok\"");
+    }
 }

@@ -2562,4 +2562,136 @@ mod tests {
             ".*~b should produce at least one branch"
         );
     }
+
+    // ========================================================================
+    // Mutation gap closers (Issue #41)
+    // ========================================================================
+
+    #[test]
+    fn test_mut_read_category_initials_mpzsc() {
+        // read_category validates the detail letter via a `match initial`.
+        // Deleting the 'M'/'P'/'Z'/'S'/'C' arms makes valid two-letter
+        // categories with those initials wrongly rejected.
+        for cat in ["~p{Mn}", "~p{Pc}", "~p{Zs}", "~p{Sm}", "~p{Cc}"] {
+            assert!(
+                parse(cat).is_ok(),
+                "category {cat} must parse: {:?}",
+                parse(cat).err()
+            );
+        }
+    }
+
+    #[test]
+    fn test_mut_class_subtraction_depth8_parses() {
+        // 8 nested `-[` levels is exactly at MAX_CLASS_SUBTRACTION_DEPTH and
+        // must parse. Guard is `depth > 8`; `== 8` or `>= 8` wrongly rejects.
+        let re = "[0-[1-[2-[3-[4-[5-[6-[7-[8]]]]]]]]]";
+        assert!(
+            parse(re).is_ok(),
+            "depth-8 subtraction: {:?}",
+            parse(re).err()
+        );
+    }
+
+    #[test]
+    fn test_mut_property_escape_inside_char_class() {
+        // `~p{...}`/`~P{...}` inside a character class is recognized via
+        // `next == 'p' || next == 'P'`; with `&&` (always false) these escapes
+        // are no longer accepted.
+        assert!(parse("[~p{L}]").is_ok(), "{:?}", parse("[~p{L}]").err());
+        assert!(parse("[~P{N}]").is_ok(), "{:?}", parse("[~P{N}]").err());
+    }
+
+    #[test]
+    fn test_mut_equal_endpoint_char_range() {
+        // `[a-a]` is a valid single-char range (lo == hi). The guard is
+        // `lo > hi`; `lo >= hi` wrongly rejects equal-endpoint ranges.
+        assert!(parse("[a-a]").is_ok(), "{:?}", parse("[a-a]").err());
+    }
+
+    #[test]
+    fn test_mut_standalone_close_bracket_message() {
+        // A standalone `]` must produce the specific "invalid ']'" error.
+        // Deleting the `']'` arm makes it fall through to the generic "stuck".
+        let err = parse("]").expect_err("standalone ] must error");
+        assert!(
+            err.message.contains("invalid ']'"),
+            "expected \"invalid ']'\", got {:?}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn test_mut_invert_rune_range_skips_surrogates_high() {
+        // Inverting [\u{0}-\u{D7FF}] must yield the high range [\u{E000}..MAX],
+        // jumping over the surrogate hole. add_gap_range's surrogate
+        // "part-after" push (and SURROGATE_END_CP + 1) must be intact.
+        let inv = invert_rune_range(vec![RunePair {
+            lo: '\u{0}',
+            hi: '\u{D7FF}',
+        }]);
+        assert!(!inv.is_empty(), "inverted range must not be empty");
+        assert!(
+            inv.iter()
+                .any(|p| (p.lo as u32) >= 0xE000 && p.hi == RUNE_MAX),
+            "inverted range must cover the post-surrogate high plane, got {inv:?}"
+        );
+    }
+
+    #[test]
+    fn test_mut_detect_ascii_negated_bytes_boundary_and_empty() {
+        // A pair straddling the ASCII boundary (lo < 128 <= hi) must be
+        // declined (`lo >= 128 || hi >= 128`); `&&` would emit bogus bytes.
+        assert_eq!(
+            detect_ascii_negated_bytes(&vec![RunePair {
+                lo: '\u{7F}',
+                hi: '\u{80}',
+            }]),
+            None
+        );
+        // Empty input must yield None (`bytes.is_empty() || ...`).
+        assert_eq!(detect_ascii_negated_bytes(&Vec::new()), None);
+    }
+
+    #[test]
+    fn test_mut_wb_at_start_single_optional_suffix_no_panic() {
+        // `~b` at value start with a single optional atom `a*` as the only
+        // suffix. expand_wb_at_start's SplitOrAbsent path guards with
+        // `suffix.len() > 1`; `>=` indexes suffix[1] out of bounds and panics.
+        let tree = parse("~ba*").unwrap();
+        let expanded = expand_word_boundaries(&tree).unwrap();
+        assert!(!expanded.is_empty(), "~ba* should expand");
+    }
+
+    #[test]
+    fn test_mut_wb_at_end_bounded_quantifier_remainder() {
+        // `a{2,3}~b`: split off one boundary char; the remainder atom keeps
+        // quant_max = original_max - 1 = 2. Mutating `- 1` to `+ 1`/`/ 1`
+        // yields 4 or 3 instead of 2.
+        let tree = parse("a{2,3}~b").unwrap();
+        let expanded = expand_word_boundaries(&tree).unwrap();
+        assert_eq!(expanded.len(), 1, "got {expanded:?}");
+        assert_eq!(expanded[0].len(), 2, "got {expanded:?}");
+        assert_eq!(
+            expanded[0][0].quant_max, 2,
+            "remainder atom quant_max must be original_max-1=2, got {}",
+            expanded[0][0].quant_max
+        );
+    }
+
+    #[test]
+    fn test_mut_wb_at_end_split_fallback_uses_previous_atom() {
+        // ` a*~b`: prefix = [' ', a*]. a* is SplitOrAbsent. When a* is absent
+        // the boundary falls after ' ' (a NON-word char), so constraining the
+        // *previous* atom (prefix[0]=' ') with the word class yields no extra
+        // fallback branch. Mutating `last_idx - 1` to `last_idx / 1`
+        // re-constrains a* itself, spuriously adding fallback branches.
+        let tree = parse(" a*~b").unwrap();
+        let expanded = expand_word_boundaries(&tree).unwrap();
+        assert_eq!(
+            expanded.len(),
+            1,
+            "space is non-word so the SplitOrAbsent fallback adds nothing; got {expanded:?}"
+        );
+    }
 }
