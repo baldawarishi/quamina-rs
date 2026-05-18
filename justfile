@@ -126,12 +126,12 @@ upstream-sync sha:
 # Run mutation testing on the full codebase
 [group('validate')]
 mutants *args:
-    cargo mutants -vV --in-place {{args}}
+    cargo mutants -vV --in-place --test-tool nextest {{args}}
 
 # Run mutation testing at background priority (CPU + I/O throttled)
 [group('validate')]
 mutants-bg *args:
-    taskpolicy -b nice -n 19 cargo mutants -vV --in-place {{args}}
+    taskpolicy -b nice -n 19 cargo mutants -vV --in-place --test-tool nextest {{args}}
 
 # Run mutation testing only on code changed vs main
 [group('validate')]
@@ -139,7 +139,7 @@ mutants-diff *args:
     #!/usr/bin/env bash
     set -euo pipefail
     git diff origin/main.. > /tmp/quamina-mutants.diff
-    cargo mutants -vV --in-diff /tmp/quamina-mutants.diff --in-place {{args}}
+    cargo mutants -vV --in-diff /tmp/quamina-mutants.diff --in-place --test-tool nextest {{args}}
 
 # Start LLM Agent in this repo (currently claude-code with dangerously-skip-permissions)
 [group('agent')]

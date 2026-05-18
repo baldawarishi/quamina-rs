@@ -24,16 +24,19 @@ exclude_globs = [
 # Without this, cargo test --no-run also compiles examples/benchmarks, adding 1m30s/mutant.
 additional_cargo_args = ["--lib", "--tests"]
 
-# Pass these skip flags to the test harness.
-# (--lib --tests are already covered by additional_cargo_args above)
+# Exclude two tests from each per-mutant run. The mutation suite runs via
+# `--test-tool nextest`, so this uses nextest's filterset syntax (-E); libtest's
+# `-- --skip` is not understood by nextest. cargo-mutants passes these straight
+# to `nextest run`. Keep `just mutants*` recipes on `--test-tool nextest` too,
+# or this filter is silently ignored by plain `cargo test`.
 # Skipped tests:
 #   test_pattern_insertion_scales_linearly: flaky timing test under CPU load
 #   test_concurrent_update_during_matching: processes full citylots2.json.gz
 #     (takes 28s in workspace, 2min in temp dirs) — re-enable when testing
 #     concurrency-related mutations in thread_safe.rs/mutable_matcher.rs
 additional_cargo_test_args = [
-  "--", "--skip", "test_pattern_insertion_scales_linearly",
-       "--skip", "test_concurrent_update_during_matching",
+  "-E",
+  "not (test(test_pattern_insertion_scales_linearly) | test(test_concurrent_update_during_matching))",
 ]
 
 # Skip kani proof harnesses — formal verification, not production code
