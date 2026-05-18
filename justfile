@@ -128,6 +128,11 @@ upstream-sync sha:
 mutants *args:
     cargo mutants -vV --in-place {{args}}
 
+# Run mutation testing at background priority (CPU + I/O throttled)
+[group('validate')]
+mutants-bg *args:
+    taskpolicy -b nice -n 19 cargo mutants -vV --in-place {{args}}
+
 # Run mutation testing only on code changed vs main
 [group('validate')]
 mutants-diff *args:

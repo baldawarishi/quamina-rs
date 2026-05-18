@@ -5,6 +5,12 @@
 # Use a fast profile with no debug symbols
 profile = "mutants"
 
+# Kill true infinite-loop mutants (e.g. index -= 1 → += 1 in numbits.rs).
+# 120s is plenty for any slow-but-finite test to complete; a timeout at this
+# threshold is almost certainly a genuine infinite loop, not a slow edge case.
+# Note: jobs must be passed via CLI (-j 2); it is not a config file field in v26+.
+minimum_test_timeout = 120
+
 # Only mutate real source code, not generated tables or test fixtures
 exclude_globs = [
   "src/case_folding.rs",       # auto-generated Unicode tables
@@ -14,8 +20,21 @@ exclude_globs = [
   "src/kani_proofs.rs",        # formal verification, not runtime code
 ]
 
-# Skip doctests (they test documentation, not correctness)
-additional_cargo_test_args = ["--all-targets"]
+# Limit ALL cargo invocations (build + test) to lib and integration test targets only.
+# Without this, cargo test --no-run also compiles examples/benchmarks, adding 1m30s/mutant.
+additional_cargo_args = ["--lib", "--tests"]
+
+# Pass these skip flags to the test harness.
+# (--lib --tests are already covered by additional_cargo_args above)
+# Skipped tests:
+#   test_pattern_insertion_scales_linearly: flaky timing test under CPU load
+#   test_concurrent_update_during_matching: processes full citylots2.json.gz
+#     (takes 28s in workspace, 2min in temp dirs) — re-enable when testing
+#     concurrency-related mutations in thread_safe.rs/mutable_matcher.rs
+additional_cargo_test_args = [
+  "--", "--skip", "test_pattern_insertion_scales_linearly",
+       "--skip", "test_concurrent_update_during_matching",
+]
 
 # Skip kani proof harnesses — formal verification, not production code
 exclude_re = ["kani_arena_proofs::"]
