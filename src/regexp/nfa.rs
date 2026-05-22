@@ -714,9 +714,6 @@ fn add_arena_byte_range_recursive(
     } else {
         add_arena_lo_range_to_tree(node, lo_bytes, idx, dest);
 
-        // Call `add_arena_middle_range_to_tree` unconditionally: when
-        // `hi_byte == lo_byte + 1` the lo/hi arguments collapse to an empty
-        // range and the function's `for byte in lo..=hi` yields nothing.
         add_arena_middle_range_to_tree(
             node,
             lo_byte + 1,
@@ -777,9 +774,6 @@ fn add_arena_lo_range_to_tree(
 
         add_arena_lo_range_to_tree(child, lo_bytes, idx + 1, dest);
 
-        // Call `add_arena_middle_range_to_tree` unconditionally: when
-        // `next_byte == 0xBF` the lo argument collapses to 0xC0 > 0xBF, so
-        // the inner `for byte in lo..=hi` loop yields nothing.
         add_arena_middle_range_to_tree(
             child,
             next_byte.wrapping_add(1),
@@ -811,9 +805,6 @@ fn add_arena_hi_range_to_tree(
         let child = entry.child.as_mut().unwrap();
         let next_byte = hi_bytes[idx + 1];
 
-        // Call `add_arena_middle_range_to_tree` unconditionally: when
-        // `next_byte == 0x80` the hi argument collapses to 0x7F < 0x80, so
-        // the inner `for byte in lo..=hi` loop yields nothing.
         add_arena_middle_range_to_tree(
             child,
             0x80,
