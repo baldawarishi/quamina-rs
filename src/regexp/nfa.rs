@@ -220,10 +220,6 @@ fn make_one_arena_branch_fa(
                 "+/* must take the plus_star path, not the general {{n,m}} expansion"
             );
 
-            // The {0,0} case is left to the general path on purpose: the
-            // `for _ in 0..0 {}` loops produce a no-op, leaving `current_next`
-            // unchanged — semantically identical to a dedicated special case.
-
             // First, build the optional part (m-n copies, each with epsilon skip)
             for _ in n..m {
                 let atom_state = make_arena_atom_fa(qa, arena, current_next);
