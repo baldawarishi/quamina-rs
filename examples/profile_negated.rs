@@ -25,5 +25,5 @@ fn main() {
 
     let elapsed = start.elapsed();
     let ns_per_op = elapsed.as_nanos() / iterations;
-    eprintln!("{iterations} iterations in {elapsed:.2?} ({ns_per_op} ns/op)",);
+    eprintln!("{iterations} iterations in {elapsed:.2?} ({ns_per_op} ns/op)");
 }
