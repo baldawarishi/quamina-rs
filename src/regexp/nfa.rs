@@ -935,6 +935,10 @@ mod tests {
 
     #[test]
     fn test_before_after_surrogate() {
+        // The surrogate window (U+D800..=U+DFFF) is invalid UTF-8, so codepoint
+        // ranges that span it must be split at the window edges. These helpers
+        // identify the pre-window and post-window slices; the comparisons are
+        // strict (< / >), so D800 itself is not "before" and DFFF is not "after".
         assert!(before_surrogate(SURROGATE_START - 1));
         assert!(!before_surrogate(SURROGATE_START));
         assert!(!before_surrogate(SURROGATE_END));
