@@ -60,6 +60,20 @@ const LAZY_DFA_BUDGET_MULTIPLIER: usize = 10;
 #[cfg(not(miri))]
 const LAZY_DFA_BUDGET_CAP: usize = 10_000;
 
+/// Returns true when the value matcher should produce a Q-number encoding for
+/// the incoming value.
+const fn should_q_encode(has_numbers: bool, is_number: bool) -> bool {
+    has_numbers && is_number
+}
+
+/// Returns true when an arena is small enough that the lazy DFA cache is worth
+/// building (`LazyDfa::new` runs in O(nfa_states) per cached state, so very
+/// large NFAs would spend seconds on initialisation with no match-time win).
+#[cfg(not(miri))]
+const fn should_build_lazy_dfa(arena_len: usize) -> bool {
+    arena_len <= EAGER_DFA_BUDGET_CAP
+}
+
 /// Compact collection for `transition_on` results, optimized for the common cases.
 ///
 /// Most calls return 0 or 1 elements. This enum avoids both heap allocation (unlike Vec)
@@ -286,14 +300,15 @@ impl<X: Clone + Eq + Hash> FrozenValueMatcher<X> {
 
         // Try with Q-number conversion if this matcher has numbers and value is numeric
         // Use stack-allocated QNumberStack to avoid heap allocation
-        let q_num_storage: Option<crate::numbits::QNumberStack> = if self.has_numbers && is_number {
-            // Try to parse as f64 using fast-float (faster than std parse)
-            fast_float2::parse(value)
-                .ok()
-                .map(crate::numbits::q_num_stack)
-        } else {
-            None
-        };
+        let q_num_storage: Option<crate::numbits::QNumberStack> =
+            if should_q_encode(self.has_numbers, is_number) {
+                // Try to parse as f64 using fast-float (faster than std parse)
+                fast_float2::parse(value)
+                    .ok()
+                    .map(crate::numbits::q_num_stack)
+            } else {
+                None
+            };
         let value_to_match: &[u8] = match &q_num_storage {
             Some(q) => q.as_slice(),
             None => value,
@@ -840,7 +855,7 @@ impl<X: Clone + Eq + Hash + Send + Sync> ThreadSafeCoreMatcher<X> {
                     // Patterns with nfa_states ≤ EAGER_DFA_BUDGET_CAP initialise in
                     // < 300 µs (empirically ~28 ns/state); beyond that, fall through to
                     // Tier 3 (NFA traversal).
-                    if arena.len() <= EAGER_DFA_BUDGET_CAP {
+                    if should_build_lazy_dfa(arena.len()) {
                         let lazy_budget = eager_budget
                             .saturating_mul(LAZY_DFA_BUDGET_MULTIPLIER)
                             .min(LAZY_DFA_BUDGET_CAP);
@@ -1316,6 +1331,30 @@ impl<X: Clone + Eq + std::hash::Hash> ValueMatcher<X> {
 mod tests {
     use super::*;
     use crate::json::Matcher;
+
+    #[test]
+    fn test_should_q_encode_truth_table() {
+        // Exhaustively covers the `has_numbers && is_number` truth table so every
+        // mutation on the guard (`&&`→`||`, body→true/false) flips at least one
+        // case and fails the test.
+        assert!(should_q_encode(true, true));
+        assert!(!should_q_encode(true, false));
+        assert!(!should_q_encode(false, true));
+        assert!(!should_q_encode(false, false));
+    }
+
+    #[cfg(not(miri))]
+    #[test]
+    fn test_should_build_lazy_dfa_boundary() {
+        // Boundary check on `arena_len <= EAGER_DFA_BUDGET_CAP`. Tests above,
+        // at, and below the boundary so every comparison-operator mutation
+        // (`<=`→`<`, `==`, `>`, `>=`, body→true/false) breaks at least one case.
+        assert!(should_build_lazy_dfa(0));
+        assert!(should_build_lazy_dfa(EAGER_DFA_BUDGET_CAP - 1));
+        assert!(should_build_lazy_dfa(EAGER_DFA_BUDGET_CAP));
+        assert!(!should_build_lazy_dfa(EAGER_DFA_BUDGET_CAP + 1));
+        assert!(!should_build_lazy_dfa(usize::MAX));
+    }
 
     /// Guard against replacing Transitions with a larger type (e.g. SmallVec<[...; 4]> = 48 bytes).
     /// A larger return type from transition_on causes a measurable no-match regression because
