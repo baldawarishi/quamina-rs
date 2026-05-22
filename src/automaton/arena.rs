@@ -634,18 +634,14 @@ impl StateArena {
                 total_ceiling_entries +=
                     u32::try_from(nc).expect("ceiling count bounded by BYTE_CEILING");
                 let nc_u16 = u16::try_from(nc).expect("ceiling count bounded by BYTE_CEILING");
-                if nc_u16 > max_ceilings {
-                    max_ceilings = nc_u16;
-                }
+                max_ceilings = max_ceilings.max(nc_u16);
             }
 
             let ne = state.table.epsilons.len();
             if ne > 0 {
                 total_epsilons += u32::try_from(ne).expect("epsilon count bounded by BYTE_CEILING");
                 let ne_u16 = u16::try_from(ne).expect("epsilon count bounded by BYTE_CEILING");
-                if ne_u16 > max_epsilons {
-                    max_epsilons = ne_u16;
-                }
+                max_epsilons = max_epsilons.max(ne_u16);
             }
 
             if !state.field_transitions.is_empty() {
@@ -655,9 +651,7 @@ impl StateArena {
             if state.closure_len > 0 {
                 states_with_closures += 1;
                 total_closure_entries += u32::from(state.closure_len);
-                if state.closure_len > max_closure_len {
-                    max_closure_len = state.closure_len;
-                }
+                max_closure_len = max_closure_len.max(state.closure_len);
             }
         }
 
@@ -747,6 +741,12 @@ impl StateArena {
                             if idx < seen.capacity() && seen.insert(idx) {
                                 closure_buf.push(eps_id);
                                 stack.push(eps_id);
+                                // Closure size invariant: a single state's epsilon closure
+                                // can include at most every state in the arena exactly once.
+                                debug_assert!(
+                                    closure_buf.len() <= self.states.len(),
+                                    "epsilon closure exceeds state count — seen set drift"
+                                );
                             }
                         }
                     }
@@ -1287,12 +1287,15 @@ pub(crate) fn traverse_lazy_dfa(lazy_dfa: &mut LazyDfa, val: &[u8], transitions:
     transitions.extend_from_slice(&lazy_dfa.states[0].field_transition_ptrs);
 
     while i <= len {
-        // Acceleration: for self-loop states with memchr exit bytes, skip ahead
-        if i < len
-            && let Some(ref accel) = lazy_dfa.states[current.index()].accel
+        // Acceleration: for self-loop states with memchr exit bytes, skip ahead.
+        // At i == len, &val[i..] is the empty slice and try_accelerate returns
+        // None, so an explicit `i < len` bounds guard would be redundant here.
+        if let Some(ref accel) = lazy_dfa.states[current.index()].accel
             && let Some(skip) = accel.try_accelerate(&val[i..])
-            && skip > 0
+            && skip != 0
         {
+            // Loop-progress invariant: an accelerated `continue` must advance `i`.
+            debug_assert!(skip > 0, "lazy-DFA acceleration must advance i");
             i += skip;
             continue;
         }
@@ -1310,11 +1313,19 @@ pub(crate) fn traverse_lazy_dfa(lazy_dfa: &mut LazyDfa, val: &[u8], transitions:
 
         // Detect self-loop and try to compute acceleration for future bytes
         if next == current && lazy_dfa.states[current.index()].accel.is_none() {
+            // Invariant: accel is only computed for genuine self-loop states.
+            debug_assert!(
+                next == current,
+                "lazy-DFA accel must only be computed on self-loop states"
+            );
             lazy_dfa.try_compute_accel(current, &mut scratch);
         }
 
         current = next;
+        let _prev_i = i;
         i += 1;
+        // Loop-progress invariant: every byte step must advance `i`.
+        debug_assert!(i > _prev_i, "lazy-DFA byte step must advance i");
 
         // Collect field transitions
         transitions.extend_from_slice(&lazy_dfa.states[current.index()].field_transition_ptrs);
@@ -1408,13 +1419,25 @@ pub fn traverse_arena_nfa(arena: &StateArena, start: StateId, val: &[u8], bufs: 
 
         // State acceleration: For ASCII-only negated patterns like [^x]+, use memchr
         // to skip directly to exit bytes. This is enabled when patterns have 1-3 exit bytes.
-        if i < len && bufs.current_states.len() == 1 {
+        // At i == len, &val[i..] is empty and try_accelerate_arena returns None, so an
+        // explicit `i < len` bounds guard would be redundant.
+        if bufs.current_states.len() == 1 {
+            // Invariant: acceleration only applies to single-state closures.
+            debug_assert_eq!(
+                bufs.current_states.len(),
+                1,
+                "arena NFA acceleration requires a single active state"
+            );
             let state_id = bufs.current_states[0];
             let state = &arena[state_id];
             if let Some(skip) = try_accelerate_arena(&state.table, &val[i..])
-                && skip > 0
+                && skip != 0
             {
+                // Loop-progress invariant: accelerated continue must advance `i`.
+                debug_assert!(skip > 0, "arena NFA acceleration must advance i");
+                let _prev_i = i;
                 i += skip;
+                debug_assert!(i > _prev_i, "arena NFA accelerated step must advance i");
                 continue;
             }
         }
@@ -1442,6 +1465,12 @@ pub fn traverse_arena_nfa(arena: &StateArena, start: StateId, val: &[u8], bufs: 
                 let closure = arena.closure_of(state_id);
 
                 if closure.len() == 1 {
+                    // Invariant: closure fast path requires a single-state closure.
+                    debug_assert_eq!(
+                        closure.len(),
+                        1,
+                        "closure fast path requires a single-state closure"
+                    );
                     for ft in &arena[state_id].field_transitions {
                         let ptr = Arc::as_ptr(ft) as usize;
                         if seen_transitions.insert(ptr) {
@@ -1473,6 +1502,12 @@ pub fn traverse_arena_nfa(arena: &StateArena, start: StateId, val: &[u8], bufs: 
                 let closure = arena.closure_of(state_id);
 
                 if closure.len() == 1 {
+                    // Invariant: closure fast path requires a single-state closure.
+                    debug_assert_eq!(
+                        closure.len(),
+                        1,
+                        "closure fast path requires a single-state closure"
+                    );
                     for &ptr in arena.ft_ptrs_of(state_id) {
                         if seen_transitions.insert(ptr) {
                             transitions.push(ptr);
@@ -1501,8 +1536,18 @@ pub fn traverse_arena_nfa(arena: &StateArena, start: StateId, val: &[u8], bufs: 
         // Nested quantifiers like (([abc]?)*)+ create epsilon loops that
         // cause duplicate states to compound exponentially across steps.
         // Dedup in-place using a generation counter when growth is detected.
-        if next_states.len() > 64 {
+        if should_dedup_next_states(next_states.len()) {
+            debug_assert!(
+                next_states.len() > 64,
+                "dedup body only valid when next_states grew beyond 64"
+            );
+            let _prev_gen = *step_gen;
             *step_gen += 1;
+            // Generation must increment so prior seen_states entries are stale.
+            debug_assert!(
+                *step_gen > _prev_gen,
+                "generation counter must increment on each dedup pass"
+            );
             let generation = *step_gen;
             let mut j = 0;
             for i_ns in 0..next_states.len() {
@@ -1519,7 +1564,10 @@ pub fn traverse_arena_nfa(arena: &StateArena, start: StateId, val: &[u8], bufs: 
         // Swap buffers — clear+swap preserves capacity on both Vecs
         current_states.clear();
         std::mem::swap(current_states, next_states);
+        let _prev_i = i;
         i += 1;
+        // Loop-progress invariant: every iteration must advance `i`.
+        debug_assert!(i > _prev_i, "arena NFA byte step must advance i");
     }
 
     // Check final states for matches (split borrows to avoid take)
@@ -1533,6 +1581,12 @@ pub fn traverse_arena_nfa(arena: &StateArena, start: StateId, val: &[u8], bufs: 
         for &state_id in current_states {
             let closure = arena.closure_of(state_id);
             if closure.len() == 1 {
+                // Invariant: singleton fast path must not run on multi-state closures.
+                debug_assert_eq!(
+                    closure.len(),
+                    1,
+                    "closure fast path requires a single-state closure"
+                );
                 for ft in &arena[state_id].field_transitions {
                     let ptr = Arc::as_ptr(ft) as usize;
                     if seen_transitions.insert(ptr) {
@@ -1554,6 +1608,12 @@ pub fn traverse_arena_nfa(arena: &StateArena, start: StateId, val: &[u8], bufs: 
         for &state_id in current_states {
             let closure = arena.closure_of(state_id);
             if closure.len() == 1 {
+                // Invariant: singleton fast path must not run on multi-state closures.
+                debug_assert_eq!(
+                    closure.len(),
+                    1,
+                    "closure fast path requires a single-state closure"
+                );
                 for &ptr in arena.ft_ptrs_of(state_id) {
                     if seen_transitions.insert(ptr) {
                         transitions.push(ptr);
@@ -1609,10 +1669,10 @@ pub fn traverse_arena_dfa(
         }
 
         // Acceleration: for self-loop states with 1-3 exit bytes, use memchr
-        // to skip directly to the next interesting byte.
-        if i < len
-            && let Some(skip) = try_accelerate_arena(&arena[current].table, &val[i..])
-            && skip > 0
+        // to skip directly to the next interesting byte. At i == len, &val[i..]
+        // is empty and try_accelerate_arena returns None.
+        if let Some(skip) = try_accelerate_arena(&arena[current].table, &val[i..])
+            && skip != 0
         {
             // A self-loop (accelerated) state must not be accepting. If it were,
             // the FT collection at the top of this loop would fire again on the
@@ -1626,7 +1686,11 @@ pub fn traverse_arena_dfa(
                 },
                 "accelerated state {current:?} has field transitions; they would be collected redundantly on each skip"
             );
+            // Loop-progress invariant: accelerated step must advance `i`.
+            debug_assert!(skip > 0, "arena DFA acceleration must advance i");
+            let _prev_i = i;
             i += skip;
+            debug_assert!(i > _prev_i, "arena DFA accelerated step must advance i");
             continue;
         }
 
@@ -1641,7 +1705,10 @@ pub fn traverse_arena_dfa(
             return;
         }
         current = next;
+        let _prev_i = i;
         i += 1;
+        // Loop-progress invariant on the byte step.
+        debug_assert!(i > _prev_i, "arena DFA byte step must advance i");
     }
 
     if has_flat {
@@ -1670,7 +1737,11 @@ pub fn traverse_arena_dfa_backward(
     val: &[u8],
     transitions: &mut Vec<usize>,
 ) {
-    if start.is_none() || val.is_empty() {
+    // Early-return on empty start or empty value (split into two `if`s for clarity).
+    if start.is_none() {
+        return;
+    }
+    if val.is_empty() {
         return;
     }
 
@@ -1808,10 +1879,8 @@ fn clone_state_recursive(
         new_table.epsilons.push(new_eps);
     }
 
-    // Remap default
-    if !old_table.default.is_none() {
-        new_table.default = clone_state_recursive(arena, old_table.default, new_arena, id_map);
-    }
+    // Remap default. `clone_state_recursive` returns NONE for a NONE input.
+    new_table.default = clone_state_recursive(arena, old_table.default, new_arena, id_map);
 
     new_arena[new_id].table = new_table;
 
@@ -1921,8 +1990,9 @@ fn remap_table_recursive(
         }
     }
 
-    // Remap default
-    if !table.default.is_none() {
+    // Remap default. `merge_arena_states_recursive` returns NONE when both
+    // sides are NONE, so calling it unconditionally with a NONE default is a no-op.
+    {
         let merged = if is_arena1 {
             merge_arena_states_recursive(
                 source_arena,
@@ -2004,7 +2074,7 @@ fn merge_arena_tables(
     let mut result = SmallTable::new();
     result.pack(&merged_unpacked);
 
-    // Merge epsilons (for DFA, these should be empty, but handle them anyway)
+    // Merge epsilons (for DFA, these should be empty, but handle them anyway).
     for &eps1 in &table1.epsilons {
         let merged =
             merge_arena_states_recursive(arena1, eps1, arena2, StateId::NONE, new_arena, memo);
@@ -2028,9 +2098,18 @@ fn unpack_arena_table(table: &SmallTable, unpacked: &mut [StateId; BYTE_CEILING]
     let mut byte_idx = 0usize;
     for (i, &ceiling) in table.ceilings.iter().enumerate() {
         let ceiling = ceiling as usize;
-        while byte_idx < ceiling && byte_idx < BYTE_CEILING {
+        // Ceilings are u8 values bounded by `BYTE_CEILING`, so `byte_idx < ceiling`
+        // keeps the write in-bounds without a redundant `byte_idx < BYTE_CEILING` guard.
+        debug_assert!(
+            ceiling <= BYTE_CEILING,
+            "ceiling must not exceed BYTE_CEILING"
+        );
+        while byte_idx < ceiling {
             unpacked[byte_idx] = table.steps[i];
+            let _prev = byte_idx;
             byte_idx += 1;
+            // Loop-progress invariant.
+            debug_assert!(byte_idx > _prev, "unpack_arena_table must advance byte_idx");
         }
     }
 }
@@ -2138,6 +2217,68 @@ fn flatten_epsilon_targets(arena: &StateArena, states: &[StateId]) -> SmallVec<[
     targets
 }
 
+/// Returns true when at least one side has epsilons — the Case 3 (epsilon
+/// splice) dispatch in `merge_arena_nfa_states_recursive`.
+const fn case_3_needs_splice(s1_has_epsilons: bool, s2_has_epsilons: bool) -> bool {
+    s1_has_epsilons || s2_has_epsilons
+}
+
+/// Threshold for the in-place dedup pass in `traverse_arena_nfa`. Nested
+/// quantifiers like `(([abc]?)*)+` create epsilon loops that compound
+/// duplicate state entries across byte steps; dedup when growth crosses 64.
+const fn should_dedup_next_states(len: usize) -> bool {
+    len > 64
+}
+
+/// Returns true when a spinner state's transition for a byte loops back to
+/// the spinner itself.
+const fn is_spinner_self_loop(spinner_next: StateId, spinner_id: StateId) -> bool {
+    spinner_next.0 == spinner_id.0
+}
+
+/// Returns true when both bounds of a numeric range are inclusive.
+const fn both_bounds_inclusive(lower_incl: bool, upper_incl: bool) -> bool {
+    lower_incl && upper_incl
+}
+
+/// Returns true when both monocase suffixes have been fully consumed by the
+/// common prefix.
+const fn both_suffixes_empty(orig_empty: bool, alt_empty: bool) -> bool {
+    orig_empty && alt_empty
+}
+
+/// Returns true when a state's table has a default transition assigned
+/// (i.e. not NONE).
+const fn has_non_none_default(default: StateId) -> bool {
+    !default.is_none()
+}
+
+/// Returns the left-shift amount used to build a partial-group mask in an
+/// IPv6 CIDR range. With `constrained_bits` bits of the group fixed by the
+/// prefix length, the variable suffix is `16 - constrained_bits` bits wide,
+/// so the mask is `!0u16 << (16 - constrained_bits)`.
+// Truncation cast: `debug_assert!` above bounds the input below 16, so the
+// result trivially fits in u32.
+#[allow(clippy::cast_possible_truncation)]
+const fn ipv6_group_mask_shift(constrained_bits: usize) -> u32 {
+    debug_assert!(constrained_bits < 16);
+    (16 - constrained_bits) as u32
+}
+
+/// Returns true when exactly one of the two states is a spinout and the OTHER
+/// side has no epsilons of its own — the asymmetric-spinner merge case in
+/// `merge_arena_nfa_states_recursive`.
+// Four bools encode an NFA-merge dispatch; a struct here would obscure the dispatch.
+#[allow(clippy::fn_params_excessive_bools)]
+const fn is_asymmetric_spinner_case(
+    s1_has_spinout: bool,
+    s1_has_epsilons: bool,
+    s2_has_spinout: bool,
+    s2_has_epsilons: bool,
+) -> bool {
+    (s1_has_spinout && !s2_has_epsilons) || (s2_has_spinout && !s1_has_epsilons)
+}
+
 /// Check if a state is a spinner/spinout state (self-loop in transition table).
 ///
 /// Spinner states are used for wildcard patterns. The convention is:
@@ -2211,6 +2352,11 @@ fn merge_arena_nfa_states_recursive(
 
     // Case 1: Both have spinouts - merge them recursively
     if s1_has_spinout && s2_has_spinout {
+        // Invariant: Case 1 requires both sides to be spinout states.
+        debug_assert!(
+            s1_has_spinout && s2_has_spinout,
+            "Case 1 dispatch requires both sides to be spinout"
+        );
         merge_dual_spinout_states(arena1, s1, arena2, s2, new_arena, memo, new_id);
         return new_id;
     }
@@ -2219,7 +2365,12 @@ fn merge_arena_nfa_states_recursive(
     // Mirrors Go's asymmetricSpinnerMerge: when a spinout is merged with a
     // non-epsilon state, we can avoid creating splice states by inlining the
     // epsilon-to-spinner relationship into the merged table.
-    if (s1_has_spinout && !s2_has_epsilons) || (s2_has_spinout && !s1_has_epsilons) {
+    if is_asymmetric_spinner_case(
+        s1_has_spinout,
+        s1_has_epsilons,
+        s2_has_spinout,
+        s2_has_epsilons,
+    ) {
         return asymmetric_spinner_merge(
             arena1,
             state1,
@@ -2232,10 +2383,8 @@ fn merge_arena_nfa_states_recursive(
         );
     }
 
-    // Case 3: Either has epsilons (but not both spinouts) - create splice
-    // Flatten epsilon targets to prevent deep nesting from repeated merges.
-    // (Mirrors Go PR #486: flattenEpsilonTargets)
-    if s1_has_epsilons || s2_has_epsilons {
+    // Case 3: Either has epsilons (but not both spinouts) - create splice.
+    if case_3_needs_splice(s1_has_epsilons, s2_has_epsilons) {
         let mut clone_map1: FxHashMap<u32, StateId> = FxHashMap::default();
         let mut clone_map2: FxHashMap<u32, StateId> = FxHashMap::default();
         let cloned1 = clone_state_into_arena(arena1, state1, new_arena, &mut clone_map1);
@@ -2328,6 +2477,17 @@ fn asymmetric_spinner_merge(
 ) -> StateId {
     let s1 = &arena1[state1];
     let s2 = &arena2[state2];
+    // Caller-side dispatch invariant: the non-spinner side must NOT have its
+    // own epsilons (otherwise Case 3 in `merge_arena_nfa_states_recursive`
+    // should have handled it).
+    debug_assert!(
+        if s1_has_spinout {
+            s2.table.epsilons.is_empty()
+        } else {
+            s1.table.epsilons.is_empty()
+        },
+        "asymmetric_spinner_merge: non-spinner side must have no epsilons"
+    );
     let (spinner_arena, spinner_id, spinner_table, other_arena, other_table) = if s1_has_spinout {
         (arena1, state1, &s1.table, arena2, &s2.table)
     } else {
@@ -2423,7 +2583,7 @@ fn merge_asymmetric_spinner_byte(
 
     if other_next.is_none() {
         // Only the spinner has a transition - remap it.
-        if spinner_next == spinner_id {
+        if is_spinner_self_loop(spinner_next, spinner_id) {
             return new_id; // self-loop maps to combined
         }
         return if s1_has_spinout {
@@ -2447,7 +2607,7 @@ fn merge_asymmetric_spinner_byte(
         };
     }
 
-    if spinner_next == spinner_id {
+    if is_spinner_self_loop(spinner_next, spinner_id) {
         // Spinner self-loops here AND other has a branch. Create a state with the
         // other's transitions plus an epsilon back to the combined spinner. This is
         // the key optimization: avoid a full merge, just add an epsilon.
@@ -2470,17 +2630,22 @@ fn merge_asymmetric_spinner_byte(
                 memo,
             )
         };
-        if !remapped_other.is_none() {
-            new_arena[remapped_other].table.epsilons.push(new_id);
-            // Copy the spinner's field transitions onto the escape state.
-            let spinner_fts = if s1_has_spinout {
-                &arena1[state1].field_transitions
-            } else {
-                &arena2[state2].field_transitions
-            };
-            for ft in spinner_fts {
-                new_arena[remapped_other].field_transitions.push(ft.clone());
-            }
+        // `other_next` was rejected as NONE earlier in this function, and
+        // `merge_arena_nfa_states_recursive` returns NONE only when BOTH inputs
+        // are NONE — so `remapped_other` is structurally non-NONE here.
+        debug_assert!(
+            !remapped_other.is_none(),
+            "remapped_other must not be NONE here"
+        );
+        new_arena[remapped_other].table.epsilons.push(new_id);
+        // Copy the spinner's field transitions onto the escape state.
+        let spinner_fts = if s1_has_spinout {
+            &arena1[state1].field_transitions
+        } else {
+            &arena2[state2].field_transitions
+        };
+        for ft in spinner_fts {
+            new_arena[remapped_other].field_transitions.push(ft.clone());
         }
         return remapped_other;
     }
@@ -2506,9 +2671,13 @@ fn merge_asymmetric_spinner_byte(
             memo,
         )
     };
-    if !merged_branch.is_none() {
-        new_arena[merged_branch].table.epsilons.push(new_id);
-    }
+    // Both `spinner_next` and `other_next` are non-NONE here (NONE cases
+    // returned earlier), so `merge_arena_nfa_states_recursive` cannot return NONE.
+    debug_assert!(
+        !merged_branch.is_none(),
+        "merged_branch must not be NONE here"
+    );
+    new_arena[merged_branch].table.epsilons.push(new_id);
     merged_branch
 }
 
@@ -2562,11 +2731,9 @@ fn clone_state_into_arena(
         new_table.epsilons.push(new_eps);
     }
 
-    // Remap default
-    if !old_table.default.is_none() {
-        new_table.default =
-            clone_state_into_arena(source_arena, old_table.default, target_arena, id_map);
-    }
+    // Remap default. `clone_state_into_arena` returns NONE for a NONE input.
+    new_table.default =
+        clone_state_into_arena(source_arena, old_table.default, target_arena, id_map);
 
     target_arena[new_id].table = new_table;
 
@@ -2617,29 +2784,28 @@ fn remap_nfa_table_recursive(
         }
     }
 
-    // Remap default
-    if !table.default.is_none() {
-        let merged = if is_arena1 {
-            merge_arena_nfa_states_recursive(
-                source_arena,
-                table.default,
-                _other_arena,
-                StateId::NONE,
-                new_arena,
-                memo,
-            )
-        } else {
-            merge_arena_nfa_states_recursive(
-                _other_arena,
-                StateId::NONE,
-                source_arena,
-                table.default,
-                new_arena,
-                memo,
-            )
-        };
-        new_table.default = merged;
-    }
+    // Remap default. `merge_arena_nfa_states_recursive` returns NONE when both
+    // sides are NONE, so calling it unconditionally with a NONE default is a no-op.
+    let merged_default = if is_arena1 {
+        merge_arena_nfa_states_recursive(
+            source_arena,
+            table.default,
+            _other_arena,
+            StateId::NONE,
+            new_arena,
+            memo,
+        )
+    } else {
+        merge_arena_nfa_states_recursive(
+            _other_arena,
+            StateId::NONE,
+            source_arena,
+            table.default,
+            new_arena,
+            memo,
+        )
+    };
+    new_table.default = merged_default;
 
     for &eps_id in &table.epsilons {
         if eps_id.is_none() {
@@ -2700,7 +2866,7 @@ fn merge_nfa_tables_bytewise(
     let mut result = SmallTable::new();
     result.pack(&merged_unpacked);
 
-    // Merge epsilons - collect all unique epsilons
+    // Merge epsilons - collect all unique epsilons.
     for &eps1 in &table1.epsilons {
         let merged =
             merge_arena_nfa_states_recursive(arena1, eps1, arena2, StateId::NONE, new_arena, memo);
@@ -2953,9 +3119,9 @@ fn make_range_arena_fa_step(
 
     // Both bounds exhausted - check terminators
     if lower_done && upper_done {
-        // Input has same length as both bounds
-        // VALUE_TERMINATOR means we've matched both bounds exactly
-        if lower_incl && upper_incl {
+        // Input has same length as both bounds.
+        // VALUE_TERMINATOR means we've matched both bounds exactly.
+        if both_bounds_inclusive(lower_incl, upper_incl) {
             // Both inclusive - accept equal
             return arena.alloc_with_table(SmallTable::with_mappings(
                 StateId::NONE,
@@ -3311,6 +3477,7 @@ pub fn make_shellstyle_arena_fa(
     let mut i = 0;
 
     while i < pattern.len() {
+        let _prev_i = i;
         let ch = pattern[i];
         if ch == b'*' {
             // Current state becomes an epsilon-only junction before the spinner.
@@ -3341,6 +3508,11 @@ pub fn make_shellstyle_arena_fa(
             state = next_step;
         }
         i += 1;
+        // Loop-progress invariant: each iteration must advance `i`.
+        debug_assert!(
+            i > _prev_i,
+            "make_shellstyle_arena_fa must advance i each iteration"
+        );
     }
 
     // Add VALUE_TERMINATOR → last_step on the final state.
@@ -3468,7 +3640,10 @@ fn make_byte_dot_table(dest: StateId) -> SmallTable {
 /// - `\\` matches literal backslash
 ///
 /// # Arguments
-/// * `pattern` - The pattern bytes (with `*` as wildcard, `\` for escape)
+/// * `pattern` - The pattern bytes (with `*` as wildcard, `\` for escape).
+///   The pattern must already have been accepted by `validate_wildcard` —
+///   in particular, a trailing single `\` is rejected upstream. Passing a
+///   raw pattern that ends in `\` will panic on the escaped-byte read.
 /// * `next_field` - The field matcher to transition to on match
 ///
 /// # Returns
@@ -3505,10 +3680,17 @@ fn parse_wildcard_segments(pattern: &[u8]) -> Vec<ShellstyleSegment> {
     let mut i = 0;
 
     while i < pattern.len() {
+        let _prev_i = i;
         if pattern[i] == b'*' {
             segments.push(ShellstyleSegment::Wildcard);
             i += 1;
-        } else if pattern[i] == b'\\' && i + 1 < pattern.len() {
+        } else if pattern[i] == b'\\' {
+            // validate_wildcard rejects a trailing `\\`, so by the time we reach
+            // this function `\\` is always followed by another byte.
+            debug_assert!(
+                i + 1 < pattern.len(),
+                "validate_wildcard must reject patterns ending in a single backslash"
+            );
             // Escape sequence - consume the escaped character
             let escaped = pattern[i + 1];
             // Start or extend literal segment with escaped character
@@ -3527,6 +3709,11 @@ fn parse_wildcard_segments(pattern: &[u8]) -> Vec<ShellstyleSegment> {
             }
             i += 1;
         }
+        // Loop-progress invariant: each iteration must advance `i` by 1 or 2.
+        debug_assert!(
+            i > _prev_i,
+            "parse_wildcard_segments must advance i each iteration"
+        );
     }
 
     segments
@@ -3579,13 +3766,13 @@ fn build_anything_but_step(
         let last_index = val.len().saturating_sub(1);
         if index <= last_index && !val.is_empty() {
             let utf8_byte = val[index];
+            // Each byte goes to exactly one bucket: continuation or ending.
             if index < last_index {
                 vals_with_bytes_remaining
                     .entry(utf8_byte)
                     .or_default()
                     .push(val);
-            }
-            if index == last_index {
+            } else if index == last_index {
                 vals_ending_here.insert(utf8_byte);
             }
         }
@@ -3625,12 +3812,13 @@ fn build_anything_but_step(
                 combined_unpacked[byte as usize] = next;
             }
 
-            // Also copy default if continuation has one
-            if !arena[continuation].table.default.is_none() {
+            // Also copy default if continuation has one.
+            let continuation_default = arena[continuation].table.default;
+            if has_non_none_default(continuation_default) {
                 // Fill non-sparse positions with continuation's default
                 for slot in &mut combined_unpacked {
                     if *slot == success {
-                        *slot = arena[continuation].table.default;
+                        *slot = continuation_default;
                     }
                 }
             }
@@ -3756,20 +3944,13 @@ fn build_monocase_ascii_chain(val: &[u8], match_state: StateId, arena: &mut Stat
         };
 
         let state = if let Some(alt) = alt_byte {
-            // Two paths to next state
-            if byte < alt {
-                arena.alloc_with_table(SmallTable::with_mappings(
-                    StateId::NONE,
-                    &[byte, alt],
-                    &[current_next, current_next],
-                ))
-            } else {
-                arena.alloc_with_table(SmallTable::with_mappings(
-                    StateId::NONE,
-                    &[alt, byte],
-                    &[current_next, current_next],
-                ))
-            }
+            // Two paths to the same next state. `with_mappings` writes into a
+            // 256-entry unpacked array, so argument order is irrelevant.
+            arena.alloc_with_table(SmallTable::with_mappings(
+                StateId::NONE,
+                &[byte, alt],
+                &[current_next, current_next],
+            ))
         } else {
             // Single path
             arena.alloc_with_table(SmallTable::with_mappings(
@@ -3820,63 +4001,51 @@ fn build_monocase_arena_recursive(
             let orig_state = build_arena_fragment(orig, next_state, arena);
             let alt_state = build_arena_fragment(alt_bytes, next_state, arena);
 
-            if orig[0] < alt_bytes[0] {
-                arena.alloc_with_table(SmallTable::with_mappings(
-                    StateId::NONE,
-                    &[orig[0], alt_bytes[0]],
-                    &[orig_state, alt_state],
-                ))
-            } else {
-                arena.alloc_with_table(SmallTable::with_mappings(
-                    StateId::NONE,
-                    &[alt_bytes[0], orig[0]],
-                    &[alt_state, orig_state],
-                ))
-            }
+            // `with_mappings` writes each (byte, target) pair into a 256-entry
+            // unpacked array, so argument order is irrelevant.
+            arena.alloc_with_table(SmallTable::with_mappings(
+                StateId::NONE,
+                &[orig[0], alt_bytes[0]],
+                &[orig_state, alt_state],
+            ))
         } else {
             // Common prefix - share states for common bytes, then branch
             let orig_suffix = &orig[common_prefix..];
             let alt_suffix = &alt_bytes[common_prefix..];
 
-            // Build the divergent part
-            let diverge_state = if orig_suffix.is_empty() && alt_suffix.is_empty() {
-                // Identical after common prefix
-                next_state
-            } else if orig_suffix.is_empty() {
-                // Original is done, alternate has more bytes
-                let alt_state = build_arena_fragment(alt_suffix, next_state, arena);
-                arena.alloc_with_table(SmallTable::with_mappings(
-                    StateId::NONE,
-                    &[alt_suffix[0]],
-                    &[alt_state],
-                ))
-            } else if alt_suffix.is_empty() {
-                // Alternate is done, original has more bytes
-                let orig_state = build_arena_fragment(orig_suffix, next_state, arena);
-                arena.alloc_with_table(SmallTable::with_mappings(
-                    StateId::NONE,
-                    &[orig_suffix[0]],
-                    &[orig_state],
-                ))
-            } else {
-                // Both have remaining bytes
-                let orig_state = build_arena_fragment(orig_suffix, next_state, arena);
-                let alt_state = build_arena_fragment(alt_suffix, next_state, arena);
-
-                if orig_suffix[0] < alt_suffix[0] {
+            // Build the divergent part.
+            let diverge_state =
+                if both_suffixes_empty(orig_suffix.is_empty(), alt_suffix.is_empty()) {
+                    // Identical after common prefix
+                    next_state
+                } else if orig_suffix.is_empty() {
+                    // Original is done, alternate has more bytes
+                    let alt_state = build_arena_fragment(alt_suffix, next_state, arena);
+                    arena.alloc_with_table(SmallTable::with_mappings(
+                        StateId::NONE,
+                        &[alt_suffix[0]],
+                        &[alt_state],
+                    ))
+                } else if alt_suffix.is_empty() {
+                    // Alternate is done, original has more bytes
+                    let orig_state = build_arena_fragment(orig_suffix, next_state, arena);
+                    arena.alloc_with_table(SmallTable::with_mappings(
+                        StateId::NONE,
+                        &[orig_suffix[0]],
+                        &[orig_state],
+                    ))
+                } else {
+                    // Both have remaining bytes. As above, `with_mappings` doesn't
+                    // care about argument order — a sorted/unsorted dispatch would
+                    // produce the same SmallTable, so collapse to a single call.
+                    let orig_state = build_arena_fragment(orig_suffix, next_state, arena);
+                    let alt_state = build_arena_fragment(alt_suffix, next_state, arena);
                     arena.alloc_with_table(SmallTable::with_mappings(
                         StateId::NONE,
                         &[orig_suffix[0], alt_suffix[0]],
                         &[orig_state, alt_state],
                     ))
-                } else {
-                    arena.alloc_with_table(SmallTable::with_mappings(
-                        StateId::NONE,
-                        &[alt_suffix[0], orig_suffix[0]],
-                        &[alt_state, orig_state],
-                    ))
-                }
-            };
+                };
 
             // Now build the common prefix chain leading to diverge_state
             // Must build a proper chain for all prefix bytes, including single-byte prefixes
@@ -4072,7 +4241,8 @@ fn make_ipv6_cidr_arena_fa(
         let group_start_bit = group_idx * 16;
         let group_end_bit = group_start_bit + 16;
 
-        let group_value = (u16::from(network[byte_idx]) << 8) | u16::from(network[byte_idx + 1]);
+        // Pack the two network bytes for this group into a u16.
+        let group_value = u16::from_be_bytes([network[byte_idx], network[byte_idx + 1]]);
 
         let (min_val, max_val) = if prefix_len as usize >= group_end_bit {
             (group_value, group_value)
@@ -4080,9 +4250,10 @@ fn make_ipv6_cidr_arena_fa(
             (0u16, 0xffffu16)
         } else {
             let constrained_bits = prefix_len as usize - group_start_bit;
-            let mask = !0u16 << (16 - constrained_bits);
+            let shift = ipv6_group_mask_shift(constrained_bits);
+            let mask = !0u16 << shift;
             let base = group_value & mask;
-            let range_size = 1u32 << (16 - constrained_bits);
+            let range_size = 1u32 << shift;
             (base, (u32::from(base) + range_size - 1).min(0xffff) as u16)
         };
 
@@ -5009,29 +5180,361 @@ mod arena_stats_utility_tests {
         let s2 = arena.alloc();
         let s3 = arena.alloc();
 
-        // s0: 2 ceilings (non-trivial), 0 epsilons
-        arena[s0].table.ceilings = smallvec![b'a', BYTE_CEILING_U8];
-        arena[s0].table.steps = smallvec![s1, StateId::NONE];
+        // The largest state is allocated FIRST so a mutated max-fold that keeps
+        // the *last* seen value (max = nc_u16) instead of the running max is
+        // caught: the true max would no longer equal the last counted state's
+        // count.
+
+        // s0: 4 ceilings (non-trivial), 3 epsilons — the max for BOTH fields
+        arena[s0].table.ceilings = smallvec![b'a', b'b', b'c', BYTE_CEILING_U8];
+        arena[s0].table.steps = smallvec![s1, s2, s3, StateId::NONE];
+        arena[s0].table.epsilons.push(s1);
+        arena[s0].table.epsilons.push(s2);
+        arena[s0].table.epsilons.push(s3);
 
         // s1: 3 ceilings (non-trivial), 1 epsilon
         arena[s1].table.ceilings = smallvec![b'a', b'b', BYTE_CEILING_U8];
         arena[s1].table.steps = smallvec![s0, s2, StateId::NONE];
         arena[s1].table.epsilons.push(s3);
 
-        // s2: 4 ceilings (non-trivial), 2 epsilons
-        arena[s2].table.ceilings = smallvec![b'a', b'b', b'c', BYTE_CEILING_U8];
-        arena[s2].table.steps = smallvec![s0, s1, s3, StateId::NONE];
-        arena[s2].table.epsilons.push(s0);
-        arena[s2].table.epsilons.push(s1);
+        // s2: 2 ceilings (non-trivial), 0 epsilons — last counted, smaller
+        arena[s2].table.ceilings = smallvec![b'a', BYTE_CEILING_U8];
+        arena[s2].table.steps = smallvec![s0, StateId::NONE];
 
         // s3: default table (1 ceiling = trivial), 0 epsilons
 
         let stats = arena.stats();
         assert_eq!(stats.state_count, 4);
         assert_eq!(stats.tables_with_transitions, 3); // s0, s1, s2
-        assert_eq!(stats.max_ceilings, 4); // s2 has 4
-        assert_eq!(stats.total_epsilons, 3); // 0 + 1 + 2 + 0
-        assert_eq!(stats.max_epsilons, 2); // s2 has 2
+        assert_eq!(stats.total_ceiling_entries, 9); // 4 + 3 + 2
+        assert_eq!(stats.max_ceilings, 4); // s0 has 4 (allocated first)
+        assert_eq!(stats.total_epsilons, 4); // 3 + 1 + 0 + 0
+        assert_eq!(stats.max_epsilons, 3); // s0 has 3 (allocated first)
+    }
+
+    #[test]
+    fn test_nfa_buffers_with_capacity_preallocates() {
+        // with_capacity() must pre-allocate non-zero capacity for the hot vectors.
+        // A mutated `with_capacity` returning `Self::default()` would leave the
+        // Vec capacities at 0, so asserting `>= 16` catches the swap.
+        let bufs = NfaBuffers::with_capacity();
+        assert!(
+            bufs.current_states.capacity() >= 16,
+            "current_states must be pre-allocated, got cap={}",
+            bufs.current_states.capacity()
+        );
+        assert!(
+            bufs.next_states.capacity() >= 16,
+            "next_states must be pre-allocated, got cap={}",
+            bufs.next_states.capacity()
+        );
+
+        // The default constructor on the other hand should NOT pre-allocate —
+        // documents the intentional difference between the two constructors.
+        let empty = NfaBuffers::new();
+        assert_eq!(empty.current_states.capacity(), 0);
+        assert_eq!(empty.next_states.capacity(), 0);
+    }
+
+    #[test]
+    fn test_ipv6_group_mask_shift() {
+        // The shift amount is `16 - constrained_bits`. The `-`→`/`/`+` mutants
+        // each produce a different result for at least one of these inputs.
+        assert_eq!(ipv6_group_mask_shift(0), 16);
+        assert_eq!(ipv6_group_mask_shift(4), 12);
+        assert_eq!(ipv6_group_mask_shift(8), 8);
+        assert_eq!(ipv6_group_mask_shift(12), 4);
+        assert_eq!(ipv6_group_mask_shift(15), 1);
+    }
+
+    #[test]
+    fn test_has_non_none_default_truth_table() {
+        // Direct truth table for the `!default.is_none()` helper. The
+        // `delete !` mutant flips the boolean and at least one of these
+        // assertions fails.
+        assert!(!has_non_none_default(StateId::NONE));
+        assert!(has_non_none_default(StateId::from_index(0)));
+        assert!(has_non_none_default(StateId::from_index(7)));
+    }
+
+    #[test]
+    fn test_both_suffixes_empty_truth_table() {
+        assert!(both_suffixes_empty(true, true));
+        assert!(!both_suffixes_empty(true, false));
+        assert!(!both_suffixes_empty(false, true));
+        assert!(!both_suffixes_empty(false, false));
+    }
+
+    #[test]
+    fn test_both_bounds_inclusive_truth_table() {
+        // Direct truth table for the `lower_incl && upper_incl` helper.
+        // The `&&`→`||` mutant flips exactly the (true, false) and (false, true)
+        // cases below.
+        assert!(both_bounds_inclusive(true, true));
+        assert!(!both_bounds_inclusive(true, false));
+        assert!(!both_bounds_inclusive(false, true));
+        assert!(!both_bounds_inclusive(false, false));
+    }
+
+    #[test]
+    fn test_is_spinner_self_loop_truth_table() {
+        // Direct truth table for the `spinner_next == spinner_id` helper.
+        // The `==`→`!=` mutant flips both cases so this test fails on it.
+        let s_a = StateId::from_index(0);
+        let s_b = StateId::from_index(1);
+        assert!(is_spinner_self_loop(s_a, s_a));
+        assert!(is_spinner_self_loop(s_b, s_b));
+        assert!(!is_spinner_self_loop(s_a, s_b));
+        assert!(!is_spinner_self_loop(s_b, s_a));
+        // NONE is a distinct state id from any allocated state.
+        assert!(is_spinner_self_loop(StateId::NONE, StateId::NONE));
+        assert!(!is_spinner_self_loop(s_a, StateId::NONE));
+    }
+
+    #[test]
+    fn test_should_dedup_next_states_threshold() {
+        // Boundary check: the dedup body runs only when next_states.len() > 64.
+        // Test below, at, just above, and far above 64 so every comparison-
+        // operator mutant (`>`→`==`/`<`/`>=`) flips at least one case.
+        assert!(!should_dedup_next_states(0));
+        assert!(!should_dedup_next_states(63));
+        assert!(!should_dedup_next_states(64));
+        assert!(should_dedup_next_states(65));
+        assert!(should_dedup_next_states(usize::MAX));
+    }
+
+    #[test]
+    fn test_case_3_needs_splice_truth_table() {
+        // Exhaustive truth table for the Case 3 dispatch helper. Any mutant
+        // on the body (`||`→`&&`, body→true/false) flips at least one cell.
+        assert!(!case_3_needs_splice(false, false));
+        assert!(case_3_needs_splice(false, true));
+        assert!(case_3_needs_splice(true, false));
+        assert!(case_3_needs_splice(true, true));
+    }
+
+    #[test]
+    fn test_is_asymmetric_spinner_case_truth_table() {
+        // Exhaustively cover the 16-input truth table so every mutation on the
+        // helper body — `&&`→`||`, `||`→`&&`, `delete !` on either negated
+        // operand — flips at least one case and fails this test.
+        // Original: (s1_spinout && !s2_eps) || (s2_spinout && !s1_eps)
+        for s1_spin in [false, true] {
+            for s1_eps in [false, true] {
+                for s2_spin in [false, true] {
+                    for s2_eps in [false, true] {
+                        let expected = (s1_spin && !s2_eps) || (s2_spin && !s1_eps);
+                        assert_eq!(
+                            is_asymmetric_spinner_case(s1_spin, s1_eps, s2_spin, s2_eps),
+                            expected,
+                            "case s1_spin={s1_spin} s1_eps={s1_eps} s2_spin={s2_spin} s2_eps={s2_eps}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn test_build_anything_but_step_handles_empty_val() {
+        // The inner-loop guard `index <= last_index && !val.is_empty()` must
+        // SKIP empty val entries — both predicates are necessary because
+        // `val.len().saturating_sub(1) == 0` for an empty val and `index == 0`
+        // satisfies `index <= last_index`. The `&&`→`||` mutant on that guard
+        // would index `val[index]` on an empty vec and panic; this test passes
+        // an empty exclusion vec mixed with a real one to drive that path.
+        let fm = Arc::new(FieldMatcher::new());
+        let excluded = vec![Vec::new(), b"abc".to_vec()];
+        // Must not panic.
+        let _ = make_anything_but_arena_fa(&excluded, fm);
+    }
+
+    #[test]
+    fn test_traverse_arena_nfa_frozen_multi_state_closure_final() {
+        // The `final state check` after the main loop iterates `current_states`
+        // and walks each state's closure. Drive `traverse_arena_nfa` so that
+        // final current_states contains a state whose closure has size > 1, AND
+        // the closure-mate states are the ones with the field_transitions.
+        //
+        // The `closure.len() == 1` fast-path mutant `==`→`!=` would silently run
+        // the singleton path on the multi-state final state, picking up only the
+        // (empty) field_transitions of `final_state` itself and missing the
+        // match-state field_transitions reachable only via the closure.
+        let mut arena = StateArena::new();
+        let fm_a = Arc::new(FieldMatcher::with_match_id(11));
+        let fm_b = Arc::new(FieldMatcher::with_match_id(13));
+        let match_state_a = arena.alloc();
+        arena[match_state_a].field_transitions.push(fm_a);
+        let match_state_b = arena.alloc();
+        arena[match_state_b].field_transitions.push(fm_b);
+        // final_state has no field_transitions of its own; only epsilon links.
+        let final_state = arena.alloc();
+        arena[final_state].table.epsilons.push(match_state_a);
+        arena[final_state].table.epsilons.push(match_state_b);
+        // vt_state transitions on the value-terminator to final_state.
+        let vt_state = arena.alloc_with_table(SmallTable::with_mappings(
+            StateId::NONE,
+            &[ARENA_VALUE_TERMINATOR],
+            &[final_state],
+        ));
+        // start transitions on 'a' to vt_state.
+        let start =
+            arena.alloc_with_table(SmallTable::with_mappings(StateId::NONE, b"a", &[vt_state]));
+        arena.precompute_epsilon_closures();
+        arena.flatten_tables();
+        assert!(
+            !arena.ft_ptrs.is_empty(),
+            "frozen path requires flatten_tables to populate ft_ptrs"
+        );
+        // Sanity: final_state's closure must be multi-state.
+        assert!(
+            arena.closure_of(final_state).len() >= 2,
+            "test setup expects final_state to have a multi-state closure"
+        );
+
+        let mut bufs = NfaBuffers::new();
+        traverse_arena_nfa(&arena, start, b"a", &mut bufs);
+        assert!(
+            !bufs.transitions.is_empty(),
+            "input 'a' should collect field transitions from final_state's closure"
+        );
+    }
+
+    #[test]
+    fn test_build_any_hex_group_arena_requires_one_digit() {
+        // `digit_pos > 0` adds an epsilon-to-continuation only AFTER the first
+        // digit; with `digit_pos >= 0` (the mutant) the epsilon is also added
+        // at the very first state, so an empty hex group (zero digits) would
+        // match. Drive both inputs and assert the mismatch.
+        let mut arena = StateArena::new();
+        let fm = Arc::new(FieldMatcher::with_match_id(42));
+        let match_state = arena.alloc();
+        arena[match_state].field_transitions.push(fm);
+        let start = build_any_hex_group_arena(match_state, &mut arena);
+        arena.precompute_epsilon_closures();
+
+        let mut bufs = NfaBuffers::new();
+
+        // One hex digit must match.
+        traverse_arena_nfa(&arena, start, b"1", &mut bufs);
+        assert!(
+            !bufs.transitions.is_empty(),
+            "one hex digit must reach the continuation match state"
+        );
+
+        // Empty (zero digits) must NOT match. The mutant's stray epsilon would
+        // include match_state in the start state's closure, leaking transitions.
+        bufs.clear();
+        traverse_arena_nfa(&arena, start, b"", &mut bufs);
+        assert!(
+            bufs.transitions.is_empty(),
+            "zero digits must NOT match; got {} transition(s)",
+            bufs.transitions.len()
+        );
+    }
+
+    #[test]
+    fn test_build_arena_fragment_empty_input_returns_end_at() {
+        // With `val` empty the early-return guard `val.is_empty() || val.len() == 1`
+        // must short-circuit to `return end_at`. The `||`→`&&` mutant on that
+        // guard would fall through and slice `val[1..]` on an empty slice,
+        // which panics. The assert below additionally verifies the returned
+        // StateId matches.
+        let mut arena = StateArena::new();
+        let end = arena.alloc();
+        let result = build_arena_fragment(&[], end, &mut arena);
+        assert_eq!(result, end, "empty val must return end_at unchanged");
+    }
+
+    #[test]
+    fn test_is_spinout_state_epsilon_count_boundary() {
+        // `is_spinout_state` returns true only when the state self-loops on its
+        // default AND has at most one epsilon. Exercising every count around
+        // the `<= 1` boundary catches mutated comparison operators (`<=`→`>`,
+        // `<`, `==`, `>=`) and the `delete !` mutant on the early NONE check.
+        let mut arena = StateArena::new();
+        let s = arena.alloc();
+        let other = arena.alloc();
+        // Make `s` self-loop on its default.
+        arena[s].table.default = s;
+
+        // 0 epsilons → spinout
+        assert!(is_spinout_state(&arena, s));
+
+        // 1 epsilon → still spinout (the `<= 1` boundary)
+        arena[s].table.epsilons.push(other);
+        assert!(is_spinout_state(&arena, s));
+
+        // 2 epsilons → no longer a spinout
+        arena[s].table.epsilons.push(other);
+        assert!(!is_spinout_state(&arena, s));
+
+        // Without the self-loop default, not a spinout regardless of eps count.
+        let s2 = arena.alloc();
+        assert!(!is_spinout_state(&arena, s2));
+
+        // NONE state returns false (early return guard).
+        assert!(!is_spinout_state(&arena, StateId::NONE));
+    }
+
+    #[test]
+    fn test_unpack_arena_table_writes_full_byte_ceiling_range() {
+        // Build a SmallTable whose final ceiling reaches BYTE_CEILING; unpacking
+        // it must write the last index (BYTE_CEILING - 1) and stop. Catches
+        // boundary mutants on the `byte_idx < BYTE_CEILING` inner loop guard:
+        // `<`→`<=` would panic on `unpacked[BYTE_CEILING]`, and `<`→`==` / `>`
+        // would skip the loop entirely, leaving the array zeroed.
+        let mut arena = StateArena::new();
+        let target = arena.alloc();
+        let table = SmallTable::with_mappings(target, &[], &[]);
+        let mut unpacked = [StateId::NONE; BYTE_CEILING];
+        unpack_arena_table(&table, &mut unpacked);
+        // Every position should map to `target` because that was the default.
+        assert_eq!(unpacked[0], target);
+        assert_eq!(unpacked[BYTE_CEILING - 1], target);
+        // And no out-of-bounds write happened (we'd have panicked).
+    }
+
+    #[test]
+    fn test_stats_add_max_takes_larger_both_directions() {
+        // Stats::add folds each max field with `self.x = self.x.max(other.x)`.
+        // Catch BOTH arg-replacement mutants:
+        //  - `= self.x`  → fails when other is larger
+        //  - `= other.x` → fails when self is larger
+        // so cover both directions for every max field in one test.
+        let mut self_larger = Stats {
+            max_ceilings: 9,
+            max_epsilons: 8,
+            max_closure_len: 7,
+            ..Default::default()
+        };
+        let smaller = Stats {
+            max_ceilings: 2,
+            max_epsilons: 1,
+            max_closure_len: 3,
+            ..Default::default()
+        };
+        self_larger.add(&smaller);
+        assert_eq!(self_larger.max_ceilings, 9);
+        assert_eq!(self_larger.max_epsilons, 8);
+        assert_eq!(self_larger.max_closure_len, 7);
+
+        let mut self_smaller = Stats {
+            max_ceilings: 2,
+            max_epsilons: 1,
+            max_closure_len: 3,
+            ..Default::default()
+        };
+        let larger = Stats {
+            max_ceilings: 9,
+            max_epsilons: 8,
+            max_closure_len: 7,
+            ..Default::default()
+        };
+        self_smaller.add(&larger);
+        assert_eq!(self_smaller.max_ceilings, 9);
+        assert_eq!(self_smaller.max_epsilons, 8);
+        assert_eq!(self_smaller.max_closure_len, 7);
     }
 
     #[test]
@@ -5202,6 +5705,142 @@ mod merge_tests {
             arena.alloc_with_table(SmallTable::with_mappings(StateId::NONE, &[byte], &[term]));
 
         (arena, start)
+    }
+
+    #[test]
+    fn test_merge_dual_spinout_states_filters_none_epsilons() {
+        // Drive `merge_dual_spinout_states` directly with NONE epsilons on both
+        // sides; the resulting combined table must not have NONE epsilons.
+        // Catches `delete !` on the epsilon-push guards inside that function.
+        let mut arena1 = StateArena::new();
+        let mut arena2 = StateArena::new();
+        let s1_id = arena1.alloc();
+        let s2_id = arena2.alloc();
+        arena1[s1_id].table.default = s1_id;
+        arena2[s2_id].table.default = s2_id;
+        arena1[s1_id].table.epsilons.push(StateId::NONE);
+        arena2[s2_id].table.epsilons.push(StateId::NONE);
+
+        let s1 = arena1[s1_id].clone();
+        let s2 = arena2[s2_id].clone();
+
+        let mut new_arena = StateArena::new();
+        let new_id = new_arena.alloc();
+        let mut memo: FxHashMap<(StateId, StateId), StateId> = FxHashMap::default();
+        merge_dual_spinout_states(
+            &arena1,
+            &s1,
+            &arena2,
+            &s2,
+            &mut new_arena,
+            &mut memo,
+            new_id,
+        );
+
+        for &eps in &new_arena[new_id].table.epsilons {
+            assert!(
+                !eps.is_none(),
+                "merge_dual_spinout_states must filter NONE epsilons; got NONE"
+            );
+        }
+    }
+
+    #[test]
+    fn test_asymmetric_spinner_merge_filters_none_epsilons() {
+        // Drive `asymmetric_spinner_merge` directly with the spinner side
+        // carrying a NONE epsilon; the merged table must not retain it.
+        // Catches `delete !` on the spinner-epsilon push guard.
+        let mut arena1 = StateArena::new();
+        let mut arena2 = StateArena::new();
+        let s1_id = arena1.alloc();
+        let s2_id = arena2.alloc();
+        // s1 is the spinner (default to self) with a NONE epsilon
+        arena1[s1_id].table.default = s1_id;
+        arena1[s1_id].table.epsilons.push(StateId::NONE);
+        // s2 has no epsilons (asymmetric precondition)
+
+        let mut new_arena = StateArena::new();
+        let new_id = new_arena.alloc();
+        let mut memo: FxHashMap<(StateId, StateId), StateId> = FxHashMap::default();
+        asymmetric_spinner_merge(
+            &arena1,
+            s1_id,
+            &arena2,
+            s2_id,
+            true,
+            &mut new_arena,
+            &mut memo,
+            new_id,
+        );
+        for &eps in &new_arena[new_id].table.epsilons {
+            assert!(
+                !eps.is_none(),
+                "asymmetric_spinner_merge must filter NONE epsilons; got NONE"
+            );
+        }
+    }
+
+    #[test]
+    fn test_merge_nfa_tables_bytewise_filters_none_epsilons() {
+        // NFA variant of `merge_arena_tables_filters_none_epsilons` below —
+        // catches `delete !` mutants on the epsilon-push guards inside
+        // `merge_nfa_tables_bytewise`. NONE epsilons must NOT leak into the
+        // result.
+        let arena1 = StateArena::new();
+        let arena2 = StateArena::new();
+        let mut table1 = SmallTable::new();
+        let mut table2 = SmallTable::new();
+        table1.epsilons.push(StateId::NONE);
+        table2.epsilons.push(StateId::NONE);
+        let mut new_arena = StateArena::new();
+        let mut memo: FxHashMap<(StateId, StateId), StateId> = FxHashMap::default();
+        let result = merge_nfa_tables_bytewise(
+            &arena1,
+            &table1,
+            &arena2,
+            &table2,
+            &mut new_arena,
+            &mut memo,
+        );
+        for &eps in &result.epsilons {
+            assert!(
+                !eps.is_none(),
+                "merge_nfa_tables_bytewise must filter NONE epsilons; got NONE in result"
+            );
+        }
+    }
+
+    #[test]
+    fn test_merge_arena_tables_filters_none_epsilons() {
+        // Directly exercise the NONE-epsilon path in merge_arena_tables: with
+        // both sides' epsilons set to NONE, `merge_arena_states_recursive`
+        // returns NONE for each merged epsilon, and the `if !merged.is_none()`
+        // guard must filter them out before pushing into result.epsilons.
+        //
+        // Catches both `delete !` mutants on lines guarding `result.epsilons.push(merged)`
+        // — without the `!`, NONE epsilons are pushed and the assertion below fires.
+        let arena1 = StateArena::new();
+        let arena2 = StateArena::new();
+        let mut table1 = SmallTable::new();
+        let mut table2 = SmallTable::new();
+        table1.epsilons.push(StateId::NONE);
+        table2.epsilons.push(StateId::NONE);
+        let mut new_arena = StateArena::new();
+        let mut memo: FxHashMap<(StateId, StateId), StateId> = FxHashMap::default();
+        let result = merge_arena_tables(
+            &arena1,
+            &table1,
+            &arena2,
+            &table2,
+            &mut new_arena,
+            &mut memo,
+        );
+        for &eps in &result.epsilons {
+            assert!(
+                !eps.is_none(),
+                "merge_arena_tables must filter NONE epsilons; got NONE in result"
+            );
+        }
     }
 
     #[test]
@@ -6002,6 +6641,97 @@ mod nfa_merge_tests {
             !matches_value(&merged, merged_start, b"d"),
             "Merged should NOT match 'd'"
         );
+    }
+
+    #[test]
+    fn test_merge_arena_nfa_states_recursive_one_side_has_epsilons() {
+        // Drive `merge_arena_nfa_states_recursive` with one side that has
+        // epsilons but is NOT a spinout, paired with a plain literal step.
+        // Original takes Case 3 (epsilon-splice); the `||`→`&&` mutant on the
+        // Case 3 guard skips it for "only one side has epsilons" inputs, and
+        // the byte-wise merge that follows drops the epsilon — caught by the
+        // tautological `debug_assert` inside the Case 3 body.
+        let mut arena1 = StateArena::new();
+        let s1_target = arena1.alloc();
+        let s1 = arena1.alloc();
+        // s1 has an epsilon to s1_target but default is NONE (not spinout).
+        arena1[s1].table.epsilons.push(s1_target);
+        assert!(!is_spinout_state(&arena1, s1));
+
+        let mut arena2 = StateArena::new();
+        let leaf = arena2.alloc();
+        let s2 = arena2.alloc_with_table(SmallTable::with_mappings(StateId::NONE, b"b", &[leaf]));
+        assert!(!is_spinout_state(&arena2, s2));
+        assert!(arena2[s2].table.epsilons.is_empty());
+
+        let mut new_arena = StateArena::new();
+        let mut memo: FxHashMap<(StateId, StateId), StateId> = FxHashMap::default();
+        let _ =
+            merge_arena_nfa_states_recursive(&arena1, s1, &arena2, s2, &mut new_arena, &mut memo);
+    }
+
+    #[test]
+    fn test_merge_arena_nfa_states_recursive_one_spinout_only() {
+        // Directly drive `merge_arena_nfa_states_recursive` at a depth where
+        // ONE state is a spinout and the OTHER is a plain literal step. The
+        // original takes Case 2 (asymmetric spinner) here; the `&&`→`||` mutant
+        // on Case 1's guard misroutes to `merge_dual_spinout_states`. The
+        // tautological debug_assert inside Case 1 panics under the mutant.
+        let mut arena1 = StateArena::new();
+        // s1 is a spinout: default = self, 0 epsilons.
+        let s1 = arena1.alloc();
+        arena1[s1].table = make_byte_dot_table(s1);
+        // Sanity check: the helper recognises s1 as a spinout.
+        assert!(is_spinout_state(&arena1, s1));
+
+        let mut arena2 = StateArena::new();
+        // s2 is a plain literal step: matches `b`, default NONE, 0 epsilons.
+        let leaf = arena2.alloc();
+        let s2 = arena2.alloc_with_table(SmallTable::with_mappings(StateId::NONE, b"b", &[leaf]));
+        assert!(!is_spinout_state(&arena2, s2));
+
+        let mut new_arena = StateArena::new();
+        let mut memo: FxHashMap<(StateId, StateId), StateId> = FxHashMap::default();
+        // The merge must complete without panicking under the original code.
+        // Under the mutated `&&`→`||` Case 1 guard, the tautological assert
+        // inside `merge_dual_spinout_states` (or the Case 1 body) fires.
+        let _ =
+            merge_arena_nfa_states_recursive(&arena1, s1, &arena2, s2, &mut new_arena, &mut memo);
+    }
+
+    #[test]
+    fn test_merge_one_spinout_with_one_literal_exercises_case_dispatch() {
+        // Merge a wildcard-style arena (has spinout state) with a literal
+        // single-byte arena (no spinout). The original dispatch routes this to
+        // Case 2 (asymmetric spinner) or Case 3 (epsilon splice) — never Case
+        // 1. With `&&`→`||` on the Case 1 guard the dispatch would enter
+        // `merge_dual_spinout_states` with mismatched sides; the tautological
+        // debug_assert inside that block panics in test builds and catches
+        // the mutant.
+        let fm1 = Arc::new(FieldMatcher::with_match_id(1));
+        let (spinout_arena, spinout_start) = make_spinout_arena(b"a", b"b", fm1);
+
+        let fm2 = Arc::new(FieldMatcher::with_match_id(2));
+        let (literal_arena, literal_start) = {
+            let mut arena = StateArena::new();
+            let end = arena.alloc();
+            arena[end].field_transitions.push(fm2);
+            let term = arena.alloc_with_table(SmallTable::with_mappings(
+                StateId::NONE,
+                &[ARENA_VALUE_TERMINATOR],
+                &[end],
+            ));
+            let start =
+                arena.alloc_with_table(SmallTable::with_mappings(StateId::NONE, b"c", &[term]));
+            (arena, start)
+        };
+
+        // Merge in both orders so the assert fires regardless of which side
+        // the mutant misroutes.
+        let (_m1, _s1) =
+            merge_arena_nfas(&spinout_arena, spinout_start, &literal_arena, literal_start);
+        let (_m2, _s2) =
+            merge_arena_nfas(&literal_arena, literal_start, &spinout_arena, spinout_start);
     }
 
     #[test]

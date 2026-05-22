@@ -781,6 +781,54 @@ fn test_cidr_ipv6_group_limit() {
     );
 }
 
+/// /60 IPv6 prefix forces `apply_ipv6_mask` to partially mask a boundary byte
+/// (`full_bytes=7`, `remaining_bits=4`). Catches the `&=`→`|=` mutation on the
+/// partial-mask line: with `|=`, the pattern's network and the event's masked
+/// IP both gain `0xF0` in byte 7, breaking the "same /60 host matches"
+/// invariant for non-zero hosts.
+#[test]
+#[cfg_attr(miri, ignore)]
+fn test_cidr_ipv6_partial_boundary_byte_masking() {
+    // Pattern host 0x...:ef01 → network 0x...:ef00 with /60.
+    // Event 0x...:ef0a is in the same /60 block as 0x...:ef00.
+    let q = q!("p" => r#"{"ip": [{"cidr": "2001:db8:abcd:ef01:0:0:0:0/60"}]}"#);
+    assert_matches!(
+        q,
+        r#"{"ip": "2001:db8:abcd:ef0a:0:0:0:0"}"#,
+        vec!["p"],
+        "/60 host 0xef0a must match the same /60 network as 0xef01"
+    );
+    // An address outside the /60 block must not match.
+    assert_no_match!(
+        q,
+        r#"{"ip": "2001:db8:abcd:ef10:0:0:0:0"}"#,
+        "/60 host 0xef10 is in a different /60 block (top-nibble boundary)"
+    );
+}
+
+/// Partial-range IPv6 group must NOT be treated as a full-range wildcard.
+/// `::/60` constrains group 3 to `[0x0000, 0x000F]`. The
+/// `&&`→`||` mutant on `min_val == 0 && max_val == 0xffff` would route any
+/// group with `min == 0` (which the all-zero network produces) through the
+/// "any hex" path, matching values outside the range.
+#[test]
+#[cfg_attr(miri, ignore)]
+fn test_cidr_ipv6_partial_range_not_treated_as_full_wildcard() {
+    let q = q!("p" => r#"{"ip": [{"cidr": "::/60"}]}"#);
+    assert_matches!(
+        q,
+        r#"{"ip": "0:0:0:1:0:0:0:0"}"#,
+        vec!["p"],
+        "0x0001 is in the /60 range from :: (network=0, max=15)"
+    );
+    assert_no_match!(
+        q,
+        r#"{"ip": "0:0:0:ff:0:0:0:0"}"#,
+        "0x00ff is OUTSIDE the /60 range [0x0000, 0x000F]; \
+         a mutant treating partial range as full wildcard would match it"
+    );
+}
+
 #[test]
 fn test_cidr_ipv6_invalid_formats() {
     // Test to catch mutations in IPv6 validation

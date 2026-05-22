@@ -141,6 +141,12 @@ mutants-diff *args:
     git diff origin/main.. > /tmp/quamina-mutants.diff
     cargo mutants -vV --in-diff /tmp/quamina-mutants.diff --in-place --test-tool nextest {{args}}
 
+# Execution-grounded mutation gate for one file (or `regex` for part of it).
+# Passes only if lib tests are green AND that file has 0 missed + 0 timeout.
+[group('validate')]
+mutants-verify file regex='':
+    ./scripts/mutants-verify.sh {{file}} {{regex}}
+
 # Start LLM Agent in this repo (currently claude-code with dangerously-skip-permissions)
 [group('agent')]
 ai:

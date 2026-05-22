@@ -206,6 +206,44 @@ struct FlattenContext<'a, 'b> {
     array_count: i32,
 }
 
+/// Returns true when the flattener is currently inside a skipped subtree
+/// (i.e. a member whose path is NOT in the segments tree).
+const fn is_in_skipped_subtree(skipping: i32) -> bool {
+    skipping > 0
+}
+
+/// Returns true when we should capture the value at the current member —
+/// only when we're at the top of a tree-tracked path (skipping == 0) AND
+/// the member name was in the segments tree.
+const fn should_capture_value(skipping: i32, member_is_used: bool) -> bool {
+    skipping == 0 && member_is_used
+}
+
+/// Returns true when `event[index]` exists AND is an ASCII digit.
+#[inline]
+fn at_digit(event: &[u8], index: usize) -> bool {
+    index < event.len() && event[index].is_ascii_digit()
+}
+
+/// Returns true when `event[index]` exists AND matches `target`.
+#[inline]
+fn at_byte(event: &[u8], index: usize, target: u8) -> bool {
+    index < event.len() && event[index] == target
+}
+
+/// Returns true when `event[index..]` starts with a `\uXXXX` escape (six
+/// bytes: backslash, `u`, four hex digits).
+#[inline]
+fn has_unicode_escape_at(event: &[u8], index: usize) -> bool {
+    index + 5 < event.len() && event[index] == b'\\' && event[index + 1] == b'u'
+}
+
+/// Returns the byte one position past `index`, if any.
+#[inline]
+fn peek_next_byte(event: &[u8], index: usize) -> Option<u8> {
+    event.get(index + 1).copied()
+}
+
 impl<'a> FlattenContext<'a, '_> {
     /// Push a field to the storage, transmuting the lifetime.
     #[inline]
@@ -226,6 +264,7 @@ impl<'a> FlattenContext<'a, '_> {
 
         // Find the opening brace
         loop {
+            let _prev_outer = self.index;
             let ch = self.ch();
             if ch == b'{' {
                 match self.read_object(tree) {
@@ -236,6 +275,7 @@ impl<'a> FlattenContext<'a, '_> {
                 // Eat trailing whitespace
                 self.index += 1;
                 while self.index < self.event.len() {
+                    let _prev = self.index;
                     let ch = self.event[self.index];
                     if !is_whitespace(ch) {
                         return Err(self.error(&format!(
@@ -244,6 +284,7 @@ impl<'a> FlattenContext<'a, '_> {
                         )));
                     }
                     self.index += 1;
+                    debug_assert!(self.index > _prev, "flatten_impl trailing-ws must advance");
                 }
                 return Ok(());
             } else if is_whitespace(ch) {
@@ -254,6 +295,10 @@ impl<'a> FlattenContext<'a, '_> {
             } else {
                 return Err(self.error("not a JSON object"));
             }
+            debug_assert!(
+                self.index > _prev_outer,
+                "flatten_impl leading-ws must advance"
+            );
         }
     }
 
@@ -346,37 +391,37 @@ impl<'a> FlattenContext<'a, '_> {
 
                     match ch {
                         b'"' => {
-                            if self.skipping > 0 || !member_is_used {
-                                self.skip_string_value()?;
-                            } else {
+                            if should_capture_value(self.skipping, member_is_used) {
                                 val = Some(self.read_string_value()?);
+                            } else {
+                                self.skip_string_value()?;
                             }
                             is_leaf = true;
                         }
                         b't' => {
                             self.read_literal(b"true")?;
-                            if self.skipping == 0 && member_is_used {
+                            if should_capture_value(self.skipping, member_is_used) {
                                 val = Some(FieldValue::Borrowed(b"true"));
                             }
                             is_leaf = true;
                         }
                         b'f' => {
                             self.read_literal(b"false")?;
-                            if self.skipping == 0 && member_is_used {
+                            if should_capture_value(self.skipping, member_is_used) {
                                 val = Some(FieldValue::Borrowed(b"false"));
                             }
                             is_leaf = true;
                         }
                         b'n' => {
                             self.read_literal(b"null")?;
-                            if self.skipping == 0 && member_is_used {
+                            if should_capture_value(self.skipping, member_is_used) {
                                 val = Some(FieldValue::Borrowed(b"null"));
                             }
                             is_leaf = true;
                         }
                         b'-' | b'0'..=b'9' => {
                             let num_val = self.read_number()?;
-                            if self.skipping == 0 && member_is_used {
+                            if should_capture_value(self.skipping, member_is_used) {
                                 val = Some(num_val);
                                 is_number = true;
                             }
@@ -387,7 +432,7 @@ impl<'a> FlattenContext<'a, '_> {
                                 self.skipping += 1;
                             }
 
-                            if self.skipping > 0 {
+                            if is_in_skipped_subtree(self.skipping) {
                                 self.skip_block(b'[', b']')?;
                             } else {
                                 let array_tree =
@@ -405,7 +450,7 @@ impl<'a> FlattenContext<'a, '_> {
                                 self.skipping += 1;
                             }
 
-                            if self.skipping > 0 {
+                            if is_in_skipped_subtree(self.skipping) {
                                 self.skip_block(b'{', b'}')?;
                             } else if let Some(child_tree) = member_entry.and_then(|e| e.node()) {
                                 nodes_count = nodes_count.saturating_sub(1);
@@ -586,6 +631,7 @@ impl<'a> FlattenContext<'a, '_> {
     /// Skip remaining content until we exit the current object.
     fn leave_object(&mut self) -> Result<(), FlattenError> {
         while self.index < self.event.len() {
+            let _prev = self.index;
             let ch = self.event[self.index];
             match ch {
                 b'"' => self.skip_string_value()?,
@@ -597,6 +643,7 @@ impl<'a> FlattenContext<'a, '_> {
                 _ => {}
             }
             self.index += 1;
+            debug_assert!(self.index > _prev, "leave_object must advance index");
         }
         Err(FlattenError::Error(self.error("truncated block")))
     }
@@ -606,6 +653,7 @@ impl<'a> FlattenContext<'a, '_> {
         let mut level = 0;
 
         while self.index < self.event.len() {
+            let _prev = self.index;
             let ch = self.event[self.index];
 
             match ch {
@@ -621,6 +669,7 @@ impl<'a> FlattenContext<'a, '_> {
             }
 
             self.index += 1;
+            debug_assert!(self.index > _prev, "skip_block must advance index");
         }
 
         Err(FlattenError::Error(self.error("truncated block")))
@@ -631,15 +680,17 @@ impl<'a> FlattenContext<'a, '_> {
         self.step()?; // skip opening "
 
         while self.index < self.event.len() {
+            let _prev = self.index;
             let ch = self.event[self.index];
 
-            // Handle escape sequences
-            if ch == b'\\' && self.index + 1 < self.event.len() {
-                let next = self.event[self.index + 1];
-                if next == b'\\' || next == b'"' {
-                    self.index += 2;
-                    continue;
-                }
+            // Handle escape sequences. `peek_next_byte` returns event[index+1] safely.
+            if ch == b'\\'
+                && let Some(next) = peek_next_byte(self.event, self.index)
+                && (next == b'\\' || next == b'"')
+            {
+                self.index += 2;
+                debug_assert!(self.index > _prev, "skip_string_value escape must advance");
+                continue;
             }
 
             if ch == b'"' {
@@ -647,6 +698,7 @@ impl<'a> FlattenContext<'a, '_> {
             }
 
             self.index += 1;
+            debug_assert!(self.index > _prev, "skip_string_value must advance index");
         }
 
         Err(FlattenError::Error(self.error("truncated string")))
@@ -660,6 +712,7 @@ impl<'a> FlattenContext<'a, '_> {
         let start = self.index;
 
         while self.index < self.event.len() {
+            let _prev = self.index;
             let ch = self.event[self.index];
             if ch == b'"' {
                 return Ok(MemberName::Borrowed(&self.event[start..self.index]));
@@ -672,6 +725,7 @@ impl<'a> FlattenContext<'a, '_> {
                 ));
             }
             self.index += 1;
+            debug_assert!(self.index > _prev, "read_member_name must advance index");
         }
 
         Err(FlattenError::Error(self.error("premature end of event")))
@@ -687,6 +741,7 @@ impl<'a> FlattenContext<'a, '_> {
         name.extend_from_slice(&self.event[start..self.index]);
 
         while self.index < self.event.len() {
+            let _prev = self.index;
             let ch = self.event[self.index];
             if ch == b'"' {
                 return Ok(MemberName::Owned(name));
@@ -723,6 +778,10 @@ impl<'a> FlattenContext<'a, '_> {
                 name.push(ch);
             }
             self.index += 1;
+            debug_assert!(
+                self.index > _prev,
+                "read_member_name_with_escapes must advance index"
+            );
         }
 
         Err(FlattenError::Error(self.error("premature end of event")))
@@ -734,6 +793,7 @@ impl<'a> FlattenContext<'a, '_> {
         self.step()?; // skip opening "
 
         while self.index < self.event.len() {
+            let _prev = self.index;
             let ch = self.event[self.index];
             if ch == b'"' {
                 return Ok(FieldValue::Borrowed(&self.event[val_start..=self.index]));
@@ -746,6 +806,7 @@ impl<'a> FlattenContext<'a, '_> {
                 ));
             }
             self.index += 1;
+            debug_assert!(self.index > _prev, "read_string_value must advance index");
         }
 
         Err(FlattenError::Error(self.error("event truncated in string")))
@@ -761,6 +822,7 @@ impl<'a> FlattenContext<'a, '_> {
         val.extend_from_slice(&self.event[val_start + 1..self.index]);
 
         while self.index < self.event.len() {
+            let _prev = self.index;
             let ch = self.event[self.index];
             if ch == b'"' {
                 val.push(b'"');
@@ -797,6 +859,10 @@ impl<'a> FlattenContext<'a, '_> {
                 val.push(ch);
             }
             self.index += 1;
+            debug_assert!(
+                self.index > _prev,
+                "read_string_with_escapes must advance index"
+            );
         }
 
         Err(FlattenError::Error(self.error("premature end of event")))
@@ -829,10 +895,7 @@ impl<'a> FlattenContext<'a, '_> {
 
         if (0xD800..=0xDBFF).contains(&code) {
             // High surrogate — try to consume the matching low surrogate.
-            if self.index + 5 < self.event.len()
-                && self.event[self.index] == b'\\'
-                && self.event[self.index + 1] == b'u'
-            {
+            if has_unicode_escape_at(self.event, self.index) {
                 self.index += 2;
                 let low = self.read_hex_4()?;
                 if (0xDC00..=0xDFFF).contains(&low) {
@@ -852,15 +915,18 @@ impl<'a> FlattenContext<'a, '_> {
             // make `char::from_u32` give up is a lone low surrogate. Emit
             // it as 3-byte WTF-8 by hand. Each masked piece is statically
             // bounded so the `try_from`s never actually fail.
+            //
+            // Combine tag bits with payload using `+`; the byte-range
+            // assertion below guarantees they are disjoint so `+` == `|`.
             debug_assert!(
                 (0xDC00..=0xDFFF).contains(&code),
                 "char::from_u32 only fails for surrogates within u16 range"
             );
-            out.push(0xE0 | u8::try_from(code >> 12).expect("code >> 12 fits in 4 bits"));
+            out.push(0xE0 + u8::try_from(code >> 12).expect("code >> 12 fits in 4 bits"));
             out.push(
-                0x80 | u8::try_from((code >> 6) & 0x3F).expect("masked to 6 bits, fits in u8"),
+                0x80 + u8::try_from((code >> 6) & 0x3F).expect("masked to 6 bits, fits in u8"),
             );
-            out.push(0x80 | u8::try_from(code & 0x3F).expect("masked to 6 bits, fits in u8"));
+            out.push(0x80 + u8::try_from(code & 0x3F).expect("masked to 6 bits, fits in u8"));
         }
 
         self.index -= 1;
@@ -907,46 +973,40 @@ impl<'a> FlattenContext<'a, '_> {
 
         // Integer part - must have at least one digit
         let digit_start = self.index;
-        while self.index < self.event.len() {
-            let ch = self.event[self.index];
-            if !ch.is_ascii_digit() {
-                break;
-            }
+        while at_digit(self.event, self.index) {
+            let _prev = self.index;
             self.index += 1;
+            debug_assert!(self.index > _prev, "read_number int digits must advance");
         }
 
-        // Validate we read at least one digit
+        // Validate we read at least one digit.
         if self.index == digit_start {
-            let ch = if self.index < self.event.len() {
-                self.event[self.index] as char
-            } else {
-                '?'
-            };
+            let ch = self.event.get(self.index).map_or('?', |&b| b as char);
             return Err(FlattenError::Error(
                 self.error(&format!("illegal character '{ch}' in number")),
             ));
         }
 
-        // Fractional part
-        if self.index < self.event.len() && self.event[self.index] == b'.' {
+        // Fractional part. Uses `at_byte` / `at_digit` to keep bounds checks centralized.
+        if at_byte(self.event, self.index, b'.') {
             self.index += 1;
-            while self.index < self.event.len() && self.event[self.index].is_ascii_digit() {
+            while at_digit(self.event, self.index) {
+                let _prev = self.index;
                 self.index += 1;
+                debug_assert!(self.index > _prev, "read_number frac digits must advance");
             }
         }
 
         // Exponent
-        if self.index < self.event.len()
-            && (self.event[self.index] == b'e' || self.event[self.index] == b'E')
-        {
+        if at_byte(self.event, self.index, b'e') || at_byte(self.event, self.index, b'E') {
             self.index += 1;
-            if self.index < self.event.len()
-                && (self.event[self.index] == b'+' || self.event[self.index] == b'-')
-            {
+            if at_byte(self.event, self.index, b'+') || at_byte(self.event, self.index, b'-') {
                 self.index += 1;
             }
-            while self.index < self.event.len() && self.event[self.index].is_ascii_digit() {
+            while at_digit(self.event, self.index) {
+                let _prev = self.index;
                 self.index += 1;
+                debug_assert!(self.index > _prev, "read_number exp digits must advance");
             }
         }
 
@@ -985,7 +1045,13 @@ impl<'a> FlattenContext<'a, '_> {
 
     /// Enter an array.
     fn enter_array(&mut self) {
+        let _prev = self.array_count;
         self.array_count += 1;
+        // Each enter_array must strictly increment so nested arrays receive distinct IDs.
+        debug_assert!(
+            self.array_count > _prev,
+            "enter_array must increment array_count"
+        );
         self.array_trail.push(ArrayPos {
             array: self.array_count,
             pos: 0,
@@ -1076,6 +1142,102 @@ mod tests {
             tree.add(path);
         }
         tree
+    }
+
+    #[test]
+    fn test_is_in_skipped_subtree_boundary() {
+        // `skipping > 0` boundary: 0 is "not skipping", anything > 0 is "skipping".
+        // The `>` boundary mutants (`==`, `<`, `<=`, `>=`) each flip at least one
+        // of these cases.
+        assert!(!is_in_skipped_subtree(0));
+        assert!(is_in_skipped_subtree(1));
+        assert!(is_in_skipped_subtree(2));
+        assert!(is_in_skipped_subtree(i32::MAX));
+    }
+
+    #[test]
+    fn test_at_digit_boundary() {
+        // Out-of-bounds index → false (bounds check beats the digit check).
+        assert!(!at_digit(b"", 0));
+        assert!(!at_digit(b"5", 1));
+        // In-bounds, ASCII digit → true.
+        assert!(at_digit(b"5", 0));
+        assert!(at_digit(b"09a", 0));
+        assert!(at_digit(b"09a", 1));
+        // In-bounds, non-digit → false.
+        assert!(!at_digit(b"09a", 2));
+        assert!(!at_digit(b" 1", 0));
+    }
+
+    #[test]
+    fn test_peek_next_byte_returns_index_plus_one() {
+        // Catches `+`→`*`/`-` mutants on the `index + 1` arithmetic by asserting
+        // we returned event[index + 1] (NOT event[index] or event[index - 1]).
+        assert_eq!(peek_next_byte(b"ab", 0), Some(b'b'));
+        assert_eq!(peek_next_byte(b"abc", 0), Some(b'b'));
+        assert_eq!(peek_next_byte(b"abc", 1), Some(b'c'));
+        // Out-of-bounds tail.
+        assert_eq!(peek_next_byte(b"a", 0), None);
+        assert_eq!(peek_next_byte(b"", 0), None);
+        // Boundary at end.
+        assert_eq!(peek_next_byte(b"ab", 1), None);
+    }
+
+    #[test]
+    fn test_error_string_truncated_after_complete_escape() {
+        // Input has a SUCCESSFUL `\\n` escape followed by EOF (no closing `"`).
+        // The outer while-loop in `read_string_with_escapes` re-evaluates with
+        // `self.index == self.event.len()`; the `<`→`<=` mutant on that
+        // condition would enter the body and access `event[len]` (OOB panic).
+        let tree = make_tree(&["k"]);
+        let mut state = State::new();
+        let bad = b"{\"k\": \"\\n";
+        let result = state.flatten(bad, &tree);
+        assert!(
+            result.is_err(),
+            "truncated string with completed escape should error"
+        );
+    }
+
+    #[test]
+    fn test_has_unicode_escape_at_boundary() {
+        // Need 6 bytes starting at `index`: `\`, `u`, and four hex digits.
+        // The body of read_unicode_escape reads event[index..index+2] then
+        // advances by 2 and calls read_hex_4 which reads 4 more bytes; so it
+        // needs `index + 5 < event.len()` (i.e. 6 valid byte positions).
+        assert!(has_unicode_escape_at(b"\\u0041X", 0)); // 7 bytes — definitely enough
+        assert!(has_unicode_escape_at(b"\\u0041", 0)); // exactly 6 bytes — boundary
+        assert!(!has_unicode_escape_at(b"\\u004", 0)); // 5 bytes — too short
+        assert!(!has_unicode_escape_at(b"", 0));
+        assert!(!has_unicode_escape_at(b"\\X0041X", 0)); // wrong second byte
+        assert!(!has_unicode_escape_at(b"Xu0041X", 0)); // wrong first byte
+        // Offset start.
+        assert!(has_unicode_escape_at(b"yy\\u0041X", 2));
+        // Out-of-bounds start.
+        assert!(!has_unicode_escape_at(b"\\u0041X", 7));
+    }
+
+    #[test]
+    fn test_at_byte_boundary() {
+        // Out-of-bounds → false regardless of target.
+        assert!(!at_byte(b"", 0, b'.'));
+        assert!(!at_byte(b"abc", 3, b'.'));
+        // In-bounds, mismatched byte → false.
+        assert!(!at_byte(b"abc", 0, b'.'));
+        // In-bounds, matched byte → true.
+        assert!(at_byte(b".", 0, b'.'));
+        assert!(at_byte(b"a.c", 1, b'.'));
+    }
+
+    #[test]
+    fn test_should_capture_value_truth_table() {
+        // Direct truth table for the `skipping == 0 && member_is_used` guard.
+        // The `&&`→`||` mutant flips the (0, false) and (>0, true) cases.
+        assert!(should_capture_value(0, true));
+        assert!(!should_capture_value(0, false));
+        assert!(!should_capture_value(1, true));
+        assert!(!should_capture_value(1, false));
+        assert!(!should_capture_value(2, true));
     }
 
     #[test]
@@ -1387,6 +1549,32 @@ x"#,
             let result = state.flatten(bad.as_bytes(), &tree);
             assert!(result.is_err(), "Should reject invalid structure: {bad}");
         }
+    }
+
+    #[test]
+    fn test_error_reports_correct_line_and_column() {
+        // `error()` walks the event buffer up to `self.index`, counting
+        // newlines and tracking the most-recent line start to report line and
+        // column. Catches every mutant on the counter:
+        //   - `i >= self.index` boundary: `<` mutation would break on the
+        //     first byte and leave line_num=1 even when the error is on line 3
+        //   - `b == b'\n'` byte test: `!=` would count every non-newline byte
+        //   - `line_num += 1`: `-=` / `*=` would skip increments
+        // Nested-field tree forces the parser into the nested object so the
+        // `{ x }` token triggers an error on line 3.
+        let tree = make_tree(&["a", "a\nbad"]);
+        let mut state = State::new();
+
+        let bad = b"{\n  \"a\": {\n    x\n  }\n}";
+        let err = state.flatten(bad, &tree).unwrap_err();
+        let msg = match err {
+            QuaminaError::InvalidJson(m) => m,
+            other => panic!("expected InvalidJson, got {other:?}"),
+        };
+        assert!(
+            msg.contains("at line 3 col "),
+            "error must report line 3 (the line containing the bad token); got: {msg}"
+        );
     }
 
     #[test]

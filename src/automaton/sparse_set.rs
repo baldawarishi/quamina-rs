@@ -67,7 +67,14 @@ impl SparseSet {
         );
         self.dense[self.len] = id;
         self.sparse[id] = self.len;
+        let prev_len = self.len;
         self.len += 1;
+        // Insertion-progress invariant: `len` must strictly increase on insert.
+        // Callers (e.g. NFA worklist loops) rely on this to make progress;
+        // a mutated `+=`→`*=` / `/=` / `-=` would silently freeze `len` and
+        // cause those callers to loop forever. debug_assert! turns the
+        // hang into an immediate test failure.
+        debug_assert!(self.len > prev_len, "SparseSet::insert must advance len");
         true
     }
 

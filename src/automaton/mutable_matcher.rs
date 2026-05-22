@@ -173,8 +173,11 @@ impl<X: Clone + Eq + std::hash::Hash> MutableFieldMatcher<X> {
             })
             .collect();
 
-        if all_exact.len() == matchers.len() && all_exact.len() > 1 {
-            // All matchers are Exact strings and there's more than one - use bulk method
+        if all_exact.len() == matchers.len() && matchers.len() >= 2 {
+            // All matchers are Exact strings and there are at least two —
+            // use the O(n·L) bulk method (vs O(n²) for repeated singletons).
+            // The bulk path is observable: it returns ONE shared next state
+            // for all exacts, vs N separate next states from one-by-one.
             let next_fm = vm.add_string_transitions_bulk(&all_exact, budget)?;
             return Ok(vec![next_fm]);
         }
@@ -2851,6 +2854,100 @@ mod tests {
         assert!(
             mvm.has_numbers.get(),
             "numeric flag should be set after adding numeric"
+        );
+    }
+
+    #[test]
+    fn test_maybe_q_number_requires_both_has_numbers_and_is_number() {
+        // maybe_q_number's guard is `if !(has_numbers && is_number) { None }`,
+        // i.e. ONLY produces a Q-number stack when BOTH are true. Catches the
+        // `&&`→`||` mutant by exercising every (has_numbers, is_number) combo
+        // for parseable numeric input bytes.
+        let mvm: MutableValueMatcher<String> = MutableValueMatcher::new();
+
+        // has_numbers = false (virgin), is_number = true, value parseable:
+        // original → None; `||` mutant would proceed and return Some(q_stack).
+        assert!(mvm.maybe_q_number(b"123", true).is_none());
+
+        // has_numbers = false, is_number = false → None on both branches.
+        assert!(mvm.maybe_q_number(b"abc", false).is_none());
+
+        // Flip has_numbers on.
+        mvm.has_numbers.set(true);
+
+        // has_numbers = true, is_number = false → None (the &&'s second leg).
+        assert!(mvm.maybe_q_number(b"abc", false).is_none());
+
+        // has_numbers = true, is_number = true, numeric value → Some.
+        assert!(mvm.maybe_q_number(b"123", true).is_some());
+    }
+
+    #[test]
+    fn test_add_transition_all_exact_returns_one_shared_next_state() {
+        // The MutableFieldMatcher dispatch routes "all matchers are Exact AND
+        // matchers.len() >= 2" to the bulk path, which returns ONE shared
+        // next state. Asserting len() == 1 with three exact strings catches
+        // boundary mutants on `>= 2` (e.g. `>= → >`, `== 2`, `< 2`) which all
+        // would fall back to the one-by-one path and return three.
+        let fm: Rc<MutableFieldMatcher<String>> = Rc::new(MutableFieldMatcher::new());
+        let matchers = vec![
+            Matcher::Exact("\"a\"".to_string()),
+            Matcher::Exact("\"b\"".to_string()),
+            Matcher::Exact("\"c\"".to_string()),
+        ];
+        let result = fm.add_transition("p", &matchers, 0).unwrap();
+        assert_eq!(
+            result.len(),
+            1,
+            "all-exact bulk path must return one shared continuation"
+        );
+
+        // Two exact matchers (boundary at >= 2) must also share one continuation.
+        let fm2: Rc<MutableFieldMatcher<String>> = Rc::new(MutableFieldMatcher::new());
+        let two = vec![
+            Matcher::Exact("\"x\"".to_string()),
+            Matcher::Exact("\"y\"".to_string()),
+        ];
+        let r2 = fm2.add_transition("p", &two, 0).unwrap();
+        assert_eq!(
+            r2.len(),
+            1,
+            "two-exact bulk path must return one continuation"
+        );
+
+        // Single matcher falls to one-by-one: returns a Vec of length 1
+        // (kills `>= → <` which would bulk a single-element slice spuriously).
+        let fm3: Rc<MutableFieldMatcher<String>> = Rc::new(MutableFieldMatcher::new());
+        let one = vec![Matcher::Exact("\"only\"".to_string())];
+        let r3 = fm3.add_transition("p", &one, 0).unwrap();
+        assert_eq!(r3.len(), 1);
+    }
+
+    #[test]
+    fn test_add_transition_mixed_exact_and_numeric_keeps_numeric_path() {
+        // Mixed [Exact, Numeric] must NOT take the bulk path (which would drop
+        // the Numeric matcher). Asserting that we get one next state PER matcher
+        // (and that the resulting value matcher reports has_numbers=true) catches
+        // mutants on `all_exact.len() == matchers.len()` that would wrongly bulk
+        // a partial all_exact slice.
+        let fm: Rc<MutableFieldMatcher<String>> = Rc::new(MutableFieldMatcher::new());
+        let matchers = vec![
+            Matcher::Exact("\"a\"".to_string()),
+            Matcher::NumericExact(42.0),
+        ];
+        let result = fm.add_transition("p", &matchers, 0).unwrap();
+        assert_eq!(
+            result.len(),
+            2,
+            "mixed matchers must go one-by-one and return one next state per matcher"
+        );
+
+        // The Numeric matcher must have flipped has_numbers on the value matcher.
+        let transitions = fm.transitions.borrow();
+        let vm = transitions.get("p").expect("value matcher present");
+        assert!(
+            vm.has_numbers.get(),
+            "Numeric matcher in the mix must set has_numbers"
         );
     }
 

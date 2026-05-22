@@ -19,3 +19,4 @@ docs/long_fuzz_output.log
 mutants.out/
 mutants.out.*/
 mutants.out.old/
+mutants-*.log

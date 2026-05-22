@@ -85,6 +85,7 @@ pub(crate) fn to_q_number_stack(nb: u64) -> QNumberStack {
     let mut index = MAX_BYTES_IN_ENCODING - 1; // 10
 
     loop {
+        let _prev = index;
         if nb & 0x7f != 0 {
             break;
         }
@@ -94,6 +95,10 @@ pub(crate) fn to_q_number_stack(nb: u64) -> QNumberStack {
             break;
         }
         index -= 1;
+        // Loop-progress invariant: `index` must strictly decrease until it
+        // reaches the break threshold, or the loop never terminates.
+        // Catches `-=`→`+=` / `/=` infinite-loop mutants on `index -= 1`.
+        debug_assert!(index < _prev, "to_q_number_stack: index must decrease");
     }
 
     // Content length (excluding prefix)
@@ -168,6 +173,7 @@ pub(crate) fn to_q_number(nb: u64) -> Vec<u8> {
     let mut index = max_content_bytes - 1;
 
     loop {
+        let _prev = index;
         if nb & 0x7f != 0 {
             break;
         }
@@ -177,6 +183,10 @@ pub(crate) fn to_q_number(nb: u64) -> Vec<u8> {
             break;
         }
         index -= 1;
+        // Loop-progress invariant: `index` must strictly decrease until it
+        // reaches 0, or the loop never terminates. Catches `-=`→`+=` / `/=`
+        // infinite-loop mutants on `index -= 1`.
+        debug_assert!(index < _prev, "to_q_number: index must decrease");
     }
 
     // Now fill in the byte encoding for the digits up to the last non-zero

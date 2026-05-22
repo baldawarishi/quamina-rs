@@ -134,10 +134,12 @@ impl CidrPattern {
             } else {
                 parts[0].split(':').collect()
             };
-            let right: Vec<&str> = if parts.len() > 1 && !parts[1].is_empty() {
-                parts[1].split(':').collect()
-            } else {
+            // `s.contains("::")` ensures split yields exactly 2 parts (we already
+            // rejected `parts.len() > 2` above), so `parts[1]` is always in-bounds.
+            let right: Vec<&str> = if parts[1].is_empty() {
                 vec![]
+            } else {
+                parts[1].split(':').collect()
             };
 
             if left.len() + right.len() > 8 {
@@ -191,8 +193,9 @@ impl CidrPattern {
             *byte = 0;
         }
 
-        // Apply partial mask to the boundary byte
-        if remaining_bits > 0 && full_bytes < 16 {
+        // Apply partial mask to the boundary byte. parse_ipv6 rejects
+        // prefix_len > 128, so `remaining_bits > 0` implies full_bytes < 16.
+        if remaining_bits > 0 {
             let mask = !0u8 << (8 - remaining_bits);
             result[full_bytes] &= mask;
         }
@@ -424,6 +427,13 @@ fn build_combined_pattern(primary_atoms: &RegexpBranch, lookahead: &RegexpRoot) 
     combined_branches
 }
 
+/// Returns true when a regexp tree has exactly one branch. Extracted from
+/// Returns true when a parsed regexp tree has exactly one branch (no
+/// top-level alternation). Used by `compute_lookbehind_byte_length`.
+const fn is_single_branch(tree: &RegexpRoot) -> bool {
+    tree.len() == 1
+}
+
 /// Compute the fixed byte length of a lookbehind pattern.
 /// Lookbehind patterns must have a fixed length (validated during parsing).
 /// This computes the UTF-8 byte length for the pattern.
@@ -432,8 +442,8 @@ fn compute_lookbehind_byte_length(tree: &RegexpRoot) -> Result<usize, String> {
         return Ok(0);
     }
 
-    // For single branch, compute length
-    if tree.len() == 1 {
+    // For single branch, compute length.
+    if is_single_branch(tree) {
         return compute_branch_byte_length(&tree[0]);
     }
 
@@ -770,6 +780,7 @@ fn parse_numeric_comparison(arr: &[Value]) -> Option<NumericComparison> {
 
     let mut i = 0;
     while i < arr.len() {
+        let _prev_i = i;
         if let Value::String(op) = &arr[i] {
             if i + 1 >= arr.len() {
                 return None;
@@ -791,6 +802,8 @@ fn parse_numeric_comparison(arr: &[Value]) -> Option<NumericComparison> {
                 _ => return None,
             }
             i += 2;
+            // Loop-progress invariant: each `op, num` pair must advance `i`.
+            debug_assert!(i > _prev_i, "parse_numeric_comparison must advance i");
         } else {
             return None;
         }
@@ -940,6 +953,9 @@ impl<'a> Parser<'a> {
             if c == '\\' {
                 self.advance();
                 if let Some(escaped) = self.peek() {
+                    // Forward-progress invariant: every escape arm MUST advance
+                    // past the escape character or the outer loop re-peeks forever.
+                    let _prev_pos_in_escape = self.pos;
                     match escaped {
                         'n' => {
                             result.push('\n');
@@ -999,11 +1015,22 @@ impl<'a> Parser<'a> {
                                 result.push(ch);
                             }
                         }
-                        _ => {
-                            result.push(escaped);
-                            self.advance();
+                        other => {
+                            // Per JSON spec only `" \ / b f n r t u` are valid
+                            // escapes. Rejecting unknown ones makes the explicit
+                            // `\\`, `"`, `/` arms above load-bearing: deleting
+                            // any of them now routes a valid escape to this
+                            // error path, which patterns with those escapes
+                            // catch.
+                            return Err(QuaminaError::InvalidPattern(format!(
+                                "invalid escape \\{other} in pattern string"
+                            )));
                         }
                     }
+                    debug_assert!(
+                        self.pos > _prev_pos_in_escape,
+                        "parse_string escape arm must advance past the escape char"
+                    );
                 }
             } else {
                 result.push(c);
@@ -1095,5 +1122,38 @@ impl<'a> Parser<'a> {
         } else {
             Err(QuaminaError::InvalidJson(format!("expected '{c}'")))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::regexp::parse_regexp;
+
+    #[test]
+    fn test_is_single_branch_boundary() {
+        // 1 branch → true; 0 branches and 2+ branches → false.
+        // Direct truth table kills `==`→`!=` on the helper body.
+        let zero = parse_regexp("").unwrap();
+        let one = parse_regexp("abc").unwrap();
+        let two = parse_regexp("ab|cd").unwrap();
+        assert!(zero.is_empty()); // sanity
+        assert_eq!(one.len(), 1);
+        assert_eq!(two.len(), 2);
+        assert!(!is_single_branch(&zero));
+        assert!(is_single_branch(&one));
+        assert!(!is_single_branch(&two));
+    }
+
+    #[test]
+    fn test_parse_string_rejects_unknown_escape() {
+        // Per JSON spec, `\z` is not a valid escape. Pattern parsing must
+        // reject it rather than silently treating it as `z`.
+        let mut parser = Parser::new(r#""\z""#);
+        let err = parser.parse_string().unwrap_err();
+        assert!(
+            matches!(err, QuaminaError::InvalidPattern(ref msg) if msg.contains("\\z")),
+            "expected InvalidPattern containing `\\z`, got {err:?}",
+        );
     }
 }

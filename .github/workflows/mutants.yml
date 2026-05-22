@@ -2,9 +2,16 @@ name: mutation-testing
 
 on:
   workflow_dispatch:
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'Cargo.toml'
+      - '.cargo/mutants.toml'
 
 jobs:
+  # Full sharded run, manually triggered.
   mutants:
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 120
     strategy:
@@ -45,5 +52,65 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: mutants-shard-${{ matrix.shard }}
+          path: mutants.out/
+          retention-days: 30
+
+  # PR-time gate: only test mutants in files the PR changed.
+  mutants-diff:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-mutants,cargo-nextest
+
+      - name: Compute PR diff against base
+        run: git diff origin/${{ github.base_ref }}.. > /tmp/pr.diff
+
+      - name: Run cargo-mutants on diff
+        run: |
+          cargo mutants -vV --in-diff /tmp/pr.diff \
+            --test-tool nextest --timeout 60 -j 2 \
+            --no-shuffle
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "## Mutation results (PR diff)" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          for f in caught missed timeout unviable; do
+            count=$(wc -l < "mutants.out/${f}.txt" 2>/dev/null || echo 0)
+            echo "- **${f}**: ${count}" >> "$GITHUB_STEP_SUMMARY"
+          done
+          if [ -s mutants.out/missed.txt ] || [ -s mutants.out/timeout.txt ]; then
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "### Gate: FAIL — missed or timed-out mutants exist" >> "$GITHUB_STEP_SUMMARY"
+            if [ -s mutants.out/missed.txt ]; then
+              echo "#### Missed" >> "$GITHUB_STEP_SUMMARY"
+              echo '```' >> "$GITHUB_STEP_SUMMARY"
+              cat mutants.out/missed.txt >> "$GITHUB_STEP_SUMMARY"
+              echo '```' >> "$GITHUB_STEP_SUMMARY"
+            fi
+            if [ -s mutants.out/timeout.txt ]; then
+              echo "#### Timeout" >> "$GITHUB_STEP_SUMMARY"
+              echo '```' >> "$GITHUB_STEP_SUMMARY"
+              cat mutants.out/timeout.txt >> "$GITHUB_STEP_SUMMARY"
+              echo '```' >> "$GITHUB_STEP_SUMMARY"
+            fi
+            exit 1
+          fi
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: mutants-pr
           path: mutants.out/
           retention-days: 30

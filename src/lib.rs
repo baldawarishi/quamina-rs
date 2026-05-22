@@ -109,6 +109,14 @@ impl PrunerStats {
     }
 }
 
+/// Returns true when a memory budget value is non-zero and therefore needs
+/// to be enforced. The upstream "0 = unlimited" convention means budget==0
+/// short-circuits the size check in `set_memory_budget`. Extracted so the
+/// `!= 0` boundary mutant is killed by a direct truth-table unit test.
+const fn budget_check_required(budget: usize) -> bool {
+    budget != 0
+}
+
 impl Clone for PrunerStats {
     fn clone(&self) -> Self {
         Self {
@@ -958,7 +966,11 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
     /// ```
     pub fn set_memory_budget(&self, budget: usize) -> Result<usize, QuaminaError> {
         let current = self.automaton.current_memory_usage();
-        if budget != 0 && budget < current {
+        // `budget == 0` means "unlimited" by upstream convention. Extracted
+        // into `budget_check_required` so the `!= 0` mutant on this guard is
+        // killed by a direct truth-table unit test rather than depending on
+        // a specific arithmetic relationship between budget and current.
+        if budget_check_required(budget) && budget < current {
             return Err(QuaminaError::PatternTooComplex(format!(
                 "set_memory_budget: requested budget ({budget} bytes) is smaller \
                  than the memory currently in use ({current} bytes)"
