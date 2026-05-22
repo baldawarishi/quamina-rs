@@ -729,13 +729,9 @@ fn add_arena_byte_range_recursive(
     }
 }
 
-/// Returns the residual `middle_range_to_tree` depth for `byte_len`-byte
-/// rune encodings at recursion index `idx`, with the per-call offset
-/// (`1` from `add_arena_byte_range_recursive`, `2` from the lo/hi range
-/// helpers).
-//
-// Two subtractions collapsed into one to avoid a divide-by-zero panic when
-// the inner `-` is mutated to `/` against idx==0.
+/// Returns the number of remaining continuation bytes after peeling `idx + offset`
+/// bytes from a `byte_len`-byte UTF-8 sequence, for use as the `depth` argument
+/// to `add_arena_middle_range_to_tree`.
 const fn remaining_byte_depth(byte_len: usize, idx: usize, offset: usize) -> usize {
     byte_len - (idx + offset)
 }
@@ -837,14 +833,9 @@ fn add_arena_middle_range_to_tree(
     depth: usize,
     dest: StateId,
 ) {
-    // UTF-8 ranges have at most 4-byte encodings, so the residual depth after
-    // peeling off the first byte is at most 3 (top-level lo/hi range call at
-    // idx=0 produces `len - 0 - 1 = 3`). Any mutated arithmetic on the
-    // `lo_bytes.len() - idx - …` callers (or on this function's own
-    // `depth - 1` recursive step) that lets depth grow beyond that is either
-    // infinite recursion or an exponential state explosion that will time
-    // out — this tight bound turns either failure mode into an immediate
-    // test panic.
+    // UTF-8 encodes at most 4 bytes, so the residual depth after peeling the
+    // first byte is at most 3. Depth growing beyond this would cause
+    // exponential state expansion.
     debug_assert!(
         depth <= 3,
         "rune-range middle depth bounded by UTF-8 byte length, got {depth}"
@@ -888,9 +879,8 @@ mod tests {
 
     #[test]
     fn test_remaining_byte_depth() {
-        // Truth table covering each `-` mutation. Inputs chosen so that the
-        // `-`→`+`/`/` flips at each of the two `-` operators flip at least
-        // one assertion.
+        // Verifies the residual-depth formula for 2-, 3-, and 4-byte UTF-8 encodings
+        // across all recursion indices and per-call offsets used by the callers.
         // byte_len=4, idx=0..=3, offset=1
         assert_eq!(remaining_byte_depth(4, 0, 1), 3);
         assert_eq!(remaining_byte_depth(4, 1, 1), 2);
@@ -922,8 +912,7 @@ mod tests {
     #[test]
     fn test_clear_fa_shell_cache_drops_entries() {
         // Populate the per-thread cache by building a regex with a rune range,
-        // then assert that `clear_fa_shell_cache` actually empties it. Catches
-        // the `clear_fa_shell_cache -> ()` mutant which leaves the cache full.
+        // then verify that `clear_fa_shell_cache` actually empties it.
         clear_fa_shell_cache();
         assert_eq!(fa_shell_cache_size(), 0);
         // `~i` is the multi-char escape for the large Unicode identifier
