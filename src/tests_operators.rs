@@ -717,14 +717,11 @@ fn test_cidr_ipv4_prefix_various_lengths() {
     }
 }
 
+/// `::` may appear at the start, middle, or end; it expands to enough zero
+/// groups to fill the address to 8 groups total.
 #[test]
 #[cfg_attr(miri, ignore)]
 fn test_cidr_ipv6_double_colon_variations() {
-    // Test to catch mutations in IPv6 :: handling (line 127:28, 136:51)
-    // Line 127: if parts.len() > 2 should reject ":::" (3 parts split by ::)
-    // Changing to < would accept multiple :: which is invalid
-
-    // Valid patterns with :: shorthand (in pattern) but expanded form in events
     let tests = vec![
         (
             "2001:db8::1/128",
@@ -753,38 +750,66 @@ fn test_cidr_ipv6_double_colon_variations() {
     }
 }
 
+/// /128 matches exactly one host; addresses differing in any group must not match.
 #[test]
 #[cfg_attr(miri, ignore)]
 fn test_cidr_ipv6_group_limit() {
-    // Test to catch mutations in IPv6 group count validation (line 142:41)
-    // if left.len() + right.len() > 8 should reject more than 8 groups
-    // Changing to == would only reject exactly 8, allowing 9+
-    // Changing to >= would reject valid 8-group addresses
-
-    // IPv6 must have exactly 8 groups. With ::, fewer explicit groups are valid
-    // but the total cannot exceed 8 (else it's invalid)
     let q = q!("p1" => r#"{"ip": [{"cidr": "2001:db8:0:0:0:0:0:1/128"}]}"#);
-
-    // Full address should match
     assert_matches!(
         q,
         r#"{"ip": "2001:db8:0:0:0:0:0:1"}"#,
         vec!["p1"],
-        "Full IPv6 should match exact /128"
+        "exact host must match /128"
     );
-
-    // Different last group should not match
     assert_no_match!(
         q,
         r#"{"ip": "2001:db8:0:0:0:0:0:2"}"#,
-        "Different final group should not match /128"
+        "address differing in the last group must not match /128"
+    );
+}
+
+/// Non-byte-aligned prefixes partially mask the boundary byte. With /60,
+/// `full_bytes=7` and `remaining_bits=4`, so only the top nibble of byte 7
+/// is kept. `0xef01` and `0xef0a` share network `0xef00`; `0xef10` does not.
+#[test]
+#[cfg_attr(miri, ignore)]
+fn test_cidr_ipv6_partial_boundary_byte_masking() {
+    let q = q!("p" => r#"{"ip": [{"cidr": "2001:db8:abcd:ef01:0:0:0:0/60"}]}"#);
+    assert_matches!(
+        q,
+        r#"{"ip": "2001:db8:abcd:ef0a:0:0:0:0"}"#,
+        vec!["p"],
+        "/60 host 0xef0a must match the same /60 network as 0xef01"
+    );
+    assert_no_match!(
+        q,
+        r#"{"ip": "2001:db8:abcd:ef10:0:0:0:0"}"#,
+        "/60 host 0xef10 is in a different /60 block (top-nibble boundary)"
+    );
+}
+
+/// A partially-constrained group whose network value is 0 must not be treated
+/// as a full-range wildcard. `::/60` constrains group 3 to `[0x0000, 0x000F]`;
+/// only byte-aligned prefixes produce groups where `min == max == 0`.
+#[test]
+#[cfg_attr(miri, ignore)]
+fn test_cidr_ipv6_partial_range_not_treated_as_full_wildcard() {
+    let q = q!("p" => r#"{"ip": [{"cidr": "::/60"}]}"#);
+    assert_matches!(
+        q,
+        r#"{"ip": "0:0:0:1:0:0:0:0"}"#,
+        vec!["p"],
+        "0x0001 is within /60"
+    );
+    assert_no_match!(
+        q,
+        r#"{"ip": "0:0:0:ff:0:0:0:0"}"#,
+        "0x00ff is outside /60 [0,15]"
     );
 }
 
 #[test]
 fn test_cidr_ipv6_invalid_formats() {
-    // Test to catch mutations in IPv6 validation
-    // Line 127: if parts.len() > 2 — reject multiple ::
     let mut q = Quamina::new();
 
     let result = q.add_pattern("p1", r#"{"ip": [{"cidr": "2001:db8:::1/64"}]}"#);
@@ -3710,4 +3735,33 @@ fn test_lookbehind_alternation_with_primary_alternation() {
     assert_has_match!(q, r#"{"v": "by"}"#, "p1");
     assert_no_match!(q, r#"{"v": "cx"}"#);
     assert_no_match!(q, r#"{"v": "az"}"#);
+}
+
+// ============================================================================
+// Thread-safe matching tests
+// ============================================================================
+
+#[test]
+fn test_mut_numeric_pattern_rejects_string_value() {
+    let q = q!("n" => r#"{"x": [{"numeric": ["=", 42]}]}"#);
+    assert_matches!(q, r#"{"x": 42}"#, vec!["n"], "numeric 42 must match");
+    assert_no_match!(
+        q,
+        r#"{"x": "42"}"#,
+        "string \"42\" must NOT match a numeric pattern"
+    );
+}
+
+#[test]
+fn test_mut_memory_usage_accumulates_suffix_and_lookaround() {
+    // current_memory_usage() must equal the sum of all constituent arena sizes.
+    let q = q!(
+        "suf" => r#"{"x": [{"suffix": "lo"}]}"#,
+        "la"  => r#"{"y": [{"regexp": "foo(?=bar)bar"}]}"#
+    );
+    let (_, used) = q.get_memory_budget();
+    assert_eq!(
+        used, 5568,
+        "memory usage must equal exact sum of arena byte sizes, got {used}"
+    );
 }
