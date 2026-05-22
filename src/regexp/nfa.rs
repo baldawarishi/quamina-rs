@@ -16,7 +16,9 @@ use crate::automaton::{
     arena::{ARENA_VALUE_TERMINATOR, SmallTable, StateArena, StateId},
 };
 
-use super::parser::{Branch as RegexpBranch, QuantifiedAtom, Root as RegexpRoot, RuneRange};
+use super::parser::{
+    Branch as RegexpBranch, QuantifiedAtom, REGEXP_QUANTIFIER_MAX, Root as RegexpRoot, RuneRange,
+};
 
 // ============================================================================
 // UTF-8 Encoding Constants
@@ -212,13 +214,15 @@ fn make_one_arena_branch_fa(
             let n = usize::try_from(qa.quant_min).expect("quant_min must be non-negative");
             let m = usize::try_from(qa.quant_max).expect("quant_max must be non-negative");
 
-            // Special case: {0,0} means match zero times - pure epsilon transition
-            if n == 0 && m == 0 {
-                let epsilon_state = arena.alloc();
-                arena[epsilon_state].table.epsilons.push(current_next);
-                current_next = epsilon_state;
-                continue;
-            }
+            // Sanity invariant: + and * use the plus_star path above.
+            debug_assert!(
+                qa.quant_max != REGEXP_QUANTIFIER_MAX,
+                "+/* must take the plus_star path, not the general {{n,m}} expansion"
+            );
+
+            // The {0,0} case is left to the general path on purpose: the
+            // `for _ in 0..0 {}` loops produce a no-op, leaving `current_next`
+            // unchanged — semantically identical to a dedicated special case.
 
             // First, build the optional part (m-n copies, each with epsilon skip)
             for _ in n..m {
@@ -511,11 +515,14 @@ fn instantiate_shell(shell: &CachedShell, arena: &mut StateArena, next: StateId)
             }
         }
 
-        // Remap epsilons
+        // Remap epsilons. Cached shells (built by `build_shell`) never insert
+        // NONE epsilon entries.
         for eps in &mut table.epsilons {
-            if !eps.is_none() {
-                *eps = id_map[eps.index()];
-            }
+            debug_assert!(
+                !eps.is_none(),
+                "cached shell epsilons must not contain NONE entries"
+            );
+            *eps = id_map[eps.index()];
         }
 
         // Remap default
@@ -557,6 +564,13 @@ pub fn clear_fa_shell_cache() {
     FA_SHELL_CACHE.with(|cache| {
         cache.borrow_mut().clear();
     });
+}
+
+/// Returns the current size of the FA shell cache. Test-only helper used to
+/// observe the side-effect of `clear_fa_shell_cache`.
+#[cfg(test)]
+pub fn fa_shell_cache_size() -> usize {
+    FA_SHELL_CACHE.with(|cache| cache.borrow().len())
 }
 
 // ============================================================================
@@ -629,15 +643,15 @@ fn add_arena_rune_pair_tree_entry(root: &mut ArenaRuneTreeNode, lo: char, hi: ch
 
         let segment_end = hi_u32.min(boundary);
 
-        if current <= SURROGATE_END && segment_end >= SURROGATE_START {
-            if current < SURROGATE_START {
+        if intersects_surrogate(current, segment_end) {
+            if before_surrogate(current) {
                 let pre_end = (SURROGATE_START - 1).min(segment_end);
                 if let (Some(start), Some(end)) = (char::from_u32(current), char::from_u32(pre_end))
                 {
                     add_arena_utf8_range_to_tree(root, start, end, dest);
                 }
             }
-            if segment_end > SURROGATE_END {
+            if after_surrogate(segment_end) {
                 let post_start = (SURROGATE_END + 1).max(current);
                 if let (Some(start), Some(end)) =
                     (char::from_u32(post_start), char::from_u32(segment_end))
@@ -700,18 +714,48 @@ fn add_arena_byte_range_recursive(
     } else {
         add_arena_lo_range_to_tree(node, lo_bytes, idx, dest);
 
-        if hi_byte > lo_byte + 1 {
-            add_arena_middle_range_to_tree(
-                node,
-                lo_byte + 1,
-                hi_byte - 1,
-                lo_bytes.len() - idx - 1,
-                dest,
-            );
-        }
+        // Call `add_arena_middle_range_to_tree` unconditionally: when
+        // `hi_byte == lo_byte + 1` the lo/hi arguments collapse to an empty
+        // range and the function's `for byte in lo..=hi` yields nothing.
+        add_arena_middle_range_to_tree(
+            node,
+            lo_byte + 1,
+            hi_byte - 1,
+            remaining_byte_depth(lo_bytes.len(), idx, 1),
+            dest,
+        );
 
         add_arena_hi_range_to_tree(node, hi_bytes, idx, dest);
     }
+}
+
+/// Returns the residual `middle_range_to_tree` depth for `byte_len`-byte
+/// rune encodings at recursion index `idx`, with the per-call offset
+/// (`1` from `add_arena_byte_range_recursive`, `2` from the lo/hi range
+/// helpers).
+//
+// Two subtractions collapsed into one to avoid a divide-by-zero panic when
+// the inner `-` is mutated to `/` against idx==0.
+const fn remaining_byte_depth(byte_len: usize, idx: usize, offset: usize) -> usize {
+    byte_len - (idx + offset)
+}
+
+/// Returns true when a `[current, segment_end]` codepoint range overlaps the
+/// UTF-16 surrogate window (`SURROGATE_START..=SURROGATE_END`, U+D800..=U+DFFF).
+const fn intersects_surrogate(current: u32, segment_end: u32) -> bool {
+    current <= SURROGATE_END && segment_end >= SURROGATE_START
+}
+
+/// Returns true when `current` lies strictly before the surrogate window —
+/// the pre-surrogate slice of an intersecting range.
+const fn before_surrogate(current: u32) -> bool {
+    current < SURROGATE_START
+}
+
+/// Returns true when `segment_end` lies strictly after the surrogate window —
+/// the post-surrogate slice of an intersecting range.
+const fn after_surrogate(segment_end: u32) -> bool {
+    segment_end > SURROGATE_END
 }
 
 fn add_arena_lo_range_to_tree(
@@ -737,15 +781,16 @@ fn add_arena_lo_range_to_tree(
 
         add_arena_lo_range_to_tree(child, lo_bytes, idx + 1, dest);
 
-        if next_byte < 0xBF {
-            add_arena_middle_range_to_tree(
-                child,
-                next_byte + 1,
-                0xBF,
-                lo_bytes.len() - idx - 2,
-                dest,
-            );
-        }
+        // Call `add_arena_middle_range_to_tree` unconditionally: when
+        // `next_byte == 0xBF` the lo argument collapses to 0xC0 > 0xBF, so
+        // the inner `for byte in lo..=hi` loop yields nothing.
+        add_arena_middle_range_to_tree(
+            child,
+            next_byte.wrapping_add(1),
+            0xBF,
+            remaining_byte_depth(lo_bytes.len(), idx, 2),
+            dest,
+        );
     }
 }
 
@@ -770,15 +815,16 @@ fn add_arena_hi_range_to_tree(
         let child = entry.child.as_mut().unwrap();
         let next_byte = hi_bytes[idx + 1];
 
-        if next_byte > 0x80 {
-            add_arena_middle_range_to_tree(
-                child,
-                0x80,
-                next_byte - 1,
-                hi_bytes.len() - idx - 2,
-                dest,
-            );
-        }
+        // Call `add_arena_middle_range_to_tree` unconditionally: when
+        // `next_byte == 0x80` the hi argument collapses to 0x7F < 0x80, so
+        // the inner `for byte in lo..=hi` loop yields nothing.
+        add_arena_middle_range_to_tree(
+            child,
+            0x80,
+            next_byte.wrapping_sub(1),
+            remaining_byte_depth(hi_bytes.len(), idx, 2),
+            dest,
+        );
 
         add_arena_hi_range_to_tree(child, hi_bytes, idx + 1, dest);
     }
@@ -791,6 +837,18 @@ fn add_arena_middle_range_to_tree(
     depth: usize,
     dest: StateId,
 ) {
+    // UTF-8 ranges have at most 4-byte encodings, so the residual depth after
+    // peeling off the first byte is at most 3 (top-level lo/hi range call at
+    // idx=0 produces `len - 0 - 1 = 3`). Any mutated arithmetic on the
+    // `lo_bytes.len() - idx - …` callers (or on this function's own
+    // `depth - 1` recursive step) that lets depth grow beyond that is either
+    // infinite recursion or an exponential state explosion that will time
+    // out — this tight bound turns either failure mode into an immediate
+    // test panic.
+    debug_assert!(
+        depth <= 3,
+        "rune-range middle depth bounded by UTF-8 byte length, got {depth}"
+    );
     if depth == 0 {
         for byte in lo..=hi {
             ensure_arena_tree_entry(node, byte);
@@ -821,5 +879,78 @@ fn ensure_arena_tree_entry(node: &mut ArenaRuneTreeNode, byte: u8) {
             next: None,
             child: None,
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_remaining_byte_depth() {
+        // Truth table covering each `-` mutation. Inputs chosen so that the
+        // `-`→`+`/`/` flips at each of the two `-` operators flip at least
+        // one assertion.
+        // byte_len=4, idx=0..=3, offset=1
+        assert_eq!(remaining_byte_depth(4, 0, 1), 3);
+        assert_eq!(remaining_byte_depth(4, 1, 1), 2);
+        assert_eq!(remaining_byte_depth(4, 2, 1), 1);
+        assert_eq!(remaining_byte_depth(4, 3, 1), 0);
+        // byte_len=4, idx=0..=2, offset=2
+        assert_eq!(remaining_byte_depth(4, 0, 2), 2);
+        assert_eq!(remaining_byte_depth(4, 1, 2), 1);
+        assert_eq!(remaining_byte_depth(4, 2, 2), 0);
+        // byte_len=2 (a 2-byte UTF-8 sequence), idx=0, offset=1
+        assert_eq!(remaining_byte_depth(2, 0, 1), 1);
+        assert_eq!(remaining_byte_depth(3, 1, 2), 0);
+    }
+
+    #[test]
+    fn test_intersects_surrogate_boundary() {
+        // Range strictly below the surrogate window.
+        assert!(!intersects_surrogate(0, 0x100));
+        assert!(!intersects_surrogate(0, SURROGATE_START - 1));
+        // Range touches the lower edge.
+        assert!(intersects_surrogate(0, SURROGATE_START));
+        assert!(intersects_surrogate(SURROGATE_START, SURROGATE_END));
+        // Range strictly above.
+        assert!(!intersects_surrogate(SURROGATE_END + 1, 0xFFFF));
+        // Range entirely surrounds the window.
+        assert!(intersects_surrogate(0, 0xFFFF));
+    }
+
+    #[test]
+    fn test_clear_fa_shell_cache_drops_entries() {
+        // Populate the per-thread cache by building a regex with a rune range,
+        // then assert that `clear_fa_shell_cache` actually empties it. Catches
+        // the `clear_fa_shell_cache -> ()` mutant which leaves the cache full.
+        clear_fa_shell_cache();
+        assert_eq!(fa_shell_cache_size(), 0);
+        // `~i` is the multi-char escape for the large Unicode identifier
+        // category that carries a `cache_key`, routing the build through
+        // the shell cache.
+        let root = crate::regexp::parse_regexp("~i").unwrap();
+        let _ = make_regexp_nfa_arena(root);
+        let populated = fa_shell_cache_size();
+        assert!(
+            populated > 0,
+            "building a rune-range regex must populate the cache"
+        );
+        clear_fa_shell_cache();
+        assert_eq!(
+            fa_shell_cache_size(),
+            0,
+            "clear_fa_shell_cache must drop all entries"
+        );
+    }
+
+    #[test]
+    fn test_before_after_surrogate() {
+        assert!(before_surrogate(SURROGATE_START - 1));
+        assert!(!before_surrogate(SURROGATE_START));
+        assert!(!before_surrogate(SURROGATE_END));
+        assert!(after_surrogate(SURROGATE_END + 1));
+        assert!(!after_surrogate(SURROGATE_END));
+        assert!(!after_surrogate(SURROGATE_START));
     }
 }
