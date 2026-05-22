@@ -485,7 +485,9 @@ fn test_should_rebuild_boundary() {
     assert!(!stats.should_rebuild());
 }
 
-/// Verify that cloning PrunerStats preserves non-default field values.
+/// Cloning PrunerStats preserves non-default field values and leaves the
+/// original intact. Uses `.clone()` explicitly — a move bypasses the Clone
+/// impl entirely and would not catch a mutated impl returning Default.
 #[test]
 fn test_pruner_stats_clone() {
     use super::PrunerStats;
@@ -494,9 +496,24 @@ fn test_pruner_stats_clone() {
     stats.add_emitted(42);
     stats.add_filtered(17);
 
-    let cloned = stats;
+    let cloned = stats.clone();
     assert_eq!(cloned.emitted(), 42);
     assert_eq!(cloned.filtered(), 17);
+    assert_eq!(stats.emitted(), 42);
+    assert_eq!(stats.filtered(), 17);
+
+    stats.add_emitted(10);
+    stats.add_filtered(5);
+    assert_eq!(
+        cloned.emitted(),
+        42,
+        "clone must not see mutations to original"
+    );
+    assert_eq!(
+        cloned.filtered(),
+        17,
+        "clone must not see mutations to original"
+    );
 }
 
 // MIRI SKIP RATIONALE: 2000 iterations of matches_for_event is slow under Miri (~100s).
@@ -612,6 +629,7 @@ fn test_pattern_count_and_clear() {
     q.clear();
     assert!(q.is_empty());
     assert_eq!(q.pattern_count(), 0);
+    assert!(q.list_pattern_ids().is_empty(), "clear must drop all ids");
 }
 
 // ============================================================================
@@ -2391,21 +2409,6 @@ fn test_should_rebuild_boundary_cases() {
     assert!(s.should_rebuild(), "total=1000, emitted=1: must rebuild");
 }
 
-/// Clone must preserve non-default emitted AND filtered values.
-/// Clone must preserve non-default emitted AND filtered values.
-#[test]
-fn test_pruner_stats_clone_preserves_values() {
-    use super::PrunerStats;
-
-    let stats = PrunerStats::new();
-    stats.add_emitted(100);
-    stats.add_filtered(50);
-
-    let cloned = stats;
-    assert_eq!(cloned.emitted(), 100, "clone must preserve emitted");
-    assert_eq!(cloned.filtered(), 50, "clone must preserve filtered");
-}
-
 // ============================================================================
 // QuaminaBuilder tests
 // ============================================================================
@@ -3011,6 +3014,60 @@ fn test_numeric_comparison_range() {
     assert_no_match!(q, r#"{"x": 4}"#); // below lower bound
 }
 
+/// An exclusive upper bound (`<`) must reject the boundary value itself.
+/// `[">=", 1, "<", 100]` — one inclusive, one exclusive bound — exercises the
+/// `&&` check in `make_range_arena_fa_step`; value 100 must not match.
+#[test]
+fn test_numeric_comparison_exclusive_upper_bound_boundary() {
+    let mut q = Quamina::<&str>::new();
+    q.add_pattern("r", r#"{"x": [{"numeric": [">=", 1, "<", 100]}]}"#)
+        .unwrap();
+    assert_matches!(q, r#"{"x": 99}"#, vec!["r"]);
+    assert_matches!(q, r#"{"x": 1}"#, vec!["r"]);
+    assert_no_match!(
+        q,
+        r#"{"x": 100}"#,
+        "exclusive upper bound must reject value == upper"
+    );
+}
+
+/// An exclusive lower bound (`>`) must reject the boundary value itself.
+/// Mirror of `test_numeric_comparison_exclusive_upper_bound_boundary` with
+/// the inclusive and exclusive sides swapped.
+#[test]
+fn test_numeric_comparison_exclusive_lower_bound_boundary() {
+    let mut q = Quamina::<&str>::new();
+    q.add_pattern("r", r#"{"x": [{"numeric": [">", 1, "<=", 100]}]}"#)
+        .unwrap();
+    assert_matches!(q, r#"{"x": 2}"#, vec!["r"]);
+    assert_matches!(q, r#"{"x": 100}"#, vec!["r"]);
+    assert_no_match!(
+        q,
+        r#"{"x": 1}"#,
+        "exclusive lower bound must reject value == lower"
+    );
+}
+
+/// Both bounds exclusive (`>`, `<`): both boundary values must be rejected.
+#[test]
+fn test_numeric_comparison_both_bounds_exclusive() {
+    let mut q = Quamina::<&str>::new();
+    q.add_pattern("r", r#"{"x": [{"numeric": [">", 1, "<", 100]}]}"#)
+        .unwrap();
+    assert_matches!(q, r#"{"x": 2}"#, vec!["r"]);
+    assert_matches!(q, r#"{"x": 99}"#, vec!["r"]);
+    assert_no_match!(
+        q,
+        r#"{"x": 1}"#,
+        "exclusive lower must reject value == lower"
+    );
+    assert_no_match!(
+        q,
+        r#"{"x": 100}"#,
+        "exclusive upper must reject value == upper"
+    );
+}
+
 #[test]
 fn test_numeric_comparison_invalid_patterns() {
     let mut q = Quamina::<&str>::new();
@@ -3243,6 +3300,29 @@ fn test_memory_stress() {
         q.add_pattern("x", pat)
             .unwrap_or_else(|e| panic!("pattern {i} rejected under generous budget: {e}"));
     }
+}
+
+/// `set_memory_budget` accepts a budget equal to current arena usage — the
+/// too-small guard is strict (`budget < current`), so equality is allowed.
+#[test]
+fn test_set_memory_budget_boundary_equal_to_current() {
+    let mut q = QuaminaBuilder::<&str>::new().build().unwrap();
+    // Prefix forces arena allocation so used > 0 (singletons keep used == 0).
+    q.add_pattern("p", r#"{"x": [{"prefix": "abc"}]}"#).unwrap();
+    let (_, current) = q.get_memory_budget();
+    assert!(
+        current > 0,
+        "need non-zero current usage for the boundary check"
+    );
+    q.set_memory_budget(current)
+        .expect("budget == current must be accepted (strict `<` guard)");
+    assert_eq!(q.get_memory_budget().0, current);
+    // A second prefix on the same field forces a merge; the merged arena
+    // exceeds `current`, so it must be rejected.
+    assert!(
+        q.add_pattern("q", r#"{"x": [{"prefix": "xyz"}]}"#).is_err(),
+        "pattern that grows arena beyond budget must be rejected"
+    );
 }
 
 /// `set_memory_budget(0)` removes the cap and lets large patterns build that
