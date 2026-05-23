@@ -369,8 +369,9 @@ fn validate_lookarounds(tree: &Root) -> Result<(), String> {
 /// Check if a pattern can match strings of different lengths.
 /// Used to validate lookbehind patterns which require fixed length.
 fn has_variable_length_pattern(tree: &Root) -> bool {
-    // Compute the first branch's fixed length and compare every later branch
-    // against it. Unifies empty-tree, single-branch and alternation cases.
+    // A pattern is variable-length if its first branch is variable-length, or if
+    // any alternation branch has a different fixed length than the first. An empty
+    // tree matches only the empty string, which is fixed-length.
     if tree.is_empty() {
         return false;
     }
@@ -387,7 +388,8 @@ fn has_variable_length_pattern(tree: &Root) -> bool {
 fn branch_fixed_length(branch: &Branch) -> Option<usize> {
     let mut total = 0usize;
     for atom in branch {
-        // Variable-length quantifiers (`quant_min != quant_max` covers `*` and `+`).
+        // A fixed-length atom repeats a fixed number of times, so quant_min must
+        // equal quant_max; `*`, `+`, and `{m,n}` with m != n are all variable.
         if atom.quant_min != atom.quant_max {
             return None;
         }
@@ -559,7 +561,9 @@ fn constrain_atom_at_boundary(
         None
     };
 
-    // Build the constrained-single atom (quant 1,1) once and reuse for both paths.
+    // The boundary-adjacent character: intersected with the constraining class and
+    // forced to exactly one occurrence. A singleton atom is exactly this; a
+    // quantified atom splits this single char off and keeps the rest of its run.
     let mut constrained_single = QuantifiedAtom {
         runes: intersected,
         cache_key,
@@ -1116,8 +1120,8 @@ fn check_multi_char_escape(c: char) -> Option<(RuneRange, Option<String>)> {
 fn read_atom(parse: &mut RegexpParse) -> Result<QuantifiedAtom, Error> {
     let b = parse.next_rune()?;
 
-    // Read-atom callers always run `read_quantifier` immediately after, which
-    // overwrites `quant_min` / `quant_max`, so they are omitted from these literals.
+    // The quantifier is applied later by read_quantifier (via read_piece), so the
+    // default quant_min/quant_max here are placeholders, not a real {0,0}.
     match b {
         c if is_normal_char(c) => Ok(QuantifiedAtom {
             runes: vec![RunePair { lo: c, hi: c }],
@@ -1182,8 +1186,8 @@ fn read_group(parse: &mut RegexpParse) -> Result<QuantifiedAtom, Error> {
     read_branches(parse)?;
     parse.require(')')?;
     let subtree = parse.unnest();
-    // `read_quantifier` (called by `read_piece` immediately after) overwrites
-    // `quant_min` / `quant_max`, so they are omitted from the literal.
+    // The quantifier is applied later by read_quantifier (via read_piece), so the
+    // default quant_min/quant_max here are placeholders, not a real {0,0}.
     Ok(QuantifiedAtom {
         subtree: Some(subtree),
         lookaround: lookaround_type,
@@ -1265,8 +1269,8 @@ fn read_escape(parse: &mut RegexpParse) -> Result<QuantifiedAtom, Error> {
         offset: parse.last_index,
     })?;
 
-    // `read_quantifier` overwrites `quant_min` / `quant_max` for every caller,
-    // so they are omitted from these struct literals.
+    // The quantifier is applied later by read_quantifier (via read_piece), so the
+    // default quant_min/quant_max here are placeholders, not a real {0,0}.
     if let Some(escaped) = check_single_char_escape(next) {
         return Ok(QuantifiedAtom {
             runes: vec![RunePair {
@@ -1325,8 +1329,8 @@ fn read_property_escape(parse: &mut RegexpParse, marker: char) -> Result<Quantif
     } else {
         cache_key
     };
-    // `read_quantifier` overwrites quant_min/quant_max immediately after
-    // `read_piece` returns, so omit them from the literal.
+    // The quantifier is applied later by read_quantifier (via read_piece), so the
+    // default quant_min/quant_max here are placeholders, not a real {0,0}.
     Ok(QuantifiedAtom {
         runes,
         cache_key,
@@ -1604,7 +1608,8 @@ pub fn subtract_rune_range(base: RuneRange, subtract: RuneRange) -> RuneRange {
         while sub_idx < subtract.len() && (subtract[sub_idx].hi as u32) < lo {
             let _prev = sub_idx;
             sub_idx += 1;
-            // Loop-progress invariant: sub_idx must advance.
+            // This loop terminates only because sub_idx strictly increases each
+            // pass; assert it so a broken increment fails fast instead of hanging.
             debug_assert!(sub_idx > _prev, "subtract_rune_range: sub_idx must advance");
         }
 
@@ -1624,7 +1629,8 @@ pub fn subtract_rune_range(base: RuneRange, subtract: RuneRange) -> RuneRange {
             // Advance past the subtracted portion
             lo = sub_hi + 1;
             si += 1;
-            // Loop-progress invariant on `si`, same rationale as above.
+            // This inner loop also terminates only because si strictly increases
+            // each pass; assert it so a broken increment fails fast, not hangs.
             debug_assert!(si > _prev_si, "subtract_rune_range: si must advance");
         }
 
