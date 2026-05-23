@@ -369,38 +369,28 @@ fn validate_lookarounds(tree: &Root) -> Result<(), String> {
 /// Check if a pattern can match strings of different lengths.
 /// Used to validate lookbehind patterns which require fixed length.
 fn has_variable_length_pattern(tree: &Root) -> bool {
-    // Multiple branches (alternation) can have different lengths
-    if tree.len() > 1 {
-        // Check if branches have same fixed length
-        let first_len = branch_fixed_length(&tree[0]);
-        for branch in tree.iter().skip(1) {
-            let branch_len = branch_fixed_length(branch);
-            if first_len != branch_len {
-                return true; // Different lengths in alternation
-            }
-        }
-        // If we get here, all branches have same length (or all are variable)
-        return first_len.is_none();
-    }
-
+    // A pattern is variable-length if its first branch is variable-length, or if
+    // any alternation branch has a different fixed length than the first. An empty
+    // tree matches only the empty string, which is fixed-length.
     if tree.is_empty() {
         return false;
     }
-
-    // Single branch - check for quantifiers that cause variable length
-    branch_fixed_length(&tree[0]).is_none()
+    let first_len = branch_fixed_length(&tree[0]);
+    if first_len.is_none() {
+        return true;
+    }
+    tree.iter()
+        .skip(1)
+        .any(|branch| branch_fixed_length(branch) != first_len)
 }
 
 /// Calculate the fixed length of a branch, or None if variable length.
 fn branch_fixed_length(branch: &Branch) -> Option<usize> {
     let mut total = 0usize;
     for atom in branch {
-        // Variable length quantifiers
+        // A fixed-length atom repeats a fixed number of times, so quant_min must
+        // equal quant_max; `*`, `+`, and `{m,n}` with m != n are all variable.
         if atom.quant_min != atom.quant_max {
-            return None;
-        }
-        // Star or plus (variable length)
-        if atom.is_star() || atom.is_plus() {
             return None;
         }
 
@@ -571,28 +561,15 @@ fn constrain_atom_at_boundary(
         None
     };
 
-    if atom.is_singleton() {
-        // Simple case: just intersect
-        return Some(ConstrainedAtom::Single(QuantifiedAtom {
-            runes: intersected,
-            is_dot: false,
-            quant_min: 1,
-            quant_max: 1,
-            cache_key,
-            ..Default::default()
-        }));
-    }
-
-    // Quantified atom: we need the boundary-adjacent char constrained,
-    // but the rest of the quantified run unconstrained.
     let constrained_single = QuantifiedAtom {
         runes: intersected,
-        is_dot: false,
-        quant_min: 1,
-        quant_max: 1,
         cache_key,
         ..Default::default()
     };
+
+    if atom.is_singleton() {
+        return Some(ConstrainedAtom::Single(constrained_single));
+    }
 
     // Adjust the base quantifier: reduce count by 1 since we split off one char.
     // Same logic for both is_last_char and !is_last_char.
@@ -1141,16 +1118,12 @@ fn read_atom(parse: &mut RegexpParse) -> Result<QuantifiedAtom, Error> {
     match b {
         c if is_normal_char(c) => Ok(QuantifiedAtom {
             runes: vec![RunePair { lo: c, hi: c }],
-            quant_min: 1,
-            quant_max: 1,
             ..Default::default()
         }),
         '.' => {
             parse.record_feature(RegexpFeature::Dot);
             Ok(QuantifiedAtom {
                 is_dot: true,
-                quant_min: 1,
-                quant_max: 1,
                 ..Default::default()
             })
         }
@@ -1174,8 +1147,6 @@ fn read_atom(parse: &mut RegexpParse) -> Result<QuantifiedAtom, Error> {
             let (rr, ascii_negated_bytes) = read_char_class_expr(parse)?;
             Ok(QuantifiedAtom {
                 runes: rr,
-                quant_min: 1,
-                quant_max: 1,
                 ascii_negated_bytes,
                 ..Default::default()
             })
@@ -1210,8 +1181,6 @@ fn read_group(parse: &mut RegexpParse) -> Result<QuantifiedAtom, Error> {
     let subtree = parse.unnest();
     Ok(QuantifiedAtom {
         subtree: Some(subtree),
-        quant_min: 1,
-        quant_max: 1,
         lookaround: lookaround_type,
         ..Default::default()
     })
@@ -1297,8 +1266,6 @@ fn read_escape(parse: &mut RegexpParse) -> Result<QuantifiedAtom, Error> {
                 lo: escaped,
                 hi: escaped,
             }],
-            quant_min: 1,
-            quant_max: 1,
             ..Default::default()
         });
     }
@@ -1307,8 +1274,6 @@ fn read_escape(parse: &mut RegexpParse) -> Result<QuantifiedAtom, Error> {
     if let Some((runes, cache_key)) = check_multi_char_escape(next) {
         return Ok(QuantifiedAtom {
             runes,
-            quant_min: 1,
-            quant_max: 1,
             cache_key,
             ..Default::default()
         });
@@ -1322,8 +1287,6 @@ fn read_escape(parse: &mut RegexpParse) -> Result<QuantifiedAtom, Error> {
         parse.record_feature(RegexpFeature::WordBoundary);
         return Ok(QuantifiedAtom {
             is_word_boundary: Some(next == 'b'),
-            quant_min: 1,
-            quant_max: 1,
             ..Default::default()
         });
     }
@@ -1357,8 +1320,6 @@ fn read_property_escape(parse: &mut RegexpParse, marker: char) -> Result<Quantif
     };
     Ok(QuantifiedAtom {
         runes,
-        quant_min: 1,
-        quant_max: 1,
         cache_key,
         ..Default::default()
     })
@@ -1632,11 +1593,16 @@ pub fn subtract_rune_range(base: RuneRange, subtract: RuneRange) -> RuneRange {
 
         // Walk through subtract ranges that might overlap this base range
         while sub_idx < subtract.len() && (subtract[sub_idx].hi as u32) < lo {
+            let _prev = sub_idx;
             sub_idx += 1;
+            // This loop terminates only because sub_idx strictly increases each
+            // pass; assert it so a broken increment fails fast instead of hanging.
+            debug_assert!(sub_idx > _prev, "subtract_rune_range: sub_idx must advance");
         }
 
         let mut si = sub_idx;
         while si < subtract.len() && (subtract[si].lo as u32) <= hi {
+            let _prev_si = si;
             let sub_lo = subtract[si].lo as u32;
             let sub_hi = subtract[si].hi as u32;
 
@@ -1650,6 +1616,9 @@ pub fn subtract_rune_range(base: RuneRange, subtract: RuneRange) -> RuneRange {
             // Advance past the subtracted portion
             lo = sub_hi + 1;
             si += 1;
+            // This inner loop also terminates only because si strictly increases
+            // each pass; assert it so a broken increment fails fast, not hangs.
+            debug_assert!(si > _prev_si, "subtract_rune_range: si must advance");
         }
 
         // Add remaining portion of base range after all subtract ranges
@@ -1696,8 +1665,8 @@ fn add_gap_range(inverted: &mut Vec<RunePair>, start: u32, end: u32) {
         return;
     }
 
-    // If the range spans the surrogate area, split it
-    if start < SURROGATE_START_CP && end >= SURROGATE_START_CP {
+    // If the range spans the surrogate area, split it.
+    if spans_into_surrogate(start, end) {
         // Part before surrogates
         if let (Some(lo), Some(hi)) = (
             char::from_u32(start),
@@ -1706,7 +1675,7 @@ fn add_gap_range(inverted: &mut Vec<RunePair>, start: u32, end: u32) {
             inverted.push(RunePair { lo, hi });
         }
         // Part after surrogates (if any)
-        if end > SURROGATE_END_CP
+        if past_surrogate_end(end)
             && let (Some(lo), Some(hi)) =
                 (char::from_u32(SURROGATE_END_CP + 1), char::from_u32(end))
         {
@@ -1714,7 +1683,7 @@ fn add_gap_range(inverted: &mut Vec<RunePair>, start: u32, end: u32) {
         }
     } else if (SURROGATE_START_CP..=SURROGATE_END_CP).contains(&start) {
         // Starts in surrogate range, only add part after
-        if end > SURROGATE_END_CP
+        if past_surrogate_end(end)
             && let (Some(lo), Some(hi)) =
                 (char::from_u32(SURROGATE_END_CP + 1), char::from_u32(end))
         {
@@ -1728,23 +1697,38 @@ fn add_gap_range(inverted: &mut Vec<RunePair>, start: u32, end: u32) {
     }
 }
 
+/// Returns true when `[start, end]` (inclusive) crosses into the surrogate
+/// codepoint window — `start` is strictly below `SURROGATE_START_CP` and
+/// `end` reaches or passes it.
+const fn spans_into_surrogate(start: u32, end: u32) -> bool {
+    start < SURROGATE_START_CP && end >= SURROGATE_START_CP
+}
+
+/// Returns true when a codepoint lies strictly past the surrogate window —
+/// the post-surrogate tail of a split range.
+const fn past_surrogate_end(end: u32) -> bool {
+    end > SURROGATE_END_CP
+}
+
+/// Returns true when a sorted RunePair starting at `next_lo` overlaps or is
+/// adjacent to a previously merged RunePair ending at `prev_hi`.
+const fn range_pair_overlaps_or_adjacent(next_lo: u32, prev_hi: u32) -> bool {
+    next_lo <= prev_hi + 1
+}
+
 /// Invert a rune range (for negated character classes).
 /// Returns a range that matches everything NOT in the input range.
 pub fn invert_rune_range(mut rr: RuneRange) -> RuneRange {
     rr.sort_by_key(|rp| rp.lo);
 
-    // Merge overlapping/adjacent ranges after sorting
+    // Merge overlapping/adjacent ranges after sorting.
     let mut merged: Vec<RunePair> = Vec::new();
     for pair in rr {
-        if let Some(last) = merged.last_mut() {
-            // Check if this pair overlaps or is adjacent to the last merged range
-            if pair.lo as u32 <= last.hi as u32 + 1 {
-                // Extend the last range if this one goes further
-                if pair.hi > last.hi {
-                    last.hi = pair.hi;
-                }
-                continue;
-            }
+        if let Some(last) = merged.last_mut()
+            && range_pair_overlaps_or_adjacent(pair.lo as u32, last.hi as u32)
+        {
+            last.hi = last.hi.max(pair.hi);
+            continue;
         }
         merged.push(pair);
     }
