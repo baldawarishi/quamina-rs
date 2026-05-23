@@ -896,21 +896,18 @@ mod tests {
         assert!(intersects_surrogate(0, 0xFFFF));
     }
 
-    #[test]
-    fn test_clear_fa_shell_cache_drops_entries() {
-        // Populate the per-thread cache by building a regex with a rune range,
-        // then verify that `clear_fa_shell_cache` actually empties it.
+    // Populate the per-thread shell cache by building a cache-keyed regex, then
+    // verify `clear_fa_shell_cache` empties it. Shared by the native and
+    // Miri-friendly tests, which differ only in the size of the cached category.
+    fn verify_shell_cache_populate_then_clear(pattern: &str) {
         clear_fa_shell_cache();
         assert_eq!(fa_shell_cache_size(), 0);
-        // `~i` is the multi-char escape for the large Unicode identifier
-        // category that carries a `cache_key`, routing the build through
-        // the shell cache.
-        let root = crate::regexp::parse_regexp("~i").unwrap();
+        let root = crate::regexp::parse_regexp(pattern).unwrap();
         let _ = make_regexp_nfa_arena(root);
         let populated = fa_shell_cache_size();
         assert!(
             populated > 0,
-            "building a rune-range regex must populate the cache"
+            "building a cache-keyed regex must populate the cache"
         );
         clear_fa_shell_cache();
         assert_eq!(
@@ -918,6 +915,24 @@ mod tests {
             0,
             "clear_fa_shell_cache must drop all entries"
         );
+    }
+
+    // MIRI SKIP RATIONALE: `~i` is the XML-name-start Unicode category (~700
+    // rune ranges); building its NFA takes ~58 min under Miri. Coverage: the
+    // Miri-friendly variant below drives the same cache populate/clear path
+    // with the tiny `~p{Cc}` (control-char) category.
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_clear_fa_shell_cache_drops_entries() {
+        verify_shell_cache_populate_then_clear("~i");
+    }
+
+    /// Miri-friendly version — `~p{Cc}` is a two-range cache-keyed category, so
+    /// the cache lifecycle is exercised without the large `~i` NFA build.
+    #[cfg(miri)]
+    #[test]
+    fn test_clear_fa_shell_cache_drops_entries_miri_friendly() {
+        verify_shell_cache_populate_then_clear("~p{Cc}");
     }
 
     #[test]
