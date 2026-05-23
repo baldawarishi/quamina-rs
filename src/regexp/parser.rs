@@ -2015,6 +2015,45 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_spans_into_surrogate() {
+        // True when [start, end] crosses into the surrogate window: start lies
+        // below the window AND end reaches it. Cases walk both edges.
+        assert!(!spans_into_surrogate(0, 0xD7FF)); // end just below the window
+        assert!(spans_into_surrogate(0, SURROGATE_START_CP)); // end at lower edge
+        assert!(spans_into_surrogate(0, SURROGATE_END_CP));
+        assert!(spans_into_surrogate(0xD7FF, SURROGATE_START_CP));
+        // A range that starts at or past the window does not "span into" it.
+        assert!(!spans_into_surrogate(SURROGATE_START_CP, 0xFFFF));
+        assert!(!spans_into_surrogate(SURROGATE_END_CP, 0xFFFF));
+        assert!(!spans_into_surrogate(SURROGATE_END_CP + 1, 0xFFFF));
+    }
+
+    #[test]
+    fn test_range_pair_overlaps_or_adjacent() {
+        // True when the next range overlaps or sits immediately adjacent to the
+        // previous one (`next_lo <= prev_hi + 1`); the `+ 1` is what lets a
+        // zero-gap adjacency count as mergeable. A gap of one or more is false.
+        assert!(range_pair_overlaps_or_adjacent(5, 10)); // overlapping inside
+        assert!(range_pair_overlaps_or_adjacent(10, 10)); // overlap at edge
+        assert!(range_pair_overlaps_or_adjacent(11, 10)); // adjacent (lo == hi + 1)
+        assert!(!range_pair_overlaps_or_adjacent(12, 10)); // gap of one
+        assert!(!range_pair_overlaps_or_adjacent(100, 10)); // far gap
+        assert!(range_pair_overlaps_or_adjacent(0, 0));
+        assert!(range_pair_overlaps_or_adjacent(1, 0));
+        assert!(!range_pair_overlaps_or_adjacent(2, 0));
+    }
+
+    #[test]
+    fn test_past_surrogate_end() {
+        // True only strictly beyond the surrogate window; the window end itself
+        // is not "past".
+        assert!(!past_surrogate_end(SURROGATE_END_CP)); // window end is not past
+        assert!(!past_surrogate_end(SURROGATE_END_CP - 1));
+        assert!(past_surrogate_end(SURROGATE_END_CP + 1));
+        assert!(past_surrogate_end(0x10FFFF));
+    }
+
+    #[test]
     fn test_detect_ascii_negated_bytes_single_char() {
         // [^x] -> should detect 'x' as exit byte
         let rr = vec![RunePair { lo: 'x', hi: 'x' }];
@@ -2545,5 +2584,150 @@ mod tests {
             !expanded.is_empty(),
             ".*~b should produce at least one branch"
         );
+    }
+
+    #[test]
+    fn test_read_category_two_letter_initials() {
+        // Two-letter Unicode categories are validated by their initial letter.
+        // Every supported initial (M, P, Z, S, C) must accept a valid detail.
+        for cat in ["~p{Mn}", "~p{Pc}", "~p{Zs}", "~p{Sm}", "~p{Cc}"] {
+            assert!(
+                parse(cat).is_ok(),
+                "category {cat} must parse: {:?}",
+                parse(cat).err()
+            );
+        }
+    }
+
+    #[test]
+    fn test_class_subtraction_at_max_depth() {
+        // Eight nested `-[` levels sits exactly at MAX_CLASS_SUBTRACTION_DEPTH,
+        // which is still allowed; only deeper nesting is rejected.
+        let re = "[0-[1-[2-[3-[4-[5-[6-[7-[8]]]]]]]]]";
+        assert!(
+            parse(re).is_ok(),
+            "depth-8 subtraction: {:?}",
+            parse(re).err()
+        );
+    }
+
+    #[test]
+    fn test_property_escape_inside_char_class() {
+        // A `~p{...}` / `~P{...}` property escape is valid inside a character
+        // class, not just at top level.
+        assert!(parse("[~p{L}]").is_ok(), "{:?}", parse("[~p{L}]").err());
+        assert!(parse("[~P{N}]").is_ok(), "{:?}", parse("[~P{N}]").err());
+    }
+
+    #[test]
+    fn test_equal_endpoint_char_range() {
+        // A range whose endpoints are equal (`[a-a]`) is a valid single-char
+        // class; only lo strictly greater than hi is an error.
+        assert!(parse("[a-a]").is_ok(), "{:?}", parse("[a-a]").err());
+    }
+
+    #[test]
+    fn test_standalone_close_bracket_error_message() {
+        // A standalone `]` reports its own specific diagnostic rather than the
+        // generic "stuck" fallthrough.
+        let err = parse("]").expect_err("standalone ] must error");
+        assert!(
+            err.message.contains("invalid ']'"),
+            "expected \"invalid ']'\", got {:?}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn test_invert_rune_range_skips_surrogate_window() {
+        // Inverting [U+0000-U+D7FF] yields the high plane [U+E000..=MAX]: the
+        // complement jumps over the surrogate window rather than including it.
+        let inv = invert_rune_range(vec![RunePair {
+            lo: '\u{0}',
+            hi: '\u{D7FF}',
+        }]);
+        assert!(!inv.is_empty(), "inverted range must not be empty");
+        assert!(
+            inv.iter()
+                .any(|p| (p.lo as u32) >= 0xE000 && p.hi == RUNE_MAX),
+            "inverted range must cover the post-surrogate high plane, got {inv:?}"
+        );
+    }
+
+    #[test]
+    fn test_detect_ascii_negated_bytes_boundary_and_empty() {
+        // A pair straddling the ASCII boundary (lo below 128, hi at/above 128)
+        // is not pure-ASCII, so no exit bytes are produced.
+        assert_eq!(
+            detect_ascii_negated_bytes(&vec![RunePair {
+                lo: '\u{7F}',
+                hi: '\u{80}',
+            }]),
+            None
+        );
+        // No ranges means nothing to negate.
+        assert_eq!(detect_ascii_negated_bytes(&Vec::new()), None);
+    }
+
+    #[test]
+    fn test_wb_at_start_single_optional_suffix() {
+        // `~b` at value start followed by a single optional atom (`a*`) is the
+        // minimal SplitOrAbsent case: the suffix has exactly one element.
+        let tree = parse("~ba*").unwrap();
+        let expanded = expand_word_boundaries(&tree).unwrap();
+        assert!(!expanded.is_empty(), "~ba* should expand");
+    }
+
+    #[test]
+    fn test_wb_at_end_bounded_quantifier_remainder() {
+        // `a{2,3}~b` splits one boundary char off the end; the remainder atom
+        // keeps a quant_max of one less than the original (3 - 1 = 2).
+        let tree = parse("a{2,3}~b").unwrap();
+        let expanded = expand_word_boundaries(&tree).unwrap();
+        assert_eq!(expanded.len(), 1, "got {expanded:?}");
+        assert_eq!(expanded[0].len(), 2, "got {expanded:?}");
+        assert_eq!(
+            expanded[0][0].quant_max, 2,
+            "remainder atom quant_max must be original_max-1=2, got {}",
+            expanded[0][0].quant_max
+        );
+    }
+
+    #[test]
+    fn test_wb_at_end_split_fallback_uses_previous_atom() {
+        // In ` a*~b` the prefix is [' ', a*] and a* is SplitOrAbsent. When a*
+        // is absent the boundary lands after the space, a non-word char, so
+        // constraining the atom before a* adds no fallback branch — the
+        // fallback considers the previous atom, not a* itself.
+        let tree = parse(" a*~b").unwrap();
+        let expanded = expand_word_boundaries(&tree).unwrap();
+        assert_eq!(
+            expanded.len(),
+            1,
+            "space is non-word so the SplitOrAbsent fallback adds nothing; got {expanded:?}"
+        );
+    }
+
+    #[test]
+    fn test_constrain_atom_base_keeps_cache_key_and_ascii_bytes() {
+        // Constraining a quantified atom at a boundary splits off one occurrence
+        // and keeps the remaining count as a `base` atom. That base must carry
+        // over the original atom's cache_key and ascii_negated_bytes rather than
+        // reset them to their defaults.
+        let atom = QuantifiedAtom {
+            runes: vec![RunePair { lo: 'a', hi: 'z' }],
+            quant_min: 2,
+            quant_max: 3,
+            cache_key: Some("wb_test".to_string()),
+            ascii_negated_bytes: Some(vec![b'q']),
+            ..Default::default()
+        };
+        let constrained = constrain_atom_at_boundary(&atom, &word_char_runes(), true)
+            .expect("a-z intersects the word class, so the atom constrains");
+        let ConstrainedAtom::Split(base, _single) = constrained else {
+            panic!("a non-zero-min {{2,3}} quantifier must produce a Split");
+        };
+        assert_eq!(base.cache_key.as_deref(), Some("wb_test"));
+        assert_eq!(base.ascii_negated_bytes, Some(vec![b'q']));
     }
 }
