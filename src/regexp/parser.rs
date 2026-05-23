@@ -561,16 +561,11 @@ fn constrain_atom_at_boundary(
         None
     };
 
-    // The boundary-adjacent character: intersected with the constraining class and
-    // forced to exactly one occurrence. A singleton atom is exactly this; a
-    // quantified atom splits this single char off and keeps the rest of its run.
-    let mut constrained_single = QuantifiedAtom {
+    let constrained_single = QuantifiedAtom {
         runes: intersected,
         cache_key,
         ..Default::default()
     };
-    constrained_single.quant_min = 1;
-    constrained_single.quant_max = 1;
 
     if atom.is_singleton() {
         return Some(ConstrainedAtom::Single(constrained_single));
@@ -593,15 +588,15 @@ fn constrain_atom_at_boundary(
         return Some(ConstrainedAtom::Single(constrained_single));
     }
 
-    let mut base = QuantifiedAtom {
+    let base = QuantifiedAtom {
         is_dot: atom.is_dot,
         runes: atom.runes.clone(),
         quant_min: new_min,
         quant_max: new_max,
+        cache_key: atom.cache_key.clone(),
+        ascii_negated_bytes: atom.ascii_negated_bytes.clone(),
         ..Default::default()
     };
-    base.cache_key = atom.cache_key.clone();
-    base.ascii_negated_bytes = atom.ascii_negated_bytes.clone();
 
     // If the original atom can match zero times (quant_min == 0, e.g., * or ?),
     // then the atom might be absent entirely, meaning the boundary is at the
@@ -1120,8 +1115,6 @@ fn check_multi_char_escape(c: char) -> Option<(RuneRange, Option<String>)> {
 fn read_atom(parse: &mut RegexpParse) -> Result<QuantifiedAtom, Error> {
     let b = parse.next_rune()?;
 
-    // The quantifier is applied later by read_quantifier (via read_piece), so the
-    // default quant_min/quant_max here are placeholders, not a real {0,0}.
     match b {
         c if is_normal_char(c) => Ok(QuantifiedAtom {
             runes: vec![RunePair { lo: c, hi: c }],
@@ -1186,8 +1179,6 @@ fn read_group(parse: &mut RegexpParse) -> Result<QuantifiedAtom, Error> {
     read_branches(parse)?;
     parse.require(')')?;
     let subtree = parse.unnest();
-    // The quantifier is applied later by read_quantifier (via read_piece), so the
-    // default quant_min/quant_max here are placeholders, not a real {0,0}.
     Ok(QuantifiedAtom {
         subtree: Some(subtree),
         lookaround: lookaround_type,
@@ -1269,8 +1260,6 @@ fn read_escape(parse: &mut RegexpParse) -> Result<QuantifiedAtom, Error> {
         offset: parse.last_index,
     })?;
 
-    // The quantifier is applied later by read_quantifier (via read_piece), so the
-    // default quant_min/quant_max here are placeholders, not a real {0,0}.
     if let Some(escaped) = check_single_char_escape(next) {
         return Ok(QuantifiedAtom {
             runes: vec![RunePair {
@@ -1329,8 +1318,6 @@ fn read_property_escape(parse: &mut RegexpParse, marker: char) -> Result<Quantif
     } else {
         cache_key
     };
-    // The quantifier is applied later by read_quantifier (via read_piece), so the
-    // default quant_min/quant_max here are placeholders, not a real {0,0}.
     Ok(QuantifiedAtom {
         runes,
         cache_key,
