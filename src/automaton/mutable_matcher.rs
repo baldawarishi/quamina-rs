@@ -3263,4 +3263,140 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn test_lookbehind_combined_keeps_primary_alternation() {
+        // When the primary pattern has top-level alternation, combining it with
+        // a lookbehind must produce one branch per primary alternative rather
+        // than the single-branch shortcut (which would drop the alternatives).
+        let lb = parse_regexp("a").unwrap();
+        let primary = parse_regexp("x|y").unwrap();
+        assert_eq!(primary.len(), 2);
+        let combined = build_lookbehind_combined_pattern(&lb, &primary);
+        assert_eq!(combined.len(), 2, "both primary alternatives must survive");
+    }
+
+    #[test]
+    fn test_add_transition_mixed_with_prefix_keeps_prefix() {
+        // Exact strings alongside a non-Exact (Prefix) matcher must go
+        // one-by-one rather than down the all-exact bulk path, which would drop
+        // the Prefix. The Prefix must still match its value.
+        let fm: MutableFieldMatcher<String> = MutableFieldMatcher::new();
+        let matchers = vec![
+            Matcher::Exact("\"aa\"".to_string()),
+            Matcher::Exact("\"bb\"".to_string()),
+            Matcher::Prefix("cc".to_string()),
+        ];
+        fm.add_transition("x", &matchers, 0).unwrap();
+        let mut bufs = NfaBuffers::new();
+        let results = fm.transition_on("x", &qv(b"ccZ"), false, &mut bufs);
+        assert!(!results.is_empty(), "Prefix matcher must not be dropped");
+    }
+
+    #[test]
+    fn test_singleton_coexisting_with_multicondition() {
+        // A value matcher holding both a singleton exact and a multi-condition
+        // (lookaround) NFA must still emit the singleton transition for the
+        // exact value, alongside any multi-condition matches.
+        let vm: MutableValueMatcher<String> = MutableValueMatcher::new();
+        let exact_fm = vm
+            .add_transition(&Matcher::Exact("\"hello\"".to_string()), 0)
+            .unwrap();
+        let pat = crate::json::parse_pattern(
+            r#"{"f": [{"regexp": "(?=h)hello"}]}"#,
+            &crate::PatternLimits::default(),
+        )
+        .unwrap();
+        let mc_matcher = pat
+            .into_values()
+            .next()
+            .unwrap()
+            .into_iter()
+            .next()
+            .unwrap();
+        vm.add_transition(&mc_matcher, 0).unwrap();
+        assert!(!vm.multi_condition_nfas.borrow().is_empty());
+        let mut bufs = NfaBuffers::new();
+        let results = vm.transition_on(&qv(b"hello"), false, &mut bufs);
+        assert!(
+            results.iter().any(|r| Rc::ptr_eq(r, &exact_fm)),
+            "singleton transition must be emitted alongside multi-condition NFAs"
+        );
+    }
+
+    #[test]
+    fn test_core_matcher_lookaround_conditions() {
+        // Positive and negative lookahead must be verified against the value:
+        // (?=bar) accepts "foobar" and (?!bar) accepts "foobaz".
+        let cm: CoreMatcher<String> = CoreMatcher::new();
+        let pos = crate::json::parse_pattern(
+            r#"{"v": [{"regexp": "foo(?=bar)bar"}]}"#,
+            &crate::PatternLimits::default(),
+        )
+        .unwrap();
+        cm.add_pattern("pos".to_string(), &pos.into_iter().collect::<Vec<_>>())
+            .unwrap();
+        let neg = crate::json::parse_pattern(
+            r#"{"w": [{"regexp": "foo(?!bar)baz"}]}"#,
+            &crate::PatternLimits::default(),
+        )
+        .unwrap();
+        cm.add_pattern("neg".to_string(), &neg.into_iter().collect::<Vec<_>>())
+            .unwrap();
+
+        let m = cm.matches_for_fields(&[EventField {
+            path: "v".to_string(),
+            value: "\"foobar\"".to_string(),
+            array_trail: vec![],
+            is_number: false,
+        }]);
+        assert_eq!(m, vec!["pos".to_string()], "positive lookahead must match");
+
+        let m = cm.matches_for_fields(&[EventField {
+            path: "w".to_string(),
+            value: "\"foobaz\"".to_string(),
+            array_trail: vec![],
+            is_number: false,
+        }]);
+        assert_eq!(m, vec!["neg".to_string()], "negative lookahead must match");
+    }
+
+    #[test]
+    fn test_merge_into_main_arena_budget_boundary() {
+        // The merge budget check rejects only when the merged size strictly
+        // exceeds the budget. Merging these two regexp FAs is deterministic at
+        // MERGED_SIZE bytes, so a budget equal to it must accept and a budget
+        // one byte smaller must reject.
+        const MERGED_SIZE: usize = 2488;
+        let p1 = crate::json::parse_pattern(
+            r#"{"x": [{"regexp": "aaaa"}]}"#,
+            &crate::PatternLimits::default(),
+        )
+        .unwrap();
+        let p2 = crate::json::parse_pattern(
+            r#"{"x": [{"regexp": "bbbb"}]}"#,
+            &crate::PatternLimits::default(),
+        )
+        .unwrap();
+        let p1v: Vec<_> = p1.into_iter().collect();
+        let p2v: Vec<_> = p2.into_iter().collect();
+
+        let cm = CoreMatcher::<String> {
+            root: Rc::new(MutableFieldMatcher::new()),
+            arena_byte_budget: MERGED_SIZE,
+        };
+        cm.add_pattern("a".to_string(), &p1v).unwrap();
+        cm.add_pattern("b".to_string(), &p2v)
+            .expect("merge at budget == merged size must succeed");
+
+        let cm2 = CoreMatcher::<String> {
+            root: Rc::new(MutableFieldMatcher::new()),
+            arena_byte_budget: MERGED_SIZE - 1,
+        };
+        cm2.add_pattern("a".to_string(), &p1v).unwrap();
+        assert!(
+            cm2.add_pattern("b".to_string(), &p2v).is_err(),
+            "merge exceeding budget by one byte must be rejected"
+        );
+    }
 }
