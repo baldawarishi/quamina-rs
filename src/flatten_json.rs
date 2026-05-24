@@ -1142,6 +1142,92 @@ mod tests {
     }
 
     #[test]
+    fn test_is_in_skipped_subtree_boundary() {
+        // Zero depth is "not skipping"; any positive depth is "skipping".
+        assert!(!is_in_skipped_subtree(0));
+        assert!(is_in_skipped_subtree(1));
+        assert!(is_in_skipped_subtree(2));
+        assert!(is_in_skipped_subtree(i32::MAX));
+    }
+
+    #[test]
+    fn test_at_digit_boundary() {
+        // Out-of-bounds index is false before the digit check runs.
+        assert!(!at_digit(b"", 0));
+        assert!(!at_digit(b"5", 1));
+        // In-bounds ASCII digit is true.
+        assert!(at_digit(b"5", 0));
+        assert!(at_digit(b"09a", 0));
+        assert!(at_digit(b"09a", 1));
+        // In-bounds non-digit is false.
+        assert!(!at_digit(b"09a", 2));
+        assert!(!at_digit(b" 1", 0));
+    }
+
+    #[test]
+    fn test_peek_next_byte_returns_index_plus_one() {
+        // Returns the byte one position past `index`.
+        assert_eq!(peek_next_byte(b"ab", 0), Some(b'b'));
+        assert_eq!(peek_next_byte(b"abc", 0), Some(b'b'));
+        assert_eq!(peek_next_byte(b"abc", 1), Some(b'c'));
+        // None once that position is past the end.
+        assert_eq!(peek_next_byte(b"a", 0), None);
+        assert_eq!(peek_next_byte(b"", 0), None);
+        assert_eq!(peek_next_byte(b"ab", 1), None);
+    }
+
+    #[test]
+    fn test_error_string_truncated_after_complete_escape() {
+        // A completed `\n` escape followed by EOF (no closing quote) must error
+        // rather than read past the end of the buffer.
+        let tree = make_tree(&["k"]);
+        let mut state = State::new();
+        let bad = b"{\"k\": \"\\n";
+        let result = state.flatten(bad, &tree);
+        assert!(
+            result.is_err(),
+            "truncated string with completed escape should error"
+        );
+    }
+
+    #[test]
+    fn test_has_unicode_escape_at_boundary() {
+        // A `\uXXXX` escape needs six bytes available from `index`: backslash,
+        // `u`, and four hex digits.
+        assert!(has_unicode_escape_at(b"\\u0041X", 0)); // seven bytes
+        assert!(has_unicode_escape_at(b"\\u0041", 0)); // exactly six — the boundary
+        assert!(!has_unicode_escape_at(b"\\u004", 0)); // five bytes — too short
+        assert!(!has_unicode_escape_at(b"", 0));
+        assert!(!has_unicode_escape_at(b"\\X0041X", 0)); // second byte not `u`
+        assert!(!has_unicode_escape_at(b"Xu0041X", 0)); // first byte not backslash
+        assert!(has_unicode_escape_at(b"yy\\u0041X", 2)); // offset start
+        assert!(!has_unicode_escape_at(b"\\u0041X", 7)); // start past the end
+    }
+
+    #[test]
+    fn test_at_byte_boundary() {
+        // Out-of-bounds index is false regardless of target.
+        assert!(!at_byte(b"", 0, b'.'));
+        assert!(!at_byte(b"abc", 3, b'.'));
+        // In-bounds mismatch is false.
+        assert!(!at_byte(b"abc", 0, b'.'));
+        // In-bounds match is true.
+        assert!(at_byte(b".", 0, b'.'));
+        assert!(at_byte(b"a.c", 1, b'.'));
+    }
+
+    #[test]
+    fn test_should_capture_value_truth_table() {
+        // Capture only at the top of a tracked path (skipping == 0) AND when the
+        // member name was used; every other combination is false.
+        assert!(should_capture_value(0, true));
+        assert!(!should_capture_value(0, false));
+        assert!(!should_capture_value(1, true));
+        assert!(!should_capture_value(1, false));
+        assert!(!should_capture_value(2, true));
+    }
+
+    #[test]
     fn test_simple_object() {
         let event = br#"{"status": "active", "count": 42}"#;
         let tree = make_tree(&["status"]);
@@ -1450,6 +1536,27 @@ x"#,
             let result = state.flatten(bad.as_bytes(), &tree);
             assert!(result.is_err(), "Should reject invalid structure: {bad}");
         }
+    }
+
+    #[test]
+    fn test_error_reports_correct_line_and_column() {
+        // `error()` reports the 1-based line and column of the failing byte by
+        // counting newlines up to the current index. Tracking the nested field
+        // forces the parser into the inner object, where the bad token sits on
+        // line 3.
+        let tree = make_tree(&["a", "a\nbad"]);
+        let mut state = State::new();
+
+        let bad = b"{\n  \"a\": {\n    x\n  }\n}";
+        let err = state.flatten(bad, &tree).unwrap_err();
+        let msg = match err {
+            QuaminaError::InvalidJson(m) => m,
+            other => panic!("expected InvalidJson, got {other:?}"),
+        };
+        assert!(
+            msg.contains("at line 3 col "),
+            "error must report line 3 (the line containing the bad token); got: {msg}"
+        );
     }
 
     #[test]
@@ -1923,5 +2030,82 @@ x"#,
             let result = state.flatten(bad.as_bytes(), &tree);
             assert!(result.is_err(), "Should reject never-ending string: {bad}");
         }
+    }
+
+    #[test]
+    fn test_skip_string_value_truncated_trailing_backslash() {
+        // An unused string value ending in a lone backslash with no closing
+        // quote. The lenient skip path must stop at EOF rather than read the
+        // byte past the trailing backslash.
+        let event = b"{\"a\":\"x\\";
+        let tree = make_tree(&["other"]);
+        let mut state = State::new();
+        let result = state.flatten(event, &tree);
+        assert!(
+            result.is_err(),
+            "truncated unused string must error, not panic"
+        );
+    }
+
+    #[test]
+    fn test_leave_object_truncated_to_eof() {
+        // Early termination leaves a non-root object, but the trailing content
+        // runs to EOF with no closing brace. The scan must stop at EOF instead
+        // of indexing past the end.
+        let event = b"{\"outer\":{\"wanted\":1,\"junk\":\"zz\"";
+        let tree = make_tree(&["outer\nwanted"]);
+        let mut state = State::new();
+        let result = state.flatten(event, &tree);
+        assert!(
+            result.is_err(),
+            "truncated trailing object content must error, not panic"
+        );
+    }
+
+    #[test]
+    fn test_member_name_escapes_truncated_to_eof() {
+        // An escaped field name followed by a content byte and EOF with no
+        // closing quote. The name scan must stop at EOF rather than index past
+        // the end.
+        let event = b"{\"ke\\ny";
+        let tree = make_tree(&["x"]);
+        let mut state = State::new();
+        let result = state.flatten(event, &tree);
+        assert!(
+            result.is_err(),
+            "truncated escaped field name must error, not panic"
+        );
+    }
+
+    #[test]
+    fn test_unused_string_skipped_leniently() {
+        // An unused top-level string value containing a raw control byte is
+        // skipped leniently, so the control byte is tolerated; only used values
+        // go through the strict reader that rejects control bytes.
+        let event = b"{\"a\":\"\x01\",\"x\":\"ok\"}";
+        let tree = make_tree(&["x"]);
+        let mut state = State::new();
+        let fields = state
+            .flatten(event, &tree)
+            .expect("unused control-char string must be skipped, not strictly parsed");
+        assert_eq!(fields.len(), 1);
+        assert_eq!(fields[0].path.as_ref(), b"x");
+        assert_eq!(fields[0].val.as_bytes(), b"\"ok\"");
+    }
+
+    #[test]
+    fn test_unused_array_skipped_via_skip_block() {
+        // An unused array whose element is a string containing a raw control
+        // byte is skipped as a block, so the control byte is tolerated; only
+        // used arrays go through the strict reader.
+        let event = b"{\"u\":[\"\x01\"],\"x\":\"ok\"}";
+        let tree = make_tree(&["x"]);
+        let mut state = State::new();
+        let fields = state
+            .flatten(event, &tree)
+            .expect("unused control-char array must be skipped, not strictly parsed");
+        assert_eq!(fields.len(), 1);
+        assert_eq!(fields[0].path.as_ref(), b"x");
+        assert_eq!(fields[0].val.as_bytes(), b"\"ok\"");
     }
 }
