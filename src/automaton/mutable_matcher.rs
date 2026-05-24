@@ -2855,6 +2855,65 @@ mod tests {
     }
 
     #[test]
+    fn test_maybe_q_number_requires_both_has_numbers_and_is_number() {
+        // A Q-number stack is built only when the matcher already has numeric
+        // transitions and the value is numeric.
+        let mvm: MutableValueMatcher<String> = MutableValueMatcher::new();
+
+        // No numeric transitions yet
+        assert!(mvm.maybe_q_number(b"123", true).is_none());
+        assert!(mvm.maybe_q_number(b"abc", false).is_none());
+
+        mvm.has_numbers.set(true);
+
+        // Now gated only on the value being numeric
+        assert!(mvm.maybe_q_number(b"abc", false).is_none());
+        assert!(mvm.maybe_q_number(b"123", true).is_some());
+    }
+
+    #[test]
+    fn test_add_transition_all_exact_returns_one_shared_next_state() {
+        // An all-Exact list of two or more collapses into a single shared
+        // continuation instead of one per matcher.
+        let fm: Rc<MutableFieldMatcher<String>> = Rc::new(MutableFieldMatcher::new());
+        let matchers = vec![
+            Matcher::Exact("\"a\"".to_string()),
+            Matcher::Exact("\"b\"".to_string()),
+            Matcher::Exact("\"c\"".to_string()),
+        ];
+        assert_eq!(fm.add_transition("p", &matchers, 0).unwrap().len(), 1);
+
+        // Two is the minimum for the bulk path
+        let fm2: Rc<MutableFieldMatcher<String>> = Rc::new(MutableFieldMatcher::new());
+        let two = vec![
+            Matcher::Exact("\"x\"".to_string()),
+            Matcher::Exact("\"y\"".to_string()),
+        ];
+        assert_eq!(fm2.add_transition("p", &two, 0).unwrap().len(), 1);
+
+        // A single matcher goes one-by-one
+        let fm3: Rc<MutableFieldMatcher<String>> = Rc::new(MutableFieldMatcher::new());
+        let one = vec![Matcher::Exact("\"only\"".to_string())];
+        assert_eq!(fm3.add_transition("p", &one, 0).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn test_add_transition_mixed_exact_and_numeric_keeps_numeric_path() {
+        // A non-Exact matcher in the list keeps everything on the one-by-one
+        // path, so the numeric matcher survives.
+        let fm: Rc<MutableFieldMatcher<String>> = Rc::new(MutableFieldMatcher::new());
+        let matchers = vec![
+            Matcher::Exact("\"a\"".to_string()),
+            Matcher::NumericExact(42.0),
+        ];
+        assert_eq!(fm.add_transition("p", &matchers, 0).unwrap().len(), 2);
+
+        let transitions = fm.transitions.borrow();
+        let vm = transitions.get("p").expect("value matcher present");
+        assert!(vm.has_numbers.get());
+    }
+
+    #[test]
     fn test_add_prefix_multiple_patterns() {
         // Multiple prefix patterns on same field
         let cm: CoreMatcher<String> = CoreMatcher::new();
