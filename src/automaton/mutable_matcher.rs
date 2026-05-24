@@ -173,10 +173,8 @@ impl<X: Clone + Eq + std::hash::Hash> MutableFieldMatcher<X> {
             })
             .collect();
 
-        if all_exact.len() == matchers.len() && matchers.len() >= 2 {
-            // Every matcher is an Exact string and there are at least two: the
-            // bulk method adds them all in one pass and returns a single shared
-            // next state, instead of one next state per matcher.
+        if all_exact.len() == matchers.len() && all_exact.len() > 1 {
+            // All matchers are Exact strings and there's more than one - use bulk method
             let next_fm = vm.add_string_transitions_bulk(&all_exact, budget)?;
             return Ok(vec![next_fm]);
         }
@@ -2858,86 +2856,61 @@ mod tests {
 
     #[test]
     fn test_maybe_q_number_requires_both_has_numbers_and_is_number() {
-        // maybe_q_number produces a Q-number stack only when the value matcher
-        // already has numeric transitions and the field value is numeric.
+        // A Q-number stack is built only when the matcher already has numeric
+        // transitions and the value is numeric.
         let mvm: MutableValueMatcher<String> = MutableValueMatcher::new();
 
-        // No numeric transitions registered yet: even a numeric value is None.
+        // No numeric transitions yet
         assert!(mvm.maybe_q_number(b"123", true).is_none());
-
-        // Neither numeric transitions nor a numeric value: None.
         assert!(mvm.maybe_q_number(b"abc", false).is_none());
 
         mvm.has_numbers.set(true);
 
-        // Numeric transitions present, but a non-numeric value: still None.
+        // Now gated only on the value being numeric
         assert!(mvm.maybe_q_number(b"abc", false).is_none());
-
-        // Numeric transitions present and a numeric value: Some.
         assert!(mvm.maybe_q_number(b"123", true).is_some());
     }
 
     #[test]
     fn test_add_transition_all_exact_returns_one_shared_next_state() {
-        // When every matcher is an Exact string and there are at least two,
-        // add_transition takes the bulk path and returns a single shared
-        // continuation rather than one next state per matcher.
+        // An all-Exact list of two or more collapses into a single shared
+        // continuation instead of one per matcher.
         let fm: Rc<MutableFieldMatcher<String>> = Rc::new(MutableFieldMatcher::new());
         let matchers = vec![
             Matcher::Exact("\"a\"".to_string()),
             Matcher::Exact("\"b\"".to_string()),
             Matcher::Exact("\"c\"".to_string()),
         ];
-        let result = fm.add_transition("p", &matchers, 0).unwrap();
-        assert_eq!(
-            result.len(),
-            1,
-            "all-exact bulk path must return one shared continuation"
-        );
+        assert_eq!(fm.add_transition("p", &matchers, 0).unwrap().len(), 1);
 
-        // Two exact matchers (the minimum for the bulk path) also share one.
+        // Two is the minimum for the bulk path
         let fm2: Rc<MutableFieldMatcher<String>> = Rc::new(MutableFieldMatcher::new());
         let two = vec![
             Matcher::Exact("\"x\"".to_string()),
             Matcher::Exact("\"y\"".to_string()),
         ];
-        let r2 = fm2.add_transition("p", &two, 0).unwrap();
-        assert_eq!(
-            r2.len(),
-            1,
-            "two-exact bulk path must return one continuation"
-        );
+        assert_eq!(fm2.add_transition("p", &two, 0).unwrap().len(), 1);
 
-        // A single matcher takes the one-by-one path and returns one next state.
+        // A single matcher goes one-by-one
         let fm3: Rc<MutableFieldMatcher<String>> = Rc::new(MutableFieldMatcher::new());
         let one = vec![Matcher::Exact("\"only\"".to_string())];
-        let r3 = fm3.add_transition("p", &one, 0).unwrap();
-        assert_eq!(r3.len(), 1);
+        assert_eq!(fm3.add_transition("p", &one, 0).unwrap().len(), 1);
     }
 
     #[test]
     fn test_add_transition_mixed_exact_and_numeric_keeps_numeric_path() {
-        // A mix of Exact and Numeric matchers must not take the all-exact bulk
-        // path; each matcher gets its own next state and the Numeric matcher
-        // flips has_numbers on the value matcher.
+        // A non-Exact matcher in the list keeps everything on the one-by-one
+        // path, so the numeric matcher survives.
         let fm: Rc<MutableFieldMatcher<String>> = Rc::new(MutableFieldMatcher::new());
         let matchers = vec![
             Matcher::Exact("\"a\"".to_string()),
             Matcher::NumericExact(42.0),
         ];
-        let result = fm.add_transition("p", &matchers, 0).unwrap();
-        assert_eq!(
-            result.len(),
-            2,
-            "mixed matchers must go one-by-one and return one next state per matcher"
-        );
+        assert_eq!(fm.add_transition("p", &matchers, 0).unwrap().len(), 2);
 
         let transitions = fm.transitions.borrow();
         let vm = transitions.get("p").expect("value matcher present");
-        assert!(
-            vm.has_numbers.get(),
-            "Numeric matcher in the mix must set has_numbers"
-        );
+        assert!(vm.has_numbers.get());
     }
 
     #[test]
