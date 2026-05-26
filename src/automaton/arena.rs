@@ -5047,6 +5047,81 @@ mod arena_stats_utility_tests {
         arena[s0].table.epsilons.push(s1);
         assert!(arena.is_nondeterministic());
     }
+
+    #[test]
+    fn test_stats_add_max_takes_larger_both_directions() {
+        // Each max_* field keeps the larger of the two sides. Exercise both
+        // directions per field: self larger, then other larger.
+        let mut self_larger = Stats {
+            max_ceilings: 9,
+            max_epsilons: 8,
+            max_closure_len: 7,
+            ..Default::default()
+        };
+        let smaller = Stats {
+            max_ceilings: 2,
+            max_epsilons: 1,
+            max_closure_len: 3,
+            ..Default::default()
+        };
+        self_larger.add(&smaller);
+        assert_eq!(self_larger.max_ceilings, 9);
+        assert_eq!(self_larger.max_epsilons, 8);
+        assert_eq!(self_larger.max_closure_len, 7);
+
+        let mut self_smaller = Stats {
+            max_ceilings: 2,
+            max_epsilons: 1,
+            max_closure_len: 3,
+            ..Default::default()
+        };
+        let larger = Stats {
+            max_ceilings: 9,
+            max_epsilons: 8,
+            max_closure_len: 7,
+            ..Default::default()
+        };
+        self_smaller.add(&larger);
+        assert_eq!(self_smaller.max_ceilings, 9);
+        assert_eq!(self_smaller.max_epsilons, 8);
+        assert_eq!(self_smaller.max_closure_len, 7);
+    }
+
+    #[test]
+    fn test_stats_total_ceiling_entries_accumulates() {
+        // total_ceiling_entries sums ceiling counts across non-trivial tables;
+        // trivial single-ceiling tables are not counted.
+        let mut arena = StateArena::new();
+        let s0 = arena.alloc();
+        let s1 = arena.alloc();
+        let s2 = arena.alloc();
+        // s0: 2 ceilings, s1: 3 ceilings, s2: trivial (1 ceiling, uncounted)
+        arena[s0].table.ceilings = smallvec![b'a', BYTE_CEILING_U8];
+        arena[s0].table.steps = smallvec![s1, StateId::NONE];
+        arena[s1].table.ceilings = smallvec![b'a', b'b', BYTE_CEILING_U8];
+        arena[s1].table.steps = smallvec![s0, s2, StateId::NONE];
+        let stats = arena.stats();
+        assert_eq!(stats.tables_with_transitions, 2);
+        assert_eq!(stats.total_ceiling_entries, 5); // 2 + 3
+    }
+
+    #[test]
+    fn test_estimated_byte_size_with_flattened_buffers() {
+        // estimated_byte_size includes the ft_ptrs and dfa_lookup buffer
+        // terms. Populate both (non-empty) so their contribution is actually
+        // exercised rather than collapsing to zero.
+        let mut arena = StateArena::new();
+        arena.alloc();
+        arena.ft_ptrs = vec![1usize, 2, 3, 4, 5, 6, 7];
+        arena.dfa_lookup = vec![StateId::NONE; 11];
+        assert!(arena.ft_ptrs.capacity() > 0);
+        assert!(arena.dfa_lookup.capacity() > 0);
+        let expected = arena.states.capacity() * std::mem::size_of::<FaState>()
+            + arena.closure_data.capacity() * std::mem::size_of::<StateId>()
+            + arena.ft_ptrs.capacity() * std::mem::size_of::<usize>()
+            + arena.dfa_lookup.capacity() * std::mem::size_of::<StateId>();
+        assert_eq!(arena.estimated_byte_size(), expected);
+    }
 }
 
 #[cfg(test)]
