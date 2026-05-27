@@ -5122,6 +5122,193 @@ mod arena_stats_utility_tests {
             + arena.dfa_lookup.capacity() * std::mem::size_of::<StateId>();
         assert_eq!(arena.estimated_byte_size(), expected);
     }
+
+    #[test]
+    fn test_nfa_buffers_with_capacity_preallocates() {
+        // with_capacity() pre-allocates the hot traversal vectors; new() does not.
+        let bufs = NfaBuffers::with_capacity();
+        assert!(
+            bufs.current_states.capacity() >= 16,
+            "current_states must be pre-allocated, got cap={}",
+            bufs.current_states.capacity()
+        );
+        assert!(
+            bufs.next_states.capacity() >= 16,
+            "next_states must be pre-allocated, got cap={}",
+            bufs.next_states.capacity()
+        );
+
+        let empty = NfaBuffers::new();
+        assert_eq!(empty.current_states.capacity(), 0);
+        assert_eq!(empty.next_states.capacity(), 0);
+    }
+
+    #[test]
+    fn test_alloc_sets_per_state_closure() {
+        // Each alloc() seeds the new state's singleton closure with its own id.
+        let mut arena = StateArena::new();
+        let s0 = arena.alloc();
+        let s1 = arena.alloc();
+        let s2 = arena.alloc();
+        assert_eq!(arena.closure_of(s0), &[s0]);
+        assert_eq!(arena.closure_of(s1), &[s1]);
+        assert_eq!(arena.closure_of(s2), &[s2]);
+    }
+
+    #[test]
+    fn test_precompute_epsilon_closures_skips_out_of_range_target() {
+        // An epsilon target one past the last valid state must be skipped rather
+        // than indexed: closure computation neither panics nor includes it.
+        let mut arena = StateArena::new();
+        let s0 = arena.alloc();
+        let s1 = arena.alloc();
+        let dangling = StateId::from_index(arena.len());
+        arena[s0].table.epsilons.push(s1);
+        arena[s0].table.epsilons.push(dangling);
+        arena.precompute_epsilon_closures();
+        let c = arena.closure_of(s0);
+        assert!(c.contains(&s0));
+        assert!(c.contains(&s1));
+        assert_eq!(c.len(), 2);
+    }
+
+    #[test]
+    fn test_unpack_arena_table_writes_full_byte_ceiling_range() {
+        // A table whose only mapping is its default unpacks to that default
+        // across the entire byte range, including the final index.
+        let mut arena = StateArena::new();
+        let target = arena.alloc();
+        let table = SmallTable::with_mappings(target, &[], &[]);
+        let mut unpacked = [StateId::NONE; BYTE_CEILING];
+        unpack_arena_table(&table, &mut unpacked);
+        assert_eq!(unpacked[0], target);
+        assert_eq!(unpacked[BYTE_CEILING - 1], target);
+    }
+
+    #[test]
+    fn test_traverse_arena_nfa_multi_state_closure_final() {
+        // The post-loop final-state check must walk a multi-state closure to
+        // collect field transitions reachable only through closure mates, not
+        // just the closure head's own (here empty) transitions. Cover both the
+        // unfrozen (field_transitions) and frozen (ft_ptrs) branches.
+        let mut arena = StateArena::new();
+        let fm_a = Arc::new(FieldMatcher::with_match_id(11));
+        let fm_b = Arc::new(FieldMatcher::with_match_id(13));
+        let match_state_a = arena.alloc();
+        arena[match_state_a].field_transitions.push(fm_a);
+        let match_state_b = arena.alloc();
+        arena[match_state_b].field_transitions.push(fm_b);
+        // final_state carries no transitions of its own — only epsilon links.
+        let final_state = arena.alloc();
+        arena[final_state].table.epsilons.push(match_state_a);
+        arena[final_state].table.epsilons.push(match_state_b);
+        let vt_state = arena.alloc_with_table(SmallTable::with_mappings(
+            StateId::NONE,
+            &[ARENA_VALUE_TERMINATOR],
+            &[final_state],
+        ));
+        let start =
+            arena.alloc_with_table(SmallTable::with_mappings(StateId::NONE, b"a", &[vt_state]));
+        arena.precompute_epsilon_closures();
+        assert!(
+            arena.closure_of(final_state).len() >= 2,
+            "test setup expects final_state to have a multi-state closure"
+        );
+
+        // Unfrozen path: ft_ptrs not yet populated, so field_transitions are read.
+        assert!(arena.ft_ptrs.is_empty());
+        let mut bufs = NfaBuffers::new();
+        traverse_arena_nfa(&arena, start, b"a", &mut bufs);
+        assert!(
+            !bufs.transitions.is_empty(),
+            "unfrozen path must collect transitions from final_state's closure"
+        );
+
+        // Frozen path: flatten_tables populates ft_ptrs.
+        arena.flatten_tables();
+        assert!(!arena.ft_ptrs.is_empty());
+        let mut bufs = NfaBuffers::new();
+        traverse_arena_nfa(&arena, start, b"a", &mut bufs);
+        assert!(
+            !bufs.transitions.is_empty(),
+            "frozen path must collect transitions from final_state's closure"
+        );
+    }
+
+    #[test]
+    fn test_traverse_arena_nfa_multi_state_closure_mid_value() {
+        // A multi-state closure encountered mid-value must step every closure
+        // mate, not just the closure head, so an onward transition reachable
+        // only through a mate is not lost. Cover both step branches.
+        let mut arena = StateArena::new();
+        let fm = Arc::new(FieldMatcher::with_match_id(7));
+        let accept = arena.alloc();
+        arena[accept].field_transitions.push(fm);
+        // m1 steps on 'b' to accept; m2 is a dead closure mate.
+        let m1 = arena.alloc_with_table(SmallTable::with_mappings(StateId::NONE, b"b", &[accept]));
+        let m2 = arena.alloc();
+        // fork epsilon-forks to m1 and m2, giving fork a multi-state closure.
+        let fork = arena.alloc();
+        arena[fork].table.epsilons.push(m1);
+        arena[fork].table.epsilons.push(m2);
+        let start = arena.alloc_with_table(SmallTable::with_mappings(StateId::NONE, b"a", &[fork]));
+        arena.precompute_epsilon_closures();
+        assert!(arena.closure_of(fork).len() >= 2);
+
+        // Unfrozen path.
+        assert!(arena.ft_ptrs.is_empty());
+        let mut bufs = NfaBuffers::new();
+        traverse_arena_nfa(&arena, start, b"ab", &mut bufs);
+        assert!(
+            !bufs.transitions.is_empty(),
+            "unfrozen path must follow the onward transition through a closure mate"
+        );
+
+        // Frozen path.
+        arena.flatten_tables();
+        let mut bufs = NfaBuffers::new();
+        traverse_arena_nfa(&arena, start, b"ab", &mut bufs);
+        assert!(
+            !bufs.transitions.is_empty(),
+            "frozen path must follow the onward transition through a closure mate"
+        );
+    }
+
+    #[test]
+    fn test_lazy_dfa_conflicting_nfa_accel_not_accelerated() {
+        // A lazy-DFA state that aggregates NFA states with conflicting exit
+        // bytes must not be accelerated: try_compute_accel bails when the
+        // member AccelInfos disagree.
+        let mut arena = StateArena::new();
+        let s0 = arena.alloc();
+        let s1 = arena.alloc();
+        let s2 = arena.alloc();
+        // s0 epsilon-forks to s1 and s2 so the start DFA state spans both.
+        arena[s0].table.epsilons.push(s1);
+        arena[s0].table.epsilons.push(s2);
+        // s1 and s2 self-loop on 'a' but advertise different exit bytes.
+        arena[s1].table.set_transition(b'a', s1);
+        arena[s1].table.accel = Some(AccelInfo {
+            exit_bytes: [b'x', 0, 0],
+            len: 1,
+        });
+        arena[s2].table.set_transition(b'a', s2);
+        arena[s2].table.accel = Some(AccelInfo {
+            exit_bytes: [b'y', 0, 0],
+            len: 1,
+        });
+        arena.precompute_epsilon_closures();
+
+        let mut lazy = LazyDfa::new(arena, s0, 100);
+        let mut transitions = Vec::new();
+        traverse_lazy_dfa(&mut lazy, b"aaaa", &mut transitions);
+
+        let accel_count = lazy.states.iter().filter(|s| s.accel.is_some()).count();
+        assert_eq!(
+            accel_count, 0,
+            "state with conflicting NFA accel must not be accelerated"
+        );
+    }
 }
 
 #[cfg(test)]
