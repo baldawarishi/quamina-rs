@@ -6377,6 +6377,21 @@ mod nfa_merge_tests {
             !matches_value(&merged, start, b"ae"),
             "'ae' matches neither"
         );
+        // Without the shared leading 'a' nothing is reachable: the alternation
+        // branches ('b'/'c'), the literal byte ('d'), and an unrelated byte must
+        // all miss, confirming the merge keeps both patterns anchored on 'a'.
+        assert!(
+            !matches_value(&merged, start, b"b"),
+            "'b' has no leading 'a' — alternation must not fire"
+        );
+        assert!(
+            !matches_value(&merged, start, b"d"),
+            "'d' has no leading 'a' — literal must not fire"
+        );
+        assert!(
+            !matches_value(&merged, start, b"f"),
+            "'f' matches neither pattern"
+        );
     }
 
     #[test]
@@ -6427,6 +6442,17 @@ mod nfa_merge_tests {
                 vec![2],
                 "literal 'ad' still matches"
             );
+            // Both patterns are anchored on a leading 'a': a value ending in 'c'
+            // but lacking the prefix must not reach the spinner, and 'd' alone
+            // must not reach the literal.
+            assert!(
+                !matches_value(&m, st, b"Xc"),
+                "a*c needs a leading 'a' — 'Xc' must not match"
+            );
+            assert!(
+                !matches_value(&m, st, b"d"),
+                "literal 'ad' needs a leading 'a' — 'd' must not match"
+            );
         }
 
         // "a*c" against literal "ac": the spinner's 'c' exit coincides with the
@@ -6447,6 +6473,15 @@ mod nfa_merge_tests {
             assert!(
                 get_match_ids(&m, st, b"acYc").contains(&1),
                 "a*c still loops after its 'c' branch: 'acYc' matches"
+            );
+            // Neither "a*c" nor literal "ac" is reachable without the leading 'a'.
+            assert!(
+                !matches_value(&m, st, b"Xc"),
+                "a*c needs a leading 'a' — 'Xc' must not match"
+            );
+            assert!(
+                !matches_value(&m, st, b"c"),
+                "literal 'ac' needs a leading 'a' — 'c' must not match"
             );
         }
     }
