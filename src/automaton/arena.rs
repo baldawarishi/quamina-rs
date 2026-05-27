@@ -5340,6 +5340,129 @@ mod merge_tests {
     }
 
     #[test]
+    fn test_merge_dual_spinout_states_filters_none_epsilons() {
+        // A NONE epsilon on either spinout side must not survive into the merged table.
+        let mut arena1 = StateArena::new();
+        let mut arena2 = StateArena::new();
+        let s1_id = arena1.alloc();
+        let s2_id = arena2.alloc();
+        arena1[s1_id].table.default = s1_id;
+        arena2[s2_id].table.default = s2_id;
+        arena1[s1_id].table.epsilons.push(StateId::NONE);
+        arena2[s2_id].table.epsilons.push(StateId::NONE);
+
+        let s1 = arena1[s1_id].clone();
+        let s2 = arena2[s2_id].clone();
+
+        let mut new_arena = StateArena::new();
+        let new_id = new_arena.alloc();
+        let mut memo: FxHashMap<(StateId, StateId), StateId> = FxHashMap::default();
+        merge_dual_spinout_states(
+            &arena1,
+            &s1,
+            &arena2,
+            &s2,
+            &mut new_arena,
+            &mut memo,
+            new_id,
+        );
+
+        assert!(
+            new_arena[new_id]
+                .table
+                .epsilons
+                .iter()
+                .all(|e| !e.is_none()),
+            "merged spinout table retained a NONE epsilon"
+        );
+    }
+
+    #[test]
+    fn test_asymmetric_spinner_merge_filters_none_epsilons() {
+        // A NONE epsilon on the spinner side must not survive into the merged table.
+        let mut arena1 = StateArena::new();
+        let mut arena2 = StateArena::new();
+        let s1_id = arena1.alloc();
+        let s2_id = arena2.alloc();
+        // s1 is the spinner (self-loop default) carrying a NONE epsilon; s2 has none.
+        arena1[s1_id].table.default = s1_id;
+        arena1[s1_id].table.epsilons.push(StateId::NONE);
+
+        let mut new_arena = StateArena::new();
+        let new_id = new_arena.alloc();
+        let mut memo: FxHashMap<(StateId, StateId), StateId> = FxHashMap::default();
+        asymmetric_spinner_merge(
+            &arena1,
+            s1_id,
+            &arena2,
+            s2_id,
+            true,
+            &mut new_arena,
+            &mut memo,
+            new_id,
+        );
+
+        assert!(
+            new_arena[new_id]
+                .table
+                .epsilons
+                .iter()
+                .all(|e| !e.is_none()),
+            "merged spinner table retained a NONE epsilon"
+        );
+    }
+
+    #[test]
+    fn test_merge_nfa_tables_bytewise_filters_none_epsilons() {
+        // NONE epsilons on either input table must not survive the NFA bytewise merge.
+        let arena1 = StateArena::new();
+        let arena2 = StateArena::new();
+        let mut table1 = SmallTable::new();
+        let mut table2 = SmallTable::new();
+        table1.epsilons.push(StateId::NONE);
+        table2.epsilons.push(StateId::NONE);
+        let mut new_arena = StateArena::new();
+        let mut memo: FxHashMap<(StateId, StateId), StateId> = FxHashMap::default();
+        let result = merge_nfa_tables_bytewise(
+            &arena1,
+            &table1,
+            &arena2,
+            &table2,
+            &mut new_arena,
+            &mut memo,
+        );
+        assert!(
+            result.epsilons.iter().all(|e| !e.is_none()),
+            "merged NFA table retained a NONE epsilon"
+        );
+    }
+
+    #[test]
+    fn test_merge_arena_tables_filters_none_epsilons() {
+        // NONE epsilons on either input table must not survive the DFA table merge.
+        let arena1 = StateArena::new();
+        let arena2 = StateArena::new();
+        let mut table1 = SmallTable::new();
+        let mut table2 = SmallTable::new();
+        table1.epsilons.push(StateId::NONE);
+        table2.epsilons.push(StateId::NONE);
+        let mut new_arena = StateArena::new();
+        let mut memo: FxHashMap<(StateId, StateId), StateId> = FxHashMap::default();
+        let result = merge_arena_tables(
+            &arena1,
+            &table1,
+            &arena2,
+            &table2,
+            &mut new_arena,
+            &mut memo,
+        );
+        assert!(
+            result.epsilons.iter().all(|e| !e.is_none()),
+            "merged DFA table retained a NONE epsilon"
+        );
+    }
+
+    #[test]
     fn test_merge_empty_arenas() {
         let arena1 = StateArena::new();
         let arena2 = StateArena::new();
@@ -6137,6 +6260,195 @@ mod nfa_merge_tests {
             !matches_value(&merged, merged_start, b"d"),
             "Merged should NOT match 'd'"
         );
+    }
+
+    #[test]
+    fn test_merge_shared_prefix_spinout_and_literal() {
+        // Both arenas step on 'a', so the merge pairs a spinout state (arena1's
+        // wildcard) with a plain literal state (arena2's 'b') on a shared byte —
+        // the asymmetric-spinner path. The literal branch must survive: "ab"
+        // matches both the wildcard (id 1) and the literal (id 2).
+        let fm1 = Arc::new(FieldMatcher::with_match_id(1));
+        let (arena1, start1) = make_spinout_arena(b"a", b"", fm1); // "a*"
+
+        let fm2 = Arc::new(FieldMatcher::with_match_id(2));
+        let (arena2, start2) = {
+            let mut arena = StateArena::new();
+            let end = arena.alloc();
+            arena[end].field_transitions.push(fm2);
+            let term = arena.alloc_with_table(SmallTable::with_mappings(
+                StateId::NONE,
+                &[ARENA_VALUE_TERMINATOR],
+                &[end],
+            ));
+            let b_state =
+                arena.alloc_with_table(SmallTable::with_mappings(StateId::NONE, b"b", &[term]));
+            let start =
+                arena.alloc_with_table(SmallTable::with_mappings(StateId::NONE, b"a", &[b_state]));
+            (arena, start)
+        };
+
+        let (merged, start) = merge_arena_nfas(&arena1, start1, &arena2, start2);
+
+        assert_eq!(
+            get_match_ids(&merged, start, b"a"),
+            vec![1],
+            "'a' is a* only"
+        );
+        let ids_ab = get_match_ids(&merged, start, b"ab");
+        assert!(
+            ids_ab.contains(&1) && ids_ab.contains(&2),
+            "'ab' matches both a* and the literal ab, got {ids_ab:?}"
+        );
+        assert_eq!(
+            get_match_ids(&merged, start, b"aXYZ"),
+            vec![1],
+            "'aXYZ' is a* only"
+        );
+        assert!(
+            !matches_value(&merged, start, b"b"),
+            "'b' needs a leading 'a'"
+        );
+    }
+
+    #[test]
+    fn test_merge_shared_prefix_epsilon_alternation_and_literal() {
+        // Both arenas step on 'a', so the merge pairs an epsilon-only alternation
+        // state (arena1's "a(b|c)") with a plain literal state (arena2's 'd') on a
+        // shared byte — the epsilon-splice path. The alternation must survive:
+        // "ab" and "ac" still match id 1 alongside the literal "ad" (id 2).
+        let fm1 = Arc::new(FieldMatcher::with_match_id(1));
+        let (arena1, start1) = {
+            let mut arena = StateArena::new();
+            let m = arena.alloc();
+            arena[m].field_transitions.push(fm1);
+            let term = arena.alloc_with_table(SmallTable::with_mappings(
+                StateId::NONE,
+                &[ARENA_VALUE_TERMINATOR],
+                &[m],
+            ));
+            let b_state =
+                arena.alloc_with_table(SmallTable::with_mappings(StateId::NONE, b"b", &[term]));
+            let c_state =
+                arena.alloc_with_table(SmallTable::with_mappings(StateId::NONE, b"c", &[term]));
+            let alt = arena.alloc();
+            arena[alt].table.epsilons = smallvec![b_state, c_state];
+            let start =
+                arena.alloc_with_table(SmallTable::with_mappings(StateId::NONE, b"a", &[alt]));
+            arena.precompute_epsilon_closures();
+            (arena, start)
+        };
+
+        let fm2 = Arc::new(FieldMatcher::with_match_id(2));
+        let (arena2, start2) = {
+            let mut arena = StateArena::new();
+            let end = arena.alloc();
+            arena[end].field_transitions.push(fm2);
+            let term = arena.alloc_with_table(SmallTable::with_mappings(
+                StateId::NONE,
+                &[ARENA_VALUE_TERMINATOR],
+                &[end],
+            ));
+            let d_state =
+                arena.alloc_with_table(SmallTable::with_mappings(StateId::NONE, b"d", &[term]));
+            let start =
+                arena.alloc_with_table(SmallTable::with_mappings(StateId::NONE, b"a", &[d_state]));
+            (arena, start)
+        };
+
+        let (merged, start) = merge_arena_nfas(&arena1, start1, &arena2, start2);
+
+        assert_eq!(
+            get_match_ids(&merged, start, b"ab"),
+            vec![1],
+            "'ab' is alternation only"
+        );
+        assert_eq!(
+            get_match_ids(&merged, start, b"ac"),
+            vec![1],
+            "'ac' is alternation only"
+        );
+        assert_eq!(
+            get_match_ids(&merged, start, b"ad"),
+            vec![2],
+            "'ad' is literal only"
+        );
+        assert!(
+            !matches_value(&merged, start, b"ae"),
+            "'ae' matches neither"
+        );
+    }
+
+    #[test]
+    fn test_merge_suffixed_spinout_asymmetric_branches() {
+        // "a*c" has a spinout whose suffix byte 'c' is a real (non-self) exit. Two
+        // shared-prefix merges drive the asymmetric per-byte resolver:
+        //   * against "ad" the spinner's 'c' exit lands where the literal has no
+        //     transition, so the wildcard's own 'c' exit must be preserved;
+        //   * against "ac" the spinner's 'c' exit coincides with the literal, so
+        //     the merged branch must keep an epsilon back to the spinner to allow
+        //     further looping ("acYc").
+        let fm1 = Arc::new(FieldMatcher::with_match_id(1));
+        let make_chain = |bytes: &[u8], fm: Arc<FieldMatcher>| {
+            let mut arena = StateArena::new();
+            let end = arena.alloc();
+            arena[end].field_transitions.push(fm);
+            let mut next = arena.alloc_with_table(SmallTable::with_mappings(
+                StateId::NONE,
+                &[ARENA_VALUE_TERMINATOR],
+                &[end],
+            ));
+            for &b in bytes.iter().rev() {
+                next =
+                    arena.alloc_with_table(SmallTable::with_mappings(StateId::NONE, &[b], &[next]));
+            }
+            (arena, next)
+        };
+
+        let (wild_arena, wild_start) = make_spinout_arena(b"a", b"c", fm1); // "a*c"
+
+        // "a*c" against literal "ad": the spinner's 'c' exit lands where the
+        // literal has no transition, so the wildcard's own 'c' exit must survive.
+        // Run both merge orders to drive each asymmetric-dispatch clause.
+        let (disjoint_arena, disjoint_start) =
+            make_chain(b"ad", Arc::new(FieldMatcher::with_match_id(2)));
+        for (a1, s1, a2, s2) in [
+            (&wild_arena, wild_start, &disjoint_arena, disjoint_start),
+            (&disjoint_arena, disjoint_start, &wild_arena, wild_start),
+        ] {
+            let (m, st) = merge_arena_nfas(a1, s1, a2, s2);
+            assert_eq!(
+                get_match_ids(&m, st, b"aXc"),
+                vec![1],
+                "a*c keeps its 'c' exit"
+            );
+            assert_eq!(
+                get_match_ids(&m, st, b"ad"),
+                vec![2],
+                "literal 'ad' still matches"
+            );
+        }
+
+        // "a*c" against literal "ac": the spinner's 'c' exit coincides with the
+        // literal, so the merged branch must keep an epsilon back to the spinner
+        // to allow further looping ("acYc"). Both merge orders.
+        let (shared_arena, shared_start) =
+            make_chain(b"ac", Arc::new(FieldMatcher::with_match_id(2)));
+        for (a1, s1, a2, s2) in [
+            (&wild_arena, wild_start, &shared_arena, shared_start),
+            (&shared_arena, shared_start, &wild_arena, wild_start),
+        ] {
+            let (m, st) = merge_arena_nfas(a1, s1, a2, s2);
+            let ids = get_match_ids(&m, st, b"ac");
+            assert!(
+                ids.contains(&1) && ids.contains(&2),
+                "'ac' matches a*c and literal ac, got {ids:?}"
+            );
+            assert!(
+                get_match_ids(&m, st, b"acYc").contains(&1),
+                "a*c still loops after its 'c' branch: 'acYc' matches"
+            );
+        }
     }
 
     #[test]
