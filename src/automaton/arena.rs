@@ -8078,6 +8078,53 @@ mod cidr_arena_tests {
             "Should NOT match 2001:db9:..."
         );
     }
+
+    #[test]
+    fn test_cidr_arena_fa_ipv6_partial_group_masks_host_bits() {
+        // /60 constrains group 3 to its top 12 bits, masking off the low
+        // nibble of the network value: 0xef08 collapses to the [0xef00, 0xef0f]
+        // block. A host inside the block matches; the first host above it does
+        // not.
+        let fm = Arc::new(FieldMatcher::with_match_id(1));
+        let cidr = CidrPattern::V6 {
+            network: [
+                0x20, 0x01, 0x0d, 0xb8, 0xab, 0xcd, 0xef, 0x08, 0, 0, 0, 0, 0, 0, 0, 0,
+            ],
+            prefix_len: 60,
+        };
+        let (arena, start) = make_cidr_arena_fa(&cidr, fm);
+
+        assert!(
+            matches_value(&arena, start, b"\"2001:db8:abcd:ef00:0:0:0:0\""),
+            "0xef00 is the masked network base and must match"
+        );
+        assert!(
+            !matches_value(&arena, start, b"\"2001:db8:abcd:ef10:0:0:0:0\""),
+            "0xef10 is the next /60 block and must not match"
+        );
+    }
+
+    #[test]
+    fn test_build_any_hex_group_requires_at_least_one_digit() {
+        // The start position consumes a hex digit before reaching the
+        // continuation; only the inner positions hold an epsilon shortcut to
+        // it, so a zero-length group cannot match.
+        let mut arena = StateArena::new();
+        let fm = Arc::new(FieldMatcher::with_match_id(1));
+        let match_state = arena.alloc();
+        arena[match_state].field_transitions.push(fm);
+        let start = build_any_hex_group_arena(match_state, &mut arena);
+        arena.precompute_epsilon_closures();
+
+        assert!(
+            matches_value(&arena, start, b"1"),
+            "one hex digit must match"
+        );
+        assert!(
+            !matches_value(&arena, start, b""),
+            "empty group must not match"
+        );
+    }
 }
 
 #[cfg(kani)]
