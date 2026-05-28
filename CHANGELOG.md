@@ -23,6 +23,9 @@ Style inspired by [ripgrep's CHANGELOG](https://github.com/BurntSushi/ripgrep/bl
 ### Fixed
 - `[^x]+` patterns (17K-state Unicode NFA) exceeded the DFA budget and regressed; SIMD acceleration via `AccelInfo::try_accelerate` restores performance (`regexp_negated_1k`: 3.2 µs → 652 ns)
 
+### Breaking
+- Pattern parsing rejects unknown JSON escapes (e.g. `\z`), matching Go upstream's `readTextWithEscapes`
+
 ## [0.5.0] — 2026-03-23
 
 ### Changed
