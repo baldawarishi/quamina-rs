@@ -24,11 +24,7 @@ Style inspired by [ripgrep's CHANGELOG](https://github.com/BurntSushi/ripgrep/bl
 - `[^x]+` patterns (17K-state Unicode NFA) exceeded the DFA budget and regressed; SIMD acceleration via `AccelInfo::try_accelerate` restores performance (`regexp_negated_1k`: 3.2 µs → 652 ns)
 
 ### Breaking
-- Pattern parsing now rejects unknown JSON escapes. Previously `\X` in a
-  pattern string was silently treated as `X`; now it returns
-  `QuaminaError::InvalidPattern`. Matches the JSON spec and upstream Go
-  behavior. Patterns using only the standard escapes
-  (`\" \\ \/ \b \f \n \r \t \uXXXX`) are unaffected.
+- Pattern parsing rejects unknown JSON escapes (e.g. `\z`), matching Go upstream's `readTextWithEscapes`
 
 ## [0.5.0] — 2026-03-23
 
