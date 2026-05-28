@@ -7546,6 +7546,22 @@ mod wildcard_arena_tests {
     }
 
     #[test]
+    fn test_wildcard_arena_fa_trailing_backslash() {
+        // A trailing backslash with nothing to escape is matched as a literal backslash.
+        let fm = Arc::new(FieldMatcher::with_match_id(1));
+        let (arena, start) = make_wildcard_arena_fa(b"foo\\", fm);
+
+        assert!(
+            matches_value(&arena, start, b"foo\\"),
+            "Should match 'foo\\'"
+        );
+        assert!(
+            !matches_value(&arena, start, b"foo"),
+            "Should NOT match 'foo'"
+        );
+    }
+
+    #[test]
     fn test_wildcard_arena_fa_merge() {
         let fm1 = Arc::new(FieldMatcher::with_match_id(1));
         let fm2 = Arc::new(FieldMatcher::with_match_id(2));
@@ -7666,6 +7682,17 @@ mod anything_but_arena_tests {
             matches_value(&arena, start, b"anything"),
             "Should match 'anything'"
         );
+        assert!(matches_value(&arena, start, b""), "Should match empty");
+    }
+
+    #[test]
+    fn test_anything_but_arena_fa_empty_value() {
+        // An empty excluded value is ignored, so every value still matches.
+        let fm = Arc::new(FieldMatcher::with_match_id(1));
+        let excluded = vec![b"".to_vec()];
+        let (arena, start) = make_anything_but_arena_fa(&excluded, fm);
+
+        assert!(matches_value(&arena, start, b"foo"), "Should match 'foo'");
         assert!(matches_value(&arena, start, b""), "Should match empty");
     }
 
