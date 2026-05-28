@@ -4740,6 +4740,16 @@ mod tests {
         assert!(try_accelerate_arena(&table, b"abcdefghij").is_none()); // none of x, y, z
     }
 
+    #[test]
+    fn test_traverse_dfa_backward_none_start_collects_nothing() {
+        // A NONE start short-circuits even for a non-empty value, rather than
+        // walking the value and indexing a state that does not exist.
+        let arena = StateArena::new();
+        let mut transitions = Vec::new();
+        traverse_arena_dfa_backward(&arena, StateId::NONE, b"suffix", &mut transitions);
+        assert!(transitions.is_empty());
+    }
+
     /// Verify that `StateArena::dstep` via `dfa_lookup` returns the same result
     /// as `SmallTable::dstep` for every byte value.
     ///
@@ -5896,6 +5906,29 @@ mod numeric_arena_tests {
         assert!(
             !matches_arena(&arena, start, &q150),
             "150 should NOT match (50, 150)"
+        );
+    }
+
+    #[test]
+    fn test_numeric_range_arena_fa_single_point() {
+        let next_field = Arc::new(FieldMatcher::new());
+        let q5 = q_num_from_f64(5.0);
+
+        // [5, 5] accepts exactly the shared bound.
+        let (incl, incl_start) =
+            make_numeric_range_arena_fa(5.0, true, 5.0, true, next_field.clone());
+        assert!(
+            matches_arena(&incl, incl_start, &q5),
+            "5 should match [5, 5]"
+        );
+
+        // [5, 5) is empty: an exclusive bound rejects the equal value even when
+        // both bounds coincide.
+        let (half_open, half_open_start) =
+            make_numeric_range_arena_fa(5.0, true, 5.0, false, next_field);
+        assert!(
+            !matches_arena(&half_open, half_open_start, &q5),
+            "5 should NOT match [5, 5)"
         );
     }
 
