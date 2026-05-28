@@ -940,6 +940,10 @@ impl<'a> Parser<'a> {
             if c == '\\' {
                 self.advance();
                 if let Some(escaped) = self.peek() {
+                    // Forward-progress invariant: every escape arm must advance
+                    // past the escape character, or the outer loop re-peeks `\`
+                    // forever.
+                    let _prev_pos_in_escape = self.pos;
                     match escaped {
                         'n' => {
                             result.push('\n');
@@ -999,11 +1003,19 @@ impl<'a> Parser<'a> {
                                 result.push(ch);
                             }
                         }
-                        _ => {
-                            result.push(escaped);
-                            self.advance();
+                        other => {
+                            // Per JSON spec only `" \ / b f n r t u` are valid
+                            // escapes; matching Go's readTextWithEscapes, any
+                            // other character is rejected.
+                            return Err(QuaminaError::InvalidPattern(format!(
+                                "invalid escape \\{other} in pattern string"
+                            )));
                         }
                     }
+                    debug_assert!(
+                        self.pos > _prev_pos_in_escape,
+                        "parse_string escape arm must advance past the escape char"
+                    );
                 }
             } else {
                 result.push(c);
@@ -1095,5 +1107,20 @@ impl<'a> Parser<'a> {
         } else {
             Err(QuaminaError::InvalidJson(format!("expected '{c}'")))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_string_rejects_unknown_escape() {
+        let mut parser = Parser::new(r#""\z""#);
+        let err = parser.parse_string().unwrap_err();
+        assert!(
+            matches!(err, QuaminaError::InvalidPattern(ref msg) if msg.contains("\\z")),
+            "expected InvalidPattern containing `\\z`, got {err:?}",
+        );
     }
 }
