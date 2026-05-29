@@ -3308,10 +3308,9 @@ pub fn make_shellstyle_arena_fa(
     // closure size 1 during self-loop, reducing dstep calls by ~2x.
     let start = arena.alloc();
     let mut state = start;
-    let mut i = 0;
+    let mut iter = pattern.iter();
 
-    while i < pattern.len() {
-        let ch = pattern[i];
+    while let Some(&ch) = iter.next() {
         if ch == b'*' {
             // Current state becomes an epsilon-only junction before the spinner.
             // This gives insert_string a clean branch point: dstep on
@@ -3321,13 +3320,13 @@ pub fn make_shellstyle_arena_fa(
             arena[spinner].table = make_byte_dot_table(spinner);
             arena[state].table.epsilons.push(spinner);
 
-            i += 1;
-            if i < pattern.len() {
-                // Create escape state with epsilon back to spinner
+            if let Some(&next_byte) = iter.next() {
+                // Override spinner's transition for the next byte to an escape
+                // state with an epsilon back to the spinner. The escape trigger
+                // byte is consumed here.
                 let spin_escape = arena.alloc();
                 arena[spin_escape].table.epsilons.push(spinner);
-                // Override spinner's transition for the next byte to go to escape
-                arena[spinner].table.set_transition(pattern[i], spin_escape);
+                arena[spinner].table.set_transition(next_byte, spin_escape);
                 state = spin_escape;
             } else {
                 // '*' is the last byte: state becomes the spinner so the
@@ -3340,7 +3339,6 @@ pub fn make_shellstyle_arena_fa(
             arena[state].table.set_transition(ch, next_step);
             state = next_step;
         }
-        i += 1;
     }
 
     // Add VALUE_TERMINATOR → last_step on the final state.
@@ -3502,30 +3500,29 @@ pub fn make_wildcard_arena_fa(
 /// - Other `\x` sequences pass through as literal (both chars)
 fn parse_wildcard_segments(pattern: &[u8]) -> Vec<ShellstyleSegment> {
     let mut segments = Vec::new();
-    let mut i = 0;
+    let mut iter = pattern.iter();
 
-    while i < pattern.len() {
-        if pattern[i] == b'*' {
+    while let Some(&ch) = iter.next() {
+        if ch == b'*' {
             segments.push(ShellstyleSegment::Wildcard);
-            i += 1;
-        } else if pattern[i] == b'\\' && i + 1 < pattern.len() {
-            // Escape sequence - consume the escaped character
-            let escaped = pattern[i + 1];
-            // Start or extend literal segment with escaped character
-            if let Some(ShellstyleSegment::Literal(bytes)) = segments.last_mut() {
-                bytes.push(escaped);
-            } else {
-                segments.push(ShellstyleSegment::Literal(vec![escaped]));
-            }
-            i += 2;
+            continue;
+        }
+
+        // For a non-trailing backslash, consume the next byte and append IT as
+        // the literal. A trailing backslash has no next byte and falls through
+        // to be appended as a literal `\` itself.
+        let literal = if ch == b'\\'
+            && let Some(&escaped) = iter.next()
+        {
+            escaped
         } else {
-            // Regular character - add to literal segment
-            if let Some(ShellstyleSegment::Literal(bytes)) = segments.last_mut() {
-                bytes.push(pattern[i]);
-            } else {
-                segments.push(ShellstyleSegment::Literal(vec![pattern[i]]));
-            }
-            i += 1;
+            ch
+        };
+
+        if let Some(ShellstyleSegment::Literal(bytes)) = segments.last_mut() {
+            bytes.push(literal);
+        } else {
+            segments.push(ShellstyleSegment::Literal(vec![literal]));
         }
     }
 
