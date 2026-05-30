@@ -2953,8 +2953,7 @@ fn test_transform_lookaround_alternation_rejected() {
 
 #[test]
 fn test_numeric_comparison_missing_value_after_operator() {
-    // Array with only an operator and no following value — should error.
-    // Catches mutation: replace + with * in parse_numeric_comparison (i+1 vs i*1 at i=0)
+    // Odd-length numeric arrays — operator without a paired value — must error.
     let mut q = Quamina::<&str>::new();
     let result = q.add_pattern("bad", r#"{"x": [{"numeric": [">"]}]}"#);
     assert!(result.is_err(), "Single-element numeric array should fail");

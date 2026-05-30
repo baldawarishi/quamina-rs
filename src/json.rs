@@ -768,32 +768,30 @@ fn parse_numeric_comparison(arr: &[Value]) -> Option<NumericComparison> {
     let mut lower = None;
     let mut upper = None;
 
-    let mut i = 0;
-    while i < arr.len() {
-        if let Value::String(op) = &arr[i] {
-            if i + 1 >= arr.len() {
-                return None;
-            }
-            let num = match &arr[i + 1] {
-                Value::Number(n) => n.parse::<f64>().ok()?,
-                _ => return None,
-            };
-
-            match op.as_str() {
-                ">" => lower = Some((false, num)),
-                ">=" => lower = Some((true, num)),
-                "<" => upper = Some((false, num)),
-                "<=" => upper = Some((true, num)),
-                "=" => {
-                    lower = Some((true, num));
-                    upper = Some((true, num));
-                }
-                _ => return None,
-            }
-            i += 2;
-        } else {
+    let mut pairs = arr.chunks_exact(2);
+    for pair in &mut pairs {
+        let Value::String(op) = &pair[0] else {
             return None;
+        };
+        let num = match &pair[1] {
+            Value::Number(n) => n.parse::<f64>().ok()?,
+            _ => return None,
+        };
+
+        match op.as_str() {
+            ">" => lower = Some((false, num)),
+            ">=" => lower = Some((true, num)),
+            "<" => upper = Some((false, num)),
+            "<=" => upper = Some((true, num)),
+            "=" => {
+                lower = Some((true, num));
+                upper = Some((true, num));
+            }
+            _ => return None,
         }
+    }
+    if !pairs.remainder().is_empty() {
+        return None;
     }
 
     Some(NumericComparison { lower, upper })
