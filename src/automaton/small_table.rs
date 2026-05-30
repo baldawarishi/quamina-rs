@@ -7,6 +7,7 @@
 //!
 //! State machines and transition tables are in the `arena` module.
 
+use std::num::NonZero;
 use std::sync::Arc;
 
 use rustc_hash::FxHashMap;
@@ -44,12 +45,15 @@ pub struct AccelInfo {
 impl AccelInfo {
     /// Find the next exit byte in `remaining` using SIMD-accelerated memchr.
     ///
-    /// Returns `Some(offset)` where offset is the position of the first exit
-    /// byte, or `None` if no exit byte is found in the slice.
+    /// Returns the strictly positive number of bytes the caller may skip
+    /// before re-stepping. Both an exit byte at offset 0 and no exit byte
+    /// at all collapse to `None`, because the caller in either case must
+    /// step normally — skipping zero bytes would loop forever, and there
+    /// is nothing to skip past when no exit was found.
     #[inline]
     #[must_use]
-    pub fn try_accelerate(&self, remaining: &[u8]) -> Option<usize> {
-        match self.len {
+    pub fn try_accelerate(&self, remaining: &[u8]) -> Option<NonZero<usize>> {
+        let offset = match self.len {
             1 => memchr::memchr(self.exit_bytes[0], remaining),
             2 => memchr::memchr2(self.exit_bytes[0], self.exit_bytes[1], remaining),
             3 => memchr::memchr3(
@@ -59,7 +63,8 @@ impl AccelInfo {
                 remaining,
             ),
             _ => None,
-        }
+        }?;
+        NonZero::new(offset)
     }
 }
 

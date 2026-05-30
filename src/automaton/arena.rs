@@ -21,6 +21,7 @@
 //!   [a-z]          epsilon
 //! ```
 
+use std::num::NonZero;
 use std::sync::Arc;
 
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -1287,13 +1288,15 @@ pub(crate) fn traverse_lazy_dfa(lazy_dfa: &mut LazyDfa, val: &[u8], transitions:
     transitions.extend_from_slice(&lazy_dfa.states[0].field_transition_ptrs);
 
     while i <= len {
-        // Acceleration: for self-loop states with memchr exit bytes, skip ahead
-        if i < len
-            && let Some(ref accel) = lazy_dfa.states[current.index()].accel
+        // Acceleration: when the current state self-loops with 1-3 memchr exit
+        // bytes, jump straight to the next exit byte. The terminator iteration
+        // (`i == len`) safely passes an empty `&val[i..]` to `try_accelerate`,
+        // which memchr reports as "no hit", so we fall through to the normal
+        // step below.
+        if let Some(ref accel) = lazy_dfa.states[current.index()].accel
             && let Some(skip) = accel.try_accelerate(&val[i..])
-            && skip > 0
         {
-            i += skip;
+            i += skip.get();
             continue;
         }
 
@@ -1379,7 +1382,7 @@ pub const ARENA_VALUE_TERMINATOR: u8 = 0xF5;
 /// Used for ASCII-only negated patterns like `[^x]+` where the exit bytes
 /// are just the negated ASCII characters (not all invalid UTF-8 bytes).
 #[inline]
-fn try_accelerate_arena(table: &SmallTable, remaining: &[u8]) -> Option<usize> {
+fn try_accelerate_arena(table: &SmallTable, remaining: &[u8]) -> Option<NonZero<usize>> {
     table.accel.as_ref()?.try_accelerate(remaining)
 }
 
@@ -1406,15 +1409,16 @@ pub fn traverse_arena_nfa(arena: &StateArena, start: StateId, val: &[u8], bufs: 
             break;
         }
 
-        // State acceleration: For ASCII-only negated patterns like [^x]+, use memchr
-        // to skip directly to exit bytes. This is enabled when patterns have 1-3 exit bytes.
-        if i < len && bufs.current_states.len() == 1 {
+        // State acceleration: ASCII-only negated patterns like [^x]+ park the NFA
+        // in a single self-looping state. When 1-3 exit bytes are known we use
+        // memchr to jump to the next exit byte. The terminator iteration
+        // (`i == len`) safely passes an empty slice and falls through to the
+        // normal step.
+        if bufs.current_states.len() == 1 {
             let state_id = bufs.current_states[0];
             let state = &arena[state_id];
-            if let Some(skip) = try_accelerate_arena(&state.table, &val[i..])
-                && skip > 0
-            {
-                i += skip;
+            if let Some(skip) = try_accelerate_arena(&state.table, &val[i..]) {
+                i += skip.get();
                 continue;
             }
         }
@@ -1608,12 +1612,11 @@ pub fn traverse_arena_dfa(
             }
         }
 
-        // Acceleration: for self-loop states with 1-3 exit bytes, use memchr
-        // to skip directly to the next interesting byte.
-        if i < len
-            && let Some(skip) = try_accelerate_arena(&arena[current].table, &val[i..])
-            && skip > 0
-        {
+        // Acceleration: for self-loop states with 1-3 exit bytes, use memchr to
+        // skip directly to the next interesting byte. The terminator iteration
+        // (`i == len`) safely passes an empty slice and falls through to the
+        // normal step.
+        if let Some(skip) = try_accelerate_arena(&arena[current].table, &val[i..]) {
             // A self-loop (accelerated) state must not be accepting. If it were,
             // the FT collection at the top of this loop would fire again on the
             // next iteration, emitting duplicate match results.
@@ -1626,7 +1629,7 @@ pub fn traverse_arena_dfa(
                 },
                 "accelerated state {current:?} has field transitions; they would be collected redundantly on each skip"
             );
-            i += skip;
+            i += skip.get();
             continue;
         }
 
@@ -4703,6 +4706,7 @@ mod tests {
     fn test_try_accelerate_arena() {
         // Test the try_accelerate_arena function directly
         let mut table = SmallTable::new();
+        let nz = |n: usize| NonZero::new(n).unwrap();
 
         // No accel info - should return None
         assert!(try_accelerate_arena(&table, b"hello").is_none());
@@ -4712,8 +4716,12 @@ mod tests {
             exit_bytes: [b'x', 0, 0],
             len: 1,
         });
-        assert_eq!(try_accelerate_arena(&table, b"helloxworld"), Some(5)); // finds 'x' at position 5
+        assert_eq!(try_accelerate_arena(&table, b"helloxworld"), Some(nz(5))); // finds 'x' at position 5
         assert!(try_accelerate_arena(&table, b"hello").is_none()); // no 'x'
+        // An exit byte at offset 0 collapses to None so the caller steps normally
+        // instead of advancing by zero and spinning forever.
+        assert!(try_accelerate_arena(&table, b"xhello").is_none());
+        assert!(try_accelerate_arena(&table, b"").is_none()); // empty slice: no hit
 
         // With 2 exit bytes
         table.accel = Some(super::super::AccelInfo {
@@ -4721,17 +4729,17 @@ mod tests {
             len: 2,
         });
         assert!(try_accelerate_arena(&table, b"helloworld").is_none()); // neither 'x' nor 'y'
-        assert_eq!(try_accelerate_arena(&table, b"hellxyworld"), Some(4)); // finds 'x' at position 4
-        assert_eq!(try_accelerate_arena(&table, b"hellyxworld"), Some(4)); // finds 'y' at position 4
-        assert_eq!(try_accelerate_arena(&table, b"helloxyw"), Some(5)); // finds 'x' at position 5
+        assert_eq!(try_accelerate_arena(&table, b"hellxyworld"), Some(nz(4))); // finds 'x' at position 4
+        assert_eq!(try_accelerate_arena(&table, b"hellyxworld"), Some(nz(4))); // finds 'y' at position 4
+        assert_eq!(try_accelerate_arena(&table, b"helloxyw"), Some(nz(5))); // finds 'x' at position 5
 
         // With 3 exit bytes
         table.accel = Some(super::super::AccelInfo {
             exit_bytes: [b'x', b'y', b'z'],
             len: 3,
         });
-        assert_eq!(try_accelerate_arena(&table, b"abcdefghijz"), Some(10)); // finds 'z' at position 10
-        assert_eq!(try_accelerate_arena(&table, b"abcxyz"), Some(3)); // finds 'x' at position 3
+        assert_eq!(try_accelerate_arena(&table, b"abcdefghijz"), Some(nz(10))); // finds 'z' at position 10
+        assert_eq!(try_accelerate_arena(&table, b"abcxyz"), Some(nz(3))); // finds 'x' at position 3
         assert!(try_accelerate_arena(&table, b"abcdefghij").is_none()); // none of x, y, z
     }
 
