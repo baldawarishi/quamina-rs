@@ -3640,20 +3640,11 @@ fn build_monocase_ascii_chain(val: &[u8], match_state: StateId, arena: &mut Stat
         };
 
         let state = if let Some(alt) = alt_byte {
-            // Two paths to next state
-            if byte < alt {
-                arena.alloc_with_table(SmallTable::with_mappings(
-                    StateId::NONE,
-                    &[byte, alt],
-                    &[current_next, current_next],
-                ))
-            } else {
-                arena.alloc_with_table(SmallTable::with_mappings(
-                    StateId::NONE,
-                    &[alt, byte],
-                    &[current_next, current_next],
-                ))
-            }
+            arena.alloc_with_table(SmallTable::with_mappings(
+                StateId::NONE,
+                &[byte, alt],
+                &[current_next, current_next],
+            ))
         } else {
             // Single path
             arena.alloc_with_table(SmallTable::with_mappings(
@@ -3704,19 +3695,11 @@ fn build_monocase_arena_recursive(
             let orig_state = build_arena_fragment(orig, next_state, arena);
             let alt_state = build_arena_fragment(alt_bytes, next_state, arena);
 
-            if orig[0] < alt_bytes[0] {
-                arena.alloc_with_table(SmallTable::with_mappings(
-                    StateId::NONE,
-                    &[orig[0], alt_bytes[0]],
-                    &[orig_state, alt_state],
-                ))
-            } else {
-                arena.alloc_with_table(SmallTable::with_mappings(
-                    StateId::NONE,
-                    &[alt_bytes[0], orig[0]],
-                    &[alt_state, orig_state],
-                ))
-            }
+            arena.alloc_with_table(SmallTable::with_mappings(
+                StateId::NONE,
+                &[orig[0], alt_bytes[0]],
+                &[orig_state, alt_state],
+            ))
         } else {
             // Common prefix - share states for common bytes, then branch
             let orig_suffix = &orig[common_prefix..];
@@ -3747,19 +3730,11 @@ fn build_monocase_arena_recursive(
                 let orig_state = build_arena_fragment(orig_suffix, next_state, arena);
                 let alt_state = build_arena_fragment(alt_suffix, next_state, arena);
 
-                if orig_suffix[0] < alt_suffix[0] {
-                    arena.alloc_with_table(SmallTable::with_mappings(
-                        StateId::NONE,
-                        &[orig_suffix[0], alt_suffix[0]],
-                        &[orig_state, alt_state],
-                    ))
-                } else {
-                    arena.alloc_with_table(SmallTable::with_mappings(
-                        StateId::NONE,
-                        &[alt_suffix[0], orig_suffix[0]],
-                        &[alt_state, orig_state],
-                    ))
-                }
+                arena.alloc_with_table(SmallTable::with_mappings(
+                    StateId::NONE,
+                    &[orig_suffix[0], alt_suffix[0]],
+                    &[orig_state, alt_state],
+                ))
             };
 
             // Now build the common prefix chain leading to diverge_state
