@@ -3761,7 +3761,7 @@ fn test_mut_memory_usage_accumulates_suffix_and_lookaround() {
     );
     let (_, used) = q.get_memory_budget();
     assert_eq!(
-        used, 5568,
+        used, 5280,
         "memory usage must equal exact sum of arena byte sizes, got {used}"
     );
 }

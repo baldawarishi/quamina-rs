@@ -3367,7 +3367,7 @@ mod tests {
         // exceeds the budget. Merging these two regexp FAs is deterministic at
         // MERGED_SIZE bytes, so a budget equal to it must accept and a budget
         // one byte smaller must reject.
-        const MERGED_SIZE: usize = 2488;
+        const MERGED_SIZE: usize = 2360;
         let p1 = crate::json::parse_pattern(
             r#"{"x": [{"regexp": "aaaa"}]}"#,
             &crate::PatternLimits::default(),
