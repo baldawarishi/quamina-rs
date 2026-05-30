@@ -2027,11 +2027,9 @@ fn merge_arena_tables(
 fn unpack_arena_table(table: &SmallTable, unpacked: &mut [StateId; BYTE_CEILING]) {
     let mut byte_idx = 0usize;
     for (i, &ceiling) in table.ceilings.iter().enumerate() {
-        let ceiling = ceiling as usize;
-        while byte_idx < ceiling && byte_idx < BYTE_CEILING {
-            unpacked[byte_idx] = table.steps[i];
-            byte_idx += 1;
-        }
+        let end = ceiling as usize;
+        unpacked[byte_idx..end].fill(table.steps[i]);
+        byte_idx = end;
     }
 }
 
