@@ -173,8 +173,6 @@ pub struct SmallTable {
     pub epsilons: SmallVec<[StateId; 2]>,
     /// Acceleration info for self-loop states (exit bytes for memchr skip)
     pub accel: Option<AccelInfo>,
-    /// Default transition (computed after pack)
-    pub default: StateId,
 }
 
 impl Default for SmallTable {
@@ -192,27 +190,26 @@ impl SmallTable {
             steps: smallvec![StateId::NONE],
             epsilons: SmallVec::new(),
             accel: None,
-            default: StateId::NONE,
         }
     }
 
     /// Create a table with specific byte mappings.
+    ///
+    /// `default` is the destination for every byte not listed in `bytes`; it is
+    /// baked into the packed `steps` array.
     #[must_use]
     pub fn with_mappings(default: StateId, bytes: &[u8], targets: &[StateId]) -> Self {
         let mut unpacked = [StateId::NONE; BYTE_CEILING];
 
-        // Set default for all
         if !default.is_none() {
             unpacked.fill(default);
         }
 
-        // Set specific mappings
         for (b, t) in bytes.iter().zip(targets.iter()) {
             unpacked[*b as usize] = *t;
         }
 
         let mut table = Self::new();
-        table.default = default;
         table.pack(&unpacked);
         table
     }
@@ -237,9 +234,6 @@ impl SmallTable {
         // Final entry
         self.ceilings.push(BYTE_CEILING_U8);
         self.steps.push(current);
-
-        // Note: `default` is not recomputed here. Callers that need it
-        // (e.g. `with_mappings`, `make_byte_dot_table`) set it explicitly.
     }
 
     /// Set a single byte transition, unpacking and repacking the table.
@@ -281,25 +275,6 @@ impl SmallTable {
             }
         }
         StateId::NONE
-    }
-
-    /// Iterate over sparse transitions (byte, state) pairs that differ from the default.
-    pub fn sparse_transitions(&self) -> impl Iterator<Item = (u8, StateId)> + '_ {
-        let mut result = Vec::new();
-        let mut prev_ceiling: u8 = 0;
-
-        for (i, &ceiling) in self.ceilings.iter().enumerate() {
-            let state = self.steps[i];
-            if state != self.default {
-                // This range has a non-default transition
-                for byte in prev_ceiling..ceiling {
-                    result.push((byte, state));
-                }
-            }
-            prev_ceiling = ceiling;
-        }
-
-        result.into_iter()
     }
 }
 
@@ -1796,24 +1771,16 @@ fn clone_state_recursive(
         steps: SmallVec::with_capacity(old_table.steps.len()),
         epsilons: SmallVec::with_capacity(old_table.epsilons.len()),
         accel: old_table.accel.clone(),
-        default: StateId::NONE,
     };
 
-    // Remap steps
     for &step_id in &old_table.steps {
         let new_step = clone_state_recursive(arena, step_id, new_arena, id_map);
         new_table.steps.push(new_step);
     }
 
-    // Remap epsilons
     for &eps_id in &old_table.epsilons {
         let new_eps = clone_state_recursive(arena, eps_id, new_arena, id_map);
         new_table.epsilons.push(new_eps);
-    }
-
-    // Remap default
-    if !old_table.default.is_none() {
-        new_table.default = clone_state_recursive(arena, old_table.default, new_arena, id_map);
     }
 
     new_arena[new_id].table = new_table;
@@ -1894,7 +1861,6 @@ fn remap_table_recursive(
         steps: SmallVec::with_capacity(table.steps.len()),
         epsilons: SmallVec::with_capacity(table.epsilons.len()),
         accel: table.accel.clone(),
-        default: StateId::NONE,
     };
 
     for &step_id in &table.steps {
@@ -1922,30 +1888,6 @@ fn remap_table_recursive(
             };
             new_table.steps.push(merged);
         }
-    }
-
-    // Remap default
-    if !table.default.is_none() {
-        let merged = if is_arena1 {
-            merge_arena_states_recursive(
-                source_arena,
-                table.default,
-                _other_arena,
-                StateId::NONE,
-                new_arena,
-                memo,
-            )
-        } else {
-            merge_arena_states_recursive(
-                _other_arena,
-                StateId::NONE,
-                source_arena,
-                table.default,
-                new_arena,
-                memo,
-            )
-        };
-        new_table.default = merged;
     }
 
     for &eps_id in &table.epsilons {
@@ -2097,10 +2039,10 @@ pub fn merge_arena_nfas(
 
 /// Check if a state is an "epsilon-only" splice state created during merges.
 ///
-/// These synthetic states only serve to branch into multiple epsilon targets,
-/// with no byte transitions or field transitions.
-/// Mirrors Go's `smallTable.isEpsilonOnly()`, with additional guard for
-/// Rust's field_transition field.
+/// These synthetic states branch into multiple epsilon targets with no byte
+/// transitions and no field transitions: the table holds a single ceiling
+/// whose step is `NONE`, so every byte falls through and the only outgoing
+/// edge is via epsilons.
 fn is_epsilon_only_state(arena: &StateArena, state_id: StateId) -> bool {
     if state_id.is_none() {
         return false;
@@ -2108,7 +2050,7 @@ fn is_epsilon_only_state(arena: &StateArena, state_id: StateId) -> bool {
     let state = &arena[state_id];
     !state.table.epsilons.is_empty()
         && state.table.ceilings.len() == 1
-        && state.table.default.is_none()
+        && state.table.steps[0].is_none()
         && state.field_transitions.is_empty()
 }
 
@@ -2139,18 +2081,15 @@ fn flatten_epsilon_targets(arena: &StateArena, states: &[StateId]) -> SmallVec<[
     targets
 }
 
-/// Check if a state is a spinner/spinout state (self-loop in transition table).
-///
-/// Spinner states are used for wildcard patterns. The convention is:
-/// - State's table default points to itself (self-loop via `make_byte_dot_table`)
-/// - Old construction: 1 epsilon (to continuation after the wildcard)
-/// - New construction: 0 epsilons (escape states have epsilon back to spinner)
+/// Check if a state is a spinner/spinout state — a wildcard self-loop where
+/// every non-forbidden byte transitions back to the state itself, encoded
+/// as at least one entry in `steps` equal to the state's own id.
 fn is_spinout_state(arena: &StateArena, state_id: StateId) -> bool {
     if state_id.is_none() {
         return false;
     }
     let state = &arena[state_id];
-    state.table.default == state_id && state.table.epsilons.len() <= 1
+    state.table.steps.contains(&state_id) && state.table.epsilons.len() <= 1
 }
 
 /// Recursively merge two NFA states from different arenas.
@@ -2251,7 +2190,6 @@ fn merge_arena_nfa_states_recursive(
             steps: smallvec![StateId::NONE],
             epsilons,
             accel: None,
-            default: StateId::NONE,
         };
         return new_id;
     }
@@ -2285,7 +2223,6 @@ fn merge_dual_spinout_states(
 ) {
     let mut combined_table =
         merge_nfa_tables_bytewise(arena1, &s1.table, arena2, &s2.table, new_arena, memo);
-    combined_table.default = new_id;
 
     let mut merged_epsilons: SmallVec<[StateId; 2]> = SmallVec::new();
     for &eps1 in &s1.table.epsilons {
@@ -2361,7 +2298,6 @@ fn asymmetric_spinner_merge(
 
     let mut combined_table = SmallTable::new();
     combined_table.pack(&merged_unpacked);
-    combined_table.default = new_id; // self-loop for the combined spinner
 
     // Remap spinner's epsilons (0 or 1).
     let mut merged_epsilons: SmallVec<[StateId; 2]> = SmallVec::new();
@@ -2548,25 +2484,16 @@ fn clone_state_into_arena(
         steps: SmallVec::with_capacity(old_table.steps.len()),
         epsilons: SmallVec::with_capacity(old_table.epsilons.len()),
         accel: old_table.accel.clone(),
-        default: StateId::NONE,
     };
 
-    // Remap steps
     for &step_id in &old_table.steps {
         let new_step = clone_state_into_arena(source_arena, step_id, target_arena, id_map);
         new_table.steps.push(new_step);
     }
 
-    // Remap epsilons
     for &eps_id in &old_table.epsilons {
         let new_eps = clone_state_into_arena(source_arena, eps_id, target_arena, id_map);
         new_table.epsilons.push(new_eps);
-    }
-
-    // Remap default
-    if !old_table.default.is_none() {
-        new_table.default =
-            clone_state_into_arena(source_arena, old_table.default, target_arena, id_map);
     }
 
     target_arena[new_id].table = new_table;
@@ -2588,7 +2515,6 @@ fn remap_nfa_table_recursive(
         steps: SmallVec::with_capacity(table.steps.len()),
         epsilons: SmallVec::with_capacity(table.epsilons.len()),
         accel: table.accel.clone(),
-        default: StateId::NONE,
     };
 
     for &step_id in &table.steps {
@@ -2616,30 +2542,6 @@ fn remap_nfa_table_recursive(
             };
             new_table.steps.push(merged);
         }
-    }
-
-    // Remap default
-    if !table.default.is_none() {
-        let merged = if is_arena1 {
-            merge_arena_nfa_states_recursive(
-                source_arena,
-                table.default,
-                _other_arena,
-                StateId::NONE,
-                new_arena,
-                memo,
-            )
-        } else {
-            merge_arena_nfa_states_recursive(
-                _other_arena,
-                StateId::NONE,
-                source_arena,
-                table.default,
-                new_arena,
-                memo,
-            )
-        };
-        new_table.default = merged;
     }
 
     for &eps_id in &table.epsilons {
@@ -3454,7 +3356,6 @@ fn make_byte_dot_table(dest: StateId) -> SmallTable {
     let mut table = SmallTable::new();
     table.ceilings = smallvec![0xC0, 0xC2, ARENA_VALUE_TERMINATOR, BYTE_CEILING_U8];
     table.steps = smallvec![dest, StateId::NONE, dest, StateId::NONE];
-    table.default = dest;
     table
 }
 
@@ -3615,25 +3516,10 @@ fn build_anything_but_step(
             // We need to create a new state that merges the continuation but overrides VALUE_TERMINATOR
             let fail_state = arena.alloc(); // Empty state = fail
 
-            // Build full unpacked table: start with success as default
+            // Inherit the continuation's byte map, then steer the terminator
+            // to fail so any value ending on this byte rejects.
             let mut combined_unpacked: [StateId; BYTE_CEILING] = [success; BYTE_CEILING];
-
-            // Copy sparse transitions from continuation
-            for (byte, next) in arena[continuation].table.sparse_transitions() {
-                combined_unpacked[byte as usize] = next;
-            }
-
-            // Also copy default if continuation has one
-            if !arena[continuation].table.default.is_none() {
-                // Fill non-sparse positions with continuation's default
-                for slot in &mut combined_unpacked {
-                    if *slot == success {
-                        *slot = arena[continuation].table.default;
-                    }
-                }
-            }
-
-            // Override VALUE_TERMINATOR to fail
+            unpack_arena_table(&arena[continuation].table, &mut combined_unpacked);
             combined_unpacked[ARENA_VALUE_TERMINATOR as usize] = fail_state;
 
             let combined_state = arena.alloc();
@@ -5359,8 +5245,6 @@ mod merge_tests {
         let mut arena2 = StateArena::new();
         let s1_id = arena1.alloc();
         let s2_id = arena2.alloc();
-        arena1[s1_id].table.default = s1_id;
-        arena2[s2_id].table.default = s2_id;
         arena1[s1_id].table.epsilons.push(StateId::NONE);
         arena2[s2_id].table.epsilons.push(StateId::NONE);
 
@@ -5397,8 +5281,6 @@ mod merge_tests {
         let mut arena2 = StateArena::new();
         let s1_id = arena1.alloc();
         let s2_id = arena2.alloc();
-        // s1 is the spinner (self-loop default) carrying a NONE epsilon; s2 has none.
-        arena1[s1_id].table.default = s1_id;
         arena1[s1_id].table.epsilons.push(StateId::NONE);
 
         let mut new_arena = StateArena::new();

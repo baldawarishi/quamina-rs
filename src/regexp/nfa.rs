@@ -521,11 +521,6 @@ fn instantiate_shell(shell: &CachedShell, arena: &mut StateArena, next: StateId)
             *eps = id_map[eps.index()];
         }
 
-        // Remap default
-        if !table.default.is_none() {
-            table.default = id_map[table.default.index()];
-        }
-
         arena[real_id].table = table;
     }
 
