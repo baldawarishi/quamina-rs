@@ -3701,58 +3701,37 @@ fn build_monocase_arena_recursive(
                 &[orig_state, alt_state],
             ))
         } else {
-            // Common prefix - share states for common bytes, then branch
+            // Shared leading bytes, then a divergence on the first byte that
+            // differs. Two complete UTF-8 encodings of distinct scalars are
+            // prefix-free, so once the shared prefix is consumed each side
+            // still carries at least one distinguishing byte — neither suffix
+            // can be empty.
             let orig_suffix = &orig[common_prefix..];
             let alt_suffix = &alt_bytes[common_prefix..];
+            debug_assert!(
+                !orig_suffix.is_empty() && !alt_suffix.is_empty(),
+                "monocase suffixes are prefix-free after the shared prefix"
+            );
 
-            // Build the divergent part
-            let diverge_state = if orig_suffix.is_empty() && alt_suffix.is_empty() {
-                // Identical after common prefix
-                next_state
-            } else if orig_suffix.is_empty() {
-                // Original is done, alternate has more bytes
-                let alt_state = build_arena_fragment(alt_suffix, next_state, arena);
-                arena.alloc_with_table(SmallTable::with_mappings(
-                    StateId::NONE,
-                    &[alt_suffix[0]],
-                    &[alt_state],
-                ))
-            } else if alt_suffix.is_empty() {
-                // Alternate is done, original has more bytes
-                let orig_state = build_arena_fragment(orig_suffix, next_state, arena);
-                arena.alloc_with_table(SmallTable::with_mappings(
-                    StateId::NONE,
-                    &[orig_suffix[0]],
-                    &[orig_state],
-                ))
-            } else {
-                // Both have remaining bytes
-                let orig_state = build_arena_fragment(orig_suffix, next_state, arena);
-                let alt_state = build_arena_fragment(alt_suffix, next_state, arena);
+            let orig_state = build_arena_fragment(orig_suffix, next_state, arena);
+            let alt_state = build_arena_fragment(alt_suffix, next_state, arena);
+            let mut current = arena.alloc_with_table(SmallTable::with_mappings(
+                StateId::NONE,
+                &[orig_suffix[0], alt_suffix[0]],
+                &[orig_state, alt_state],
+            ));
 
-                arena.alloc_with_table(SmallTable::with_mappings(
+            // Prepend the shared prefix as a single-byte chain (common_prefix
+            // is non-zero in this branch, so this always emits at least one
+            // state).
+            for &byte in orig[..common_prefix].iter().rev() {
+                current = arena.alloc_with_table(SmallTable::with_mappings(
                     StateId::NONE,
-                    &[orig_suffix[0], alt_suffix[0]],
-                    &[orig_state, alt_state],
-                ))
-            };
-
-            // Now build the common prefix chain leading to diverge_state
-            // Must build a proper chain for all prefix bytes, including single-byte prefixes
-            let prefix = &orig[..common_prefix];
-            if prefix.is_empty() {
-                diverge_state
-            } else {
-                let mut current = diverge_state;
-                for &byte in prefix.iter().rev() {
-                    current = arena.alloc_with_table(SmallTable::with_mappings(
-                        StateId::NONE,
-                        &[byte],
-                        &[current],
-                    ));
-                }
-                current
+                    &[byte],
+                    &[current],
+                ));
             }
+            current
         }
     } else {
         // No case alternate - single path
@@ -3771,18 +3750,18 @@ fn build_monocase_arena_recursive(
 
 /// Build an FA fragment for a byte sequence, returning the state to use as target.
 ///
-/// For sequences of length <= 1, returns end_at since the caller will
-/// create the transition on the first byte. For longer sequences, builds
-/// a chain from the second byte to end_at.
+/// The caller emits the transition on the first byte, so this chains only the
+/// remaining bytes back to `end_at`. Callers pass whole UTF-8 char encodings or
+/// their suffixes, which are never empty; a single-byte input therefore returns
+/// `end_at` unchanged.
 fn build_arena_fragment(val: &[u8], end_at: StateId, arena: &mut StateArena) -> StateId {
-    if val.is_empty() || val.len() == 1 {
-        // Caller handles the first (or only) byte
-        return end_at;
-    }
+    let Some((_first, rest)) = val.split_first() else {
+        unreachable!("monocase fragment is a non-empty char encoding")
+    };
 
-    // Build chain from last byte back to second byte (skip first byte)
+    // Build chain from last byte back to second byte (the first is the caller's).
     let mut current = end_at;
-    for &byte in val[1..].iter().rev() {
+    for &byte in rest.iter().rev() {
         current = arena.alloc_with_table(SmallTable::with_mappings(
             StateId::NONE,
             &[byte],
@@ -7826,6 +7805,40 @@ mod monocase_arena_tests {
         assert!(
             matches_value(&arena, start, "σΟΦΑ".as_bytes()),
             "Mixed case should match"
+        );
+    }
+
+    #[test]
+    fn test_monocase_arena_fa_shared_lead_byte() {
+        // 'À' (U+00C0, C3 80) folds to 'à' (U+00E0, C3 A0): the two encodings
+        // share their leading byte, so the builder emits a shared-prefix chain
+        // then diverges. A trailing ASCII letter forces another case-folded
+        // transition after the shared prefix to keep the path going.
+        let fm = Arc::new(FieldMatcher::with_match_id(1));
+        let (arena, start) = make_monocase_arena_fa("Àb".as_bytes(), fm);
+
+        assert!(
+            matches_value(&arena, start, "Àb".as_bytes()),
+            "Should match original 'Àb'"
+        );
+        assert!(
+            matches_value(&arena, start, "àB".as_bytes()),
+            "Should match folded 'àB'"
+        );
+        assert!(
+            matches_value(&arena, start, "àb".as_bytes()),
+            "Should match folded 'àb'"
+        );
+
+        // Sharing the leading byte must not collapse the divergence: a value
+        // that keeps the shared prefix but takes neither real branch must fail.
+        assert!(
+            !matches_value(&arena, start, "Áb".as_bytes()),
+            "Should NOT match 'Áb' (U+00C1 shares the C3 lead byte only)"
+        );
+        assert!(
+            !matches_value(&arena, start, "Àc".as_bytes()),
+            "Should NOT match 'Àc'"
         );
     }
 }
