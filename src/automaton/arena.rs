@@ -3475,18 +3475,20 @@ fn build_anything_but_step(
     let mut vals_ending_here: FxHashSet<u8> = FxHashSet::default();
 
     for val in vals {
-        let last_index = val.len().saturating_sub(1);
-        if index <= last_index && !val.is_empty() {
-            let utf8_byte = val[index];
-            if index < last_index {
-                vals_with_bytes_remaining
-                    .entry(utf8_byte)
-                    .or_default()
-                    .push(val);
-            }
-            if index == last_index {
-                vals_ending_here.insert(utf8_byte);
-            }
+        // `get` rejects empty values and indices past the end in one check,
+        // so the matched byte is always a valid position in a non-empty value.
+        let Some(&utf8_byte) = val.get(index) else {
+            continue;
+        };
+        if index == val.len() - 1 {
+            // The value terminates on this byte.
+            vals_ending_here.insert(utf8_byte);
+        } else {
+            // More bytes follow; defer to a continuation keyed on this byte.
+            vals_with_bytes_remaining
+                .entry(utf8_byte)
+                .or_default()
+                .push(val);
         }
     }
 
