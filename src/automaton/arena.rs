@@ -3912,7 +3912,7 @@ fn make_ipv6_cidr_arena_fa(
         let group_start_bit = group_idx * 16;
         let group_end_bit = group_start_bit + 16;
 
-        let group_value = (u16::from(network[byte_idx]) << 8) | u16::from(network[byte_idx + 1]);
+        let group_value = u16::from_be_bytes([network[byte_idx], network[byte_idx + 1]]);
 
         let (min_val, max_val) = if prefix_len as usize >= group_end_bit {
             (group_value, group_value)
