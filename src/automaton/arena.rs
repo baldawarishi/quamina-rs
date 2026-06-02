@@ -347,24 +347,18 @@ impl std::fmt::Display for Stats {
 
 impl Stats {
     /// Accumulate another arena's stats into this aggregate.
-    pub const fn add(&mut self, other: &Self) {
+    pub fn add(&mut self, other: &Self) {
         self.state_count += other.state_count;
         self.tables_with_transitions += other.tables_with_transitions;
         self.total_ceiling_entries += other.total_ceiling_entries;
-        if other.max_ceilings > self.max_ceilings {
-            self.max_ceilings = other.max_ceilings;
-        }
+        self.max_ceilings = self.max_ceilings.max(other.max_ceilings);
         self.total_epsilons += other.total_epsilons;
-        if other.max_epsilons > self.max_epsilons {
-            self.max_epsilons = other.max_epsilons;
-        }
+        self.max_epsilons = self.max_epsilons.max(other.max_epsilons);
         self.states_with_field_transitions += other.states_with_field_transitions;
         self.closure_data_len += other.closure_data_len;
         self.states_with_closures += other.states_with_closures;
         self.total_closure_entries += other.total_closure_entries;
-        if other.max_closure_len > self.max_closure_len {
-            self.max_closure_len = other.max_closure_len;
-        }
+        self.max_closure_len = self.max_closure_len.max(other.max_closure_len);
         self.ft_ptrs_len += other.ft_ptrs_len;
         self.dfa_lookup_states += other.dfa_lookup_states;
         self.estimated_bytes += other.estimated_bytes;
@@ -610,18 +604,14 @@ impl StateArena {
                 total_ceiling_entries +=
                     u32::try_from(nc).expect("ceiling count bounded by BYTE_CEILING");
                 let nc_u16 = u16::try_from(nc).expect("ceiling count bounded by BYTE_CEILING");
-                if nc_u16 > max_ceilings {
-                    max_ceilings = nc_u16;
-                }
+                max_ceilings = max_ceilings.max(nc_u16);
             }
 
             let ne = state.table.epsilons.len();
             if ne > 0 {
                 total_epsilons += u32::try_from(ne).expect("epsilon count bounded by BYTE_CEILING");
                 let ne_u16 = u16::try_from(ne).expect("epsilon count bounded by BYTE_CEILING");
-                if ne_u16 > max_epsilons {
-                    max_epsilons = ne_u16;
-                }
+                max_epsilons = max_epsilons.max(ne_u16);
             }
 
             if !state.field_transitions.is_empty() {
@@ -631,9 +621,7 @@ impl StateArena {
             if state.closure_len > 0 {
                 states_with_closures += 1;
                 total_closure_entries += u32::from(state.closure_len);
-                if state.closure_len > max_closure_len {
-                    max_closure_len = state.closure_len;
-                }
+                max_closure_len = max_closure_len.max(state.closure_len);
             }
         }
 
