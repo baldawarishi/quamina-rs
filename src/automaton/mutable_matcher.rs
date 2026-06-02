@@ -173,8 +173,9 @@ impl<X: Clone + Eq + std::hash::Hash> MutableFieldMatcher<X> {
             })
             .collect();
 
-        if all_exact.len() == matchers.len() && all_exact.len() > 1 {
-            // All matchers are Exact strings and there's more than one - use bulk method
+        if all_exact.len() == matchers.len() {
+            // All matchers are Exact strings: insert them into one shared trie
+            // so they share a single continuation.
             let next_fm = vm.add_string_transitions_bulk(&all_exact, budget)?;
             return Ok(vec![next_fm]);
         }
@@ -2883,7 +2884,6 @@ mod tests {
         ];
         assert_eq!(fm.add_transition("p", &matchers, 0).unwrap().len(), 1);
 
-        // Two is the minimum for the bulk path
         let fm2: Rc<MutableFieldMatcher<String>> = Rc::new(MutableFieldMatcher::new());
         let two = vec![
             Matcher::Exact("\"x\"".to_string()),
@@ -2891,7 +2891,7 @@ mod tests {
         ];
         assert_eq!(fm2.add_transition("p", &two, 0).unwrap().len(), 1);
 
-        // A single matcher goes one-by-one
+        // A single Exact still yields exactly one continuation.
         let fm3: Rc<MutableFieldMatcher<String>> = Rc::new(MutableFieldMatcher::new());
         let one = vec![Matcher::Exact("\"only\"".to_string())];
         assert_eq!(fm3.add_transition("p", &one, 0).unwrap().len(), 1);
