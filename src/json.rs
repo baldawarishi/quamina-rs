@@ -428,20 +428,15 @@ fn build_combined_pattern(primary_atoms: &RegexpBranch, lookahead: &RegexpRoot) 
 /// Lookbehind patterns must have a fixed length (validated during parsing).
 /// This computes the UTF-8 byte length for the pattern.
 fn compute_lookbehind_byte_length(tree: &RegexpRoot) -> Result<usize, String> {
-    if tree.is_empty() {
+    let Some((first, rest)) = tree.split_first() else {
         return Ok(0);
-    }
+    };
 
-    // For single branch, compute length
-    if tree.len() == 1 {
-        return compute_branch_byte_length(&tree[0]);
-    }
-
-    // For alternation, all branches must have same length (already validated)
-    let first_len = compute_branch_byte_length(&tree[0])?;
-    for branch in tree.iter().skip(1) {
-        let len = compute_branch_byte_length(branch)?;
-        if len != first_len {
+    // Every alternation branch must encode to the same byte length; reject any
+    // that disagrees so callers can rely on a single fixed lookbehind width.
+    let first_len = compute_branch_byte_length(first)?;
+    for branch in rest {
+        if compute_branch_byte_length(branch)? != first_len {
             return Err("variable-length lookbehind not supported".into());
         }
     }
