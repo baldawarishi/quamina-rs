@@ -3648,6 +3648,44 @@ fn test_cidr_ipv6_right_side_high_bytes() {
 }
 
 #[test]
+fn test_cidr_ipv6_parse_masks_boundary_byte() {
+    use crate::json::CidrPattern;
+
+    // A non-byte-aligned prefix keeps the high bits of the boundary byte and
+    // zeroes everything below it. /60 fixes 7 full bytes plus the top nibble
+    // of byte 7, so 0xef01 → 0xef00 and the trailing groups clear to zero.
+    let CidrPattern::V6 {
+        network,
+        prefix_len,
+    } = CidrPattern::parse("2001:db8:abcd:ef01::/60").expect("valid /60")
+    else {
+        panic!("expected V6");
+    };
+    assert_eq!(prefix_len, 60);
+    assert_eq!(
+        network,
+        [
+            0x20, 0x01, 0x0d, 0xb8, 0xab, 0xcd, 0xef, 0x00, 0, 0, 0, 0, 0, 0, 0, 0
+        ]
+    );
+
+    // /124 masks the top nibble of the very last byte (full_bytes == 15) — the
+    // highest index the boundary mask can ever touch.
+    let CidrPattern::V6 { network, .. } = CidrPattern::parse("::ff/124").expect("valid /124")
+    else {
+        panic!("expected V6");
+    };
+    assert_eq!(network[15], 0xf0, "0xff & 0xf0 == 0xf0 at byte 15");
+
+    // /128 is byte-aligned: every byte is preserved, no partial mask applied.
+    let CidrPattern::V6 { network, .. } = CidrPattern::parse("::ff/128").expect("valid /128")
+    else {
+        panic!("expected V6");
+    };
+    assert_eq!(network[15], 0xff, "/128 leaves the last byte untouched");
+}
+
+#[test]
 #[cfg_attr(miri, ignore)]
 fn test_cidr_ipv6_non_byte_aligned_prefix() {
     // /121 — 15 full bytes + 1 bit: only the high bit of the last byte matters

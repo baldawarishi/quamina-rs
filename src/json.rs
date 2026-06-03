@@ -191,8 +191,10 @@ impl CidrPattern {
             *byte = 0;
         }
 
-        // Apply partial mask to the boundary byte
-        if remaining_bits > 0 && full_bytes < 16 {
+        // Mask the partial boundary byte. A prefix with leftover bits is not
+        // byte-aligned, so it is at most 127 bits and `full_bytes` is at most
+        // 15 — always a valid index into the 16-byte address.
+        if remaining_bits > 0 {
             let mask = !0u8 << (8 - remaining_bits);
             result[full_bytes] &= mask;
         }
