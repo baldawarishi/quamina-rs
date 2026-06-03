@@ -134,10 +134,10 @@ impl CidrPattern {
             } else {
                 parts[0].split(':').collect()
             };
-            let right: Vec<&str> = if parts.len() > 1 && !parts[1].is_empty() {
-                parts[1].split(':').collect()
-            } else {
+            let right: Vec<&str> = if parts[1].is_empty() {
                 vec![]
+            } else {
+                parts[1].split(':').collect()
             };
 
             if left.len() + right.len() > 8 {
