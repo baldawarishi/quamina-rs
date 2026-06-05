@@ -2255,6 +2255,53 @@ mod tests {
     }
 
     // ========================================================================
+    // Atom dispatch + character-class membership
+    // ========================================================================
+
+    #[test]
+    fn test_atom_unbalanced_close_paren() {
+        // An unmatched ')' is a hard error, not the end of an empty branch.
+        assert!(parse(")").unwrap_err().message.contains("unbalanced"));
+        assert!(parse("a)").is_err());
+    }
+
+    #[test]
+    fn test_atom_bare_quantifier_rejected() {
+        // A quantifier at atom start has nothing to quantify and is rejected.
+        for q in ["?", "+", "*", "{"] {
+            assert!(
+                parse(q)
+                    .unwrap_err()
+                    .message
+                    .contains("quantifier without atom")
+            );
+        }
+    }
+
+    #[test]
+    fn test_char_class_backslash_is_valid_member() {
+        // '\' falls in the gap between is_cc_char's member ranges, so it is a
+        // valid class member only via the explicit backslash case.
+        let tree = parse("[\\]").unwrap();
+        assert_eq!(tree[0][0].runes, vec![RunePair { lo: '\\', hi: '\\' }]);
+    }
+
+    #[test]
+    fn test_inverted_category_in_class() {
+        // ~P{...} is the inverted category, ~p{...} the plain one: a control
+        // char belongs to ~p{Cc} only, an ordinary letter to ~P{Cc} only.
+        let contains = |runes: &RuneRange, c: char| runes.iter().any(|p| p.lo <= c && c <= p.hi);
+
+        let plain = parse("[~p{Cc}]").unwrap()[0][0].runes.clone();
+        assert!(contains(&plain, '\u{01}'));
+        assert!(!contains(&plain, 'a'));
+
+        let inverted = parse("[~P{Cc}]").unwrap()[0][0].runes.clone();
+        assert!(!contains(&inverted, '\u{01}'));
+        assert!(contains(&inverted, 'a'));
+    }
+
+    // ========================================================================
     // Word boundary (~b/~B) expansion
     // ========================================================================
 
