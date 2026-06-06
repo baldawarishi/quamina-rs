@@ -6080,6 +6080,137 @@ mod nfa_merge_tests {
         (arena, start)
     }
 
+    /// Read the byte transition `state` takes on `byte` in `arena`.
+    fn step_byte(arena: &StateArena, state: StateId, byte: u8) -> StateId {
+        let mut unpacked = [StateId::NONE; BYTE_CEILING];
+        unpack_arena_table(&arena[state].table, &mut unpacked);
+        unpacked[byte as usize]
+    }
+
+    #[test]
+    fn test_merge_alternation_with_literal_builds_splice_not_expansion() {
+        // A merge that pairs an epsilon-bearing operand with a plain literal on a
+        // shared byte keeps the operand behind one epsilon-only splice state
+        // instead of inlining its branches into the combined byte table. That
+        // bounds merge growth: inlining per byte is what makes high-pattern-count
+        // merges blow up. Here "a(b|c)" (alternation) meets "ad" (literal).
+        let fm1 = Arc::new(FieldMatcher::with_match_id(1));
+        let (arena1, start1) = {
+            let mut arena = StateArena::new();
+            let m = arena.alloc();
+            arena[m].field_transitions.push(fm1);
+            let term = arena.alloc_with_table(SmallTable::with_mappings(
+                StateId::NONE,
+                &[ARENA_VALUE_TERMINATOR],
+                &[m],
+            ));
+            let b_state =
+                arena.alloc_with_table(SmallTable::with_mappings(StateId::NONE, b"b", &[term]));
+            let c_state =
+                arena.alloc_with_table(SmallTable::with_mappings(StateId::NONE, b"c", &[term]));
+            let alt = arena.alloc();
+            arena[alt].table.epsilons = smallvec![b_state, c_state];
+            let start =
+                arena.alloc_with_table(SmallTable::with_mappings(StateId::NONE, b"a", &[alt]));
+            arena.precompute_epsilon_closures();
+            (arena, start)
+        };
+
+        let fm2 = Arc::new(FieldMatcher::with_match_id(2));
+        let (arena2, start2) = {
+            let mut arena = StateArena::new();
+            let end = arena.alloc();
+            arena[end].field_transitions.push(fm2);
+            let term = arena.alloc_with_table(SmallTable::with_mappings(
+                StateId::NONE,
+                &[ARENA_VALUE_TERMINATOR],
+                &[end],
+            ));
+            let d_state =
+                arena.alloc_with_table(SmallTable::with_mappings(StateId::NONE, b"d", &[term]));
+            let start =
+                arena.alloc_with_table(SmallTable::with_mappings(StateId::NONE, b"a", &[d_state]));
+            (arena, start)
+        };
+
+        let (merged, start) = merge_arena_nfas(&arena1, start1, &arena2, start2);
+
+        // The post-'a' merge state is the splice: every byte step is NONE, all
+        // outgoing edges are epsilons.
+        let after_a = step_byte(&merged, start, b'a');
+        assert!(!after_a.is_none(), "'a' must reach a merged state");
+        assert!(
+            is_epsilon_only_state(&merged, after_a),
+            "expected an epsilon-only splice, got a state that carries its own \
+             byte transitions"
+        );
+
+        // The splice still routes both patterns.
+        assert_eq!(get_match_ids(&merged, start, b"ab"), vec![1]);
+        assert_eq!(get_match_ids(&merged, start, b"ac"), vec![1]);
+        assert_eq!(get_match_ids(&merged, start, b"ad"), vec![2]);
+    }
+
+    #[test]
+    fn test_merge_spinout_with_literal_stays_a_spinner() {
+        // A merge that pairs a spinout with a plain literal on a shared byte
+        // keeps the combined state one self-looping spinner: the literal's lone
+        // branch folds in via an epsilon back-edge rather than cloning the
+        // wildcard per byte. Cloning would mint a fresh state for every byte the
+        // literal omits, ballooning state count for wildcard-heavy pattern sets.
+        // Here "a*" (spinout) meets "ad" (literal).
+        let fm1 = Arc::new(FieldMatcher::with_match_id(1));
+        let (arena1, start1) = make_spinout_arena(b"a", b"", fm1); // "a*"
+
+        let fm2 = Arc::new(FieldMatcher::with_match_id(2));
+        let (arena2, start2) = {
+            let mut arena = StateArena::new();
+            let end = arena.alloc();
+            arena[end].field_transitions.push(fm2);
+            let term = arena.alloc_with_table(SmallTable::with_mappings(
+                StateId::NONE,
+                &[ARENA_VALUE_TERMINATOR],
+                &[end],
+            ));
+            let d_state =
+                arena.alloc_with_table(SmallTable::with_mappings(StateId::NONE, b"d", &[term]));
+            let start =
+                arena.alloc_with_table(SmallTable::with_mappings(StateId::NONE, b"a", &[d_state]));
+            (arena, start)
+        };
+
+        let (merged, start) = merge_arena_nfas(&arena1, start1, &arena2, start2);
+
+        // The post-'a' state is the spinner, and a byte the literal omits ('z')
+        // loops back to it rather than landing in a clone.
+        let spinner = step_byte(&merged, start, b'a');
+        assert!(!spinner.is_none(), "'a' must reach the combined spinner");
+        assert!(
+            is_spinout_state(&merged, spinner),
+            "the combined post-'a' state must remain a self-looping spinner"
+        );
+        assert_eq!(
+            step_byte(&merged, spinner, b'z'),
+            spinner,
+            "a byte the literal does not cover must loop back to the same spinner"
+        );
+
+        // The spinner still routes both patterns.
+        assert!(
+            get_match_ids(&merged, start, b"a").contains(&1),
+            "'a' is a*"
+        );
+        assert!(
+            get_match_ids(&merged, start, b"azz").contains(&1),
+            "'azz' is a*"
+        );
+        let ids_ad = get_match_ids(&merged, start, b"ad");
+        assert!(
+            ids_ad.contains(&1) && ids_ad.contains(&2),
+            "'ad' matches both a* and the literal ad, got {ids_ad:?}"
+        );
+    }
+
     #[test]
     fn test_merge_arena_with_epsilons() {
         // Arena 1: matches "a" OR "b" via epsilon branching
