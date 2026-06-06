@@ -3489,6 +3489,51 @@ fn test_surrogate_boundary_multiple_ranges() {
     assert_no_has_match!(q, r#"{"text": "m"}"#, "p2");
 }
 
+// A rune range whose endpoints have different UTF-8 encoded lengths must match
+// every codepoint on both sides of the length boundary. U+07FF/U+0800 are the
+// last 2-byte and first 3-byte codepoints — the tightest such span.
+#[allow(clippy::similar_names)]
+#[test]
+fn test_rune_range_utf8_length_boundary() {
+    let char_07ff = '\u{07FF}';
+    let char_0800 = '\u{0800}';
+    let q = q!("p1" => &format!(
+        r#"{{"text": [{{"regexp": "[{char_07ff}-{char_0800}]"}}]}}"#
+    ));
+
+    let event_07ff = format!(r#"{{"text": "{char_07ff}"}}"#);
+    assert_has_match!(q, &event_07ff, "p1");
+    let event_0800 = format!(r#"{{"text": "{char_0800}"}}"#);
+    assert_has_match!(q, &event_0800, "p1");
+
+    let event_07fe = format!(r#"{{"text": "{}"}}"#, '\u{07FE}');
+    assert_no_has_match!(q, &event_07fe, "p1");
+    assert_no_has_match!(q, r#"{"text": "a"}"#, "p1");
+}
+
+// A rune range whose endpoints share neither lead byte nor a continuation
+// boundary must match its interior but reject the immediate neighbours that
+// share an endpoint's lead byte with an out-of-range continuation. U+00C1 (C3
+// 81) and U+0150 (C5 90) give distinct lead bytes and non-extreme tails, so
+// U+00C0 (C3 80, one below) and U+0151 (C5 91, one above) are the witnesses.
+#[allow(clippy::similar_names)]
+#[test]
+fn test_rune_range_split_lead_byte() {
+    let q = q!("p1" => &format!(
+        r#"{{"text": [{{"regexp": "[{}-{}]"}}]}}"#, '\u{00C1}', '\u{0150}'
+    ));
+
+    for cp in ['\u{00C1}', '\u{0100}', '\u{0150}'] {
+        let event = format!(r#"{{"text": "{cp}"}}"#);
+        assert_has_match!(q, &event, "p1");
+    }
+
+    let event_below = format!(r#"{{"text": "{}"}}"#, '\u{00C0}');
+    assert_no_has_match!(q, &event_below, "p1");
+    let event_above = format!(r#"{{"text": "{}"}}"#, '\u{0151}');
+    assert_no_has_match!(q, &event_above, "p1");
+}
+
 // ============================================================================
 // Merged Pattern + Arena Logic Tests
 // ============================================================================
