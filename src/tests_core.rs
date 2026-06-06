@@ -3186,14 +3186,16 @@ fn test_memory_budget_basic() {
     assert_eq!(q.get_memory_budget().0, 64 * 1024);
 
     let mut q = q;
-    q.add_pattern("x", r#"{"x": ["abc"]}"#).unwrap();
+    // A `prefix` matcher builds an arena, so it reports non-zero usage. An exact
+    // string would hit the singleton optimization and never touch the arena,
+    // leaving usage at 0 and the shrink-rejection path below unexercised.
+    q.add_pattern("x", r#"{"x": [{"prefix": "abc"}]}"#).unwrap();
 
     let (_, used_now) = q.get_memory_budget();
-    if used_now > 0 {
-        let err = q.set_memory_budget(used_now.saturating_sub(1)).unwrap_err();
-        assert!(matches!(err, QuaminaError::PatternTooComplex(_)));
-        assert_eq!(q.get_memory_budget().0, 64 * 1024);
-    }
+    assert!(used_now > 0);
+    let err = q.set_memory_budget(used_now - 1).unwrap_err();
+    assert!(matches!(err, QuaminaError::PatternTooComplex(_)));
+    assert_eq!(q.get_memory_budget().0, 64 * 1024);
 
     q.set_memory_budget(0).unwrap();
     assert_eq!(q.get_memory_budget().0, 0);
