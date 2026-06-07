@@ -1244,29 +1244,29 @@ pub(crate) fn traverse_lazy_dfa(lazy_dfa: &mut LazyDfa, val: &[u8], transitions:
 
     let mut scratch = LazyDfaScratch::default();
     let mut current = StateId::from_index(0); // Start state is always index 0
-    let len = val.len();
-    let mut i = 0;
+    let mut remaining = val;
 
     // Collect field transitions from start state
     transitions.extend_from_slice(&lazy_dfa.states[0].field_transition_ptrs);
 
-    while i <= len {
+    loop {
         // Acceleration: when the current state self-loops with 1-3 memchr exit
-        // bytes, jump straight to the next exit byte. The terminator iteration
-        // (`i == len`) safely passes an empty `&val[i..]` to `try_accelerate`,
-        // which memchr reports as "no hit", so we fall through to the normal
-        // step below.
+        // bytes, jump the cursor straight to the next exit byte. On the
+        // terminator step `remaining` is empty, which memchr reports as "no
+        // hit", so we fall through to the normal step below.
         if let Some(ref accel) = lazy_dfa.states[current.index()].accel
-            && let Some(skip) = accel.try_accelerate(&val[i..])
+            && let Some(skip) = accel.try_accelerate(remaining)
         {
-            i += skip.get();
+            remaining = &remaining[skip.get()..];
             continue;
         }
 
-        let byte = if i < len {
-            val[i]
-        } else {
-            ARENA_VALUE_TERMINATOR
+        let (byte, at_end) = match remaining.split_first() {
+            Some((&b, rest)) => {
+                remaining = rest;
+                (b, false)
+            }
+            None => (ARENA_VALUE_TERMINATOR, true),
         };
 
         let next = lazy_dfa.step(current, byte, &mut scratch);
@@ -1280,10 +1280,13 @@ pub(crate) fn traverse_lazy_dfa(lazy_dfa: &mut LazyDfa, val: &[u8], transitions:
         }
 
         current = next;
-        i += 1;
 
         // Collect field transitions
         transitions.extend_from_slice(&lazy_dfa.states[current.index()].field_transition_ptrs);
+
+        if at_end {
+            break;
+        }
     }
 }
 
@@ -1363,33 +1366,35 @@ pub fn traverse_arena_nfa(arena: &StateArena, start: StateId, val: &[u8], bufs: 
 
     bufs.current_states.push(start);
 
-    let len = val.len();
+    let mut remaining = val;
 
-    let mut i = 0;
-
-    while i <= len {
+    loop {
         if bufs.current_states.is_empty() {
             break;
         }
 
         // State acceleration: ASCII-only negated patterns like [^x]+ park the NFA
         // in a single self-looping state. When 1-3 exit bytes are known we use
-        // memchr to jump to the next exit byte. The terminator iteration
-        // (`i == len`) safely passes an empty slice and falls through to the
-        // normal step.
+        // memchr to jump the cursor to the next exit byte. On the terminator
+        // step `remaining` is empty and we fall through to the normal step.
         if bufs.current_states.len() == 1 {
             let state_id = bufs.current_states[0];
             let state = &arena[state_id];
-            if let Some(skip) = try_accelerate_arena(&state.table, &val[i..]) {
-                i += skip.get();
+            if let Some(skip) = try_accelerate_arena(&state.table, remaining) {
+                remaining = &remaining[skip.get()..];
                 continue;
             }
         }
 
-        let byte = if i < len {
-            val[i]
-        } else {
-            ARENA_VALUE_TERMINATOR
+        // Advance the cursor before the step block below, so only `at_end`
+        // crosses its borrows. Carrying the slice tail across the block instead
+        // regresses the hot epsilon path.
+        let (byte, at_end) = match remaining.split_first() {
+            Some((&b, rest)) => {
+                remaining = rest;
+                (b, false)
+            }
+            None => (ARENA_VALUE_TERMINATOR, true),
         };
 
         // Destructure bufs for split borrows: iterate current_states immutably
@@ -1486,7 +1491,10 @@ pub fn traverse_arena_nfa(arena: &StateArena, start: StateId, val: &[u8], bufs: 
         // Swap buffers — clear+swap preserves capacity on both Vecs
         current_states.clear();
         std::mem::swap(current_states, next_states);
-        i += 1;
+
+        if at_end {
+            break;
+        }
     }
 
     // Check final states for matches (split borrows to avoid take)
@@ -1561,10 +1569,9 @@ pub fn traverse_arena_dfa(
 
     let has_flat = !arena.ft_ptrs.is_empty();
     let mut current = start;
-    let len = val.len();
-    let mut i = 0;
+    let mut remaining = val;
 
-    while i <= len {
+    loop {
         if has_flat {
             for &ptr in arena.ft_ptrs_of(current) {
                 transitions.push(ptr);
@@ -1576,10 +1583,10 @@ pub fn traverse_arena_dfa(
         }
 
         // Acceleration: for self-loop states with 1-3 exit bytes, use memchr to
-        // skip directly to the next interesting byte. The terminator iteration
-        // (`i == len`) safely passes an empty slice and falls through to the
+        // jump the cursor directly to the next interesting byte. On the
+        // terminator step `remaining` is empty and we fall through to the
         // normal step.
-        if let Some(skip) = try_accelerate_arena(&arena[current].table, &val[i..]) {
+        if let Some(skip) = try_accelerate_arena(&arena[current].table, remaining) {
             // A self-loop (accelerated) state must not be accepting. If it were,
             // the FT collection at the top of this loop would fire again on the
             // next iteration, emitting duplicate match results.
@@ -1592,14 +1599,16 @@ pub fn traverse_arena_dfa(
                 },
                 "accelerated state {current:?} has field transitions; they would be collected redundantly on each skip"
             );
-            i += skip.get();
+            remaining = &remaining[skip.get()..];
             continue;
         }
 
-        let byte = if i < len {
-            val[i]
-        } else {
-            ARENA_VALUE_TERMINATOR
+        let (byte, at_end) = match remaining.split_first() {
+            Some((&b, rest)) => {
+                remaining = rest;
+                (b, false)
+            }
+            None => (ARENA_VALUE_TERMINATOR, true),
         };
 
         let next = arena.dstep(current, byte);
@@ -1607,7 +1616,10 @@ pub fn traverse_arena_dfa(
             return;
         }
         current = next;
-        i += 1;
+
+        if at_end {
+            break;
+        }
     }
 
     if has_flat {
