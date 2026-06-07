@@ -4532,6 +4532,108 @@ mod tests {
         );
     }
 
+    // Acceleration skips input off a single state's exit set, so it is sound only
+    // while exactly one state is active; with more, it would advance past bytes the
+    // other states still need. The accel fast path must stay gated on a single
+    // active state.
+    #[test]
+    fn test_arena_nfa_skips_acceleration_with_multiple_active_states() {
+        let mut arena = StateArena::new();
+        let field_matcher = Arc::new(FieldMatcher::new());
+
+        // Literal path "abz": ...->lit_mid -b-> lit_ready -z-> lit_final -TERM-> match.
+        let match_state = arena.alloc();
+        arena[match_state].field_transitions.push(field_matcher);
+        let lit_final = arena.alloc_with_table(SmallTable::with_mappings(
+            StateId::NONE,
+            &[ARENA_VALUE_TERMINATOR],
+            &[match_state],
+        ));
+        let lit_ready =
+            arena.alloc_with_table(SmallTable::with_mappings(StateId::NONE, b"z", &[lit_final]));
+        let lit_mid =
+            arena.alloc_with_table(SmallTable::with_mappings(StateId::NONE, b"b", &[lit_ready]));
+
+        // Accelerating self-loop on every byte except its exit byte 'z'.
+        let accel_state = arena.alloc();
+        let mut unpacked = [StateId::NONE; BYTE_CEILING];
+        for (byte, slot) in unpacked.iter_mut().enumerate() {
+            if byte != b'z' as usize && byte != ARENA_VALUE_TERMINATOR as usize {
+                *slot = accel_state;
+            }
+        }
+        arena[accel_state].table.pack(&unpacked);
+        arena[accel_state].table.accel = Some(AccelInfo {
+            exit_bytes: [b'z', 0, 0],
+            len: 1,
+        });
+
+        // Start steps 'a' into the accel state directly and, via an epsilon
+        // sibling, into the literal path — so both are active from byte 1, with
+        // the accel state first in the active set.
+        let lit_entry =
+            arena.alloc_with_table(SmallTable::with_mappings(StateId::NONE, b"a", &[lit_mid]));
+        let start = arena.alloc_with_table(SmallTable::with_mappings(
+            StateId::NONE,
+            b"a",
+            &[accel_state],
+        ));
+        arena[start].table.epsilons = smallvec![lit_entry];
+
+        arena.precompute_epsilon_closures();
+
+        let mut bufs = NfaBuffers::with_capacity();
+        traverse_arena_nfa(&arena, start, b"abz", &mut bufs);
+        assert_eq!(
+            bufs.transitions.len(),
+            1,
+            "literal 'abz' must match: acceleration must not fire while a second state is active"
+        );
+    }
+
+    // The dedup pass marks states with a per-step generation so a logical clear is
+    // just a counter bump. The generation must advance each step, or states marked
+    // in one step read as duplicates in the next and get dropped.
+    #[test]
+    fn test_arena_nfa_dedup_generation_advances_between_steps() {
+        // More hubs than the dedup threshold so each 'a' step triggers a dedup.
+        const HUBS: usize = 70;
+
+        let mut arena = StateArena::new();
+        let field_matcher = Arc::new(FieldMatcher::new());
+
+        let match_state = arena.alloc();
+        arena[match_state].field_transitions.push(field_matcher);
+
+        let hubs: Vec<StateId> = (0..HUBS).map(|_| arena.alloc()).collect();
+        for (k, &hub) in hubs.iter().enumerate() {
+            if k == 0 {
+                // Hub 0 also exits to the match on the value terminator.
+                arena[hub].table = SmallTable::with_mappings(
+                    StateId::NONE,
+                    &[b'a', ARENA_VALUE_TERMINATOR],
+                    &[hub, match_state],
+                );
+            } else {
+                arena[hub].table = SmallTable::with_mappings(StateId::NONE, b"a", &[hub]);
+            }
+        }
+
+        // Start fans out to every hub via epsilon; none of its own bytes step.
+        let start = arena.alloc();
+        arena[start].table.epsilons = SmallVec::from_vec(hubs);
+
+        arena.precompute_epsilon_closures();
+
+        let mut bufs = NfaBuffers::with_capacity();
+        traverse_arena_nfa(&arena, start, b"aa", &mut bufs);
+        assert_eq!(
+            bufs.transitions.len(),
+            1,
+            "match must survive two consecutive dedup steps over a repeating active set"
+        );
+    }
+
     #[test]
     fn test_try_accelerate_arena() {
         // Test the try_accelerate_arena function directly
