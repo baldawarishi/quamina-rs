@@ -17,8 +17,25 @@ exclude_globs = [
 # Skip doctests (they test documentation, not correctness)
 additional_cargo_test_args = ["--all-targets"]
 
-# Skip kani proof harnesses — formal verification, not production code
-exclude_re = ["kani_arena_proofs::"]
+# Skip kani proof harnesses — formal verification, not production code.
+#
+# The rest are equivalents we can't kill: the mutated operator gives the same
+# result as the original for every input, so no test can tell them apart. Each
+# has an intent comment at its source site.
+exclude_re = [
+  "kani_arena_proofs::",
+  # WTF-8 tag byte: the tag and payload never share a bit, so `|` and `^`
+  # build the same byte.
+  'replace \| with \^ in .*read_unicode_escape',
+  # Self-loop acceleration is a pure speed-up; toggling when it fires never
+  # changes a match.
+  'replace == with != in traverse_lazy_dfa',
+  # Column-anchored (not line) so it survives edits in the fn; a separate,
+  # caught `&&` at another column stays tested.
+  ':28: replace && with \|\| in traverse_lazy_dfa',
+  # Dedup drops only exact duplicates, so the `> 64` threshold is speed-only.
+  'replace > with .* in traverse_arena_nfa',
+]
 
 # Don't mutate logging/debug/panic macros — not worth testing
 skip_calls = [

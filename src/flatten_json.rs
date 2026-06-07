@@ -910,11 +910,11 @@ impl<'a> FlattenContext<'a, '_> {
             let mut buf = [0u8; 4];
             out.extend_from_slice(c.encode_utf8(&mut buf).as_bytes());
         } else {
-            // `read_hex_4` only returns 0..=0xFFFF, and we've already taken
-            // the high-surrogate path above, so the only thing that can
-            // make `char::from_u32` give up is a lone low surrogate. Emit
-            // it as 3-byte WTF-8 by hand. Each masked piece is statically
-            // bounded so the `try_from`s never actually fail.
+            // `read_hex_4` caps at 0xFFFF and the high-surrogate path is taken
+            // above, so the only value left for `char::from_u32` to reject is a
+            // lone low surrogate; hand-encode it as 3-byte WTF-8. The tag and
+            // the masked payload never share a bit, so OR just lays them
+            // side by side (the `try_from`s can't fail).
             debug_assert!(
                 (0xDC00..=0xDFFF).contains(&code),
                 "char::from_u32 only fails for surrogates within u16 range"
@@ -1174,6 +1174,20 @@ mod tests {
         assert_eq!(peek_next_byte(b"a", 0), None);
         assert_eq!(peek_next_byte(b"", 0), None);
         assert_eq!(peek_next_byte(b"ab", 1), None);
+    }
+
+    #[test]
+    fn test_lone_low_surrogate_wtf8_encoding() {
+        // A lone low surrogate \uDC00 has no scalar value, so it takes the
+        // hand-rolled 3-byte WTF-8 path and encodes as ED B0 80 (the value bytes
+        // include the surrounding quotes). Pins the masks and shifts on that
+        // path: any change to them moves the output and fails here.
+        let tree = make_tree(&["k"]);
+        let mut state = State::new();
+        let event = b"{\"k\": \"\\uDC00\"}";
+        let fields = state.flatten(event, &tree).unwrap();
+        assert_eq!(fields.len(), 1);
+        assert_eq!(fields[0].val.as_bytes(), &[0x22, 0xED, 0xB0, 0x80, 0x22]);
     }
 
     #[test]
