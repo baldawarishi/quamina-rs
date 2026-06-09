@@ -1,10 +1,64 @@
 name: mutation-testing
 
 on:
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 
 jobs:
-  mutants:
+  # Mutates only the lines a PR changed, so it finishes in seconds and fails when
+  # a changed line of production code has no test covering it. No Rust changes =>
+  # no mutants => pass.
+  incremental:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0 # need the base branch to diff against
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-mutants,cargo-nextest
+
+      - name: Diff against base branch
+        run: git diff "origin/${{ github.base_ref }}...HEAD" > pr.diff
+
+      - name: Mutation-test changed code
+        run: cargo mutants --no-shuffle -vV --in-diff pr.diff
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "## Mutation results (changed lines)" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          for f in caught missed timeout unviable; do
+            count=$(wc -l < "mutants.out/${f}.txt" 2>/dev/null || echo 0)
+            echo "- **${f}**: ${count}" >> "$GITHUB_STEP_SUMMARY"
+          done
+          if [ -s mutants.out/missed.txt ]; then
+            echo "" >> "$GITHUB_STEP_SUMMARY"
+            echo "### Missed mutants" >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+            cat mutants.out/missed.txt >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: mutants-incremental
+          path: mutants.out/
+          retention-days: 30
+
+  # Whole-tree sweep, sharded. Too slow for a per-PR gate; run on demand as the
+  # authoritative 0-missed / 0-timeout check.
+  full:
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 120
     strategy:
@@ -18,7 +72,7 @@ jobs:
 
       - uses: taiki-e/install-action@v2
         with:
-          tool: cargo-mutants
+          tool: cargo-mutants,cargo-nextest
 
       - name: Run mutation testing (shard ${{ matrix.shard }}/8)
         run: cargo mutants --no-shuffle -vV --timeout 120 -j 2 --shard ${{ matrix.shard }}/8 --sharding round-robin

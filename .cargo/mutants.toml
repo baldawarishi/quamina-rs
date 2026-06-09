@@ -5,6 +5,11 @@
 # Use a fast profile with no debug symbols
 profile = "mutants"
 
+# nextest runs each test in its own process, so a mutant is scored the moment a
+# test fails. The per-mutant timeout then means "this mutant hung", not "the test
+# binary is slow". (Gate-only: the repo's own `cargo test` skips no doctests.)
+test_tool = "nextest"
+
 # Only mutate real source code, not generated tables or test fixtures
 exclude_globs = [
   "src/case_folding.rs",       # auto-generated Unicode tables
@@ -14,8 +19,15 @@ exclude_globs = [
   "src/kani_proofs.rs",        # formal verification, not runtime code
 ]
 
-# Skip doctests (they test documentation, not correctness)
-additional_cargo_test_args = ["--all-targets"]
+# Library unit tests only. Do NOT add `--all-targets`: it builds the Criterion
+# benches unoptimized, which overruns the per-mutant timeout and fails the
+# baseline. The two excluded tests are slow (concurrent-stress and regexp
+# fuzzing) and catch nothing the rest of the suite doesn't.
+additional_cargo_test_args = [
+  "--lib",
+  "-E",
+  "not (test(test_concurrent_update_during_matching) | test(test_regexp_validity))",
+]
 
 # Skip kani proof harnesses — formal verification, not production code.
 #
