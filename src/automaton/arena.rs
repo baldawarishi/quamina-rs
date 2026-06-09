@@ -1274,7 +1274,10 @@ pub(crate) fn traverse_lazy_dfa(lazy_dfa: &mut LazyDfa, val: &[u8], transitions:
             return;
         }
 
-        // Detect self-loop and try to compute acceleration for future bytes
+        // On a self-loop, try to compute acceleration for future bytes. This is
+        // a pure speed-up: `try_compute_accel` only installs an accelerator it
+        // has re-checked, so attempting it more or less often never changes a
+        // match.
         if next == current && lazy_dfa.states[current.index()].accel.is_none() {
             lazy_dfa.try_compute_accel(current, &mut scratch);
         }
@@ -1471,8 +1474,9 @@ pub fn traverse_arena_nfa(arena: &StateArena, start: StateId, val: &[u8], bufs: 
         }
 
         // Nested quantifiers like (([abc]?)*)+ create epsilon loops that
-        // cause duplicate states to compound exponentially across steps.
-        // Dedup in-place using a generation counter when growth is detected.
+        // compound duplicate states across steps. Compact in place when growth
+        // is detected; this only drops exact duplicates, so the threshold is a
+        // speed knob, not a correctness one.
         if next_states.len() > 64 {
             *step_gen += 1;
             let generation = *step_gen;
