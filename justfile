@@ -141,6 +141,34 @@ mutants-diff *args:
 mutants-verify file regex='':
     ./scripts/mutants-verify.sh {{file}} {{regex}}
 
+# caffeinate keeps the laptop awake; the watchdog kills cargo-mutants before the
+# OS reboots, and a pressure kill reports INCOMPLETE, never a pass. nextest +
+# lib-only come from .cargo/mutants.toml; scope with args like `--file src/...`.
+# Full-tree local mutation sweep with the macOS memory-pressure watchdog
+[group('validate')]
+mutants-local *args:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cd "{{justfile_directory()}}"
+    OOM_FLAG="$(pwd)/target/mutants-local.oom"
+    export OOM_FLAG
+    rm -f "$OOM_FLAG"
+    source scripts/mutants-watchdog.sh
+    caffeinate=()
+    command -v caffeinate >/dev/null 2>&1 && caffeinate=(caffeinate -i)
+    start_watchdog
+    trap stop_watchdog EXIT
+    rc=0
+    "${caffeinate[@]}" cargo mutants -vV --iterate --baseline skip \
+        -j 4 --timeout 10 {{args}} || rc=$?
+    stop_watchdog
+    trap - EXIT
+    if [[ -f "$OOM_FLAG" ]]; then
+        echo "INCOMPLETE: run killed under memory pressure — result is NOT trustworthy" >&2
+        exit 1
+    fi
+    exit "$rc"
+
 # Start LLM Agent in this repo (currently claude-code with dangerously-skip-permissions)
 [group('agent')]
 ai:
