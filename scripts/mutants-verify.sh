@@ -61,30 +61,9 @@ if [[ "${SKIP_BASELINE:-0}" != "1" ]]; then
 fi
 
 # --- memory-pressure watchdog (macOS only) ---------------------------------
-# Mirrors the failsafe from issue #41: kill the run before the OS reboots the
-# laptop, and leave a sentinel so a kill is never mistaken for a clean PASS.
-WATCHDOG_PID=""
-start_watchdog() {
-    [[ "$(uname -s)" == "Darwin" ]] || return 0
-    (
-        while pgrep -qf cargo-mutants; do
-            lvl=$(sysctl -n kern.memorystatus_vm_pressure_level 2>/dev/null || echo 0)
-            free=$(memory_pressure 2>/dev/null \
-                | awk -F': ' '/free percentage/{gsub(/%/,"",$2);print $2}')
-            if [[ "$lvl" -ge 4 ]] || { [[ -n "$free" ]] && [[ "$free" -lt 6 ]]; }; then
-                echo "$(date): pressure=$lvl free=${free}% — killing cargo-mutants" >&2
-                : > "$OOM_FLAG"
-                pkill -9 -f cargo-mutants
-                break
-            fi
-            sleep 15
-        done
-    ) &
-    WATCHDOG_PID=$!
-}
-stop_watchdog() {
-    [[ -n "$WATCHDOG_PID" ]] && kill "$WATCHDOG_PID" 2>/dev/null || true
-}
+# Shared with `just mutants-local`; OOM_FLAG (set above) is the kill sentinel,
+# adjudicated below so a pressure kill reports INCOMPLETE, never a clean PASS.
+source "$REPO_ROOT/scripts/mutants-watchdog.sh"
 trap stop_watchdog EXIT
 start_watchdog
 
