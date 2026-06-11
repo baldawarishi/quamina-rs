@@ -1216,6 +1216,64 @@ fn test_wb_utf8_nonword_to_word() {
 }
 
 // ============================================================================
+// Regexp Range Quantifier Bounds Tests
+// ============================================================================
+
+#[test]
+#[cfg_attr(miri, ignore)] // matching ~100-char strings through ~100-state NFAs is slow under Miri
+fn test_range_quantifier_at_max_accepted() {
+    // Counts up to REGEXP_QUANTIFIER_MAX (100) are accepted, including the
+    // {n,} and {n,100} forms whose quant_max equals the +/* sentinel value.
+    let q = q!("p" => r#"{"v": [{"regexp": "x{98,100}"}]}"#);
+    assert_has_match!(q, &format!(r#"{{"v": "{}"}}"#, "x".repeat(99)), "p");
+    assert_no_has_match!(q, r#"{"v": "x"}"#, "p");
+
+    let q = q!("p" => r#"{"v": [{"regexp": "x{100}"}]}"#);
+    assert_has_match!(q, &format!(r#"{{"v": "{}"}}"#, "x".repeat(100)), "p");
+
+    let q = q!("p" => r#"{"v": [{"regexp": "x{2,}"}]}"#);
+    assert_has_match!(q, r#"{"v": "xxx"}"#, "p");
+    assert_no_has_match!(q, r#"{"v": "x"}"#, "p");
+}
+
+/// Miri-only: covers the gap left by skipping test_range_quantifier_at_max_accepted.
+/// The bound is enforced in the parser, so parse_regexp alone pins acceptance;
+/// the build path runs at tiny scale in test_range_quantifier_larger_values.
+#[test]
+#[cfg(miri)]
+fn test_range_quantifier_at_max_accepted_miri() {
+    use crate::regexp::parse_regexp;
+
+    for rx in ["x{98,100}", "x{100}", "x{100,}"] {
+        parse_regexp(rx).unwrap_or_else(|e| panic!("{rx} should be accepted, got: {e}"));
+    }
+}
+
+#[test]
+fn test_range_quantifier_over_max_rejected() {
+    // Oversized counts must be rejected by the parser, before the NFA
+    // builder allocates one state per repetition.
+    let mut q = Quamina::<String>::new();
+    for rx in [
+        "x{1,101}",   // one over the maximum
+        "x{101}",     // exact count
+        "x{101,}",    // open-ended minimum
+        "x{101,200}", // both bounds
+        "x{1,65535}", // large enough to allocate gigabytes if built
+        "x{1,65536}", // large enough to overflow the u16 epsilon-closure limit
+    ] {
+        let pattern = format!(r#"{{"v": [{{"regexp": "{rx}"}}]}}"#);
+        let err = q
+            .add_pattern("p".to_string(), &pattern)
+            .expect_err(&format!("{rx} should be rejected"));
+        assert!(
+            err.to_string().contains("quantifier"),
+            "{rx} should fail in the quantifier parser, got: {err}"
+        );
+    }
+}
+
+// ============================================================================
 // JSON Escape Sequences Tests
 // ============================================================================
 

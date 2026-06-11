@@ -214,10 +214,12 @@ fn make_one_arena_branch_fa(
             let n = usize::try_from(qa.quant_min).expect("quant_min must be non-negative");
             let m = usize::try_from(qa.quant_max).expect("quant_max must be non-negative");
 
-            // Sanity invariant: + and * use the plus_star path above.
+            // One state is allocated per repetition, so this expansion relies
+            // on the parser capping both counts. `{n,}` and `{n,100}` reach
+            // this path with quant_max equal to the +/* sentinel when n > 1.
             debug_assert!(
-                qa.quant_max != REGEXP_QUANTIFIER_MAX,
-                "+/* must take the plus_star path, not the general {{n,m}} expansion"
+                qa.quant_max <= REGEXP_QUANTIFIER_MAX,
+                "parser must bound quantifier repetition counts"
             );
 
             // First, build the optional part (m-n copies, each with epsilon skip)
