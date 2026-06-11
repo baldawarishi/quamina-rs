@@ -1913,6 +1913,15 @@ fn read_quantifier(parse: &mut RegexpParse, qa: &mut QuantifiedAtom) -> Result<(
     Ok(())
 }
 
+fn quantifier_too_large_error(parse: &RegexpParse) -> Error {
+    Error {
+        message: format!(
+            "invalid range quantifier, repetition count exceeds maximum of {REGEXP_QUANTIFIER_MAX}"
+        ),
+        offset: parse.last_index,
+    }
+}
+
 /// Read a range quantifier {m,n}
 fn read_range_quantifier(parse: &mut RegexpParse, qa: &mut QuantifiedAtom) -> Result<(), Error> {
     // Helper to convert EOF to a more specific error
@@ -1947,6 +1956,13 @@ fn read_range_quantifier(parse: &mut RegexpParse, qa: &mut QuantifiedAtom) -> Re
                 message: "invalid number in quantifier".into(),
                 offset: parse.last_index,
             })?;
+            // The NFA builder materializes one state per repetition, so an
+            // unbounded count would let a single pattern allocate an
+            // arbitrarily large automaton. Reject oversized counts here,
+            // before any states are built.
+            if lo > REGEXP_QUANTIFIER_MAX {
+                return Err(quantifier_too_large_error(parse));
+            }
             qa.quant_min = lo;
             // Default to exact match; will be updated if comma is present
             qa.quant_max = lo;
@@ -1993,6 +2009,9 @@ fn read_range_quantifier(parse: &mut RegexpParse, qa: &mut QuantifiedAtom) -> Re
                 message: "invalid number in quantifier".into(),
                 offset: parse.last_index,
             })?;
+            if hi > REGEXP_QUANTIFIER_MAX {
+                return Err(quantifier_too_large_error(parse));
+            }
             if hi < qa.quant_min {
                 return Err(Error {
                     message: "invalid range quantifier, top must be greater than bottom".into(),

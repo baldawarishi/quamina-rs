@@ -1216,6 +1216,52 @@ fn test_wb_utf8_nonword_to_word() {
 }
 
 // ============================================================================
+// Regexp Range Quantifier Bounds Tests
+// ============================================================================
+
+#[test]
+fn test_range_quantifier_at_max_accepted() {
+    // Counts up to REGEXP_QUANTIFIER_MAX (100) are accepted, including the
+    // {n,} and {n,100} forms whose quant_max equals the +/* sentinel value.
+    let q = q!("p" => r#"{"v": [{"regexp": "x{98,100}"}]}"#);
+    assert_has_match!(q, &format!(r#"{{"v": "{}"}}"#, "x".repeat(99)), "p");
+    assert_no_has_match!(q, r#"{"v": "x"}"#, "p");
+
+    let q = q!("p" => r#"{"v": [{"regexp": "x{100}"}]}"#);
+    assert_has_match!(q, &format!(r#"{{"v": "{}"}}"#, "x".repeat(100)), "p");
+
+    let q = q!("p" => r#"{"v": [{"regexp": "x{2,}"}]}"#);
+    assert_has_match!(q, r#"{"v": "xxx"}"#, "p");
+    assert_no_has_match!(q, r#"{"v": "x"}"#, "p");
+}
+
+#[test]
+fn test_range_quantifier_over_max_rejected() {
+    // The NFA builds one state per repetition, so the parser must reject
+    // oversized counts before any automaton is constructed. The error must
+    // come from the regexp parser (cheap), not from a post-build memory
+    // budget check, and large counts must never panic.
+    let mut q = Quamina::<String>::new();
+    for rx in [
+        "x{1,101}",   // one over the max in the upper bound
+        "x{101}",     // exact count over the max
+        "x{101,}",    // open-ended with oversized minimum
+        "x{101,200}", // both bounds oversized
+        "x{1,65535}", // builds an ~8 GB arena if it reaches the NFA builder
+        "x{1,65536}", // panics in the arena epsilon-closure path if built
+    ] {
+        let pattern = format!(r#"{{"v": [{{"regexp": "{rx}"}}]}}"#);
+        let err = q
+            .add_pattern("p".to_string(), &pattern)
+            .expect_err(&format!("{rx} should be rejected"));
+        assert!(
+            err.to_string().contains("quantifier"),
+            "{rx} should fail in the quantifier parser, got: {err}"
+        );
+    }
+}
+
+// ============================================================================
 // JSON Escape Sequences Tests
 // ============================================================================
 
