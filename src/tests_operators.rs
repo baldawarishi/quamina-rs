@@ -1220,6 +1220,7 @@ fn test_wb_utf8_nonword_to_word() {
 // ============================================================================
 
 #[test]
+#[cfg_attr(miri, ignore)] // matching ~100-char strings through ~100-state NFAs is slow under Miri
 fn test_range_quantifier_at_max_accepted() {
     // Counts up to REGEXP_QUANTIFIER_MAX (100) are accepted, including the
     // {n,} and {n,100} forms whose quant_max equals the +/* sentinel value.
@@ -1233,6 +1234,24 @@ fn test_range_quantifier_at_max_accepted() {
     let q = q!("p" => r#"{"v": [{"regexp": "x{2,}"}]}"#);
     assert_has_match!(q, r#"{"v": "xxx"}"#, "p");
     assert_no_has_match!(q, r#"{"v": "x"}"#, "p");
+}
+
+/// Miri-only: covers the gap left by skipping test_range_quantifier_at_max_accepted.
+/// The acceptance side of the bound is parser-level, so this pins it via
+/// parse_regexp without building the ~100-state NFAs (any count at the maximum
+/// materializes one state per repetition, which is slow under Miri). The
+/// general-expansion build path itself is covered at tiny scale by
+/// test_range_quantifier_larger_values.
+#[test]
+#[cfg(miri)]
+fn test_range_quantifier_at_max_accepted_miri() {
+    use crate::regexp::parse_regexp;
+
+    // Counts at exactly REGEXP_QUANTIFIER_MAX are accepted, including the
+    // {n,} and {n,100} forms whose quant_max equals the +/* sentinel value.
+    for rx in ["x{98,100}", "x{100}", "x{100,}"] {
+        parse_regexp(rx).unwrap_or_else(|e| panic!("{rx} should be accepted, got: {e}"));
+    }
 }
 
 #[test]
