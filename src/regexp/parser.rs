@@ -1956,10 +1956,8 @@ fn read_range_quantifier(parse: &mut RegexpParse, qa: &mut QuantifiedAtom) -> Re
                 message: "invalid number in quantifier".into(),
                 offset: parse.last_index,
             })?;
-            // The NFA builder materializes one state per repetition, so an
-            // unbounded count would let a single pattern allocate an
-            // arbitrarily large automaton. Reject oversized counts here,
-            // before any states are built.
+            // The NFA builder materializes one state per repetition, so
+            // repetition counts must be bounded before any states are built.
             if lo > REGEXP_QUANTIFIER_MAX {
                 return Err(quantifier_too_large_error(parse));
             }

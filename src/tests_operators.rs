@@ -1237,18 +1237,13 @@ fn test_range_quantifier_at_max_accepted() {
 }
 
 /// Miri-only: covers the gap left by skipping test_range_quantifier_at_max_accepted.
-/// The acceptance side of the bound is parser-level, so this pins it via
-/// parse_regexp without building the ~100-state NFAs (any count at the maximum
-/// materializes one state per repetition, which is slow under Miri). The
-/// general-expansion build path itself is covered at tiny scale by
-/// test_range_quantifier_larger_values.
+/// The bound is enforced in the parser, so parse_regexp alone pins acceptance;
+/// the build path runs at tiny scale in test_range_quantifier_larger_values.
 #[test]
 #[cfg(miri)]
 fn test_range_quantifier_at_max_accepted_miri() {
     use crate::regexp::parse_regexp;
 
-    // Counts at exactly REGEXP_QUANTIFIER_MAX are accepted, including the
-    // {n,} and {n,100} forms whose quant_max equals the +/* sentinel value.
     for rx in ["x{98,100}", "x{100}", "x{100,}"] {
         parse_regexp(rx).unwrap_or_else(|e| panic!("{rx} should be accepted, got: {e}"));
     }
@@ -1256,18 +1251,16 @@ fn test_range_quantifier_at_max_accepted_miri() {
 
 #[test]
 fn test_range_quantifier_over_max_rejected() {
-    // The NFA builds one state per repetition, so the parser must reject
-    // oversized counts before any automaton is constructed. The error must
-    // come from the regexp parser (cheap), not from a post-build memory
-    // budget check, and large counts must never panic.
+    // Oversized counts must be rejected by the parser, before the NFA
+    // builder allocates one state per repetition.
     let mut q = Quamina::<String>::new();
     for rx in [
-        "x{1,101}",   // one over the max in the upper bound
-        "x{101}",     // exact count over the max
-        "x{101,}",    // open-ended with oversized minimum
-        "x{101,200}", // both bounds oversized
-        "x{1,65535}", // builds an ~8 GB arena if it reaches the NFA builder
-        "x{1,65536}", // panics in the arena epsilon-closure path if built
+        "x{1,101}",   // one over the maximum
+        "x{101}",     // exact count
+        "x{101,}",    // open-ended minimum
+        "x{101,200}", // both bounds
+        "x{1,65535}", // large enough to allocate gigabytes if built
+        "x{1,65536}", // large enough to overflow the u16 epsilon-closure limit
     ] {
         let pattern = format!(r#"{{"v": [{{"regexp": "{rx}"}}]}}"#);
         let err = q
