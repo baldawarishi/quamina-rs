@@ -9,27 +9,22 @@ Style inspired by [ripgrep's CHANGELOG](https://github.com/BurntSushi/ripgrep/bl
 ## [0.6.0] — 2026-06-11
 
 ### Added
-- `Quamina::get_memory_budget` / `Quamina::set_memory_budget`: inspect and adjust the memory cap at runtime; a budget of 0 disables the check. Ported from Go upstream PR #516 (#101)
-- NFA→DFA subset construction at freeze time: regexp patterns with epsilon transitions are eagerly converted to DFA (budget: 8× NFA states, max 10k), with a lazy DFA fallback for patterns exceeding the eager budget (`regexp_plus_long`: 1259→501 ns, `regexp_star_long`: 1125→459 ns, `pathological_epsilon`: 6.08→2.00 µs) (#90)
-- DFA acceleration: `compute_dfa_accel` detects self-loop states and attaches memchr skip info for SIMD byte skipping on patterns like `[^x]+`
-- Profiling examples for NFA→DFA budget tuning and negated char class acceleration
-- Allocation-free integration test for `traverse_arena_nfa` (counting global allocator, gated off Miri), expanded `dstep` hot-path documentation, and forbidden UTF-8 byte coverage tests (#100)
-- Incremental mutation-testing gate on PRs and `just mutants-local` for full-tree sweeps (#147, #148)
+- `get_memory_budget` / `set_memory_budget` on `Quamina`: adjust the memory cap at runtime, 0 disables the check (ported from Go PR #516) (#101)
+- NFA→DFA subset construction at freeze time, with a lazy DFA fallback for patterns over budget (`regexp_plus_long`: 1259 ns → 501 ns, `pathological_epsilon`: 6.1 µs → 2.0 µs) (#90)
+- memchr acceleration for self-loop states like `[^x]+` (`regexp_negated_1k`: 3.2 µs → 652 ns) (#90)
+- Mutation-testing gate on PRs, plus `just mutants-local` for full sweeps (#147, #148)
 
 ### Changed
-- Removed `SmallTable.default`; spinner states are now detected structurally. The smaller `FaState` improves cache density along the epsilon traversal (`pathological_epsilon`: 3.39 µs → 1.72 µs) (#128)
-- Tightened strict clippy lints: removed blanket allows for `module_name_repetitions`, `too_many_lines`, `similar_names`, and related structural/naming lints; refactored hot spots, kept per-item allows on hot loops and generated tables
-- Added `# Errors` sections to public fallible APIs and enabled `missing_errors_doc`
-- Removed unused `SmallTable::step` wrapper; `dstep` is the only stepping entry point
-- Expanded mutation test coverage across arena, parser, NFA, flatten_json, and matcher modules; closed all non-equivalent gaps in `arena.rs` and `regexp/parser.rs` (#84–#145)
-- Synced Go upstream through commit d951751
+- Removed `SmallTable.default`; the smaller state struct speeds up epsilon traversal (`pathological_epsilon`: 3.4 µs → 1.7 µs) (#128)
+- Tightened strict clippy lints and added `# Errors` docs to public fallible APIs (#95–#99)
+- Expanded mutation test coverage across all modules (#83–#145)
+- Synced Go upstream through d951751
 
 ### Fixed
-- Explicit range quantifiers (`{n,m}`) are now bounded at parse time: counts above 100 are rejected as invalid patterns. Previously `x{1,65535}` built a multi-gigabyte arena before the memory budget could reject it, and `x{1,65536}` panicked. Also fixed a debug-build panic on open-ended quantifiers like `x{2,}` (#150)
-- `[^x]+` patterns (17K-state Unicode NFA) exceeded the DFA budget and regressed; SIMD acceleration via `AccelInfo::try_accelerate` restores performance (`regexp_negated_1k`: 3.2 µs → 652 ns)
+- Range quantifiers (`{n,m}`) now reject counts above 100 at parse time; huge counts previously built multi-gigabyte arenas or panicked (#150)
 
 ### Breaking
-- Pattern parsing rejects unknown JSON escapes (e.g. `\z`), matching Go upstream's `readTextWithEscapes` (#122)
+- Pattern parsing rejects unknown JSON escapes like `\z`, matching Go upstream (#122)
 
 ## [0.5.0] — 2026-03-23
 
