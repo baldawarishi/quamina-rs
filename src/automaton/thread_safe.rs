@@ -912,6 +912,7 @@ impl<X: Clone + Eq + Hash + Send + Sync> ThreadSafeCoreMatcher<X> {
         let mut matches = FrozenMatchSet::new();
         TL_MATCH_BUFS.with(|bufs_cell| {
             let mut bufs = bufs_cell.borrow_mut();
+            bufs.clear(); // Reset buffers for reuse
 
             // For each field, try to match from the start state
             for i in 0..fields.len() {
