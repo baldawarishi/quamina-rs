@@ -33,6 +33,14 @@ fn make_event(value: &str) -> Vec<u8> {
     format!(r#"{{"val": "{value}"}}"#).into_bytes()
 }
 
+/// Like [`make_event`], but encodes ZWJ (U+200D) as a `\u200d` JSON escape.
+/// Go's benchmark builds events with `%q`, which escapes non-printable format
+/// characters, so its flattener decodes a `\u200d` escape on every iteration;
+/// encoding events the same way keeps the timed work comparable.
+fn make_event_zwj_escaped(value: &str) -> Vec<u8> {
+    make_event(&value.replace('\u{200D}', r"\u200d"))
+}
+
 /// Appends `min + rand(0..extra)` characters drawn from `alphabet`.
 fn push_filler(buf: &mut String, rng: &mut StdRng, alphabet: &[char], min: usize, extra: usize) {
     let n = min + rng.random_range(0..extra);
@@ -342,7 +350,7 @@ fn bench_shellstyle_zwj_emoji(c: &mut Criterion) {
                 buf.push_str(japanese_filler[rng.random_range(0..japanese_filler.len())]);
                 buf.push_str(e2);
                 buf.push_str(japanese_filler[rng.random_range(0..japanese_filler.len())]);
-                make_event(&buf)
+                make_event_zwj_escaped(&buf)
             })
             .collect();
 
