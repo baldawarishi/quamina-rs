@@ -31,7 +31,7 @@ use super::arena::{
 use super::mutable_matcher::{
     EventField, EventFieldRef, MultiConditionNfa, MutableFieldMatcher, MutableValueMatcher,
 };
-use super::small_table::{FieldMatcher, NfaBuffers};
+use super::small_table::{FieldMatcher, NfaBuffers, TL_MATCH_BUFS};
 
 // =============================================================================
 // NFA→DFA conversion budget constants
@@ -910,12 +910,14 @@ impl<X: Clone + Eq + Hash + Send + Sync> ThreadSafeCoreMatcher<X> {
         }
 
         let mut matches = FrozenMatchSet::new();
-        let mut bufs = NfaBuffers::new();
+        TL_MATCH_BUFS.with(|bufs_cell| {
+            let mut bufs = bufs_cell.borrow_mut();
 
-        // For each field, try to match from the start state
-        for i in 0..fields.len() {
-            self.try_to_match(fields, i, &root, &mut matches, &mut bufs);
-        }
+            // For each field, try to match from the start state
+            for i in 0..fields.len() {
+                self.try_to_match(fields, i, &root, &mut matches, &mut bufs);
+            }
+        });
 
         matches.into_vec()
     }
