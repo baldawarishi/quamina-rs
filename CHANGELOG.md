@@ -9,13 +9,13 @@ Style inspired by [ripgrep's CHANGELOG](https://github.com/BurntSushi/ripgrep/bl
 ## [0.6.0] — 2026-06-11
 
 ### Added
-- `get_memory_budget` / `set_memory_budget` on `Quamina`: adjust the memory cap at runtime, 0 disables the check (ported from Go PR #516) (#101)
-- NFA→DFA subset construction at freeze time, with a lazy DFA fallback for patterns over budget (`regexp_plus_long`: 1259 ns → 501 ns, `pathological_epsilon`: 6.1 µs → 2.0 µs) (#90)
-- memchr acceleration for self-loop states like `[^x]+` (`regexp_negated_1k`: 3.2 µs → 652 ns) (#90)
+- (Beta) Ability to adjust the memory cap at runtime (ported from Go PR #516) (#101)
+- NFA→DFA subset construction with a lazy DFA fallback for patterns over budget, giving 2~3x improvement in some cases (`regexp_plus_long`: 1259 ns → 501 ns, `pathological_epsilon`: 6.1 µs → 2.0 µs) (#90)
+- memchr acceleration for self-loop states like `[^x]+` for more performance. (#90)
 - Mutation-testing gate on PRs, plus `just mutants-local` for full sweeps (#147, #148)
 
 ### Changed
-- Removed `SmallTable.default`; the smaller state struct speeds up epsilon traversal (`pathological_epsilon`: 3.4 µs → 1.7 µs) (#128)
+- Removed `SmallTable.default`. The smaller state struct speeds up epsilon traversal (#128)
 - Tightened strict clippy lints and added `# Errors` docs to public fallible APIs (#95–#99)
 - Expanded mutation test coverage across all modules (#83–#145)
 - Synced Go upstream through d951751
