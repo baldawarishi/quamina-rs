@@ -19,6 +19,7 @@ Style inspired by [ripgrep's CHANGELOG](https://github.com/BurntSushi/ripgrep/bl
 - Tightened strict clippy lints and added `# Errors` docs to public fallible APIs (#95–#99)
 - Expanded mutation test coverage across all modules (#83–#145)
 - Synced Go upstream through d951751
+- Declared minimum supported Rust version: 1.88
 
 ### Fixed
 - Range quantifiers (`{n,m}`) now reject counts above 100 at parse time; huge counts previously built multi-gigabyte arenas or panicked (#150)
