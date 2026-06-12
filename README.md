@@ -224,12 +224,12 @@ Matching time is nearly independent of pattern count. All patterns compile into 
 
 ### Pattern count scaling
 
-On an M3 Max:
+On an M4 Max:
 
 | Patterns | Match time |
 |----------|-----------|
-| 100 | ~115 ns |
-| 10,000 | ~100 ns |
+| 100 | ~110 ns |
+| 10,000 | ~90 ns |
 
 Matching time is sublinear in pattern count because all patterns share one automaton.
 
@@ -237,22 +237,22 @@ Matching time is sublinear in pattern count because all patterns share one autom
 
 | Benchmark | Time | Description |
 |-----------|-----:|-------------|
-| citylots | ~1,600 ns | 4 patterns, 206 KB of GeoJSON |
-| nested field match | ~5,100 ns | 5 KB JSON, deeply nested field |
-| early field exit | ~220 ns | 14 KB JSON, matching field near the top |
+| citylots | ~1,400 ns | 4 patterns, 206 KB of GeoJSON |
+| nested field match | ~4,400 ns | 9 KB JSON, deeply nested field |
+| early field exit | ~180 ns | 9 KB JSON, matching field near the top |
 
 ### Pattern type benchmarks
 
 | Benchmark | Time | Description |
 |---|---:|---|
-| exact_match | ~70 ns | Single exact match |
-| nested_match | ~103 ns | Exact match on a nested key |
-| regex_match | ~60 ns | Simple regex (eager DFA after compile) |
-| anything_but_match | ~83 ns | `anything-but` with 3 excluded values |
-| numeric_range_two_sided | ~89 ns | Two-sided range (`>= 0, < 100`) |
-| 100_prefix_patterns | ~120 ns | 100 `prefix` patterns merged into one automaton |
-| shellstyle_26_patterns | ~105 ns | 26 shellstyle patterns (A\*–Z\*) |
-| regexp_plus_long | ~340 ns | `[a-z]+` on a 100-char value |
+| exact_match | ~56 ns | Single exact match |
+| nested_match | ~83 ns | Exact match on a nested key |
+| regex_match | ~48 ns | Simple regex (eager DFA after compile) |
+| anything_but_match | ~65 ns | `anything-but` with 3 excluded values |
+| numeric_range_two_sided | ~72 ns | Two-sided range (`>= 0, < 100`) |
+| 100_prefix_patterns | ~117 ns | 100 `prefix` patterns merged into one automaton |
+| shellstyle_26_patterns | ~97 ns | 26 shellstyle patterns (A\*–Z\*) |
+| regexp_plus_long | ~260 ns | `[a-z]+` on a 100-char value |
 
 ### What affects performance
 

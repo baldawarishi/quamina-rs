@@ -6,25 +6,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 Style inspired by [ripgrep's CHANGELOG](https://github.com/BurntSushi/ripgrep/blob/master/CHANGELOG.md).
 
-## [Unreleased]
+## [0.6.0] — 2026-06-11
 
 ### Added
-- NFA→DFA subset construction at freeze time: regexp patterns with epsilon transitions are eagerly converted to DFA (budget: 8× NFA states, max 10k), with a lazy DFA fallback for patterns exceeding the eager budget (`regexp_plus_long`: 1259→501 ns, `regexp_star_long`: 1125→459 ns, `pathological_epsilon`: 6.08→2.00 µs)
-- DFA acceleration: `compute_dfa_accel` detects self-loop states and attaches memchr skip info for SIMD byte skipping on patterns like `[^x]+`
-- Profiling examples for NFA→DFA budget tuning and negated char class acceleration
-- Allocation-free integration test for `traverse_arena_nfa` (counting global allocator, gated off Miri), expanded `dstep` hot-path documentation, and forbidden UTF-8 byte coverage tests (#100)
+- (Beta) Ability to adjust the memory cap at runtime (ported from Go PR #516) (#101)
+- NFA→DFA subset construction with a lazy DFA fallback for patterns over budget, giving 2~3x improvement in some cases (`regexp_plus_long`: 1259 ns → 501 ns, `pathological_epsilon`: 6.1 µs → 2.0 µs) (#90)
+- memchr acceleration for self-loop states like `[^x]+` for more performance. (#90)
+- Mutation-testing gate on PRs, plus `just mutants-local` for full sweeps (#147, #148)
 
 ### Changed
-- Tightened strict clippy lints: removed blanket allows for `module_name_repetitions`, `too_many_lines`, `similar_names`, and related structural/naming lints; refactored hot spots, kept per-item allows on hot loops and generated tables
-- Added `# Errors` sections to public fallible APIs and enabled `missing_errors_doc`
-- Removed unused `SmallTable::step` wrapper; `dstep` is the only stepping entry point
-- Synced Go upstream through commit e33139f
+- Removed `SmallTable.default`. The smaller state struct speeds up epsilon traversal (#128)
+- Tightened strict clippy lints and added `# Errors` docs to public fallible APIs (#95–#99)
+- Expanded mutation test coverage across all modules (#83–#145)
+- Synced Go upstream through d951751
+- Declared minimum supported Rust version: 1.88
 
 ### Fixed
-- `[^x]+` patterns (17K-state Unicode NFA) exceeded the DFA budget and regressed; SIMD acceleration via `AccelInfo::try_accelerate` restores performance (`regexp_negated_1k`: 3.2 µs → 652 ns)
+- Range quantifiers (`{n,m}`) now reject counts above 100 at parse time; huge counts previously built multi-gigabyte arenas or panicked (#150)
 
 ### Breaking
-- Pattern parsing rejects unknown JSON escapes (e.g. `\z`), matching Go upstream's `readTextWithEscapes`
+- Pattern parsing rejects unknown JSON escapes like `\z`, matching Go upstream (#122)
 
 ## [0.5.0] — 2026-03-23
 
