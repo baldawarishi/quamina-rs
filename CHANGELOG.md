@@ -11,6 +11,9 @@ Style inspired by [ripgrep's CHANGELOG](https://github.com/BurntSushi/ripgrep/bl
 ### Added
 - Memory and automaton statistics via `Quamina::matcher_stats()`, reporting states, bytes, fanouts, and max fanout (ported from Go upstream's `GetMatcherStats`)
 
+### Changed
+- Synced Go upstream through 5c6e2df
+
 ### Breaking
 - Removed the runtime memory-budget API (`get_memory_budget`/`set_memory_budget`), matching Go upstream dropping it; the build-time `QuaminaBuilder::with_arena_byte_budget` cap remains
 
