@@ -9,13 +9,13 @@ Style inspired by [ripgrep's CHANGELOG](https://github.com/BurntSushi/ripgrep/bl
 ## [Unreleased]
 
 ### Added
-- Memory and automaton statistics via `Quamina::matcher_stats()`, reporting states, bytes, fanouts, and max fanout (ported from Go upstream's `GetMatcherStats`)
+- Memory and automaton statistics via `Quamina::matcher_stats()`, reporting states, bytes, fanouts, and max fanout (ported from Go upstream's `GetMatcherStats`) (#152)
 
 ### Changed
-- Synced Go upstream through 5c6e2df
+- Synced Go upstream through 5c6e2df (#152)
 
 ### Breaking
-- Removed the runtime memory-budget API (`get_memory_budget`/`set_memory_budget`), matching Go upstream dropping it; the build-time `QuaminaBuilder::with_arena_byte_budget` cap remains
+- Removed the runtime memory-budget API (`get_memory_budget`/`set_memory_budget`), matching Go upstream dropping it; the build-time `QuaminaBuilder::with_arena_byte_budget` cap remains (#152)
 
 ## [0.6.0] — 2026-06-11
 
