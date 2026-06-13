@@ -16,7 +16,7 @@
 use std::hash::Hash;
 use std::rc::Rc;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
@@ -461,12 +461,9 @@ pub struct ThreadSafeCoreMatcher<X: Clone + Eq + Hash + Send + Sync> {
     /// This avoids O(n²) cost from freezing after every add_pattern.
     needs_freeze: AtomicBool,
     /// Arena byte budget for pattern complexity limiting (0 = unlimited).
-    ///
-    /// `add_pattern` snapshots this once at the top of the build, so concurrent
-    /// `set_memory_budget` calls take effect on the *next* `add_pattern`, not
-    /// mid-build. This matches upstream Go's semantics and lets the inner build
-    /// code thread a plain `usize` instead of touching the atomic per arena update.
-    arena_byte_budget: AtomicUsize,
+    /// Fixed at construction; the inner build code threads it as a plain
+    /// `usize` through the arena-update call chain.
+    arena_byte_budget: usize,
     /// Maximum field-matcher states during add_pattern (prevents 2^N blowup)
     max_states_per_pattern: usize,
 }
@@ -493,61 +490,51 @@ impl<X: Clone + Eq + Hash + Send + Sync> ThreadSafeCoreMatcher<X> {
             root: ArcSwap::from_pointee(FrozenFieldMatcher::new()),
             build_lock: Mutex::new(BuildState::new()),
             needs_freeze: AtomicBool::new(false),
-            arena_byte_budget: AtomicUsize::new(arena_byte_budget),
+            arena_byte_budget,
             max_states_per_pattern,
         }
     }
 
-    /// Read the currently configured memory budget (0 = unlimited).
-    #[must_use]
-    pub fn memory_budget(&self) -> usize {
-        self.arena_byte_budget.load(Ordering::Relaxed)
-    }
-
-    /// Replace the shared memory budget. A value of 0 disables the budget
-    /// check; the change is observed by every matcher in the tree on its next
-    /// arena update.
-    pub fn set_memory_budget(&self, budget: usize) {
-        self.arena_byte_budget.store(budget, Ordering::Relaxed);
-    }
-
-    /// Walk the mutable matcher DAG and sum the estimated byte size of every
-    /// distinct arena. The DAG is deduplicated by `MutableValueMatcher` identity
-    /// so arenas reachable via multiple field paths are only counted once.
+    /// Walk the mutable matcher DAG and accumulate resource-consumption
+    /// statistics for every distinct automaton. The DAG is deduplicated by
+    /// `MutableValueMatcher` identity so arenas reachable via multiple field
+    /// paths are only counted once. Value matchers in singleton mode (a
+    /// stored comparison buffer, no automaton) contribute the buffer's
+    /// capacity to the byte estimate.
     ///
     /// Acquires `build_lock`, so this contends with `add_pattern` callers.
     #[must_use]
-    pub fn current_memory_usage(&self) -> usize {
+    pub fn matcher_stats(&self) -> crate::MatcherStats {
         let build_state = self.build_lock.lock();
         let mut field_seen: FxHashSet<*const MutableFieldMatcher<X>> = FxHashSet::default();
         let mut value_seen: FxHashSet<*const MutableValueMatcher<X>> = FxHashSet::default();
-        let mut total: usize = 0;
+        let mut stats = crate::MatcherStats::default();
         Self::walk_field_matcher(
             &build_state.root,
             &mut field_seen,
             &mut value_seen,
-            &mut total,
+            &mut stats,
         );
-        total
+        stats
     }
 
     fn walk_field_matcher(
         fm: &Rc<MutableFieldMatcher<X>>,
         field_seen: &mut FxHashSet<*const MutableFieldMatcher<X>>,
         value_seen: &mut FxHashSet<*const MutableValueMatcher<X>>,
-        total: &mut usize,
+        stats: &mut crate::MatcherStats,
     ) {
         if !field_seen.insert(Rc::as_ptr(fm)) {
             return;
         }
         for vm in fm.transitions.borrow().values() {
-            Self::walk_value_matcher(vm, field_seen, value_seen, total);
+            Self::walk_value_matcher(vm, field_seen, value_seen, stats);
         }
         for next in fm.exists_true.borrow().values() {
-            Self::walk_field_matcher(next, field_seen, value_seen, total);
+            Self::walk_field_matcher(next, field_seen, value_seen, stats);
         }
         for next in fm.exists_false.borrow().values() {
-            Self::walk_field_matcher(next, field_seen, value_seen, total);
+            Self::walk_field_matcher(next, field_seen, value_seen, stats);
         }
     }
 
@@ -555,28 +542,31 @@ impl<X: Clone + Eq + Hash + Send + Sync> ThreadSafeCoreMatcher<X> {
         vm: &Rc<MutableValueMatcher<X>>,
         field_seen: &mut FxHashSet<*const MutableFieldMatcher<X>>,
         value_seen: &mut FxHashSet<*const MutableValueMatcher<X>>,
-        total: &mut usize,
+        stats: &mut crate::MatcherStats,
     ) {
         if !value_seen.insert(Rc::as_ptr(vm)) {
             return;
         }
+        if let Some(singleton) = vm.singleton_match.borrow().as_ref() {
+            stats.bytes += singleton.capacity();
+        }
         if let Some((arena, _)) = vm.main_arena.borrow().as_ref() {
-            *total += arena.estimated_byte_size();
+            arena.accumulate_matcher_stats(stats);
         }
         if let Some((arena, _)) = vm.suffix_arena.borrow().as_ref() {
-            *total += arena.estimated_byte_size();
+            arena.accumulate_matcher_stats(stats);
         }
         for mc in vm.multi_condition_nfas.borrow().iter() {
-            *total += mc.primary_arena.estimated_byte_size();
+            mc.primary_arena.accumulate_matcher_stats(stats);
             for cond in &mc.conditions {
-                *total += cond.arena.estimated_byte_size();
+                cond.arena.accumulate_matcher_stats(stats);
             }
         }
         for next in vm.transition_map.borrow().values() {
-            Self::walk_field_matcher(next, field_seen, value_seen, total);
+            Self::walk_field_matcher(next, field_seen, value_seen, stats);
         }
         if let Some(ref next) = *vm.singleton_transition.borrow() {
-            Self::walk_field_matcher(next, field_seen, value_seen, total);
+            Self::walk_field_matcher(next, field_seen, value_seen, stats);
         }
     }
 
@@ -612,9 +602,9 @@ impl<X: Clone + Eq + Hash + Send + Sync> ThreadSafeCoreMatcher<X> {
         // Acquire build lock
         let build_state = self.build_lock.lock();
 
-        // Snapshot the budget once; the inner build code threads this `usize`
-        // through instead of touching the atomic per arena update.
-        let budget = self.arena_byte_budget.load(Ordering::Relaxed);
+        // Build-time pattern-complexity cap, fixed per matcher; the inner
+        // build code threads this `usize` through the arena-update call chain.
+        let budget = self.arena_byte_budget;
 
         // Sort fields lexically by path (like Go)
         let mut sorted_fields: Vec<_> = pattern_fields.to_vec();

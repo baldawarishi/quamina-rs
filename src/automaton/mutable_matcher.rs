@@ -256,10 +256,10 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
     }
 
     /// Check whether the given arena size exceeds the budget.
-    /// A budget of 0 means unlimited (matches upstream Go convention).
-    /// `budget` is snapshotted at the start of the enclosing `add_pattern` call,
-    /// so concurrent `set_memory_budget` updates take effect on the next add, not
-    /// mid-build.
+    /// A budget of 0 means unlimited. `budget` is the build-time arena byte
+    /// cap, fixed for the matcher's lifetime and threaded down from
+    /// `add_pattern`; it bounds how large any single value matcher's arena may
+    /// grow, which is the binding constraint for complex regular expressions.
     fn check_budget(size: usize, budget: usize) -> Result<(), crate::QuaminaError> {
         if budget != 0 && size > budget {
             return Err(crate::QuaminaError::PatternTooComplex(format!(
