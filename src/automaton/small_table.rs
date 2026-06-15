@@ -7,6 +7,7 @@
 //!
 //! State machines and transition tables are in the `arena` module.
 
+use std::cell::RefCell;
 use std::num::NonZero;
 use std::sync::Arc;
 
@@ -123,4 +124,11 @@ impl NfaBuffers {
     pub fn clear(&mut self) {
         self.arena_bufs.clear();
     }
+}
+
+thread_local! {
+    /// Per-thread reusable traversal buffers for the `matches_for_fields`
+    /// convenience paths that don't take caller-provided buffers, so repeated
+    /// calls keep their grown capacity instead of reallocating every time.
+    pub(super) static TL_MATCH_BUFS: RefCell<NfaBuffers> = RefCell::new(NfaBuffers::new());
 }

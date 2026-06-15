@@ -3895,14 +3895,21 @@ fn test_mut_numeric_pattern_rejects_string_value() {
 
 #[test]
 fn test_mut_memory_usage_accumulates_suffix_and_lookaround() {
-    // current_memory_usage() must equal the sum of all constituent arena sizes.
+    // `bytes` aggregates across every distinct automaton in the matcher DAG, so
+    // a suffix arena on one field plus a lookaround arena on another together
+    // exceed what either contributes alone.
+    let suffix_only = q!("suf" => r#"{"x": [{"suffix": "lo"}]}"#);
+    let suffix_bytes = suffix_only.matcher_stats().bytes;
+    assert!(suffix_bytes > 0, "suffix arena must contribute bytes");
+
     let q = q!(
         "suf" => r#"{"x": [{"suffix": "lo"}]}"#,
         "la"  => r#"{"y": [{"regexp": "foo(?=bar)bar"}]}"#
     );
-    let (_, used) = q.get_memory_budget();
-    assert_eq!(
-        used, 5280,
-        "memory usage must equal exact sum of arena byte sizes, got {used}"
+    let used = q.matcher_stats().bytes;
+    assert!(
+        used > suffix_bytes,
+        "adding a lookaround arena on a second field must grow accounted bytes: \
+         {used} should exceed the suffix-only {suffix_bytes}"
     );
 }

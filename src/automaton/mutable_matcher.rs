@@ -19,7 +19,7 @@ use super::arena::{
     make_wildcard_arena_fa, merge_arena_nfas, traverse_arena_dfa, traverse_arena_dfa_backward,
     traverse_arena_nfa,
 };
-use super::small_table::{FieldMatcher, NfaBuffers};
+use super::small_table::{FieldMatcher, NfaBuffers, TL_MATCH_BUFS};
 use crate::regexp::make_regexp_nfa_arena;
 
 /// Wrap a byte slice in quotes: `val` → `"val"`.
@@ -256,10 +256,10 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
     }
 
     /// Check whether the given arena size exceeds the budget.
-    /// A budget of 0 means unlimited (matches upstream Go convention).
-    /// `budget` is snapshotted at the start of the enclosing `add_pattern` call,
-    /// so concurrent `set_memory_budget` updates take effect on the next add, not
-    /// mid-build.
+    ///
+    /// A budget of 0 means unlimited; otherwise it bounds how large any single
+    /// value matcher's arena may grow — the binding constraint for complex
+    /// regexps.
     fn check_budget(size: usize, budget: usize) -> Result<(), crate::QuaminaError> {
         if budget != 0 && size > budget {
             return Err(crate::QuaminaError::PatternTooComplex(format!(
@@ -1217,12 +1217,15 @@ impl<X: Clone + Eq + std::hash::Hash> CoreMatcher<X> {
         }
 
         let mut matches = MatchSet::new();
-        let mut bufs = NfaBuffers::new();
+        TL_MATCH_BUFS.with(|bufs_cell| {
+            let mut bufs = bufs_cell.borrow_mut();
+            bufs.clear(); // Reset buffers for reuse
 
-        // For each field, try to match from the start state
-        for i in 0..fields.len() {
-            self.try_to_match(fields, i, &self.root, &mut matches, &mut bufs);
-        }
+            // For each field, try to match from the start state
+            for i in 0..fields.len() {
+                self.try_to_match(fields, i, &self.root, &mut matches, &mut bufs);
+            }
+        });
 
         matches.into_vec()
     }

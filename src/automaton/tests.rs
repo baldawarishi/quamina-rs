@@ -556,9 +556,9 @@ fn test_nfa_buffers_clear() {
 /// Verify that `NfaBuffers::clear` (called by `traverse_arena_nfa`) prevents
 /// stale state from leaking across successive match calls.
 ///
-/// `CoreMatcher::matches_for_fields` creates fresh `NfaBuffers` each call, but
-/// `MutableValueMatcher::transition_on` ignores that parameter (`_bufs`) and uses
-/// its own `arena_bufs: RefCell<NfaBuffers>` which persists across calls.
+/// `CoreMatcher::matches_for_fields` reuses per-thread `NfaBuffers`, and
+/// `MutableValueMatcher::transition_on` ignores that parameter (`_bufs`) anyway,
+/// using its own `arena_bufs: RefCell<NfaBuffers>` which persists across calls.
 /// `traverse_arena_nfa` calls `NfaBuffers::clear()` at the start of each
 /// traversal — without it, stale transitions from one traversal would leak into
 /// the next and produce false pattern_ids.

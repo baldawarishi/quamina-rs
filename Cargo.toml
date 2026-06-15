@@ -45,6 +45,14 @@ harness = false
 name = "memory"
 harness = false
 
+[[bench]]
+name = "regex_nfa_dfa"
+harness = false
+
+[[bench]]
+name = "workload"
+harness = false
+
 [profile.bench]
 debug = 1  # Line tables for flamegraph/samply
 

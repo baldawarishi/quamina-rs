@@ -118,6 +118,25 @@ impl Clone for PrunerStats {
     }
 }
 
+/// Resource-consumption statistics for a matcher tree, as reported by
+/// [`Quamina::matcher_stats`].
+///
+/// `bytes` is the headline figure: an estimate of the memory consumed by the
+/// matcher's data structures. The other fields describe the automaton's
+/// shape, which drives traversal cost.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct MatcherStats {
+    /// Total automaton states across all value matchers.
+    pub states: usize,
+    /// Estimated bytes consumed by the matcher's data structures.
+    /// Capacity-based: counts allocated buffer space, not just occupied space.
+    pub bytes: usize,
+    /// Sum of the epsilon-closure sizes of all states.
+    pub fanouts: usize,
+    /// Size of the largest single epsilon closure.
+    pub max_fanout: usize,
+}
+
 /// Pattern definition: field matchers
 type PatternDef = FxHashMap<String, Vec<Matcher>>;
 
@@ -530,10 +549,9 @@ pub struct Quamina<X: Clone + Eq + Hash + Send + Sync = String> {
 
 impl<X: Clone + Eq + Hash + Send + Sync> Clone for Quamina<X> {
     fn clone(&self) -> Self {
-        // Rebuild automaton from pattern_defs, carrying over the live budget so
-        // any prior `set_memory_budget` adjustments survive the clone.
+        // Rebuild automaton from pattern_defs.
         let automaton = ThreadSafeCoreMatcher::with_limits(
-            self.automaton.memory_budget(),
+            self.pattern_limits.arena_byte_budget,
             self.pattern_limits.max_states_per_pattern,
         );
 
@@ -888,84 +906,30 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
         self.automaton.arena_stats()
     }
 
-    /// Retrieves the current memory budget and an approximate count of the
-    /// bytes currently in use by matchers.
+    /// Retrieves resource-consumption data for this instance; the results
+    /// depend only on the [`add_pattern`](Self::add_pattern) calls made
+    /// previously.
     ///
-    /// If no budget has been set (or it has been set to 0), the returned
-    /// budget is 0, meaning Quamina will not check for any maximum value.
-    /// The reported usage is approximate: computing the exact figure is too
-    /// expensive, so we sum the estimated arena byte size of each distinct
-    /// `StateArena` in the matcher DAG, deduplicating sub-graphs reachable
-    /// via multiple field paths so they are counted once.
+    /// The most useful figure is [`MatcherStats::bytes`], an estimate of the
+    /// memory consumed by the matcher's data structures. Its growth
+    /// correlates well with the slowdown in `add_pattern` and
+    /// [`matches_for_event`](Self::matches_for_event) performance when the
+    /// patterns being added are of the `wildcard` or `regexp` flavors.
     ///
     /// ```
     /// # use quamina::Quamina;
     /// # fn main() -> Result<(), quamina::QuaminaError> {
     /// let mut q = Quamina::<&str>::new();
-    /// let (budget, used) = q.get_memory_budget();
-    /// assert!(budget > 0);     // default builder budget
-    /// assert_eq!(used, 0);     // no patterns added yet
-    /// q.add_pattern("p", r#"{"x": [{"prefix": "abc"}]}"#)?;
-    /// let (_, used_after) = q.get_memory_budget();
-    /// assert!(used_after > 0);
+    /// assert_eq!(q.matcher_stats().bytes, 0);
+    /// q.add_pattern("p", r#"{"x": [{"wildcard": "*z"}]}"#)?;
+    /// let stats = q.matcher_stats();
+    /// assert!(stats.bytes > 0 && stats.states > 0);
     /// # Ok(())
     /// # }
     /// ```
     #[must_use]
-    pub fn get_memory_budget(&self) -> (usize, usize) {
-        (
-            self.automaton.memory_budget(),
-            self.automaton.current_memory_usage(),
-        )
-    }
-
-    /// Sets an approximate limit on the bytes that any single value matcher's
-    /// arena may reach when building patterns — typically the binding
-    /// constraint for complex regular expressions. If successful, returns the
-    /// approximate amount of memory currently in use across matchers.
-    ///
-    /// A budget of 0 disables the check (matching upstream Go's "0 = unlimited"
-    /// convention); any other value caps subsequent pattern construction.
-    /// Patterns already built are not affected.
-    ///
-    /// The new budget applies to the next [`add_pattern`](Self::add_pattern)
-    /// call — each `add_pattern` snapshots the budget at the start of the
-    /// build, so a `set_memory_budget` invocation racing with an in-flight
-    /// `add_pattern` won't change the budget for that build.
-    ///
-    /// `set_memory_budget` only takes `&self`, so it can be called
-    /// concurrently with matching, but not with `add_pattern` (which takes
-    /// `&mut self`).
-    ///
-    /// # Errors
-    ///
-    /// Returns [`QuaminaError::PatternTooComplex`] if the requested non-zero
-    /// budget is smaller than the memory currently in use; the budget is left
-    /// unchanged in that case.
-    ///
-    /// ```
-    /// # use quamina::Quamina;
-    /// # fn main() -> Result<(), quamina::QuaminaError> {
-    /// let mut q = Quamina::<&str>::new();
-    /// q.set_memory_budget(0)?;                   // disable the check
-    /// q.add_pattern("p", r#"{"x": [{"prefix": "abc"}]}"#)?;
-    ///
-    /// // Tightening below the current usage is rejected; the budget stays put.
-    /// assert!(q.set_memory_budget(1).is_err());
-    /// assert_eq!(q.get_memory_budget().0, 0);
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub fn set_memory_budget(&self, budget: usize) -> Result<usize, QuaminaError> {
-        let current = self.automaton.current_memory_usage();
-        if budget != 0 && budget < current {
-            return Err(QuaminaError::PatternTooComplex(format!(
-                "set_memory_budget: requested budget ({budget} bytes) is smaller \
-                 than the memory currently in use ({current} bytes)"
-            )));
-        }
-        self.automaton.set_memory_budget(budget);
-        Ok(current)
+    pub fn matcher_stats(&self) -> MatcherStats {
+        self.automaton.matcher_stats()
     }
 
     /// Enable or disable auto-rebuild
@@ -1001,10 +965,9 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
             return 0;
         }
 
-        // Create new automaton with only live patterns, carrying over the live
-        // budget so updates made via `set_memory_budget` survive a rebuild.
+        // Create new automaton with only live patterns
         let new_automaton = ThreadSafeCoreMatcher::with_limits(
-            self.automaton.memory_budget(),
+            self.pattern_limits.arena_byte_budget,
             self.pattern_limits.max_states_per_pattern,
         );
 
@@ -1075,7 +1038,7 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
     /// ```
     pub fn clear(&mut self) {
         self.automaton = ThreadSafeCoreMatcher::with_limits(
-            self.automaton.memory_budget(),
+            self.pattern_limits.arena_byte_budget,
             self.pattern_limits.max_states_per_pattern,
         );
         self.pattern_defs.clear();

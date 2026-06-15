@@ -425,6 +425,40 @@ impl StateArena {
             + self.dfa_lookup.capacity() * std::mem::size_of::<StateId>()
     }
 
+    /// Accumulate this arena's contribution to matcher-level resource statistics.
+    ///
+    /// Bytes are capacity-based: the arena's flat buffers (via
+    /// [`estimated_byte_size`](Self::estimated_byte_size)) plus the heap
+    /// capacity of any per-state SmallVec that has spilled past its inline slots.
+    /// Inline slots are not counted here — `size_of::<FaState>()` already covers
+    /// them, so adding them again would double-count. `fanouts`/`max_fanout`
+    /// come from each state's precomputed epsilon closure.
+    pub fn accumulate_matcher_stats(&self, stats: &mut crate::MatcherStats) {
+        stats.states += self.states.len();
+        let mut bytes = self.estimated_byte_size();
+        for state in &self.states {
+            let table = &state.table;
+            if table.ceilings.spilled() {
+                // ceilings holds u8, so its capacity is already a byte count.
+                bytes += table.ceilings.capacity();
+            }
+            if table.steps.spilled() {
+                bytes += table.steps.capacity() * std::mem::size_of::<StateId>();
+            }
+            if table.epsilons.spilled() {
+                bytes += table.epsilons.capacity() * std::mem::size_of::<StateId>();
+            }
+            if state.field_transitions.spilled() {
+                bytes +=
+                    state.field_transitions.capacity() * std::mem::size_of::<Arc<FieldMatcher>>();
+            }
+            let fanout = state.closure_len as usize;
+            stats.fanouts += fanout;
+            stats.max_fanout = stats.max_fanout.max(fanout);
+        }
+        stats.bytes += bytes;
+    }
+
     /// Get a state reference without bounds checking.
     ///
     /// # Safety
@@ -4100,6 +4134,50 @@ mod tests {
         assert_eq!(id1.index(), 0);
         assert_eq!(id2.index(), 1);
         assert_eq!(arena.len(), 2);
+    }
+
+    /// `accumulate_matcher_stats` adds the heap capacity of any per-state
+    /// SmallVec that has spilled past its inline slots — transition tables
+    /// (`ceilings`/`steps`/`epsilons`) and `field_transitions`. Real test
+    /// matchers stay inline, so this drives the spill branches on a hand-built
+    /// arena and pins the exact byte arithmetic against an independent estimate.
+    #[test]
+    fn test_accumulate_matcher_stats_counts_spilled_capacity() {
+        let mut arena = StateArena::new();
+        let id = arena.alloc();
+
+        // Inline capacities: ceilings/steps = 8, epsilons = 2,
+        // field_transitions = 1. Fill each past its inline slots so it spills.
+        let fa = &mut arena[id];
+        fa.table.ceilings = (0..=15u8).collect();
+        fa.table.steps = (0..16u32).map(StateId).collect();
+        fa.table.epsilons = (0..4u32).map(StateId).collect();
+        fa.field_transitions.push(Arc::new(FieldMatcher::new()));
+        fa.field_transitions.push(Arc::new(FieldMatcher::new()));
+
+        let fa = &arena[id];
+        assert!(fa.table.ceilings.spilled());
+        assert!(fa.table.steps.spilled());
+        assert!(fa.table.epsilons.spilled());
+        assert!(fa.field_transitions.spilled());
+
+        // Re-derive the total independently: the flat-buffer estimate plus each
+        // spilled buffer's heap capacity in bytes. Reading capacity() here
+        // (rather than predicting SmallVec growth) keeps the assertion exact.
+        let expected = arena.estimated_byte_size()
+            + fa.table.ceilings.capacity()
+            + fa.table.steps.capacity() * std::mem::size_of::<StateId>()
+            + fa.table.epsilons.capacity() * std::mem::size_of::<StateId>()
+            + fa.field_transitions.capacity() * std::mem::size_of::<Arc<FieldMatcher>>();
+
+        let mut stats = crate::MatcherStats::default();
+        arena.accumulate_matcher_stats(&mut stats);
+
+        assert_eq!(
+            stats.bytes, expected,
+            "spilled SmallVec capacity must add byte-for-byte to the total"
+        );
+        assert_eq!(stats.states, 1);
     }
 
     #[test]
