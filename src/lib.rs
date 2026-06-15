@@ -916,12 +916,6 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
     /// [`matches_for_event`](Self::matches_for_event) performance when the
     /// patterns being added are of the `wildcard` or `regexp` flavors.
     ///
-    /// The estimate is computed by walking the matcher DAG and summing the
-    /// capacity-based byte size of each distinct automaton, deduplicating
-    /// sub-graphs reachable via multiple field paths so they are counted
-    /// once. Single-valued matchers that store a comparison buffer instead
-    /// of building an automaton contribute that buffer's capacity.
-    ///
     /// ```
     /// # use quamina::Quamina;
     /// # fn main() -> Result<(), quamina::QuaminaError> {

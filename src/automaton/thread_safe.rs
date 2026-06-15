@@ -460,9 +460,9 @@ pub struct ThreadSafeCoreMatcher<X: Clone + Eq + Hash + Send + Sync> {
     /// When true, the next match operation will freeze before reading.
     /// This avoids O(n²) cost from freezing after every add_pattern.
     needs_freeze: AtomicBool,
-    /// Arena byte budget for pattern complexity limiting (0 = unlimited).
-    /// Fixed at construction; the inner build code threads it as a plain
-    /// `usize` through the arena-update call chain.
+    /// Cap on any single value matcher's arena byte size — the binding
+    /// constraint for complex regexps (0 = unlimited). Fixed for the matcher's
+    /// lifetime.
     arena_byte_budget: usize,
     /// Maximum field-matcher states during add_pattern (prevents 2^N blowup)
     max_states_per_pattern: usize,
@@ -602,8 +602,6 @@ impl<X: Clone + Eq + Hash + Send + Sync> ThreadSafeCoreMatcher<X> {
         // Acquire build lock
         let build_state = self.build_lock.lock();
 
-        // Build-time pattern-complexity cap, fixed per matcher; the inner
-        // build code threads this `usize` through the arena-update call chain.
         let budget = self.arena_byte_budget;
 
         // Sort fields lexically by path (like Go)

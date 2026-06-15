@@ -425,17 +425,14 @@ impl StateArena {
             + self.dfa_lookup.capacity() * std::mem::size_of::<StateId>()
     }
 
-    /// Accumulate this arena's contribution to matcher-level resource
-    /// statistics.
+    /// Accumulate this arena's contribution to matcher-level resource statistics.
     ///
-    /// Byte accounting is capacity-based (allocated, not just occupied): the
-    /// arena's flat buffers via [`estimated_byte_size`](Self::estimated_byte_size),
-    /// plus any per-state SmallVec storage (transition tables, field
-    /// transitions) that has spilled from its inline slots to the heap.
-    /// Inline SmallVec slots are already covered by `size_of::<FaState>()`.
-    /// Fanout figures come from the precomputed epsilon closures: `fanouts`
-    /// sums every state's closure size and `max_fanout` tracks the largest
-    /// single closure.
+    /// Bytes are capacity-based: the arena's flat buffers (via
+    /// [`estimated_byte_size`](Self::estimated_byte_size)) plus the heap
+    /// capacity of any per-state SmallVec that has spilled past its inline slots.
+    /// Inline slots are not counted here — `size_of::<FaState>()` already covers
+    /// them, so adding them again would double-count. `fanouts`/`max_fanout`
+    /// come from each state's precomputed epsilon closure.
     pub fn accumulate_matcher_stats(&self, stats: &mut crate::MatcherStats) {
         stats.states += self.states.len();
         let mut bytes = self.estimated_byte_size();
