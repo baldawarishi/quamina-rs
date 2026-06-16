@@ -613,6 +613,160 @@ fn test_empty_regex_matches_empty_string() {
 }
 
 // ============================================================================
+// Alternation branch-merge tests
+//
+// Alternation branches are folded into one deterministic byte-dispatch entry.
+// These tests pin the match behavior across the cases the merge has to get
+// right: shared prefixes, branches of unequal length, nesting, empty
+// alternatives, and alternations wrapped in `+`/`*`.
+// ============================================================================
+
+#[test]
+fn test_alternation_sequential_groups() {
+    let q = q!("p" => r#"{"x": [{"regexp": "(a|b|c)(d|e|f)(g|h|i)"}]}"#);
+    for v in ["adg", "beh", "cfi", "afh", "cdg"] {
+        assert_has_match!(q, format!(r#"{{"x": "{v}"}}"#), "p", "should match");
+    }
+    for v in ["ad", "adgg", "xdg", "ag", "dgi", ""] {
+        assert_no_match!(q, format!(r#"{{"x": "{v}"}}"#), "should not match");
+    }
+}
+
+#[test]
+fn test_alternation_shared_prefix_and_unequal_length() {
+    // Branches sharing a prefix ("ca") and of differing lengths must each match
+    // exactly, re-converging at the shared continuation.
+    let q = q!("p" => r#"{"x": [{"regexp": "(cat|car|cart|ca)"}]}"#);
+    for v in ["cat", "car", "cart", "ca"] {
+        assert_has_match!(q, format!(r#"{{"x": "{v}"}}"#), "p", "should match");
+    }
+    for v in ["c", "cab", "carts", "ar", ""] {
+        assert_no_match!(q, format!(r#"{{"x": "{v}"}}"#), "should not match");
+    }
+
+    let q2 = q!("p" => r#"{"x": [{"regexp": "(a|ab|abc)"}]}"#);
+    for v in ["a", "ab", "abc"] {
+        assert_has_match!(q2, format!(r#"{{"x": "{v}"}}"#), "p", "should match");
+    }
+    for v in ["abcd", "b", "ac", ""] {
+        assert_no_match!(q2, format!(r#"{{"x": "{v}"}}"#), "should not match");
+    }
+}
+
+#[test]
+fn test_alternation_nested() {
+    let q = q!("p" => r#"{"x": [{"regexp": "((a|b)|(c|d))((e|f)|(g|h))"}]}"#);
+    for v in ["ae", "bf", "cg", "dh", "ah", "de"] {
+        assert_has_match!(q, format!(r#"{{"x": "{v}"}}"#), "p", "should match");
+    }
+    for v in ["a", "e", "ax", "xe", "aef", ""] {
+        assert_no_match!(q, format!(r#"{{"x": "{v}"}}"#), "should not match");
+    }
+}
+
+#[test]
+fn test_alternation_empty_alternatives() {
+    // Each group matches one of {first, second, empty}. quamina matches every
+    // combination of the optional groups, including the all-empty "" — this is
+    // the correct language for `(a|b|)(c|d|)(e|f|)`.
+    let q = q!("p" => r#"{"x": [{"regexp": "(a|b|)(c|d|)(e|f|)"}]}"#);
+    for v in ["", "a", "b", "c", "e", "ce", "ae", "af", "ace", "bdf", "cf"] {
+        assert_has_match!(q, format!(r#"{{"x": "{v}"}}"#), "p", "should match");
+    }
+    for v in ["ab", "ba", "ca", "g", "aceg", "aa"] {
+        assert_no_match!(q, format!(r#"{{"x": "{v}"}}"#), "should not match");
+    }
+}
+
+#[test]
+fn test_alternation_under_quantifier() {
+    // An alternation wrapped in `+` keeps its `+` loop while still byte-merging
+    // the branches.
+    let q = q!("p" => r#"{"x": [{"regexp": "(ab|cd|ef)+"}]}"#);
+    for v in ["ab", "cd", "ef", "abcd", "efefef", "abefcd"] {
+        assert_has_match!(q, format!(r#"{{"x": "{v}"}}"#), "p", "should match");
+    }
+    for v in ["", "a", "abc", "abx", "aef"] {
+        assert_no_match!(q, format!(r#"{{"x": "{v}"}}"#), "should not match");
+    }
+
+    // `*` admits the empty string.
+    let q2 = q!("p" => r#"{"x": [{"regexp": "(a|bc)*"}]}"#);
+    for v in ["", "a", "bc", "aa", "abc", "bca", "aabca"] {
+        assert_has_match!(q2, format!(r#"{{"x": "{v}"}}"#), "p", "should match");
+    }
+    for v in ["b", "ab x", "cb"] {
+        assert_no_match!(q2, format!(r#"{{"x": "{v}"}}"#), "should not match");
+    }
+}
+
+#[test]
+fn test_alternation_empty_branch_under_quantifier() {
+    // An empty alternative under `+` must let the loop match empty once and fall
+    // through, but the empty-skip must not leak back in when the loop repeats:
+    // `(a|)+b` matches "b"/"ab"/"aab" but the trailing `b` is still required.
+    let q = q!("p" => r#"{"x": [{"regexp": "(a|)+b"}]}"#);
+    for v in ["b", "ab", "aab", "aaab"] {
+        assert_has_match!(q, format!(r#"{{"x": "{v}"}}"#), "p", "should match");
+    }
+    for v in ["", "a", "ba", "abb", "ac"] {
+        assert_no_match!(q, format!(r#"{{"x": "{v}"}}"#), "should not match");
+    }
+
+    // `(((?:.)+a)|)` matches only "" or (one-or-more chars then 'a'); a single
+    // character must NOT match, even though the branch entry is a `+` loopback.
+    let q2 = q!("p" => r#"{"x": [{"regexp": "(((?:.)+a)|)"}]}"#);
+    for v in ["", "ba", "aa", "xya", "aba"] {
+        assert_has_match!(q2, format!(r#"{{"x": "{v}"}}"#), "p", "should match");
+    }
+    for v in ["a", "b", "ab", "xy"] {
+        assert_no_match!(q2, format!(r#"{{"x": "{v}"}}"#), "should not match");
+    }
+}
+
+#[test]
+fn test_alternation_merged_on_one_field() {
+    // Several distinct alternation patterns on the same field must each match
+    // only their own values once merged.
+    let q = q!(
+        "p0" => r#"{"x": [{"regexp": "(a|b)(c|d)"}]}"#,
+        "p1" => r#"{"x": [{"regexp": "(e|f)(g|h)"}]}"#,
+        "p2" => r#"{"x": [{"regexp": "(foo|bar)"}]}"#
+    );
+    assert_matches!(q, r#"{"x": "ac"}"#, vec!["p0"]);
+    assert_matches!(q, r#"{"x": "bd"}"#, vec!["p0"]);
+    assert_matches!(q, r#"{"x": "eh"}"#, vec!["p1"]);
+    assert_matches!(q, r#"{"x": "foo"}"#, vec!["p2"]);
+    assert_matches!(q, r#"{"x": "bar"}"#, vec!["p2"]);
+    assert_no_match!(q, r#"{"x": "ae"}"#);
+    assert_no_match!(q, r#"{"x": "baz"}"#);
+}
+
+#[test]
+fn test_alternation_has_no_epsilon_hub() {
+    // The whole point of folding branches: a pure (quantifier-free) alternation
+    // determinizes to a byte-dispatch automaton with no epsilon-only hub, so the
+    // largest epsilon closure is a single state.
+    let mut q = Quamina::new();
+    q.add_pattern("p", r#"{"x": [{"regexp": "(a|b|c)(d|e|f)(g|h|i)"}]}"#)
+        .unwrap();
+    let _ = q.matches_for_event(br#"{"x": "adg"}"#).unwrap();
+    let stats = q.matcher_stats();
+    assert_eq!(
+        stats.max_fanout, 1,
+        "pure alternation must have no epsilon hub (max_fanout {} > 1)",
+        stats.max_fanout
+    );
+    // A hub would add one state per branch on top of the byte states; without it
+    // the count stays small.
+    assert!(
+        stats.states <= 10,
+        "expected a compact automaton, got {} states",
+        stats.states
+    );
+}
+
+// ============================================================================
 // CIDR Matching Tests
 // ============================================================================
 

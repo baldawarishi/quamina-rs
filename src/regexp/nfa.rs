@@ -9,11 +9,14 @@ use std::sync::Arc;
 
 use rustc_hash::FxHashMap;
 
-use smallvec::{SmallVec, smallvec};
+use smallvec::smallvec;
 
 use crate::automaton::{
     BYTE_CEILING, FieldMatcher,
-    arena::{ARENA_VALUE_TERMINATOR, SmallTable, StateArena, StateId},
+    arena::{
+        ARENA_VALUE_TERMINATOR, SmallTable, StateArena, StateId, clone_arena_subset,
+        determinize_branch_starts,
+    },
 };
 
 use super::parser::{
@@ -44,6 +47,25 @@ fn rune_to_utf8(r: char) -> Vec<u8> {
     let mut buf = [0u8; 4];
     let s = r.encode_utf8(&mut buf);
     s.as_bytes().to_vec()
+}
+
+/// Check if a regexp tree contains alternation, at the top level or inside any
+/// parenthesized group. Folding alternation branches leaves the original branch
+/// entry states unreachable, so this gates the reachability compaction pass.
+fn regexp_has_alternation(root: &RegexpRoot) -> bool {
+    if root.len() > 1 {
+        return true;
+    }
+    for branch in root {
+        for qa in branch {
+            if let Some(ref subtree) = qa.subtree
+                && regexp_has_alternation(subtree)
+            {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 /// Check if a regexp tree has any `+` or `*` quantifiers that would benefit from arena-based NFA.
@@ -141,8 +163,17 @@ pub fn make_regexp_nfa_arena(root: RegexpRoot) -> (StateArena, StateId, Arc<Fiel
         (arena, start)
     };
 
-    arena.precompute_epsilon_closures();
-    (arena, start, next_field)
+    if regexp_has_alternation(&root) {
+        // Folded branches leave their original entry states unreachable. Rebuild
+        // from the reachable set so they don't bloat this arena and every later
+        // merge that clones it; the rebuild also precomputes the epsilon
+        // closures.
+        let (arena, start) = clone_arena_subset(&arena, start);
+        (arena, start, next_field)
+    } else {
+        arena.precompute_epsilon_closures();
+        (arena, start, next_field)
+    }
 }
 
 /// Build arena NFA from branches (alternatives).
@@ -164,23 +195,21 @@ fn make_arena_nfa_from_branches(
         return make_one_arena_branch_fa(&root[0], arena, next_step);
     }
 
-    // Multiple branches - create a start state with epsilons to each branch
+    // Build every branch against the same continuation, then fold them into one
+    // deterministic byte-dispatch entry that re-converges at that continuation.
+    // An empty alternative (e.g. the trailing `|` in `(a|b|)`) contributes the
+    // continuation itself as a branch start, so "match nothing here" stays a
+    // reachable option.
     let mut branch_starts = Vec::with_capacity(root.len());
     for branch in root {
         if branch.is_empty() {
-            // Empty branch means we can skip directly to next_step
             branch_starts.push(next_step);
         } else {
-            let branch_start = make_one_arena_branch_fa(branch, arena, next_step);
-            branch_starts.push(branch_start);
+            branch_starts.push(make_one_arena_branch_fa(branch, arena, next_step));
         }
     }
 
-    // Create a start state that has epsilons to all branch starts
-    let start = arena.alloc();
-    arena[start].table.epsilons = SmallVec::from_vec(branch_starts);
-
-    start
+    determinize_branch_starts(arena, &branch_starts, next_step)
 }
 
 /// Build arena NFA for one branch (sequence of atoms).
