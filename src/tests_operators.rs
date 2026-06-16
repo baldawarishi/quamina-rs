@@ -766,6 +766,58 @@ fn test_alternation_has_no_epsilon_hub() {
     );
 }
 
+#[test]
+fn test_alternation_quantified_branch() {
+    // A branch whose first atom is quantified (`a*`/`a?`) has an epsilon-led
+    // entry. It must be spliced, not byte-merged: byte-merging reads only the
+    // entry's byte table and drops the skip/loop epsilons, so the empty match is
+    // lost. Branches fold left-to-right, so this has to hold whether the
+    // epsilon-led branch comes first or second.
+    for pat in ["(a*|b)", "(b|a*)"] {
+        let mut q = Quamina::new();
+        q.add_pattern("p", &format!(r#"{{"x": [{{"regexp": "{pat}"}}]}}"#))
+            .unwrap();
+        for v in ["", "a", "aa", "aaa", "b"] {
+            assert_has_match!(q, format!(r#"{{"x": "{v}"}}"#), "p", "should match");
+        }
+        for v in ["c", "ab", "ba", "bb"] {
+            assert_no_match!(q, format!(r#"{{"x": "{v}"}}"#), "should not match");
+        }
+    }
+
+    // Epsilon-led branch second, with a multi-byte sibling and an optional atom.
+    let q2 = q!("p" => r#"{"x": [{"regexp": "(cd|a?)"}]}"#);
+    for v in ["", "a", "cd"] {
+        assert_has_match!(q2, format!(r#"{{"x": "{v}"}}"#), "p", "should match");
+    }
+    for v in ["aa", "c", "d", "cdd"] {
+        assert_no_match!(q2, format!(r#"{{"x": "{v}"}}"#), "should not match");
+    }
+}
+
+#[test]
+fn test_alternation_top_level_is_compacted() {
+    // A top-level alternation (`a|b|c`, no enclosing group) folds its branches and
+    // then drops the now-unreachable per-branch entry states. Without that
+    // compaction the dead states linger, so the state count pins it down.
+    let mut q = Quamina::new();
+    q.add_pattern("p", r#"{"x": [{"regexp": "a|b|c"}]}"#)
+        .unwrap();
+    let _ = q.matches_for_event(br#"{"x": "a"}"#).unwrap();
+    let stats = q.matcher_stats();
+    assert!(
+        stats.states <= 6,
+        "top-level alternation should compact, got {} states",
+        stats.states
+    );
+    for v in ["a", "b", "c"] {
+        assert_has_match!(q, format!(r#"{{"x": "{v}"}}"#), "p", "should match");
+    }
+    for v in ["", "d", "ab"] {
+        assert_no_match!(q, format!(r#"{{"x": "{v}"}}"#), "should not match");
+    }
+}
+
 // ============================================================================
 // CIDR Matching Tests
 // ============================================================================

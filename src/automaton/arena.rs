@@ -2124,11 +2124,14 @@ fn merge_branch_pair(
     new_id
 }
 
-/// Collect the non-epsilon-only targets reachable from `state` through
-/// epsilon-only splice states, so a splice never points at another splice.
-/// `boundary` is always kept as a leaf, even when it currently looks
-/// epsilon-only: a not-yet-wired `+`/`*` loopback can carry a transient
-/// self-epsilon, and collapsing through it would lose the continuation.
+/// Collect the real (non-epsilon-only) targets reachable from `state` through
+/// epsilon-only splice states, so the splice points at real states instead of
+/// chaining through other splices.
+///
+/// `boundary` is kept as a leaf, never collapsed: its epsilons may not be wired
+/// yet — a `+`/`*` loopback is empty here until its loop/exit edges are added
+/// later — so descending into it could capture an incomplete target set.
+/// `visited` only avoids re-walking an already-flattened splice.
 fn collect_branch_epsilon_targets(
     arena: &StateArena,
     state: StateId,

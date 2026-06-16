@@ -53,6 +53,9 @@ fn rune_to_utf8(r: char) -> Vec<u8> {
 /// parenthesized group. Folding alternation branches leaves the original branch
 /// entry states unreachable, so this gates the reachability compaction pass.
 fn regexp_has_alternation(root: &RegexpRoot) -> bool {
+    // More than one branch at any level means alternation. Compaction past this
+    // gate only drops states that folding left unreachable, so gating it avoids
+    // pointlessly cloning patterns that have none.
     if root.len() > 1 {
         return true;
     }
