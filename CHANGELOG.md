@@ -12,6 +12,7 @@ Style inspired by [ripgrep's CHANGELOG](https://github.com/BurntSushi/ripgrep/bl
 - Memory and automaton statistics via `Quamina::matcher_stats()`, reporting states, bytes, fanouts, and max fanout (ported from Go upstream's `GetMatcherStats`) (#152)
 
 ### Changed
+- Build regexp alternations by byte-merging branches into a deterministic entry instead of a Thompson epsilon hub (matching Go upstream's `makeNFAFromBranches`), shrinking alternation automata and speeding up their construction (#154)
 - Synced Go upstream through 5c6e2df (#152)
 
 ### Breaking

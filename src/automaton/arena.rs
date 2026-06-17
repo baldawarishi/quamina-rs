@@ -1762,7 +1762,7 @@ pub fn merge_arena_dfas(
 }
 
 /// Clone a subset of an arena starting from a given state.
-fn clone_arena_subset(arena: &StateArena, start: StateId) -> (StateArena, StateId) {
+pub(crate) fn clone_arena_subset(arena: &StateArena, start: StateId) -> (StateArena, StateId) {
     if start.is_none() {
         return (StateArena::new(), StateId::NONE);
     }
@@ -2013,6 +2013,141 @@ fn unpack_arena_table(table: &SmallTable, unpacked: &mut [StateId; BYTE_CEILING]
         let end = ceiling as usize;
         unpacked[byte_idx..end].fill(table.steps[i]);
         byte_idx = end;
+    }
+}
+
+// =============================================================================
+// Alternation branch determinization
+// =============================================================================
+
+/// Fold alternation branch entry states into one deterministic entry, merging
+/// their byte transitions and re-converging wherever two branches reach the
+/// same state.
+///
+/// All branches share the continuation `next_step`, so a state both branches
+/// reach is returned directly — the shared tail stays a single subgraph. Two
+/// kinds of state must be spliced behind an epsilon rather than byte-merged:
+/// an entry that begins with an epsilon, whose `+`/`*` loop must remain NFA
+/// structure; and `next_step` itself, which is opaque here because it may be a
+/// `+`/`*` loopback whose edges are wired up only after this returns — merging
+/// or collapsing it would drop those edges.
+///
+/// New states are appended to `arena`; the original branch entries are left
+/// unreachable and dropped by the later reachability compaction
+/// ([`clone_arena_subset`]).
+pub(crate) fn determinize_branch_starts(
+    arena: &mut StateArena,
+    starts: &[StateId],
+    next_step: StateId,
+) -> StateId {
+    debug_assert!(
+        !starts.is_empty(),
+        "alternation must have at least one branch"
+    );
+    let mut acc = starts[0];
+    // The pair memo is local to each fold step: branch entries are built from
+    // disjoint state sets, so a pair from one step never recurs in the next.
+    let mut memo: FxHashMap<(StateId, StateId), StateId> = FxHashMap::default();
+    for &next in &starts[1..] {
+        memo.clear();
+        acc = merge_branch_pair(arena, acc, next, next_step, &mut memo);
+    }
+    acc
+}
+
+/// Merge two alternation branch states within a single arena. `boundary` is the
+/// shared continuation, treated as an opaque leaf (never baked or collapsed).
+fn merge_branch_pair(
+    arena: &mut StateArena,
+    a: StateId,
+    b: StateId,
+    boundary: StateId,
+    memo: &mut FxHashMap<(StateId, StateId), StateId>,
+) -> StateId {
+    // Converging branches share their state directly; no new node is allocated.
+    if a == b {
+        return a;
+    }
+    if a.is_none() {
+        return b;
+    }
+    if b.is_none() {
+        return a;
+    }
+    if let Some(&cached) = memo.get(&(a, b)) {
+        return cached;
+    }
+
+    // Epsilon-led entries (a quantifier loop) and the boundary cannot be
+    // byte-merged; they are joined behind an epsilon splice instead.
+    let needs_splice = !arena[a].table.epsilons.is_empty()
+        || !arena[b].table.epsilons.is_empty()
+        || a == boundary
+        || b == boundary;
+
+    // Insert the memo entry before recursing so byte cycles terminate.
+    let new_id = arena.alloc();
+    memo.insert((a, b), new_id);
+
+    if needs_splice {
+        // The new state's epsilons are the two entries' real targets, so both
+        // remain reachable as alternatives without flattening their loops.
+        let mut targets: SmallVec<[StateId; 2]> = SmallVec::new();
+        let mut visited: FxHashSet<u32> = FxHashSet::default();
+        collect_branch_epsilon_targets(arena, a, boundary, &mut visited, &mut targets);
+        collect_branch_epsilon_targets(arena, b, boundary, &mut visited, &mut targets);
+        arena[new_id].table = SmallTable {
+            ceilings: smallvec![BYTE_CEILING_U8],
+            steps: smallvec![StateId::NONE],
+            epsilons: targets,
+            accel: None,
+        };
+        return new_id;
+    }
+
+    // Byte-wise merge: for each byte value, merge the pair of target states.
+    let mut unpacked_a = [StateId::NONE; BYTE_CEILING];
+    let mut unpacked_b = [StateId::NONE; BYTE_CEILING];
+    unpack_arena_table(&arena[a].table, &mut unpacked_a);
+    unpack_arena_table(&arena[b].table, &mut unpacked_b);
+
+    let mut field_transitions = arena[a].field_transitions.clone();
+    field_transitions.extend(arena[b].field_transitions.iter().cloned());
+
+    let mut merged = [StateId::NONE; BYTE_CEILING];
+    for i in 0..BYTE_CEILING {
+        merged[i] = merge_branch_pair(arena, unpacked_a[i], unpacked_b[i], boundary, memo);
+    }
+
+    arena[new_id].field_transitions = field_transitions;
+    arena[new_id].table.pack(&merged);
+    new_id
+}
+
+/// Collect the real (non-epsilon-only) targets reachable from `state` through
+/// epsilon-only splice states, so the splice points at real states instead of
+/// chaining through other splices.
+///
+/// `boundary` is kept as a leaf, never collapsed: its epsilons may not be wired
+/// yet — a `+`/`*` loopback is empty here until its loop/exit edges are added
+/// later — so descending into it could capture an incomplete target set.
+/// `visited` only avoids re-walking an already-flattened splice.
+fn collect_branch_epsilon_targets(
+    arena: &StateArena,
+    state: StateId,
+    boundary: StateId,
+    visited: &mut FxHashSet<u32>,
+    out: &mut SmallVec<[StateId; 2]>,
+) {
+    if state.is_none() || !visited.insert(state.0) {
+        return;
+    }
+    if state != boundary && is_epsilon_only_state(arena, state) {
+        for &eps in &arena[state].table.epsilons {
+            collect_branch_epsilon_targets(arena, eps, boundary, visited, out);
+        }
+    } else {
+        out.push(state);
     }
 }
 

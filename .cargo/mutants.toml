@@ -47,6 +47,17 @@ exclude_re = [
   ':28: replace && with \|\| in traverse_lazy_dfa',
   # Dedup drops only exact duplicates, so the `> 64` threshold is speed-only.
   'replace > with .* in traverse_arena_nfa',
+  # Branch folding: the continuation boundary is never an epsilon-only state
+  # mid-fold (a +/* loopback is still empty), and a finished splice collapses to
+  # the same closure, so == and != pick the same targets.
+  'replace != with == in collect_branch_epsilon_targets',
+  # `visited` only de-dups already-flattened splices; no epsilon cycle is
+  # reachable mid-fold, so a dropped dedup just repeats a target the closure
+  # already ignores.
+  'replace \|\| with && in collect_branch_epsilon_targets',
+  # Post-fold compaction is cleanup-only: a pattern with no dead states (every
+  # non-alternation one) clones to itself, so >1 vs >=1 changes nothing.
+  'replace > with >= in regexp_has_alternation',
 ]
 
 # Don't mutate logging/debug/panic macros — not worth testing
