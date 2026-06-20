@@ -830,6 +830,7 @@ fn test_alternation_top_level_is_compacted() {
 // ============================================================================
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn test_dot_under_nested_quantifier_no_overmatch() {
     // `.b` needs two characters, so a single trailing `[ab]` cannot complete an
     // outer iteration. The inner `(?:a)*` loop must not re-expose the outer
@@ -844,6 +845,7 @@ fn test_dot_under_nested_quantifier_no_overmatch() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn test_plus_loop_under_star_no_overmatch() {
     // The body of the outer `*` begins with a `+` loop whose start has no
     // epsilons of its own (its back-edge lives on the loopback state), yet it is
@@ -858,6 +860,7 @@ fn test_plus_loop_under_star_no_overmatch() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn test_star_under_star_no_overmatch() {
     // `(a*)*b` matches any run of `a`s followed by a single `b`; the inner `a*`
     // loop must not let the construct reach `b`'s continuation early.
@@ -871,6 +874,7 @@ fn test_star_under_star_no_overmatch() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn test_optional_under_star_no_overmatch() {
     // The `?` skip inside `([xyz]?)*` must not leak past the trailing `end`.
     let q = q!("p" => r#"{"x": [{"regexp": "([xyz]?)*end"}]}"#);
@@ -883,6 +887,7 @@ fn test_optional_under_star_no_overmatch() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn test_deeply_nested_quantifiers_no_overmatch() {
     // Three quantifier layers, each contributing a skip edge; the value alphabet
     // is `{a,b,c}` only, so any character outside it must fail.
@@ -896,6 +901,7 @@ fn test_deeply_nested_quantifiers_no_overmatch() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn test_bounded_quantifier_with_loop_body_no_overmatch() {
     // An optional `{0,2}` copy whose body (`a*b`) begins with a loop: the
     // optional-copy skip must not leak across the inner `a*`.
@@ -909,6 +915,7 @@ fn test_bounded_quantifier_with_loop_body_no_overmatch() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn test_dot_primitive_quantifiers_still_match() {
     // Guard the simple `.` cases: a bare `.b` and `.` under a single star.
     let q = q!("p" => r#"{"x": [{"regexp": ".b"}]}"#);
@@ -924,6 +931,23 @@ fn test_dot_primitive_quantifiers_still_match() {
     for v in ["", "a", "b", "ab", "xyz", "aaaa"] {
         assert_has_match!(q2, format!(r#"{{"x": "{v}"}}"#), "p", "should match");
     }
+}
+
+/// Miri-only: exercises the nested-quantifier skip routing (`add_skip_epsilon`)
+/// for a compound body (outer `*` over a subtree → split node) and a primitive
+/// atom on a loop start (inner `a*` → direct skip), plus the `.` UTF-8 FA —
+/// without the per-value match sweeps. Covers the gap left by ignoring the
+/// test_*_no_overmatch tests under Miri.
+#[test]
+#[cfg(miri)]
+fn test_nested_quantifier_overmatch_miri_minimal() {
+    let q = q!("p" => r#"{"x": [{"regexp": "(a*)*b"}]}"#);
+    assert_has_match!(q, r#"{"x": "aab"}"#, "p", "should match");
+    assert_no_match!(q, r#"{"x": "a"}"#, "should not match");
+
+    let q2 = q!("p" => r#"{"x": [{"regexp": "(.+c)*"}]}"#);
+    assert_has_match!(q2, r#"{"x": "abc"}"#, "p", "should match");
+    assert_no_match!(q2, r#"{"x": "abb"}"#, "should not match");
 }
 
 // ============================================================================
