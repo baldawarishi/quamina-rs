@@ -233,8 +233,7 @@ fn make_one_arena_branch_fa(
         } else if qa.is_qm() {
             // Optional: build atom FA with epsilon to skip
             let atom_state = make_arena_atom_fa(qa, arena, current_next);
-            arena[atom_state].table.epsilons.push(original_next);
-            current_next = atom_state;
+            current_next = add_skip_epsilon(arena, atom_state, original_next, qa.subtree.is_some());
         } else if qa.is_singleton() {
             // No quantifier - simple FA
             current_next = make_arena_atom_fa(qa, arena, current_next);
@@ -257,8 +256,8 @@ fn make_one_arena_branch_fa(
             // First, build the optional part (m-n copies, each with epsilon skip)
             for _ in n..m {
                 let atom_state = make_arena_atom_fa(qa, arena, current_next);
-                arena[atom_state].table.epsilons.push(current_next);
-                current_next = atom_state;
+                current_next =
+                    add_skip_epsilon(arena, atom_state, current_next, qa.subtree.is_some());
             }
 
             // Then, build the required part (n copies, no epsilon skip)
@@ -269,6 +268,34 @@ fn make_one_arena_branch_fa(
     }
 
     current_next
+}
+
+/// Wire a quantified atom's "match zero copies" skip (the bypass edge for `*`,
+/// `?`, and the optional copies of `{n,m}`) to `skip_target`, returning the
+/// construct's entry state.
+///
+/// The skip must not sit on any state the body re-enters while matching, or an
+/// inner loop's back-edge re-exposes it part-way through and the construct can
+/// exit before its body is satisfied (over-match). A primitive atom (rune range
+/// or `.`) is cycle-free and takes the skip directly. A subtree body may begin
+/// with its own `+`/`*` whose loop start is this entry — re-entered each pass but
+/// holding no epsilons of its own (the back-edge sits on the loopback state, so
+/// inspecting `entry`'s epsilons cannot detect it; that is what `compound`
+/// signals) — so it gets a private epsilon-only split node instead.
+fn add_skip_epsilon(
+    arena: &mut StateArena,
+    entry: StateId,
+    skip_target: StateId,
+    compound: bool,
+) -> StateId {
+    if !compound && arena[entry].table.epsilons.is_empty() {
+        arena[entry].table.epsilons.push(skip_target);
+        entry
+    } else {
+        let split = arena.alloc();
+        arena[split].table.epsilons = smallvec![entry, skip_target];
+        split
+    }
 }
 
 /// Create a cyclic arena NFA structure for + and * quantifiers.
@@ -294,11 +321,6 @@ fn create_arena_plus_star_loop(
     // Set up loopback's epsilons: to exit AND back to start (CYCLE!)
     arena[loopback].table.epsilons = smallvec![exit_state, start];
 
-    // For *, add epsilon from start to exit (can skip entirely)
-    if is_star {
-        arena[start].table.epsilons.push(exit_state);
-    }
-
     // Compute acceleration for the loop.
     // Only ASCII-only negated patterns can be accelerated.
     // Unicode patterns have too many exit bytes (68+) for memchr to help.
@@ -317,12 +339,19 @@ fn create_arena_plus_star_loop(
         accel
     });
 
+    // Accel applies to the looping byte states (start + loopback), never to an
+    // epsilon-only entry split.
     if let Some(accel) = accel {
         arena[start].table.accel = Some(accel.clone());
         arena[loopback].table.accel = Some(accel);
     }
 
-    start
+    // For *, offer the "match zero copies" bypass straight to the exit.
+    if is_star {
+        add_skip_epsilon(arena, start, exit_state, qa.subtree.is_some())
+    } else {
+        start
+    }
 }
 
 /// Build arena FA for a single atom.
