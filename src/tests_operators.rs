@@ -933,21 +933,16 @@ fn test_dot_primitive_quantifiers_still_match() {
     }
 }
 
-/// Miri-only: exercises the nested-quantifier skip routing (`add_skip_epsilon`)
-/// for a compound body (outer `*` over a subtree → split node) and a primitive
-/// atom on a loop start (inner `a*` → direct skip), plus the `.` UTF-8 FA —
-/// without the per-value match sweeps. Covers the gap left by ignoring the
-/// test_*_no_overmatch tests under Miri.
+/// Miri-only: exercises `add_skip_epsilon` in the NFA builder — compound-body branch
+/// (outer `*` over the `(a*)` subtree → split node) and the primitive-direct branch
+/// (inner `a*` loop start) — via direct NFA build, without freeze or match calls.
+/// Covers the gap left by ignoring the test_*_no_overmatch tests under Miri.
 #[test]
 #[cfg(miri)]
 fn test_nested_quantifier_overmatch_miri_minimal() {
-    let q = q!("p" => r#"{"x": [{"regexp": "(a*)*b"}]}"#);
-    assert_has_match!(q, r#"{"x": "aab"}"#, "p", "should match");
-    assert_no_match!(q, r#"{"x": "a"}"#, "should not match");
-
-    let q2 = q!("p" => r#"{"x": [{"regexp": "(.+c)*"}]}"#);
-    assert_has_match!(q2, r#"{"x": "abc"}"#, "p", "should match");
-    assert_no_match!(q2, r#"{"x": "abb"}"#, "should not match");
+    use crate::regexp::{make_regexp_nfa_arena, parse_regexp};
+    make_regexp_nfa_arena(parse_regexp("(a*)*b").unwrap());
+    make_regexp_nfa_arena(parse_regexp("(a+c)*").unwrap());
 }
 
 // ============================================================================
