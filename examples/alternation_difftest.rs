@@ -100,19 +100,17 @@ fn check(pat: &str, strings: &[String], shown: &mut usize) -> usize {
 /// Generate a random regexp over {a,b,c} using a depth-bounded grammar shared by
 /// both engines.
 ///
-/// Two constructs are kept out of the grammar because quamina has pre-existing
-/// over-match bugs around them (unrelated to this builder) that would mask the
-/// property under test: the `.` atom, and nesting one unbounded quantifier
-/// (`*`/`+`) inside another. `allow_unbounded` enforces the latter — it is
-/// cleared inside any quantified body, so siblings like `a*b*` are still
-/// generated but `(?:a*)+` is not. The unit tests in `tests_operators` cover
-/// `.` and the quantifier shapes this change affects directly.
-fn gen_regexp(rng: &mut StdRng, depth: u32, allow_unbounded: bool) -> String {
+/// The grammar deliberately exercises the `.` atom and nests unbounded
+/// quantifiers (`*`/`+`) inside one another, e.g. `(?:a*)+` — the shapes most
+/// prone to over-matching in the NFA builder, where a quantifier's "match zero
+/// copies" skip can leak across an inner loop's back-edge. The unit tests in
+/// `tests_operators` cover the same shapes directly.
+fn gen_regexp(rng: &mut StdRng, depth: u32) -> String {
     // At depth 0 only produce atoms to keep patterns bounded.
     let choice = if depth == 0 {
-        rng.random_range(0usize..4)
+        rng.random_range(0usize..5)
     } else {
-        rng.random_range(0usize..8)
+        rng.random_range(0usize..9)
     };
     match choice {
         0 => {
@@ -130,36 +128,31 @@ fn gen_regexp(rng: &mut StdRng, depth: u32, allow_unbounded: bool) -> String {
             String::new()
         }
         4 => {
-            // concatenation of 2-3 sub-expressions
-            let n = 2 + rng.random_range(0usize..2);
-            (0..n)
-                .map(|_| gen_regexp(rng, depth - 1, allow_unbounded))
-                .collect()
+            // dot (any character)
+            ".".to_string()
         }
         5 => {
+            // concatenation of 2-3 sub-expressions
+            let n = 2 + rng.random_range(0usize..2);
+            (0..n).map(|_| gen_regexp(rng, depth - 1)).collect()
+        }
+        6 => {
             // alternation of 2-4 branches (may include empties)
             let n = 2 + rng.random_range(0usize..3);
-            let parts: Vec<String> = (0..n)
-                .map(|_| gen_regexp(rng, depth - 1, allow_unbounded))
-                .collect();
+            let parts: Vec<String> = (0..n).map(|_| gen_regexp(rng, depth - 1)).collect();
             let joined = parts.join("|");
             format!("({joined})")
         }
-        6 => {
-            // quantified group; the body may not introduce another unbounded
-            // quantifier (see the bug note above).
-            let inner = gen_regexp(rng, depth - 1, false);
-            let quantifiers: &[&str] = if allow_unbounded {
-                &["*", "+", "?", "{1,2}", "{0,2}", "{2,3}"]
-            } else {
-                &["?", "{1,2}", "{0,2}", "{2,3}"]
-            };
+        7 => {
+            // quantified group; the body may itself contain quantifiers.
+            let inner = gen_regexp(rng, depth - 1);
+            let quantifiers = ["*", "+", "?", "{1,2}", "{0,2}", "{2,3}"];
             let q = quantifiers[rng.random_range(0usize..quantifiers.len())];
             format!("(?:{inner}){q}")
         }
         _ => {
             // group
-            let inner = gen_regexp(rng, depth - 1, allow_unbounded);
+            let inner = gen_regexp(rng, depth - 1);
             format!("({inner})")
         }
     }
@@ -197,7 +190,7 @@ fn main() {
     ] {
         let mut rng = StdRng::seed_from_u64(seed);
         for _ in 0..n_patterns {
-            let pat = gen_regexp(&mut rng, 4, true);
+            let pat = gen_regexp(&mut rng, 4);
             if pat.is_empty() {
                 continue;
             }

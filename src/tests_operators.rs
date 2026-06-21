@@ -819,6 +819,121 @@ fn test_alternation_top_level_is_compacted() {
 }
 
 // ============================================================================
+// Nested-quantifier over-match tests
+//
+// These pin the property that a quantifier's "match zero copies" skip (`*`, `?`,
+// and the optional copies of `{n,m}`) never lets the construct exit before its
+// body matches — even when the body is itself a `+`/`*`/`?` whose entry state is
+// re-entered mid-match. `.` appears in several cases because it makes such a leak
+// observable (it would consume the closing quote), but the property holds for any
+// atom.
+// ============================================================================
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn test_dot_under_nested_quantifier_no_overmatch() {
+    // `.b` needs two characters, so a single trailing `[ab]` cannot complete an
+    // outer iteration. The inner `(?:a)*` loop must not re-expose the outer
+    // star's exit, or "a"/"ab" would falsely match.
+    let q = q!("p" => r#"{"x": [{"regexp": "(?:(?:a)*[ab]((c)|.b))*"}]}"#);
+    for v in ["", "ac", "bc", "abb", "aab"] {
+        assert_has_match!(q, format!(r#"{{"x": "{v}"}}"#), "p", "should match");
+    }
+    for v in ["a", "ab", "aa", "ca"] {
+        assert_no_match!(q, format!(r#"{{"x": "{v}"}}"#), "should not match");
+    }
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn test_plus_loop_under_star_no_overmatch() {
+    // The body of the outer `*` begins with a `+` loop whose start has no
+    // epsilons of its own (its back-edge lives on the loopback state), yet it is
+    // still re-entered each pass. Each iteration of `(.+c)` must end in `c`.
+    let q = q!("p" => r#"{"x": [{"regexp": "(.+c)*"}]}"#);
+    for v in ["", "ac", "abc", "abbc", "acbc"] {
+        assert_has_match!(q, format!(r#"{{"x": "{v}"}}"#), "p", "should match");
+    }
+    for v in ["a", "c", "abb", "aab", "ca"] {
+        assert_no_match!(q, format!(r#"{{"x": "{v}"}}"#), "should not match");
+    }
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn test_star_under_star_no_overmatch() {
+    // `(a*)*b` matches any run of `a`s followed by a single `b`; the inner `a*`
+    // loop must not let the construct reach `b`'s continuation early.
+    let q = q!("p" => r#"{"x": [{"regexp": "(a*)*b"}]}"#);
+    for v in ["b", "ab", "aab", "aaab"] {
+        assert_has_match!(q, format!(r#"{{"x": "{v}"}}"#), "p", "should match");
+    }
+    for v in ["", "a", "aa", "ba"] {
+        assert_no_match!(q, format!(r#"{{"x": "{v}"}}"#), "should not match");
+    }
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn test_optional_under_star_no_overmatch() {
+    // The `?` skip inside `([xyz]?)*` must not leak past the trailing `end`.
+    let q = q!("p" => r#"{"x": [{"regexp": "([xyz]?)*end"}]}"#);
+    for v in ["end", "xyzend", "xend"] {
+        assert_has_match!(q, format!(r#"{{"x": "{v}"}}"#), "p", "should match");
+    }
+    for v in ["", "xyz", "aend", "en"] {
+        assert_no_match!(q, format!(r#"{{"x": "{v}"}}"#), "should not match");
+    }
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn test_deeply_nested_quantifiers_no_overmatch() {
+    // Three quantifier layers, each contributing a skip edge; the value alphabet
+    // is `{a,b,c}` only, so any character outside it must fail.
+    let q = q!("p" => r#"{"x": [{"regexp": "(((a?)*b?)*c?)*"}]}"#);
+    for v in ["", "a", "c", "abc", "aab", "ca", "aaaa"] {
+        assert_has_match!(q, format!(r#"{{"x": "{v}"}}"#), "p", "should match");
+    }
+    for v in ["d", "ad", "xy", "abcd"] {
+        assert_no_match!(q, format!(r#"{{"x": "{v}"}}"#), "should not match");
+    }
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn test_bounded_quantifier_with_loop_body_no_overmatch() {
+    // An optional `{0,2}` copy whose body (`a*b`) begins with a loop: the
+    // optional-copy skip must not leak across the inner `a*`.
+    let q = q!("p" => r#"{"x": [{"regexp": "(?:a*b){0,2}"}]}"#);
+    for v in ["", "b", "ab", "abb", "aab", "abab", "bb"] {
+        assert_has_match!(q, format!(r#"{{"x": "{v}"}}"#), "p", "should match");
+    }
+    for v in ["a", "abc", "aa", "ba"] {
+        assert_no_match!(q, format!(r#"{{"x": "{v}"}}"#), "should not match");
+    }
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn test_dot_primitive_quantifiers_still_match() {
+    // Guard the simple `.` cases: a bare `.b` and `.` under a single star.
+    let q = q!("p" => r#"{"x": [{"regexp": ".b"}]}"#);
+    for v in ["ab", "bb", "xb"] {
+        assert_has_match!(q, format!(r#"{{"x": "{v}"}}"#), "p", "should match");
+    }
+    for v in ["", "b", "abb"] {
+        assert_no_match!(q, format!(r#"{{"x": "{v}"}}"#), "should not match");
+    }
+
+    // `(?:a*.)*` accepts every string, including the empty one.
+    let q2 = q!("p" => r#"{"x": [{"regexp": "(?:a*.)*"}]}"#);
+    for v in ["", "a", "b", "ab", "xyz", "aaaa"] {
+        assert_has_match!(q2, format!(r#"{{"x": "{v}"}}"#), "p", "should match");
+    }
+}
+
+// ============================================================================
 // CIDR Matching Tests
 // ============================================================================
 
