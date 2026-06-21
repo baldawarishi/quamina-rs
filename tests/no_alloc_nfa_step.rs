@@ -1,31 +1,19 @@
 //! Validates that `traverse_arena_nfa` performs zero heap allocations in
-//! steady state.
+//! steady state (Go upstream e33139f equivalent).
 //!
-//! Upstream Go's commit `e33139f` ("nfa: simplify smallTable.step, eliminate
-//! per-traverse stepOut alloc") removed a `&stepOut{}` literal that was
-//! escaping to the heap once per `traverseNFA` call. Our Rust port is
-//! claimed to avoid the same allocation by returning `StateId` (a `u32`
-//! newtype) directly from `dstep` rather than threading a struct through
-//! the call. This test backs that claim with a real measurement: a custom
-//! global allocator counts every `alloc` call during 1000 traversals after
-//! warmup, and the assertion is "exactly zero".
+//! Lives in its own integration-test binary so the custom global allocator
+//! is scoped here and does not perturb the unit-test suite.
 //!
-//! The harness lives in its own integration-test binary so the global
-//! allocator is scoped to this file alone — it does not perturb the unit
-//! test allocator.
-//!
-//! The counter and its enable flag are process-global, and the allocator sees
-//! allocations from every thread. Both measured scenarios therefore live in a
-//! single `#[test]` function and run sequentially: that keeps exactly one test
-//! thread alive in this binary, so no sibling test's setup or the harness's
-//! result reporting can allocate while a counting window is open. (When the
-//! two scenarios were separate `#[test]`s, `cargo test` ran them in parallel
-//! and their windows interleaved, miscounting one test's allocations against
-//! the other.)
+//! The counter is thread-local rather than process-global because the test
+//! harness keeps a background main thread alive even when only one `#[test]`
+//! exists, and that thread occasionally allocates. `COUNTING_ENABLED` is a
+//! cheap process-wide gate so the allocator skips the TLS read when no
+//! window is open.
 
 #![allow(unsafe_code)]
 
 use std::alloc::{GlobalAlloc, Layout, System};
+use std::cell::Cell;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -36,16 +24,23 @@ use quamina::automaton::arena::{
 
 struct CountingAlloc;
 
-static ALLOCS: AtomicUsize = AtomicUsize::new(0);
-/// Counting is gated so only the measured window contributes. Any allocation
-/// performed during test setup (Vec growth in NfaBuffers, Arc construction,
-/// arena building) happens with the gate closed.
+// `const` initializers keep the TLS slot in the binary's static TLS template,
+// so accessing these from inside the allocator impl cannot trigger allocation.
+thread_local! {
+    static TL_COUNTING_ENABLED: Cell<bool> = const { Cell::new(false) };
+    static TL_ALLOCS: Cell<usize> = const { Cell::new(0) };
+}
+
 static COUNTING_ENABLED: AtomicUsize = AtomicUsize::new(0);
 
 unsafe impl GlobalAlloc for CountingAlloc {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
         if COUNTING_ENABLED.load(Ordering::Relaxed) != 0 {
-            ALLOCS.fetch_add(1, Ordering::Relaxed);
+            TL_COUNTING_ENABLED.with(|f| {
+                if f.get() {
+                    TL_ALLOCS.with(|c| c.set(c.get() + 1));
+                }
+            });
         }
         // SAFETY: forwarding to the real system allocator with the same layout.
         unsafe { System.alloc(layout) }
@@ -59,7 +54,11 @@ unsafe impl GlobalAlloc for CountingAlloc {
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
         if COUNTING_ENABLED.load(Ordering::Relaxed) != 0 {
             // realloc may move the buffer — count it as one allocation event.
-            ALLOCS.fetch_add(1, Ordering::Relaxed);
+            TL_COUNTING_ENABLED.with(|f| {
+                if f.get() {
+                    TL_ALLOCS.with(|c| c.set(c.get() + 1));
+                }
+            });
         }
         // SAFETY: forwarding to the real system allocator with the same layout.
         unsafe { System.realloc(ptr, layout, new_size) }
@@ -85,9 +84,7 @@ fn count_steady_state_allocs(value: &[u8], expect_match: bool) -> usize {
 
     let mut bufs = NfaBuffers::with_capacity();
 
-    // Warmup. The first few traversals push into the internal Vecs / HashSets
-    // inside `NfaBuffers`, growing them to their working capacity. Sixteen
-    // iterations is overkill for this small FA but cheap insurance.
+    // Warmup: grow NfaBuffers internals to working capacity before the window.
     for _ in 0..16 {
         traverse_arena_nfa(&arena, start, value, &mut bufs);
         assert_eq!(
@@ -97,14 +94,18 @@ fn count_steady_state_allocs(value: &[u8], expect_match: bool) -> usize {
         );
     }
 
-    // Open the counting window and measure 1000 steady-state traversals.
-    ALLOCS.store(0, Ordering::Relaxed);
+    // Prime TLS before the window so first-access overhead is not counted.
+    TL_ALLOCS.with(|c| c.set(0));
+    TL_COUNTING_ENABLED.with(|f| f.set(false));
+
     COUNTING_ENABLED.store(1, Ordering::Relaxed);
+    TL_COUNTING_ENABLED.with(|f| f.set(true));
     for _ in 0..1000 {
         traverse_arena_nfa(&arena, start, value, &mut bufs);
     }
+    TL_COUNTING_ENABLED.with(|f| f.set(false));
     COUNTING_ENABLED.store(0, Ordering::Relaxed);
-    ALLOCS.load(Ordering::Relaxed)
+    TL_ALLOCS.with(Cell::get)
 }
 
 #[test]
@@ -114,8 +115,6 @@ fn count_steady_state_allocs(value: &[u8], expect_match: bool) -> usize {
 // path is covered by the unit tests in `src/automaton/arena.rs`.
 #[cfg_attr(miri, ignore)]
 fn traverse_arena_nfa_is_alloc_free_in_steady_state() {
-    // Matching value: ends with the arena's value terminator and runs the
-    // spinner to a successful endpoint.
     let mut matching: Vec<u8> = b"ALICE_IN_WONDERLAND_AAAAAAAAAAAA".to_vec();
     matching.push(ARENA_VALUE_TERMINATOR);
     let match_allocs = count_steady_state_allocs(&matching, true);
@@ -124,10 +123,8 @@ fn traverse_arena_nfa_is_alloc_free_in_steady_state() {
         "traverse_arena_nfa allocated {match_allocs} time(s) across 1000 steady-state matches; the inner NFA step is supposed to be allocation-free (upstream Go e33139f equivalent)"
     );
 
-    // Non-matching value: starts with 'B', so the FA dies out on the first
-    // byte. This still exercises every branch of the stepping loop — in fact
-    // more of them, because the spinner has to absorb every byte rather than
-    // terminating early. Same allocation guarantee.
+    // Non-matching: 'B' kills the FA on the first byte, exercising the
+    // no-transition path through the full value length.
     let mut no_match: Vec<u8> = b"BOB_NEVER_STARTS_WITH_A".to_vec();
     no_match.push(ARENA_VALUE_TERMINATOR);
     let no_match_allocs = count_steady_state_allocs(&no_match, false);
