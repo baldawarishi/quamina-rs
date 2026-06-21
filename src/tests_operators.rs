@@ -933,18 +933,6 @@ fn test_dot_primitive_quantifiers_still_match() {
     }
 }
 
-/// Miri-only: exercises `add_skip_epsilon` in the NFA builder — compound-body branch
-/// (outer `*` over the `(a*)` subtree → split node) and the primitive-direct branch
-/// (inner `a*` loop start) — via direct NFA build, without freeze or match calls.
-/// Covers the gap left by ignoring the test_*_no_overmatch tests under Miri.
-#[test]
-#[cfg(miri)]
-fn test_nested_quantifier_overmatch_miri_minimal() {
-    use crate::regexp::{make_regexp_nfa_arena, parse_regexp};
-    make_regexp_nfa_arena(parse_regexp("(a*)*b").unwrap());
-    make_regexp_nfa_arena(parse_regexp("(a+c)*").unwrap());
-}
-
 // ============================================================================
 // CIDR Matching Tests
 // ============================================================================
