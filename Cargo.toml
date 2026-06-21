@@ -42,6 +42,10 @@ name = "bulk_10k"
 harness = false
 
 [[bench]]
+name = "add_pattern_scaling"
+harness = false
+
+[[bench]]
 name = "memory"
 harness = false
 
