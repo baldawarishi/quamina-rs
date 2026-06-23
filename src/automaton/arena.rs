@@ -2210,6 +2210,37 @@ pub fn merge_arena_nfas(
     (new_arena, start)
 }
 
+/// Append the union of `target_start` and `source_start` into `target`.
+///
+/// Existing target states are treated as immutable. Target-only branches reuse
+/// their existing `StateId`s, source-only branches are copied into `target`,
+/// and overlapping target/source pairs allocate newly appended states. The
+/// returned state is the new live start; callers should install it only after
+/// budget checks have passed.
+pub fn append_merge_arena_nfas(
+    target: &mut StateArena,
+    target_start: StateId,
+    source: &StateArena,
+    source_start: StateId,
+) -> StateId {
+    if target_start.is_none() {
+        let mut memo = FxHashMap::default();
+        return append_merge_nfa_states_recursive(
+            target,
+            StateId::NONE,
+            source,
+            source_start,
+            &mut memo,
+        );
+    }
+    if source_start.is_none() {
+        return target_start;
+    }
+
+    let mut memo = FxHashMap::default();
+    append_merge_nfa_states_recursive(target, target_start, source, source_start, &mut memo)
+}
+
 /// Check if a state is an "epsilon-only" splice state created during merges.
 ///
 /// These synthetic states branch into multiple epsilon targets with no byte
@@ -2263,6 +2294,445 @@ fn is_spinout_state(arena: &StateArena, state_id: StateId) -> bool {
     }
     let state = &arena[state_id];
     state.table.steps.contains(&state_id) && state.table.epsilons.len() <= 1
+}
+
+fn append_merge_nfa_states_recursive(
+    target: &mut StateArena,
+    target_state: StateId,
+    source: &StateArena,
+    source_state: StateId,
+    memo: &mut FxHashMap<(StateId, StateId), StateId>,
+) -> StateId {
+    let key = (target_state, source_state);
+    if let Some(&cached) = memo.get(&key) {
+        return cached;
+    }
+
+    if target_state.is_none() && source_state.is_none() {
+        return StateId::NONE;
+    }
+
+    if source_state.is_none() {
+        memo.insert(key, target_state);
+        return target_state;
+    }
+
+    if target_state.is_none() {
+        let new_id = target.alloc();
+        memo.insert(key, new_id);
+
+        let source_state_ref = source[source_state].clone();
+        target[new_id].field_transitions = source_state_ref.field_transitions.clone();
+        target[new_id].table =
+            append_remap_source_nfa_table(target, source, &source_state_ref.table, memo);
+        return new_id;
+    }
+
+    let new_id = target.alloc();
+    memo.insert(key, new_id);
+
+    let target_state_ref = target[target_state].clone();
+    let source_state_ref = source[source_state].clone();
+
+    let target_has_spinout = is_spinout_state(target, target_state);
+    let source_has_spinout = is_spinout_state(source, source_state);
+    let target_has_epsilons = !target_state_ref.table.epsilons.is_empty();
+    let source_has_epsilons = !source_state_ref.table.epsilons.is_empty();
+
+    if target_has_spinout && source_has_spinout {
+        append_merge_dual_spinout_states(
+            target,
+            &target_state_ref,
+            source,
+            &source_state_ref,
+            memo,
+            new_id,
+        );
+        return new_id;
+    }
+
+    if (target_has_spinout && !source_has_epsilons) || (source_has_spinout && !target_has_epsilons)
+    {
+        return append_asymmetric_spinner_merge(
+            target,
+            target_state,
+            &target_state_ref,
+            source,
+            source_state,
+            &source_state_ref,
+            target_has_spinout,
+            memo,
+            new_id,
+        );
+    }
+
+    if target_has_epsilons || source_has_epsilons {
+        let cloned_source =
+            append_merge_nfa_states_recursive(target, StateId::NONE, source, source_state, memo);
+        let epsilons = flatten_epsilon_targets(target, &[target_state, cloned_source]);
+        target[new_id].table = SmallTable {
+            ceilings: smallvec![BYTE_CEILING_U8],
+            steps: smallvec![StateId::NONE],
+            epsilons,
+            accel: None,
+        };
+        return new_id;
+    }
+
+    let combined_table = append_merge_nfa_tables_bytewise(
+        target,
+        &target_state_ref.table,
+        source,
+        &source_state_ref.table,
+        memo,
+    );
+
+    let mut field_transitions = target_state_ref.field_transitions;
+    field_transitions.extend(source_state_ref.field_transitions);
+
+    target[new_id].table = combined_table;
+    target[new_id].field_transitions = field_transitions;
+
+    new_id
+}
+
+fn append_merge_dual_spinout_states(
+    target: &mut StateArena,
+    target_state_ref: &FaState,
+    source: &StateArena,
+    source_state_ref: &FaState,
+    memo: &mut FxHashMap<(StateId, StateId), StateId>,
+    new_id: StateId,
+) {
+    let mut combined_table = append_merge_nfa_tables_bytewise(
+        target,
+        &target_state_ref.table,
+        source,
+        &source_state_ref.table,
+        memo,
+    );
+
+    let mut merged_epsilons: SmallVec<[StateId; 2]> = SmallVec::new();
+    for &eps in &target_state_ref.table.epsilons {
+        let merged = append_merge_nfa_states_recursive(target, eps, source, StateId::NONE, memo);
+        if !merged.is_none() {
+            merged_epsilons.push(merged);
+        }
+    }
+    for &eps in &source_state_ref.table.epsilons {
+        let merged = append_merge_nfa_states_recursive(target, StateId::NONE, source, eps, memo);
+        if !merged.is_none() {
+            merged_epsilons.push(merged);
+        }
+    }
+    combined_table.epsilons = merged_epsilons;
+
+    let mut field_transitions = target_state_ref.field_transitions.clone();
+    field_transitions.extend(source_state_ref.field_transitions.iter().cloned());
+
+    target[new_id].table = combined_table;
+    target[new_id].field_transitions = field_transitions;
+}
+
+#[allow(clippy::too_many_arguments)]
+fn append_asymmetric_spinner_merge(
+    target: &mut StateArena,
+    target_state: StateId,
+    target_state_ref: &FaState,
+    source: &StateArena,
+    source_state: StateId,
+    source_state_ref: &FaState,
+    target_has_spinout: bool,
+    memo: &mut FxHashMap<(StateId, StateId), StateId>,
+    new_id: StateId,
+) -> StateId {
+    let mut target_unpacked = [StateId::NONE; BYTE_CEILING];
+    let mut source_unpacked = [StateId::NONE; BYTE_CEILING];
+    unpack_arena_table(&target_state_ref.table, &mut target_unpacked);
+    unpack_arena_table(&source_state_ref.table, &mut source_unpacked);
+
+    let mut target_clone_map = FxHashMap::default();
+    let mut merged_unpacked = [StateId::NONE; BYTE_CEILING];
+    for i in 0..BYTE_CEILING {
+        merged_unpacked[i] = if target_has_spinout {
+            append_asymmetric_spinner_byte_target_spinout(
+                target,
+                target_state,
+                target_unpacked[i],
+                target_state_ref,
+                source,
+                source_unpacked[i],
+                memo,
+                new_id,
+            )
+        } else {
+            append_asymmetric_spinner_byte_source_spinout(
+                target,
+                target_unpacked[i],
+                source,
+                source_state,
+                source_unpacked[i],
+                source_state_ref,
+                memo,
+                &mut target_clone_map,
+                new_id,
+            )
+        };
+    }
+
+    let mut combined_table = SmallTable::new();
+    combined_table.pack(&merged_unpacked);
+
+    let spinner_epsilons = if target_has_spinout {
+        &target_state_ref.table.epsilons
+    } else {
+        &source_state_ref.table.epsilons
+    };
+    for &spinner_eps in spinner_epsilons {
+        let merged = if target_has_spinout {
+            append_merge_nfa_states_recursive(target, spinner_eps, source, StateId::NONE, memo)
+        } else {
+            append_merge_nfa_states_recursive(target, StateId::NONE, source, spinner_eps, memo)
+        };
+        if !merged.is_none() {
+            combined_table.epsilons.push(merged);
+        }
+    }
+
+    let mut field_transitions = target_state_ref.field_transitions.clone();
+    field_transitions.extend(source_state_ref.field_transitions.iter().cloned());
+
+    target[new_id].table = combined_table;
+    target[new_id].field_transitions = field_transitions;
+    new_id
+}
+
+#[allow(clippy::too_many_arguments)]
+fn append_asymmetric_spinner_byte_target_spinout(
+    target: &mut StateArena,
+    spinner_id: StateId,
+    spinner_next: StateId,
+    spinner_state: &FaState,
+    source: &StateArena,
+    other_next: StateId,
+    memo: &mut FxHashMap<(StateId, StateId), StateId>,
+    new_id: StateId,
+) -> StateId {
+    if spinner_next.is_none() {
+        return StateId::NONE;
+    }
+
+    if other_next.is_none() {
+        if spinner_next == spinner_id {
+            return new_id;
+        }
+        return append_merge_nfa_states_recursive(
+            target,
+            spinner_next,
+            source,
+            StateId::NONE,
+            memo,
+        );
+    }
+
+    if spinner_next == spinner_id {
+        let remapped_other =
+            append_merge_nfa_states_recursive(target, StateId::NONE, source, other_next, memo);
+        append_add_spinner_backedge(
+            target,
+            remapped_other,
+            new_id,
+            &spinner_state.field_transitions,
+        );
+        return remapped_other;
+    }
+
+    let merged_branch =
+        append_merge_nfa_states_recursive(target, spinner_next, source, other_next, memo);
+    if !merged_branch.is_none() {
+        target[merged_branch].table.epsilons.push(new_id);
+    }
+    merged_branch
+}
+
+#[allow(clippy::too_many_arguments)]
+fn append_asymmetric_spinner_byte_source_spinout(
+    target: &mut StateArena,
+    other_next: StateId,
+    source: &StateArena,
+    spinner_id: StateId,
+    spinner_next: StateId,
+    spinner_state: &FaState,
+    memo: &mut FxHashMap<(StateId, StateId), StateId>,
+    target_clone_map: &mut FxHashMap<StateId, StateId>,
+    new_id: StateId,
+) -> StateId {
+    if spinner_next.is_none() {
+        return StateId::NONE;
+    }
+
+    if other_next.is_none() {
+        if spinner_next == spinner_id {
+            return new_id;
+        }
+        return append_merge_nfa_states_recursive(
+            target,
+            StateId::NONE,
+            source,
+            spinner_next,
+            memo,
+        );
+    }
+
+    if spinner_next == spinner_id {
+        let remapped_other = append_clone_target_state(target, other_next, target_clone_map);
+        append_add_spinner_backedge(
+            target,
+            remapped_other,
+            new_id,
+            &spinner_state.field_transitions,
+        );
+        return remapped_other;
+    }
+
+    let merged_branch =
+        append_merge_nfa_states_recursive(target, other_next, source, spinner_next, memo);
+    if !merged_branch.is_none() {
+        target[merged_branch].table.epsilons.push(new_id);
+    }
+    merged_branch
+}
+
+fn append_add_spinner_backedge(
+    target: &mut StateArena,
+    state_id: StateId,
+    backedge: StateId,
+    spinner_field_transitions: &SmallVec<[Arc<FieldMatcher>; 1]>,
+) {
+    if state_id.is_none() {
+        return;
+    }
+    target[state_id].table.epsilons.push(backedge);
+    target[state_id]
+        .field_transitions
+        .extend(spinner_field_transitions.iter().cloned());
+}
+
+fn append_clone_target_state(
+    target: &mut StateArena,
+    state_id: StateId,
+    id_map: &mut FxHashMap<StateId, StateId>,
+) -> StateId {
+    if state_id.is_none() {
+        return StateId::NONE;
+    }
+    if let Some(&new_id) = id_map.get(&state_id) {
+        return new_id;
+    }
+
+    let new_id = target.alloc();
+    id_map.insert(state_id, new_id);
+
+    let old_state = target[state_id].clone();
+    target[new_id].field_transitions = old_state.field_transitions;
+    target[new_id].table = append_clone_target_table(target, &old_state.table, id_map);
+    new_id
+}
+
+fn append_clone_target_table(
+    target: &mut StateArena,
+    table: &SmallTable,
+    id_map: &mut FxHashMap<StateId, StateId>,
+) -> SmallTable {
+    let mut new_table = SmallTable {
+        ceilings: table.ceilings.clone(),
+        steps: SmallVec::with_capacity(table.steps.len()),
+        epsilons: SmallVec::with_capacity(table.epsilons.len()),
+        accel: table.accel.clone(),
+    };
+
+    for &step_id in &table.steps {
+        new_table
+            .steps
+            .push(append_clone_target_state(target, step_id, id_map));
+    }
+    for &eps_id in &table.epsilons {
+        new_table
+            .epsilons
+            .push(append_clone_target_state(target, eps_id, id_map));
+    }
+
+    new_table
+}
+
+fn append_remap_source_nfa_table(
+    target: &mut StateArena,
+    source: &StateArena,
+    table: &SmallTable,
+    memo: &mut FxHashMap<(StateId, StateId), StateId>,
+) -> SmallTable {
+    let mut new_table = SmallTable {
+        ceilings: table.ceilings.clone(),
+        steps: SmallVec::with_capacity(table.steps.len()),
+        epsilons: SmallVec::with_capacity(table.epsilons.len()),
+        accel: table.accel.clone(),
+    };
+
+    for &step_id in &table.steps {
+        let merged =
+            append_merge_nfa_states_recursive(target, StateId::NONE, source, step_id, memo);
+        new_table.steps.push(merged);
+    }
+
+    for &eps_id in &table.epsilons {
+        let merged = append_merge_nfa_states_recursive(target, StateId::NONE, source, eps_id, memo);
+        new_table.epsilons.push(merged);
+    }
+
+    new_table
+}
+
+fn append_merge_nfa_tables_bytewise(
+    target: &mut StateArena,
+    target_table: &SmallTable,
+    source: &StateArena,
+    source_table: &SmallTable,
+    memo: &mut FxHashMap<(StateId, StateId), StateId>,
+) -> SmallTable {
+    let mut unpacked_target = [StateId::NONE; BYTE_CEILING];
+    let mut unpacked_source = [StateId::NONE; BYTE_CEILING];
+
+    unpack_arena_table(target_table, &mut unpacked_target);
+    unpack_arena_table(source_table, &mut unpacked_source);
+
+    let mut merged_unpacked = [StateId::NONE; BYTE_CEILING];
+    for i in 0..BYTE_CEILING {
+        merged_unpacked[i] = append_merge_nfa_states_recursive(
+            target,
+            unpacked_target[i],
+            source,
+            unpacked_source[i],
+            memo,
+        );
+    }
+
+    let mut result = SmallTable::new();
+    result.pack(&merged_unpacked);
+
+    for &eps in &target_table.epsilons {
+        let merged = append_merge_nfa_states_recursive(target, eps, source, StateId::NONE, memo);
+        if !merged.is_none() {
+            result.epsilons.push(merged);
+        }
+    }
+    for &eps in &source_table.epsilons {
+        let merged = append_merge_nfa_states_recursive(target, StateId::NONE, source, eps, memo);
+        if !merged.is_none() {
+            result.epsilons.push(merged);
+        }
+    }
+
+    result
 }
 
 /// Recursively merge two NFA states from different arenas.
@@ -6416,6 +6886,369 @@ mod nfa_merge_tests {
         let mut unpacked = [StateId::NONE; BYTE_CEILING];
         unpack_arena_table(&arena[state].table, &mut unpacked);
         unpacked[byte as usize]
+    }
+
+    fn sorted_match_ids(arena: &StateArena, start: StateId, value: &[u8]) -> Vec<u64> {
+        let mut ids = get_match_ids(arena, start, value);
+        ids.sort_unstable();
+        ids
+    }
+
+    fn assert_append_matches_rebuild(
+        target: &StateArena,
+        target_start: StateId,
+        source: &StateArena,
+        source_start: StateId,
+        values: &[&[u8]],
+    ) {
+        let (rebuilt, rebuilt_start) = merge_arena_nfas(target, target_start, source, source_start);
+        let mut appended = target.clone();
+        let appended_start =
+            append_merge_arena_nfas(&mut appended, target_start, source, source_start);
+        appended.precompute_epsilon_closures();
+
+        for value in values {
+            assert_eq!(
+                sorted_match_ids(&appended, appended_start, value),
+                sorted_match_ids(&rebuilt, rebuilt_start, value),
+                "append merge must match rebuild merge for {:?}",
+                String::from_utf8_lossy(value)
+            );
+        }
+    }
+
+    fn assert_no_none_epsilons(arena: &StateArena, state: StateId) {
+        assert!(
+            arena[state].table.epsilons.iter().all(|eps| !eps.is_none()),
+            "state {state:?} must not retain NONE epsilon targets"
+        );
+    }
+
+    #[test]
+    fn test_append_merge_arena_nfas_matches_rebuild_for_literals() {
+        let (arena1, start1) =
+            make_string_arena_fa(b"ab", Arc::new(FieldMatcher::with_match_id(1)));
+        let (arena2, start2) =
+            make_string_arena_fa(b"ac", Arc::new(FieldMatcher::with_match_id(2)));
+
+        assert_append_matches_rebuild(
+            &arena1,
+            start1,
+            &arena2,
+            start2,
+            &[b"ab", b"ac", b"a", b"ad"],
+        );
+    }
+
+    #[test]
+    fn test_append_merge_arena_nfas_matches_rebuild_for_empty_cases() {
+        let empty = StateArena::new();
+        let (arena, start) =
+            make_string_arena_fa(b"solo", Arc::new(FieldMatcher::with_match_id(1)));
+
+        assert_append_matches_rebuild(
+            &empty,
+            StateId::NONE,
+            &empty,
+            StateId::NONE,
+            &[b"", b"solo"],
+        );
+        assert_append_matches_rebuild(
+            &empty,
+            StateId::NONE,
+            &arena,
+            start,
+            &[b"", b"solo", b"other"],
+        );
+        assert_append_matches_rebuild(
+            &arena,
+            start,
+            &empty,
+            StateId::NONE,
+            &[b"", b"solo", b"other"],
+        );
+    }
+
+    #[test]
+    fn test_append_merge_arena_nfas_matches_rebuild_for_epsilons_and_spinouts() {
+        let (alternation, alternation_start) = make_epsilon_alternation_arena(
+            &[b"ab", b"ac"],
+            Arc::new(FieldMatcher::with_match_id(1)),
+        );
+        let (literal, literal_start) =
+            make_string_arena_fa(b"ad", Arc::new(FieldMatcher::with_match_id(2)));
+        assert_append_matches_rebuild(
+            &alternation,
+            alternation_start,
+            &literal,
+            literal_start,
+            &[b"ab", b"ac", b"ad", b"ae", b"b"],
+        );
+
+        let (spinout, spinout_start) =
+            make_spinout_arena(b"a", b"c", Arc::new(FieldMatcher::with_match_id(3)));
+        let (overlap, overlap_start) =
+            make_string_arena_fa(b"ac", Arc::new(FieldMatcher::with_match_id(4)));
+        assert_append_matches_rebuild(
+            &spinout,
+            spinout_start,
+            &overlap,
+            overlap_start,
+            &[b"ac", b"abc", b"aXYZc", b"c", b"ad"],
+        );
+    }
+
+    #[test]
+    fn test_append_merge_arena_nfas_matches_rebuild_for_cycles() {
+        let fm1 = Arc::new(FieldMatcher::with_match_id(1));
+        let (cycle_arena, cycle_start) = {
+            let mut arena = StateArena::new();
+            let match_state = arena.alloc();
+            arena[match_state].field_transitions.push(fm1);
+            let term_state = arena.alloc_with_table(SmallTable::with_mappings(
+                StateId::NONE,
+                &[ARENA_VALUE_TERMINATOR],
+                &[match_state],
+            ));
+            let loopback = arena.alloc();
+            let start = arena.alloc_with_table(SmallTable::with_mappings(
+                StateId::NONE,
+                b"ab",
+                &[loopback, loopback],
+            ));
+            arena[loopback].table.epsilons = smallvec![term_state, start];
+            arena.precompute_epsilon_closures();
+            (arena, start)
+        };
+        let (literal, literal_start) =
+            make_string_arena_fa(b"c", Arc::new(FieldMatcher::with_match_id(2)));
+
+        assert_append_matches_rebuild(
+            &cycle_arena,
+            cycle_start,
+            &literal,
+            literal_start,
+            &[b"a", b"b", b"ab", b"abba", b"c", b"d", b""],
+        );
+    }
+
+    #[test]
+    fn test_append_merge_epsilon_operand_uses_splice() {
+        let (alternation, alternation_start) = {
+            let mut arena = StateArena::new();
+            let m = arena.alloc();
+            arena[m]
+                .field_transitions
+                .push(Arc::new(FieldMatcher::with_match_id(1)));
+            let term = arena.alloc_with_table(SmallTable::with_mappings(
+                StateId::NONE,
+                &[ARENA_VALUE_TERMINATOR],
+                &[m],
+            ));
+            let b_state =
+                arena.alloc_with_table(SmallTable::with_mappings(StateId::NONE, b"b", &[term]));
+            let c_state =
+                arena.alloc_with_table(SmallTable::with_mappings(StateId::NONE, b"c", &[term]));
+            let alt = arena.alloc();
+            arena[alt].table.epsilons = smallvec![b_state, c_state];
+            let start =
+                arena.alloc_with_table(SmallTable::with_mappings(StateId::NONE, b"a", &[alt]));
+            arena.precompute_epsilon_closures();
+            (arena, start)
+        };
+
+        let (literal, literal_start) =
+            make_string_arena_fa(b"ad", Arc::new(FieldMatcher::with_match_id(2)));
+        let mut appended = alternation.clone();
+        let appended_start =
+            append_merge_arena_nfas(&mut appended, alternation_start, &literal, literal_start);
+        let after_a = step_byte(&appended, appended_start, b'a');
+        assert!(
+            is_epsilon_only_state(&appended, after_a),
+            "epsilon/plain merge must append a splice state"
+        );
+
+        let (spinout, spinout_start) =
+            make_spinout_arena(b"a", b"d", Arc::new(FieldMatcher::with_match_id(3)));
+        let mut appended = alternation;
+        let appended_start =
+            append_merge_arena_nfas(&mut appended, alternation_start, &spinout, spinout_start);
+        let after_a = step_byte(&appended, appended_start, b'a');
+        assert!(
+            is_epsilon_only_state(&appended, after_a),
+            "epsilon/spinout merge must splice instead of using asymmetric spinout merge"
+        );
+    }
+
+    #[test]
+    fn test_append_merge_dual_spinout_filters_none_epsilons() {
+        fn spinout_with_none_epsilon() -> (StateArena, StateId) {
+            let mut arena = StateArena::new();
+            let start = arena.alloc();
+            arena[start].table = make_byte_dot_table(start);
+            arena[start].table.epsilons.push(StateId::NONE);
+            arena.precompute_epsilon_closures();
+            (arena, start)
+        }
+
+        let (mut target, target_start) = spinout_with_none_epsilon();
+        let (source, source_start) = spinout_with_none_epsilon();
+        let appended_start =
+            append_merge_arena_nfas(&mut target, target_start, &source, source_start);
+
+        assert_no_none_epsilons(&target, appended_start);
+    }
+
+    #[test]
+    fn test_append_merge_nfa_tables_bytewise_filters_none_epsilons() {
+        let mut target = StateArena::new();
+        let source = StateArena::new();
+        let target_table = SmallTable {
+            ceilings: smallvec![BYTE_CEILING_U8],
+            steps: smallvec![StateId::NONE],
+            epsilons: smallvec![StateId::NONE],
+            accel: None,
+        };
+        let source_table = target_table.clone();
+        let mut memo = FxHashMap::default();
+
+        let merged = append_merge_nfa_tables_bytewise(
+            &mut target,
+            &target_table,
+            &source,
+            &source_table,
+            &mut memo,
+        );
+
+        assert!(
+            merged.epsilons.iter().all(|eps| !eps.is_none()),
+            "bytewise append merge must filter NONE epsilon targets"
+        );
+    }
+
+    #[test]
+    fn test_append_merge_source_spinout_keeps_self_loop_and_backedges() {
+        let (target, target_start) =
+            make_string_arena_fa(b"ad", Arc::new(FieldMatcher::with_match_id(1)));
+        let (source, source_start) =
+            make_spinout_arena(b"a", b"c", Arc::new(FieldMatcher::with_match_id(2)));
+        let mut appended = target;
+        let appended_start =
+            append_merge_arena_nfas(&mut appended, target_start, &source, source_start);
+        appended.precompute_epsilon_closures();
+
+        let spinner = step_byte(&appended, appended_start, b'a');
+        assert_eq!(
+            step_byte(&appended, spinner, b'z'),
+            spinner,
+            "source spinout self-loop must map to the combined spinner"
+        );
+        let d_branch = step_byte(&appended, spinner, b'd');
+        assert!(
+            !is_spinout_state(&appended, d_branch),
+            "target branch reached through a source spinout self-loop should stay a plain branch"
+        );
+        assert!(
+            appended[d_branch].table.epsilons.contains(&spinner),
+            "target branch entered from a source spinout self-loop needs a backedge"
+        );
+        assert!(
+            step_byte(&appended, d_branch, b'z').is_none(),
+            "target branch should use the spinner backedge instead of becoming a direct wildcard branch"
+        );
+        assert!(get_match_ids(&appended, appended_start, b"adXc").contains(&2));
+
+        let (target, target_start) =
+            make_string_arena_fa(b"ac", Arc::new(FieldMatcher::with_match_id(1)));
+        let mut appended = target;
+        let appended_start =
+            append_merge_arena_nfas(&mut appended, target_start, &source, source_start);
+        appended.precompute_epsilon_closures();
+        let spinner = step_byte(&appended, appended_start, b'a');
+        let c_branch = step_byte(&appended, spinner, b'c');
+        assert!(
+            appended[c_branch].table.epsilons.contains(&spinner),
+            "merged source spinout suffix branch needs a backedge"
+        );
+        assert!(get_match_ids(&appended, appended_start, b"acXc").contains(&2));
+    }
+
+    #[test]
+    fn test_append_merge_target_spinout_keeps_branch_backedges() {
+        let (target, target_start) =
+            make_spinout_arena(b"a", b"c", Arc::new(FieldMatcher::with_match_id(1)));
+        let (source, source_start) =
+            make_string_arena_fa(b"ad", Arc::new(FieldMatcher::with_match_id(2)));
+        let mut appended = target.clone();
+        let appended_start =
+            append_merge_arena_nfas(&mut appended, target_start, &source, source_start);
+        appended.precompute_epsilon_closures();
+
+        let spinner = step_byte(&appended, appended_start, b'a');
+        let d_branch = step_byte(&appended, spinner, b'd');
+        assert!(
+            !is_spinout_state(&appended, d_branch),
+            "source branch reached through a target spinout self-loop should stay a plain branch"
+        );
+        assert!(
+            appended[d_branch].table.epsilons.contains(&spinner),
+            "source branch entered from a target spinout self-loop needs a backedge"
+        );
+        assert!(
+            step_byte(&appended, d_branch, b'z').is_none(),
+            "source branch should use the spinner backedge instead of becoming a direct wildcard branch"
+        );
+        assert!(get_match_ids(&appended, appended_start, b"adXc").contains(&1));
+
+        let (source, source_start) =
+            make_string_arena_fa(b"ac", Arc::new(FieldMatcher::with_match_id(2)));
+        let mut appended = target;
+        let appended_start =
+            append_merge_arena_nfas(&mut appended, target_start, &source, source_start);
+        appended.precompute_epsilon_closures();
+        let spinner = step_byte(&appended, appended_start, b'a');
+        let c_branch = step_byte(&appended, spinner, b'c');
+        assert!(
+            appended[c_branch].table.epsilons.contains(&spinner),
+            "merged target spinout suffix branch needs a backedge"
+        );
+        assert!(get_match_ids(&appended, appended_start, b"acXc").contains(&1));
+    }
+
+    #[test]
+    fn test_append_merge_arena_nfas_leaves_existing_target_states_unchanged() {
+        let (mut target, target_start) =
+            make_string_arena_fa(b"left", Arc::new(FieldMatcher::with_match_id(1)));
+        let (source, source_start) =
+            make_string_arena_fa(b"right", Arc::new(FieldMatcher::with_match_id(2)));
+        let old_len = target.len();
+        let before = target.clone();
+
+        let appended_start =
+            append_merge_arena_nfas(&mut target, target_start, &source, source_start);
+
+        assert_ne!(
+            appended_start, target_start,
+            "overlapping non-empty append should return a new live start"
+        );
+        assert!(
+            target.len() > old_len,
+            "append merge should add states instead of rebuilding the target"
+        );
+        for i in 0..old_len {
+            let state = &target[StateId::from_index(i)];
+            let before_state = &before[StateId::from_index(i)];
+            assert_eq!(state.table.ceilings, before_state.table.ceilings);
+            assert_eq!(state.table.steps, before_state.table.steps);
+            assert_eq!(state.table.epsilons, before_state.table.epsilons);
+            assert!(
+                state
+                    .field_transitions
+                    .iter()
+                    .map(Arc::as_ptr)
+                    .eq(before_state.field_transitions.iter().map(Arc::as_ptr))
+            );
+        }
     }
 
     #[test]
