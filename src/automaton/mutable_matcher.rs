@@ -12,12 +12,12 @@ use std::sync::Arc;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::arena::{
-    NfaBuffers as ArenaNfaBuffers, StateArena, StateId, insert_string, insert_suffix,
-    make_anything_but_arena_fa, make_cidr_arena_fa, make_monocase_arena_fa,
-    make_numeric_greater_arena_fa, make_numeric_less_arena_fa, make_numeric_range_arena_fa,
-    make_prefix_arena_fa, make_shellstyle_arena_fa, make_string_arena_fa, make_suffix_dfa,
-    make_wildcard_arena_fa, merge_arena_nfas, traverse_arena_dfa, traverse_arena_dfa_backward,
-    traverse_arena_nfa,
+    NfaBuffers as ArenaNfaBuffers, StateArena, StateId, append_merge_arena_nfas,
+    clone_arena_subset, insert_string, insert_suffix, make_anything_but_arena_fa,
+    make_cidr_arena_fa, make_monocase_arena_fa, make_numeric_greater_arena_fa,
+    make_numeric_less_arena_fa, make_numeric_range_arena_fa, make_prefix_arena_fa,
+    make_shellstyle_arena_fa, make_string_arena_fa, make_suffix_dfa, make_wildcard_arena_fa,
+    merge_arena_nfas, traverse_arena_dfa, traverse_arena_dfa_backward, traverse_arena_nfa,
 };
 use super::small_table::{FieldMatcher, NfaBuffers, TL_MATCH_BUFS};
 use crate::regexp::make_regexp_nfa_arena;
@@ -280,7 +280,8 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
     }
 
     /// Helper to merge an arena FA into main_arena.
-    /// If main_arena is empty, just set it. Otherwise, merge using merge_arena_nfas.
+    /// If main_arena is empty, just set it. Otherwise, append a copy-on-write
+    /// merge into the existing arena and advance the live start on success.
     /// Checks the arena byte budget before and after merging.
     fn merge_into_main_arena(
         &self,
@@ -291,18 +292,37 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
         Self::check_budget(new_arena.estimated_byte_size(), budget)?;
 
         let mut main = self.main_arena.borrow_mut();
-        if let Some((existing_arena, existing_start)) = main.take() {
-            let (merged, merged_start) =
-                merge_arena_nfas(&existing_arena, existing_start, &new_arena, new_start);
-            let merged_size = merged.estimated_byte_size();
-            if budget != 0 && merged_size > budget {
-                // Restore existing arena on failure
-                *main = Some((existing_arena, existing_start));
-                return Err(crate::QuaminaError::PatternTooComplex(format!(
-                    "automaton byte size ({merged_size} bytes) exceeds budget ({budget} bytes)"
-                )));
+        if let Some((existing_arena, existing_start)) = main.as_mut() {
+            let old_start = *existing_start;
+            let old_len = existing_arena.len();
+            let merged_start =
+                append_merge_arena_nfas(existing_arena, old_start, &new_arena, new_start);
+            if *self.main_arena_is_nfa.borrow() {
+                existing_arena.precompute_epsilon_closures();
             }
-            *main = Some((merged, merged_start));
+
+            if budget != 0 {
+                let merged_size = existing_arena.estimated_byte_size();
+                if merged_size > budget {
+                    // The appended arena keeps unreachable history, so weigh the
+                    // pattern against the live reachable subset instead. Only the
+                    // compacted automaton has to fit the budget.
+                    let (compacted, compacted_start) =
+                        clone_arena_subset(existing_arena, merged_start);
+                    let compacted_size = compacted.estimated_byte_size();
+                    if compacted_size > budget {
+                        existing_arena.truncate_states(old_len);
+                        *existing_start = old_start;
+                        return Err(crate::QuaminaError::PatternTooComplex(format!(
+                            "automaton byte size ({compacted_size} bytes) exceeds budget ({budget} bytes)"
+                        )));
+                    }
+                    *existing_arena = compacted;
+                    *existing_start = compacted_start;
+                    return Ok(());
+                }
+            }
+            *existing_start = merged_start;
         } else {
             *main = Some((new_arena, new_start));
         }
@@ -3367,10 +3387,8 @@ mod tests {
     #[test]
     fn test_merge_into_main_arena_budget_boundary() {
         // The merge budget check rejects only when the merged size strictly
-        // exceeds the budget. Merging these two regexp FAs is deterministic at
-        // MERGED_SIZE bytes, so a budget equal to it must accept and a budget
-        // one byte smaller must reject.
-        const MERGED_SIZE: usize = 2360;
+        // exceeds the live reachable arena budget. Compute the compacted live
+        // size so this stays valid across append-history capacity changes.
         let p1 = crate::json::parse_pattern(
             r#"{"x": [{"regexp": "aaaa"}]}"#,
             &crate::PatternLimits::default(),
@@ -3384,9 +3402,23 @@ mod tests {
         let p1v: Vec<_> = p1.into_iter().collect();
         let p2v: Vec<_> = p2.into_iter().collect();
 
+        let probe = CoreMatcher::<String> {
+            root: Rc::new(MutableFieldMatcher::new()),
+            arena_byte_budget: 0,
+        };
+        probe.add_pattern("a".to_string(), &p1v).unwrap();
+        probe.add_pattern("b".to_string(), &p2v).unwrap();
+        let merged_size = {
+            let transitions = probe.root.transitions.borrow();
+            let vm = transitions.get("x").expect("value matcher should exist");
+            let main = vm.main_arena.borrow();
+            let (arena, start) = main.as_ref().expect("main arena should exist");
+            clone_arena_subset(arena, *start).0.estimated_byte_size()
+        };
+
         let cm = CoreMatcher::<String> {
             root: Rc::new(MutableFieldMatcher::new()),
-            arena_byte_budget: MERGED_SIZE,
+            arena_byte_budget: merged_size,
         };
         cm.add_pattern("a".to_string(), &p1v).unwrap();
         cm.add_pattern("b".to_string(), &p2v)
@@ -3394,12 +3426,73 @@ mod tests {
 
         let cm2 = CoreMatcher::<String> {
             root: Rc::new(MutableFieldMatcher::new()),
-            arena_byte_budget: MERGED_SIZE - 1,
+            arena_byte_budget: merged_size - 1,
         };
         cm2.add_pattern("a".to_string(), &p1v).unwrap();
         assert!(
             cm2.add_pattern("b".to_string(), &p2v).is_err(),
             "merge exceeding budget by one byte must be rejected"
+        );
+    }
+
+    #[test]
+    fn test_merge_at_uncompacted_budget_keeps_history() {
+        // When the merged arena fits the budget exactly, the strict `>` skips
+        // compaction and the live arena keeps its append history. A no-budget
+        // probe running the same adds yields the uncompacted size to aim the
+        // budget at, plus the live (with-history) vs compacted state counts.
+        let p1: Vec<_> = crate::json::parse_pattern(
+            r#"{"x": [{"regexp": "aaaa"}]}"#,
+            &crate::PatternLimits::default(),
+        )
+        .unwrap()
+        .into_iter()
+        .collect();
+        let p2: Vec<_> = crate::json::parse_pattern(
+            r#"{"x": [{"regexp": "bbbb"}]}"#,
+            &crate::PatternLimits::default(),
+        )
+        .unwrap()
+        .into_iter()
+        .collect();
+
+        let probe = CoreMatcher::<String> {
+            root: Rc::new(MutableFieldMatcher::new()),
+            arena_byte_budget: 0,
+        };
+        probe.add_pattern("a".to_string(), &p1).unwrap();
+        probe.add_pattern("b".to_string(), &p2).unwrap();
+        let (uncompacted_size, live_states, compacted_states) = {
+            let transitions = probe.root.transitions.borrow();
+            let vm = transitions.get("x").expect("value matcher should exist");
+            let main = vm.main_arena.borrow();
+            let (arena, start) = main.as_ref().expect("main arena should exist");
+            (
+                arena.estimated_byte_size(),
+                arena.len(),
+                clone_arena_subset(arena, *start).0.len(),
+            )
+        };
+        assert!(
+            live_states > compacted_states,
+            "append merge must leave history for compaction to remove"
+        );
+
+        let cm = CoreMatcher::<String> {
+            root: Rc::new(MutableFieldMatcher::new()),
+            arena_byte_budget: uncompacted_size,
+        };
+        cm.add_pattern("a".to_string(), &p1).unwrap();
+        cm.add_pattern("b".to_string(), &p2)
+            .expect("merge at budget == uncompacted size must fit");
+
+        let transitions = cm.root.transitions.borrow();
+        let vm = transitions.get("x").expect("value matcher should exist");
+        let main = vm.main_arena.borrow();
+        let live = main.as_ref().expect("main arena should exist").0.len();
+        assert_eq!(
+            live, live_states,
+            "an exactly-fitting merge must not compact the live arena"
         );
     }
 }

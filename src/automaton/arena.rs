@@ -608,6 +608,31 @@ impl StateArena {
         self.states.is_empty()
     }
 
+    /// Drop every state with index `>= n`, restoring the arena to an earlier
+    /// length.
+    ///
+    /// `append_merge_arena_nfas` only ever appends states and never edits the
+    /// ones already present, so truncating back to a length captured before the
+    /// merge exactly undoes it. The surviving states keep their tables and
+    /// epsilons untouched. Epsilon closures are laid out in state order, so the
+    /// survivors own a prefix of `closure_data`; the tail is trimmed to match.
+    ///
+    /// This is a build-time operation: the frozen lookup buffers are only
+    /// populated at freeze, so they are empty here and need no adjustment.
+    pub fn truncate_states(&mut self, n: usize) {
+        if n >= self.states.len() {
+            return;
+        }
+        let closure_end = if n == 0 {
+            0
+        } else {
+            let last = &self.states[n - 1];
+            last.closure_start as usize + last.closure_len as usize
+        };
+        self.states.truncate(n);
+        self.closure_data.truncate(closure_end);
+    }
+
     /// Compute statistics about this arena's structure.
     #[must_use]
     pub fn stats(&self) -> Stats {
@@ -7249,6 +7274,28 @@ mod nfa_merge_tests {
                     .eq(before_state.field_transitions.iter().map(Arc::as_ptr))
             );
         }
+    }
+
+    #[test]
+    fn test_truncate_states_drops_tail_and_trims_closures() {
+        // alloc() appends one closure slot per state in state order, so after
+        // five states closure_data is [s0..s4] and state i owns closure slot i.
+        let mut arena = StateArena::new();
+        let ids: Vec<_> = (0..5).map(|_| arena.alloc()).collect();
+        assert_eq!(arena.len(), 5);
+        assert_eq!(arena.closure_data.len(), 5);
+
+        // Truncating below the current length drops the tail states and trims
+        // their closure slots back to the surviving prefix, which is untouched.
+        arena.truncate_states(2);
+        assert_eq!(arena.len(), 2);
+        assert_eq!(arena.closure_data.len(), 2);
+        assert_eq!(arena[ids[1]].closure_start, 1);
+
+        // Truncating to zero clears the arena and its closure buffer entirely.
+        arena.truncate_states(0);
+        assert!(arena.is_empty());
+        assert!(arena.closure_data.is_empty());
     }
 
     #[test]
