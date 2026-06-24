@@ -233,6 +233,20 @@ pub struct MutableValueMatcher<X: Clone + Eq + std::hash::Hash> {
     pub(crate) suffix_arena: RefCell<Option<(StateArena, StateId)>>,
 }
 
+struct TakenSingleton<X: Clone + Eq + std::hash::Hash> {
+    arena: StateArena,
+    start: StateId,
+    value: Vec<u8>,
+    transition: Rc<MutableFieldMatcher<X>>,
+    transition_key: *const FieldMatcher,
+}
+
+struct RegisteredTransition<X: Clone + Eq + std::hash::Hash> {
+    next_fm: Rc<MutableFieldMatcher<X>>,
+    next_arc: Arc<FieldMatcher>,
+    transition_key: *const FieldMatcher,
+}
+
 impl<X: Clone + Eq + std::hash::Hash> Default for MutableValueMatcher<X> {
     fn default() -> Self {
         Self::new()
@@ -277,6 +291,33 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
         } else {
             Ok(())
         }
+    }
+
+    fn register_transition(
+        &self,
+        next_fm: Rc<MutableFieldMatcher<X>>,
+        next_arc: Arc<FieldMatcher>,
+    ) -> RegisteredTransition<X> {
+        let transition_key = Arc::as_ptr(&next_arc);
+        self.transition_map
+            .borrow_mut()
+            .insert(transition_key, next_fm.clone());
+        RegisteredTransition {
+            next_fm,
+            next_arc,
+            transition_key,
+        }
+    }
+
+    fn new_registered_transition(&self) -> RegisteredTransition<X> {
+        self.register_transition(
+            Rc::new(MutableFieldMatcher::new()),
+            Arc::new(FieldMatcher::new()),
+        )
+    }
+
+    fn remove_transition(&self, transition_key: *const FieldMatcher) {
+        self.transition_map.borrow_mut().remove(&transition_key);
     }
 
     /// Helper to merge an arena FA into main_arena.
@@ -330,25 +371,50 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
     }
 
     /// Consume the pending singleton (if any) into a standalone arena.
-    /// Returns `Some((arena, start))` if there was a singleton, `None` otherwise.
-    /// Registers the singleton's FieldMatcher in transition_map.
-    fn take_singleton_as_arena(&self) -> Option<(StateArena, StateId)> {
-        if self.singleton_match.borrow().is_none() {
-            return None;
-        }
-        let singleton_val = self.singleton_match.borrow().clone().unwrap();
-        let singleton_trans = self.singleton_transition.borrow().clone().unwrap();
+    /// Returns `Some(TakenSingleton)` if there was a singleton, `None` otherwise.
+    /// Registers the singleton's FieldMatcher in transition_map so the returned
+    /// arena can be matched unless the caller restores it after a failed add.
+    fn take_singleton_as_arena(&self) -> Option<TakenSingleton<X>> {
+        let singleton_val = self.singleton_match.borrow_mut().take()?;
+        let singleton_trans = self
+            .singleton_transition
+            .borrow_mut()
+            .take()
+            .expect("singleton transition must exist with singleton value");
         let singleton_arc = Arc::new(FieldMatcher::new());
+        let transition_key = Arc::as_ptr(&singleton_arc);
         self.transition_map
             .borrow_mut()
-            .insert(Arc::as_ptr(&singleton_arc), singleton_trans);
+            .insert(transition_key, singleton_trans.clone());
 
-        let result = make_string_arena_fa(&singleton_val, singleton_arc);
+        let (arena, start) = make_string_arena_fa(&singleton_val, singleton_arc);
 
-        *self.singleton_match.borrow_mut() = None;
-        *self.singleton_transition.borrow_mut() = None;
+        Some(TakenSingleton {
+            arena,
+            start,
+            value: singleton_val,
+            transition: singleton_trans,
+            transition_key,
+        })
+    }
 
-        Some(result)
+    fn restore_singleton(&self, singleton: TakenSingleton<X>) {
+        self.remove_transition(singleton.transition_key);
+        *self.singleton_match.borrow_mut() = Some(singleton.value);
+        *self.singleton_transition.borrow_mut() = Some(singleton.transition);
+    }
+
+    fn merge_taken_singleton_into_main(
+        &self,
+        singleton: TakenSingleton<X>,
+        budget: usize,
+    ) -> Result<(), crate::QuaminaError> {
+        let result = self.merge_into_main_arena(singleton.arena.clone(), singleton.start, budget);
+        if let Err(err) = result {
+            self.restore_singleton(singleton);
+            return Err(err);
+        }
+        Ok(())
     }
 
     /// Merge a new arena FA into main_arena, incorporating any pending singleton.
@@ -365,13 +431,42 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
         new_start: StateId,
         budget: usize,
     ) -> Result<(), crate::QuaminaError> {
-        if let Some((singleton_arena, singleton_start)) = self.take_singleton_as_arena() {
+        if let Some(singleton) = self.take_singleton_as_arena() {
             let (merged, merged_start) =
-                merge_arena_nfas(&singleton_arena, singleton_start, &new_arena, new_start);
-            self.merge_into_main_arena(merged, merged_start, budget)
+                merge_arena_nfas(&singleton.arena, singleton.start, &new_arena, new_start);
+            let result = self.merge_into_main_arena(merged, merged_start, budget);
+            if let Err(err) = result {
+                self.restore_singleton(singleton);
+                return Err(err);
+            }
+            Ok(())
         } else {
             self.merge_into_main_arena(new_arena, new_start, budget)
         }
+    }
+
+    fn merge_registered_with_singleton(
+        &self,
+        registered: RegisteredTransition<X>,
+        new_arena: StateArena,
+        new_start: StateId,
+        budget: usize,
+        marks_main_arena_nfa: bool,
+    ) -> Result<Rc<MutableFieldMatcher<X>>, crate::QuaminaError> {
+        let old_main_arena_is_nfa = *self.main_arena_is_nfa.borrow();
+        if marks_main_arena_nfa {
+            *self.main_arena_is_nfa.borrow_mut() = true;
+        }
+
+        if let Err(err) = self.merge_with_singleton(new_arena, new_start, budget) {
+            self.remove_transition(registered.transition_key);
+            if marks_main_arena_nfa {
+                *self.main_arena_is_nfa.borrow_mut() = old_main_arena_is_nfa;
+            }
+            return Err(err);
+        }
+
+        Ok(registered.next_fm)
     }
 
     /// Ensure main_arena exists, bootstrapping it from the singleton if needed.
@@ -380,16 +475,15 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
         if self.main_arena.borrow().is_some() {
             // Already exists — but if there's a pending singleton, fold it in.
             // Build a standalone arena from the singleton, then merge into main.
-            if let Some((singleton_arena, singleton_start)) = self.take_singleton_as_arena() {
-                self.merge_into_main_arena(singleton_arena, singleton_start, budget)?;
+            if let Some(singleton) = self.take_singleton_as_arena() {
+                self.merge_taken_singleton_into_main(singleton, budget)?;
             }
             return Ok(());
         }
 
         // No main_arena yet — create one
-        if let Some((arena, start)) = self.take_singleton_as_arena() {
-            Self::check_budget(arena.estimated_byte_size(), budget)?;
-            *self.main_arena.borrow_mut() = Some((arena, start));
+        if let Some(singleton) = self.take_singleton_as_arena() {
+            self.merge_taken_singleton_into_main(singleton, budget)?;
         } else {
             // Create empty arena with a start state
             let mut arena = StateArena::new();
@@ -587,16 +681,10 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
         prefix: &[u8],
         budget: usize,
     ) -> Result<Rc<MutableFieldMatcher<X>>, crate::QuaminaError> {
-        let next_fm = Rc::new(MutableFieldMatcher::new());
-        let next_arc = Arc::new(FieldMatcher::new());
-        self.transition_map
-            .borrow_mut()
-            .insert(Arc::as_ptr(&next_arc), next_fm.clone());
+        let registered = self.new_registered_transition();
 
-        let (new_arena, new_start) = make_prefix_arena_fa(prefix, next_arc);
-        self.merge_with_singleton(new_arena, new_start, budget)?;
-
-        Ok(next_fm)
+        let (new_arena, new_start) = make_prefix_arena_fa(prefix, registered.next_arc.clone());
+        self.merge_registered_with_singleton(registered, new_arena, new_start, budget, false)
     }
 
     fn add_shellstyle_transition(
@@ -604,17 +692,10 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
         pattern: &[u8],
         budget: usize,
     ) -> Result<Rc<MutableFieldMatcher<X>>, crate::QuaminaError> {
-        let next_fm = Rc::new(MutableFieldMatcher::new());
-        let next_arc = Arc::new(FieldMatcher::new());
-        self.transition_map
-            .borrow_mut()
-            .insert(Arc::as_ptr(&next_arc), next_fm.clone());
+        let registered = self.new_registered_transition();
 
-        *self.main_arena_is_nfa.borrow_mut() = true;
-        let (new_arena, new_start) = make_shellstyle_arena_fa(pattern, next_arc);
-        self.merge_with_singleton(new_arena, new_start, budget)?;
-
-        Ok(next_fm)
+        let (new_arena, new_start) = make_shellstyle_arena_fa(pattern, registered.next_arc.clone());
+        self.merge_registered_with_singleton(registered, new_arena, new_start, budget, true)
     }
 
     /// Add a suffix pattern using a reversed DFA trie.
@@ -630,9 +711,9 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
         // If there's a pending singleton, fold it into main_arena first
         // so transition_on doesn't short-circuit past suffix_arena
         if self.singleton_match.borrow().is_some()
-            && let Some((singleton_arena, singleton_start)) = self.take_singleton_as_arena()
+            && let Some(singleton) = self.take_singleton_as_arena()
         {
-            self.merge_into_main_arena(singleton_arena, singleton_start, budget)?;
+            self.merge_taken_singleton_into_main(singleton, budget)?;
         }
 
         let next_fm = Rc::new(MutableFieldMatcher::new());
@@ -664,17 +745,10 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
         pattern: &[u8],
         budget: usize,
     ) -> Result<Rc<MutableFieldMatcher<X>>, crate::QuaminaError> {
-        let next_fm = Rc::new(MutableFieldMatcher::new());
-        let next_arc = Arc::new(FieldMatcher::new());
-        self.transition_map
-            .borrow_mut()
-            .insert(Arc::as_ptr(&next_arc), next_fm.clone());
+        let registered = self.new_registered_transition();
 
-        *self.main_arena_is_nfa.borrow_mut() = true;
-        let (new_arena, new_start) = make_wildcard_arena_fa(pattern, next_arc);
-        self.merge_with_singleton(new_arena, new_start, budget)?;
-
-        Ok(next_fm)
+        let (new_arena, new_start) = make_wildcard_arena_fa(pattern, registered.next_arc.clone());
+        self.merge_registered_with_singleton(registered, new_arena, new_start, budget, true)
     }
 
     fn add_anything_but_transition(
@@ -682,16 +756,11 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
         excluded: &[Vec<u8>],
         budget: usize,
     ) -> Result<Rc<MutableFieldMatcher<X>>, crate::QuaminaError> {
-        let next_fm = Rc::new(MutableFieldMatcher::new());
-        let next_arc = Arc::new(FieldMatcher::new());
-        self.transition_map
-            .borrow_mut()
-            .insert(Arc::as_ptr(&next_arc), next_fm.clone());
+        let registered = self.new_registered_transition();
 
-        let (new_arena, new_start) = make_anything_but_arena_fa(excluded, next_arc);
-        self.merge_with_singleton(new_arena, new_start, budget)?;
-
-        Ok(next_fm)
+        let (new_arena, new_start) =
+            make_anything_but_arena_fa(excluded, registered.next_arc.clone());
+        self.merge_registered_with_singleton(registered, new_arena, new_start, budget, false)
     }
 
     /// Add a numeric anything-but transition using Q-number FA.
@@ -703,21 +772,16 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
         excluded: &[f64],
         budget: usize,
     ) -> Result<Rc<MutableFieldMatcher<X>>, crate::QuaminaError> {
-        let next_fm = Rc::new(MutableFieldMatcher::new());
-        let next_arc = Arc::new(FieldMatcher::new());
-        self.transition_map
-            .borrow_mut()
-            .insert(Arc::as_ptr(&next_arc), next_fm.clone());
+        let registered = self.new_registered_transition();
 
         let excluded_q_nums: Vec<Vec<u8>> = excluded
             .iter()
             .map(|&n| crate::numbits::q_num_from_f64(n))
             .collect();
 
-        let (new_arena, new_start) = make_anything_but_arena_fa(&excluded_q_nums, next_arc);
-        self.merge_with_singleton(new_arena, new_start, budget)?;
-
-        Ok(next_fm)
+        let (new_arena, new_start) =
+            make_anything_but_arena_fa(&excluded_q_nums, registered.next_arc.clone());
+        self.merge_registered_with_singleton(registered, new_arena, new_start, budget, false)
     }
 
     fn add_monocase_transition(
@@ -725,16 +789,10 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
         val: &[u8],
         budget: usize,
     ) -> Result<Rc<MutableFieldMatcher<X>>, crate::QuaminaError> {
-        let next_fm = Rc::new(MutableFieldMatcher::new());
-        let next_arc = Arc::new(FieldMatcher::new());
-        self.transition_map
-            .borrow_mut()
-            .insert(Arc::as_ptr(&next_arc), next_fm.clone());
+        let registered = self.new_registered_transition();
 
-        let (new_arena, new_start) = make_monocase_arena_fa(val, next_arc);
-        self.merge_with_singleton(new_arena, new_start, budget)?;
-
-        Ok(next_fm)
+        let (new_arena, new_start) = make_monocase_arena_fa(val, registered.next_arc.clone());
+        self.merge_registered_with_singleton(registered, new_arena, new_start, budget, false)
     }
 
     fn add_regexp_transition(
@@ -745,17 +803,10 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
         let next_fm = Rc::new(MutableFieldMatcher::new());
 
         let (arena, start, field_matcher_arc) = make_regexp_nfa_arena(tree.clone());
-        if arena.is_nondeterministic() {
-            *self.main_arena_is_nfa.borrow_mut() = true;
-        }
+        let marks_main_arena_nfa = arena.is_nondeterministic();
+        let registered = self.register_transition(next_fm, field_matcher_arc);
 
-        self.transition_map
-            .borrow_mut()
-            .insert(Arc::as_ptr(&field_matcher_arc), next_fm.clone());
-
-        self.merge_with_singleton(arena, start, budget)?;
-
-        Ok(next_fm)
+        self.merge_registered_with_singleton(registered, arena, start, budget, marks_main_arena_nfa)
     }
 
     /// Add a multi-condition transition for lookaround patterns.
@@ -778,10 +829,7 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
         // Build primary pattern automaton (with quote transitions for field values)
         let (primary_arena, primary_start, field_matcher_arc) =
             make_regexp_nfa_arena(mc.primary.clone());
-
-        self.transition_map
-            .borrow_mut()
-            .insert(Arc::as_ptr(&field_matcher_arc), next_fm.clone());
+        let registered = self.register_transition(next_fm, field_matcher_arc);
 
         // Build condition automata
         let mut condition_nfas = Vec::new();
@@ -819,9 +867,15 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
         }
 
         // Check budget for the primary arena and all condition arenas
-        Self::check_budget(primary_arena.estimated_byte_size(), budget)?;
+        if let Err(err) = Self::check_budget(primary_arena.estimated_byte_size(), budget) {
+            self.remove_transition(registered.transition_key);
+            return Err(err);
+        }
         for cond in &condition_nfas {
-            Self::check_budget(cond.arena.estimated_byte_size(), budget)?;
+            if let Err(err) = Self::check_budget(cond.arena.estimated_byte_size(), budget) {
+                self.remove_transition(registered.transition_key);
+                return Err(err);
+            }
         }
 
         // Store in multi_condition_nfas for condition verification during matching
@@ -830,11 +884,11 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
             .push(MultiConditionNfa {
                 primary_arena,
                 primary_start,
-                field_matcher_ptr: Arc::as_ptr(&field_matcher_arc),
+                field_matcher_ptr: registered.transition_key,
                 conditions: condition_nfas,
             });
 
-        Ok(next_fm)
+        Ok(registered.next_fm)
     }
 
     /// Add a numeric range transition using arena-based FA for better performance.
@@ -847,11 +901,7 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
         cmp: &crate::json::NumericComparison,
         budget: usize,
     ) -> Result<Rc<MutableFieldMatcher<X>>, crate::QuaminaError> {
-        let next_fm = Rc::new(MutableFieldMatcher::new());
-        let next_arc = Arc::new(FieldMatcher::new());
-        self.transition_map
-            .borrow_mut()
-            .insert(Arc::as_ptr(&next_arc), next_fm.clone());
+        let registered = self.new_registered_transition();
 
         // Build the arena FA based on the comparison operators
         let (new_arena, new_start) = match (&cmp.lower, &cmp.upper) {
@@ -862,27 +912,26 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
                     *lower_incl,
                     *upper_val,
                     *upper_incl,
-                    next_arc,
+                    registered.next_arc.clone(),
                 )
             }
             (Some((incl, val)), None) => {
                 // Lower bound only: >= or >
-                make_numeric_greater_arena_fa(*val, *incl, next_arc)
+                make_numeric_greater_arena_fa(*val, *incl, registered.next_arc.clone())
             }
             (None, Some((incl, val))) => {
                 // Upper bound only: <= or <
-                make_numeric_less_arena_fa(*val, *incl, next_arc)
+                make_numeric_less_arena_fa(*val, *incl, registered.next_arc.clone())
             }
             (None, None) => {
                 // No bounds specified - match any number
                 // This shouldn't happen in practice
-                return Ok(next_fm);
+                self.remove_transition(registered.transition_key);
+                return Ok(registered.next_fm);
             }
         };
 
-        self.merge_with_singleton(new_arena, new_start, budget)?;
-
-        Ok(next_fm)
+        self.merge_registered_with_singleton(registered, new_arena, new_start, budget, false)
     }
 
     /// Add a CIDR pattern transition using automaton-based IP matching.
@@ -893,17 +942,10 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
         cidr: &crate::json::CidrPattern,
         budget: usize,
     ) -> Result<Rc<MutableFieldMatcher<X>>, crate::QuaminaError> {
-        let next_fm = Rc::new(MutableFieldMatcher::new());
-        let next_arc = Arc::new(FieldMatcher::new());
-        self.transition_map
-            .borrow_mut()
-            .insert(Arc::as_ptr(&next_arc), next_fm.clone());
+        let registered = self.new_registered_transition();
 
-        *self.main_arena_is_nfa.borrow_mut() = true;
-        let (new_arena, new_start) = make_cidr_arena_fa(cidr, next_arc);
-        self.merge_with_singleton(new_arena, new_start, budget)?;
-
-        Ok(next_fm)
+        let (new_arena, new_start) = make_cidr_arena_fa(cidr, registered.next_arc.clone());
+        self.merge_registered_with_singleton(registered, new_arena, new_start, budget, true)
     }
 
     /// Transition on a value during matching
@@ -3432,6 +3474,163 @@ mod tests {
         assert!(
             cm2.add_pattern("b".to_string(), &p2v).is_err(),
             "merge exceeding budget by one byte must be rejected"
+        );
+    }
+
+    #[test]
+    fn test_failed_append_merge_rolls_back_main_arena_state() {
+        let accepted_prefix = b"\"keep";
+        let rejected_shell = quote_wrap(b"reject*");
+
+        let probe: MutableValueMatcher<String> = MutableValueMatcher::new();
+        probe
+            .add_prefix_transition(accepted_prefix, 0)
+            .expect("first pattern should build");
+        let standalone_rejected_size = {
+            let (arena, _) =
+                make_shellstyle_arena_fa(&rejected_shell, Arc::new(FieldMatcher::new()));
+            arena.estimated_byte_size()
+        };
+        probe
+            .add_shellstyle_transition(&rejected_shell, 0)
+            .expect("probe merge should build");
+        let merged_size = {
+            let main = probe.main_arena.borrow();
+            let (arena, start) = main.as_ref().expect("main arena should exist");
+            clone_arena_subset(arena, *start).0.estimated_byte_size()
+        };
+        let budget = merged_size - 1;
+        assert!(
+            standalone_rejected_size <= budget,
+            "test must fail after append merge, not on standalone arena size"
+        );
+
+        let vm: MutableValueMatcher<String> = MutableValueMatcher::new();
+        let accepted_fm = vm
+            .add_prefix_transition(accepted_prefix, 0)
+            .expect("first pattern should build");
+        let (old_start, old_len, old_transition_count, old_nfa_flag) = {
+            let main = vm.main_arena.borrow();
+            let (arena, start) = main.as_ref().expect("main arena should exist");
+            (
+                *start,
+                arena.len(),
+                vm.transition_map.borrow().len(),
+                *vm.main_arena_is_nfa.borrow(),
+            )
+        };
+
+        let err = match vm.add_shellstyle_transition(&rejected_shell, budget) {
+            Ok(_) => panic!("second pattern should exceed the merge budget"),
+            Err(err) => err,
+        };
+        assert!(matches!(err, crate::QuaminaError::PatternTooComplex(_)));
+
+        {
+            let main = vm.main_arena.borrow();
+            let (arena, start) = main.as_ref().expect("main arena should exist");
+            assert_eq!(*start, old_start, "live start must be restored");
+            assert_eq!(arena.len(), old_len, "appended states must be truncated");
+        }
+        assert_eq!(
+            vm.transition_map.borrow().len(),
+            old_transition_count,
+            "rejected transition key must be removed"
+        );
+        assert_eq!(
+            *vm.main_arena_is_nfa.borrow(),
+            old_nfa_flag,
+            "NFA flag must be restored"
+        );
+
+        let mut bufs = NfaBuffers::new();
+        let accepted = vm.transition_on(&qv(b"keep-going"), false, &mut bufs);
+        assert!(
+            accepted.iter().any(|fm| Rc::ptr_eq(fm, &accepted_fm)),
+            "accepted pattern must still match"
+        );
+        let rejected = vm.transition_on(&qv(b"reject-me"), false, &mut bufs);
+        assert!(
+            rejected.is_empty(),
+            "rejected pattern must not become visible"
+        );
+    }
+
+    #[test]
+    fn test_failed_append_merge_rolls_back_singleton_state() {
+        let rejected_prefix = b"\"reject";
+
+        let probe: MutableValueMatcher<String> = MutableValueMatcher::new();
+        probe.add_string_transition(&qv(b"keep"), 0).unwrap();
+        let singleton_size = {
+            let (arena, _) = make_string_arena_fa(&qv(b"keep"), Arc::new(FieldMatcher::new()));
+            arena.estimated_byte_size()
+        };
+        let merged_size = {
+            let (prefix_arena, prefix_start) =
+                make_prefix_arena_fa(rejected_prefix, Arc::new(FieldMatcher::new()));
+            let singleton = probe
+                .take_singleton_as_arena()
+                .expect("singleton should be consumed");
+            let (merged, merged_start) = merge_arena_nfas(
+                &singleton.arena,
+                singleton.start,
+                &prefix_arena,
+                prefix_start,
+            );
+            clone_arena_subset(&merged, merged_start)
+                .0
+                .estimated_byte_size()
+        };
+        let budget = merged_size - 1;
+        assert!(
+            singleton_size <= budget,
+            "test must fail after consuming the singleton"
+        );
+
+        let vm: MutableValueMatcher<String> = MutableValueMatcher::new();
+        let accepted_fm = vm.add_string_transition(&qv(b"keep"), 0).unwrap();
+        assert_eq!(vm.transition_map.borrow().len(), 0);
+        assert!(vm.main_arena.borrow().is_none());
+
+        let err = match vm.add_prefix_transition(rejected_prefix, budget) {
+            Ok(_) => panic!("merged singleton plus prefix should exceed budget"),
+            Err(err) => err,
+        };
+        assert!(matches!(err, crate::QuaminaError::PatternTooComplex(_)));
+
+        assert_eq!(
+            vm.singleton_match.borrow().as_deref(),
+            Some(qv(b"keep").as_slice()),
+            "singleton value must be restored"
+        );
+        assert!(
+            vm.singleton_transition
+                .borrow()
+                .as_ref()
+                .is_some_and(|fm| Rc::ptr_eq(fm, &accepted_fm)),
+            "singleton transition must be restored"
+        );
+        assert_eq!(
+            vm.transition_map.borrow().len(),
+            0,
+            "singleton and rejected transition keys must be removed"
+        );
+        assert!(
+            vm.main_arena.borrow().is_none(),
+            "failed singleton merge must not install a main arena"
+        );
+
+        let mut bufs = NfaBuffers::new();
+        let accepted = vm.transition_on(&qv(b"keep"), false, &mut bufs);
+        assert!(
+            accepted.iter().any(|fm| Rc::ptr_eq(fm, &accepted_fm)),
+            "restored singleton must still match"
+        );
+        assert!(
+            vm.transition_on(&qv(b"rejecting"), false, &mut bufs)
+                .is_empty(),
+            "rejected prefix must not match"
         );
     }
 
