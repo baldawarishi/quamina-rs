@@ -3434,4 +3434,65 @@ mod tests {
             "merge exceeding budget by one byte must be rejected"
         );
     }
+
+    #[test]
+    fn test_merge_at_uncompacted_budget_keeps_history() {
+        // When the merged arena fits the budget exactly, the strict `>` skips
+        // compaction and the live arena keeps its append history. A no-budget
+        // probe running the same adds yields the uncompacted size to aim the
+        // budget at, plus the live (with-history) vs compacted state counts.
+        let p1: Vec<_> = crate::json::parse_pattern(
+            r#"{"x": [{"regexp": "aaaa"}]}"#,
+            &crate::PatternLimits::default(),
+        )
+        .unwrap()
+        .into_iter()
+        .collect();
+        let p2: Vec<_> = crate::json::parse_pattern(
+            r#"{"x": [{"regexp": "bbbb"}]}"#,
+            &crate::PatternLimits::default(),
+        )
+        .unwrap()
+        .into_iter()
+        .collect();
+
+        let probe = CoreMatcher::<String> {
+            root: Rc::new(MutableFieldMatcher::new()),
+            arena_byte_budget: 0,
+        };
+        probe.add_pattern("a".to_string(), &p1).unwrap();
+        probe.add_pattern("b".to_string(), &p2).unwrap();
+        let (uncompacted_size, live_states, compacted_states) = {
+            let transitions = probe.root.transitions.borrow();
+            let vm = transitions.get("x").expect("value matcher should exist");
+            let main = vm.main_arena.borrow();
+            let (arena, start) = main.as_ref().expect("main arena should exist");
+            (
+                arena.estimated_byte_size(),
+                arena.len(),
+                clone_arena_subset(arena, *start).0.len(),
+            )
+        };
+        assert!(
+            live_states > compacted_states,
+            "append merge must leave history for compaction to remove"
+        );
+
+        let cm = CoreMatcher::<String> {
+            root: Rc::new(MutableFieldMatcher::new()),
+            arena_byte_budget: uncompacted_size,
+        };
+        cm.add_pattern("a".to_string(), &p1).unwrap();
+        cm.add_pattern("b".to_string(), &p2)
+            .expect("merge at budget == uncompacted size must fit");
+
+        let transitions = cm.root.transitions.borrow();
+        let vm = transitions.get("x").expect("value matcher should exist");
+        let main = vm.main_arena.borrow();
+        let live = main.as_ref().expect("main arena should exist").0.len();
+        assert_eq!(
+            live, live_states,
+            "an exactly-fitting merge must not compact the live arena"
+        );
+    }
 }

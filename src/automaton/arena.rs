@@ -7277,6 +7277,28 @@ mod nfa_merge_tests {
     }
 
     #[test]
+    fn test_truncate_states_drops_tail_and_trims_closures() {
+        // alloc() appends one closure slot per state in state order, so after
+        // five states closure_data is [s0..s4] and state i owns closure slot i.
+        let mut arena = StateArena::new();
+        let ids: Vec<_> = (0..5).map(|_| arena.alloc()).collect();
+        assert_eq!(arena.len(), 5);
+        assert_eq!(arena.closure_data.len(), 5);
+
+        // Truncating below the current length drops the tail states and trims
+        // their closure slots back to the surviving prefix, which is untouched.
+        arena.truncate_states(2);
+        assert_eq!(arena.len(), 2);
+        assert_eq!(arena.closure_data.len(), 2);
+        assert_eq!(arena[ids[1]].closure_start, 1);
+
+        // Truncating to zero clears the arena and its closure buffer entirely.
+        arena.truncate_states(0);
+        assert!(arena.is_empty());
+        assert!(arena.closure_data.is_empty());
+    }
+
+    #[test]
     fn test_merge_alternation_with_literal_builds_splice_not_expansion() {
         // A merge that pairs an epsilon-bearing operand with a plain literal on a
         // shared byte keeps the operand behind one epsilon-only splice state
