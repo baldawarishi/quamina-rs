@@ -608,6 +608,31 @@ impl StateArena {
         self.states.is_empty()
     }
 
+    /// Drop every state with index `>= n`, restoring the arena to an earlier
+    /// length.
+    ///
+    /// `append_merge_arena_nfas` only ever appends states and never edits the
+    /// ones already present, so truncating back to a length captured before the
+    /// merge exactly undoes it. The surviving states keep their tables and
+    /// epsilons untouched. Epsilon closures are laid out in state order, so the
+    /// survivors own a prefix of `closure_data`; the tail is trimmed to match.
+    ///
+    /// This is a build-time operation: the frozen lookup buffers are only
+    /// populated at freeze, so they are empty here and need no adjustment.
+    pub fn truncate_states(&mut self, n: usize) {
+        if n >= self.states.len() {
+            return;
+        }
+        let closure_end = if n == 0 {
+            0
+        } else {
+            let last = &self.states[n - 1];
+            last.closure_start as usize + last.closure_len as usize
+        };
+        self.states.truncate(n);
+        self.closure_data.truncate(closure_end);
+    }
+
     /// Compute statistics about this arena's structure.
     #[must_use]
     pub fn stats(&self) -> Stats {

@@ -25,8 +25,9 @@ use parking_lot::Mutex;
 
 use super::arena::{
     LazyDfa, NfaBuffers as ArenaNfaBuffers, StateArena, StateId, Stats as ArenaStats,
-    make_prefix_arena_fa, make_shellstyle_arena_fa, make_string_arena_fa, merge_arena_nfas,
-    traverse_arena_dfa, traverse_arena_dfa_backward, traverse_arena_nfa, traverse_lazy_dfa,
+    append_merge_arena_nfas, clone_arena_subset, make_prefix_arena_fa, make_shellstyle_arena_fa,
+    make_string_arena_fa, traverse_arena_dfa, traverse_arena_dfa_backward, traverse_arena_nfa,
+    traverse_lazy_dfa,
 };
 use super::mutable_matcher::{
     EventField, EventFieldRef, MultiConditionNfa, MutableFieldMatcher, MutableValueMatcher,
@@ -814,50 +815,48 @@ impl<X: Clone + Eq + Hash + Send + Sync> ThreadSafeCoreMatcher<X> {
         let mut main_arena_is_nfa = *mutable.main_arena_is_nfa.borrow();
         let mut lazy_dfa: Option<Box<Mutex<LazyDfa>>> = None;
 
-        let main_arena = mutable
-            .main_arena
-            .borrow()
-            .clone()
-            .map(|(mut arena, start)| {
-                arena.precompute_epsilon_closures();
+        let main_arena = mutable.main_arena.borrow().as_ref().map(|(arena, start)| {
+            // Append-merge leaves unreachable history behind the live start, so
+            // freeze the compacted reachable subset rather than the build arena.
+            let (mut arena, start) = clone_arena_subset(arena, *start);
 
-                // Under Miri, skip DFA conversion (FxHashMap/Mutex are ~200× slower
-                // under interpretation). Fall straight to Tier 3 (NFA traversal).
-                #[cfg(not(miri))]
-                if main_arena_is_nfa {
-                    // Tier 1: Attempt eager NFA→DFA conversion.
-                    let eager_budget =
-                        (arena.len() * EAGER_DFA_BUDGET_MULTIPLIER).min(EAGER_DFA_BUDGET_CAP);
-                    if let Some((dfa_arena, dfa_start)) = arena.nfa_to_dfa(start, eager_budget) {
-                        arena = dfa_arena;
-                        main_arena_is_nfa = false;
-                        arena.flatten_tables();
-                        return (arena, dfa_start);
-                    }
-
-                    // Tier 2: Eager DFA budget exceeded — create a lazy DFA cache,
-                    // but only when the NFA is small enough that LazyDfa::new is fast.
-                    // Each cached DFA state requires O(nfa_states) work to construct,
-                    // so for very large NFAs (e.g. [^u-z]{13} expands to ~229k states)
-                    // initialisation takes seconds with no match-time benefit over NFA.
-                    // Patterns with nfa_states ≤ EAGER_DFA_BUDGET_CAP initialise in
-                    // < 300 µs (empirically ~28 ns/state); beyond that, fall through to
-                    // Tier 3 (NFA traversal).
-                    if should_build_lazy_dfa(arena.len()) {
-                        let lazy_budget = eager_budget
-                            .saturating_mul(LAZY_DFA_BUDGET_MULTIPLIER)
-                            .min(LAZY_DFA_BUDGET_CAP);
-                        lazy_dfa = Some(Box::new(Mutex::new(LazyDfa::new(
-                            arena.clone(),
-                            start,
-                            lazy_budget,
-                        ))));
-                    }
+            // Under Miri, skip DFA conversion (FxHashMap/Mutex are ~200× slower
+            // under interpretation). Fall straight to Tier 3 (NFA traversal).
+            #[cfg(not(miri))]
+            if main_arena_is_nfa {
+                // Tier 1: Attempt eager NFA→DFA conversion.
+                let eager_budget =
+                    (arena.len() * EAGER_DFA_BUDGET_MULTIPLIER).min(EAGER_DFA_BUDGET_CAP);
+                if let Some((dfa_arena, dfa_start)) = arena.nfa_to_dfa(start, eager_budget) {
+                    arena = dfa_arena;
+                    main_arena_is_nfa = false;
+                    arena.flatten_tables();
+                    return (arena, dfa_start);
                 }
 
-                arena.flatten_tables();
-                (arena, start)
-            });
+                // Tier 2: Eager DFA budget exceeded — create a lazy DFA cache,
+                // but only when the NFA is small enough that LazyDfa::new is fast.
+                // Each cached DFA state requires O(nfa_states) work to construct,
+                // so for very large NFAs (e.g. [^u-z]{13} expands to ~229k states)
+                // initialisation takes seconds with no match-time benefit over NFA.
+                // Patterns with nfa_states ≤ EAGER_DFA_BUDGET_CAP initialise in
+                // < 300 µs (empirically ~28 ns/state); beyond that, fall through to
+                // Tier 3 (NFA traversal).
+                if should_build_lazy_dfa(arena.len()) {
+                    let lazy_budget = eager_budget
+                        .saturating_mul(LAZY_DFA_BUDGET_MULTIPLIER)
+                        .min(LAZY_DFA_BUDGET_CAP);
+                    lazy_dfa = Some(Box::new(Mutex::new(LazyDfa::new(
+                        arena.clone(),
+                        start,
+                        lazy_budget,
+                    ))));
+                }
+            }
+
+            arena.flatten_tables();
+            (arena, start)
+        });
 
         // Copy the suffix_arena (reversed DFA trie for suffix patterns).
         // Freeze tables for the suffix arena too (it skips precompute during build).
@@ -1274,11 +1273,12 @@ impl<X: Clone + Eq + std::hash::Hash> ValueMatcher<X> {
 
     /// Helper to merge a new arena into the existing one
     fn merge_arena(&mut self, new_arena: StateArena, new_start: StateId) {
-        match self.arena.take() {
+        match self.arena.as_mut() {
             Some((existing_arena, existing_start)) => {
-                let (merged_arena, merged_start) =
-                    merge_arena_nfas(&existing_arena, existing_start, &new_arena, new_start);
-                self.arena = Some((merged_arena, merged_start));
+                let merged_start =
+                    append_merge_arena_nfas(existing_arena, *existing_start, &new_arena, new_start);
+                existing_arena.precompute_epsilon_closures();
+                *existing_start = merged_start;
             }
             None => {
                 self.arena = Some((new_arena, new_start));
@@ -2108,6 +2108,40 @@ mod tests {
         assert!(
             stats.state_count > 0,
             "arena should have states after adding a prefix pattern; got {stats:?}"
+        );
+    }
+
+    #[test]
+    fn test_freeze_value_matcher_compacts_unreachable_main_arena_states() {
+        let matcher: ThreadSafeCoreMatcher<String> = ThreadSafeCoreMatcher::new();
+        let vm = Rc::new(MutableValueMatcher::new());
+        let (mut arena, start) = make_prefix_arena_fa(b"live", Arc::new(FieldMatcher::new()));
+        let reachable_len = clone_arena_subset(&arena, start).0.len();
+
+        let dead = arena.alloc();
+        arena[dead]
+            .field_transitions
+            .push(Arc::new(FieldMatcher::new()));
+        let build_len = arena.len();
+        assert!(
+            build_len > reachable_len,
+            "test setup must include unreachable build states"
+        );
+
+        *vm.main_arena.borrow_mut() = Some((arena, start));
+
+        let mut cache = FxHashMap::default();
+        let frozen = matcher.freeze_value_matcher(&vm, &mut cache);
+        let (frozen_arena, _) = frozen.main_arena.expect("main arena should freeze");
+
+        assert_eq!(
+            frozen_arena.len(),
+            reachable_len,
+            "freeze should clone only the live reachable subset"
+        );
+        assert!(
+            frozen_arena.len() < build_len,
+            "frozen arena must drop unreachable build history"
         );
     }
 }
