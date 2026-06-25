@@ -3662,6 +3662,42 @@ fn make_string_arena_fa_step(
     ))
 }
 
+/// Rollback data for an in-place trie insertion.
+///
+/// `insert_string` and `insert_suffix` append states and edit at most one
+/// existing state. This records just enough old state to undo that mutation if
+/// the caller rejects the insertion after a budget check.
+#[doc(hidden)]
+pub struct ArenaInsertRollback {
+    old_len: usize,
+    touched_state: StateId,
+    old_table: SmallTable,
+    old_field_transitions: SmallVec<[Arc<FieldMatcher>; 1]>,
+}
+
+impl ArenaInsertRollback {
+    /// Undo the insertion this token was returned for.
+    pub fn rollback(self, arena: &mut StateArena) {
+        let touched = &mut arena[self.touched_state];
+        touched.table = self.old_table;
+        touched.field_transitions = self.old_field_transitions;
+        arena.truncate_states(self.old_len);
+    }
+}
+
+fn arena_insert_rollback(
+    arena: &StateArena,
+    old_len: usize,
+    touched_state: StateId,
+) -> ArenaInsertRollback {
+    ArenaInsertRollback {
+        old_len,
+        touched_state,
+        old_table: arena[touched_state].table.clone(),
+        old_field_transitions: arena[touched_state].field_transitions.clone(),
+    }
+}
+
 /// Insert a string into an existing arena in-place, sharing prefix structure.
 ///
 /// This is O(L) per string where L is the string length, avoiding the O(n²) cost
@@ -3672,7 +3708,8 @@ pub fn insert_string(
     start: StateId,
     val: &[u8],
     field_matcher: Arc<FieldMatcher>,
-) {
+) -> ArenaInsertRollback {
+    let old_len = arena.len();
     let mut current = start;
 
     for i in 0..=val.len() {
@@ -3684,6 +3721,8 @@ pub fn insert_string(
 
         let next = arena[current].table.dstep(byte);
         if next.is_none() {
+            let rollback = arena_insert_rollback(arena, old_len, current);
+
             // No transition for this byte — create the remaining chain
             let match_state = arena.alloc();
             arena[match_state].field_transitions.push(field_matcher);
@@ -3705,14 +3744,16 @@ pub fn insert_string(
 
             // Add transition from current state to the new chain
             arena[current].table.set_transition(byte, target);
-            return;
+            return rollback;
         }
         // Transition exists, follow it
         current = next;
     }
 
     // Full path already exists — add field transition to the terminal state
+    let rollback = arena_insert_rollback(arena, old_len, current);
     arena[current].field_transitions.push(field_matcher);
+    rollback
 }
 
 /// Build a DFA trie for a single reversed suffix pattern.
@@ -3757,12 +3798,15 @@ pub fn insert_suffix(
     start: StateId,
     reversed_bytes: &[u8],
     field_matcher: Arc<FieldMatcher>,
-) {
+) -> ArenaInsertRollback {
+    let old_len = arena.len();
     let mut current = start;
 
     for (i, &byte) in reversed_bytes.iter().enumerate() {
         let next = arena[current].table.dstep(byte);
         if next.is_none() {
+            let rollback = arena_insert_rollback(arena, old_len, current);
+
             // No transition — create the remaining chain
             let match_state = arena.alloc();
             arena[match_state].field_transitions.push(field_matcher);
@@ -3779,14 +3823,16 @@ pub fn insert_suffix(
 
             // Connect current state to the new chain
             arena[current].table.set_transition(byte, target);
-            return;
+            return rollback;
         }
         // Transition exists, follow it
         current = next;
     }
 
     // Full path already exists — add field transition to the terminal state
+    let rollback = arena_insert_rollback(arena, old_len, current);
     arena[current].field_transitions.push(field_matcher);
+    rollback
 }
 
 /// Build an arena-based FA that matches strings with a given prefix.

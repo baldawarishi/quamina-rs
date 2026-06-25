@@ -12,12 +12,13 @@ use std::sync::Arc;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::arena::{
-    NfaBuffers as ArenaNfaBuffers, StateArena, StateId, append_merge_arena_nfas,
-    clone_arena_subset, insert_string, insert_suffix, make_anything_but_arena_fa,
-    make_cidr_arena_fa, make_monocase_arena_fa, make_numeric_greater_arena_fa,
-    make_numeric_less_arena_fa, make_numeric_range_arena_fa, make_prefix_arena_fa,
-    make_shellstyle_arena_fa, make_string_arena_fa, make_suffix_dfa, make_wildcard_arena_fa,
-    merge_arena_nfas, traverse_arena_dfa, traverse_arena_dfa_backward, traverse_arena_nfa,
+    ArenaInsertRollback, NfaBuffers as ArenaNfaBuffers, StateArena, StateId,
+    append_merge_arena_nfas, clone_arena_subset, insert_string, insert_suffix,
+    make_anything_but_arena_fa, make_cidr_arena_fa, make_monocase_arena_fa,
+    make_numeric_greater_arena_fa, make_numeric_less_arena_fa, make_numeric_range_arena_fa,
+    make_prefix_arena_fa, make_shellstyle_arena_fa, make_string_arena_fa, make_suffix_dfa,
+    make_wildcard_arena_fa, merge_arena_nfas, traverse_arena_dfa, traverse_arena_dfa_backward,
+    traverse_arena_nfa,
 };
 use super::small_table::{FieldMatcher, NfaBuffers, TL_MATCH_BUFS};
 use crate::regexp::make_regexp_nfa_arena;
@@ -247,6 +248,15 @@ struct RegisteredTransition<X: Clone + Eq + std::hash::Hash> {
     transition_key: *const FieldMatcher,
 }
 
+struct DirectMainArenaInsert<X: Clone + Eq + std::hash::Hash> {
+    had_main_arena: bool,
+    main_arena_snapshot: Option<(StateArena, StateId)>,
+    singleton_match: Option<Vec<u8>>,
+    singleton_transition: Option<Rc<MutableFieldMatcher<X>>>,
+    transition_keys: Option<FxHashSet<*const FieldMatcher>>,
+    main_arena_is_nfa: bool,
+}
+
 impl<X: Clone + Eq + std::hash::Hash> Default for MutableValueMatcher<X> {
     fn default() -> Self {
         Self::new()
@@ -293,6 +303,15 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
         }
     }
 
+    fn check_suffix_arena_budget(&self, budget: usize) -> Result<(), crate::QuaminaError> {
+        let suffix = self.suffix_arena.borrow();
+        if let Some((arena, _)) = suffix.as_ref() {
+            Self::check_budget(arena.estimated_byte_size(), budget)
+        } else {
+            Ok(())
+        }
+    }
+
     fn register_transition(
         &self,
         next_fm: Rc<MutableFieldMatcher<X>>,
@@ -318,6 +337,93 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
 
     fn remove_transition(&self, transition_key: *const FieldMatcher) {
         self.transition_map.borrow_mut().remove(&transition_key);
+    }
+
+    fn begin_direct_main_arena_insert(&self) -> DirectMainArenaInsert<X> {
+        let singleton_match = self.singleton_match.borrow().clone();
+        let singleton_transition = self.singleton_transition.borrow().clone();
+        let transition_keys = if singleton_match.is_some() {
+            Some(self.transition_map.borrow().keys().copied().collect())
+        } else {
+            None
+        };
+
+        let main = self.main_arena.borrow();
+        let had_main_arena = main.is_some();
+        let main_arena_snapshot = if singleton_match.is_some() {
+            if had_main_arena {
+                main.as_ref().cloned()
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        DirectMainArenaInsert {
+            had_main_arena,
+            main_arena_snapshot,
+            singleton_match,
+            singleton_transition,
+            transition_keys,
+            main_arena_is_nfa: *self.main_arena_is_nfa.borrow(),
+        }
+    }
+
+    fn rollback_direct_main_arena_insert(
+        &self,
+        snapshot: DirectMainArenaInsert<X>,
+        transition_key: Option<*const FieldMatcher>,
+        insert_rollbacks: Vec<ArenaInsertRollback>,
+    ) {
+        let DirectMainArenaInsert {
+            had_main_arena,
+            main_arena_snapshot,
+            singleton_match,
+            singleton_transition,
+            transition_keys,
+            main_arena_is_nfa,
+        } = snapshot;
+
+        {
+            let mut main = self.main_arena.borrow_mut();
+            if let Some(snapshot) = main_arena_snapshot {
+                *main = Some(snapshot);
+            } else if !had_main_arena {
+                *main = None;
+            } else if let Some((arena, _)) = main.as_mut() {
+                for rollback in insert_rollbacks.into_iter().rev() {
+                    rollback.rollback(arena);
+                }
+            }
+        }
+
+        if let Some(value) = singleton_match {
+            *self.singleton_match.borrow_mut() = Some(value);
+            *self.singleton_transition.borrow_mut() = singleton_transition;
+        }
+        *self.main_arena_is_nfa.borrow_mut() = main_arena_is_nfa;
+
+        if let Some(old_keys) = transition_keys {
+            self.transition_map
+                .borrow_mut()
+                .retain(|key, _| old_keys.contains(key));
+        } else if let Some(key) = transition_key {
+            self.remove_transition(key);
+        }
+    }
+
+    fn rollback_suffix_arena_insert(
+        &self,
+        had_suffix_arena: bool,
+        insert_rollback: Option<ArenaInsertRollback>,
+    ) {
+        let mut suffix = self.suffix_arena.borrow_mut();
+        if !had_suffix_arena {
+            *suffix = None;
+        } else if let (Some((arena, _)), Some(rollback)) = (suffix.as_mut(), insert_rollback) {
+            rollback.rollback(arena);
+        }
     }
 
     /// Helper to merge an arena FA into main_arena.
@@ -570,23 +676,40 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
         }
 
         // Create a shared next state for all new values
-        let next_fm = Rc::new(MutableFieldMatcher::new());
-        let next_arc = Arc::new(FieldMatcher::new());
-        self.transition_map
-            .borrow_mut()
-            .insert(Arc::as_ptr(&next_arc), next_fm.clone());
+        let snapshot = self.begin_direct_main_arena_insert();
+        let registered = self.new_registered_transition();
 
-        self.ensure_main_arena_with_singleton(budget)?;
+        if let Err(err) = self.ensure_main_arena_with_singleton(budget) {
+            self.rollback_direct_main_arena_insert(
+                snapshot,
+                Some(registered.transition_key),
+                Vec::new(),
+            );
+            return Err(err);
+        }
+        let mut insert_rollbacks = Vec::with_capacity(values.len());
         {
             let mut main = self.main_arena.borrow_mut();
             let (arena, start) = main.as_mut().unwrap();
             for val in values {
-                insert_string(arena, *start, val, next_arc.clone());
+                insert_rollbacks.push(insert_string(
+                    arena,
+                    *start,
+                    val,
+                    registered.next_arc.clone(),
+                ));
             }
         }
-        self.check_main_arena_budget(budget)?;
+        if let Err(err) = self.check_main_arena_budget(budget) {
+            self.rollback_direct_main_arena_insert(
+                snapshot,
+                Some(registered.transition_key),
+                insert_rollbacks,
+            );
+            return Err(err);
+        }
 
-        Ok(next_fm)
+        Ok(registered.next_fm)
     }
 
     fn add_string_transition(
@@ -624,22 +747,32 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
         drop(singleton_trans);
 
         // Need to build arena-based automaton
-        let next_fm = Rc::new(MutableFieldMatcher::new());
-        let next_arc = Arc::new(FieldMatcher::new());
-        // Register the mapping from Arc<FieldMatcher> to Rc<MutableFieldMatcher>
-        self.transition_map
-            .borrow_mut()
-            .insert(Arc::as_ptr(&next_arc), next_fm.clone());
+        let snapshot = self.begin_direct_main_arena_insert();
+        let registered = self.new_registered_transition();
 
-        self.ensure_main_arena_with_singleton(budget)?;
-        {
+        if let Err(err) = self.ensure_main_arena_with_singleton(budget) {
+            self.rollback_direct_main_arena_insert(
+                snapshot,
+                Some(registered.transition_key),
+                Vec::new(),
+            );
+            return Err(err);
+        }
+        let insert_rollback = {
             let mut main = self.main_arena.borrow_mut();
             let (arena, start) = main.as_mut().unwrap();
-            insert_string(arena, *start, val, next_arc);
+            insert_string(arena, *start, val, registered.next_arc.clone())
+        };
+        if let Err(err) = self.check_main_arena_budget(budget) {
+            self.rollback_direct_main_arena_insert(
+                snapshot,
+                Some(registered.transition_key),
+                vec![insert_rollback],
+            );
+            return Err(err);
         }
-        self.check_main_arena_budget(budget)?;
 
-        Ok(next_fm)
+        Ok(registered.next_fm)
     }
 
     /// Add a numeric transition that supports Q-number matching.
@@ -650,6 +783,7 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
         budget: usize,
     ) -> Result<Rc<MutableFieldMatcher<X>>, crate::QuaminaError> {
         // Mark that this matcher has numeric patterns
+        let old_has_numbers = self.has_numbers.get();
         self.has_numbers.set(true);
 
         let val_str = num.to_string();
@@ -658,22 +792,46 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
         // Get Q-number representation
         let q_num = crate::numbits::q_num_from_f64(num);
 
-        let next_fm = Rc::new(MutableFieldMatcher::new());
-        let next_arc = Arc::new(FieldMatcher::new());
-        self.transition_map
-            .borrow_mut()
-            .insert(Arc::as_ptr(&next_arc), next_fm.clone());
+        let snapshot = self.begin_direct_main_arena_insert();
+        let registered = self.new_registered_transition();
 
-        self.ensure_main_arena_with_singleton(budget)?;
+        if let Err(err) = self.ensure_main_arena_with_singleton(budget) {
+            self.rollback_direct_main_arena_insert(
+                snapshot,
+                Some(registered.transition_key),
+                Vec::new(),
+            );
+            self.has_numbers.set(old_has_numbers);
+            return Err(err);
+        }
+        let mut insert_rollbacks = Vec::with_capacity(2);
         {
             let mut main = self.main_arena.borrow_mut();
             let (arena, start) = main.as_mut().unwrap();
-            insert_string(arena, *start, val, next_arc.clone());
-            insert_string(arena, *start, &q_num, next_arc);
+            insert_rollbacks.push(insert_string(
+                arena,
+                *start,
+                val,
+                registered.next_arc.clone(),
+            ));
+            insert_rollbacks.push(insert_string(
+                arena,
+                *start,
+                &q_num,
+                registered.next_arc.clone(),
+            ));
         }
-        self.check_main_arena_budget(budget)?;
+        if let Err(err) = self.check_main_arena_budget(budget) {
+            self.rollback_direct_main_arena_insert(
+                snapshot,
+                Some(registered.transition_key),
+                insert_rollbacks,
+            );
+            self.has_numbers.set(old_has_numbers);
+            return Err(err);
+        }
 
-        Ok(next_fm)
+        Ok(registered.next_fm)
     }
 
     fn add_prefix_transition(
@@ -708,6 +866,8 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
         suffix: &str,
         budget: usize,
     ) -> Result<Rc<MutableFieldMatcher<X>>, crate::QuaminaError> {
+        let main_snapshot = self.begin_direct_main_arena_insert();
+
         // If there's a pending singleton, fold it into main_arena first
         // so transition_on doesn't short-circuit past suffix_arena
         if self.singleton_match.borrow().is_some()
@@ -716,11 +876,7 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
             self.merge_taken_singleton_into_main(singleton, budget)?;
         }
 
-        let next_fm = Rc::new(MutableFieldMatcher::new());
-        let next_arc = Arc::new(FieldMatcher::new());
-        self.transition_map
-            .borrow_mut()
-            .insert(Arc::as_ptr(&next_arc), next_fm.clone());
+        let registered = self.new_registered_transition();
 
         // Build reversed suffix bytes: closing quote + reversed suffix
         let suffix_bytes = suffix.as_bytes();
@@ -729,15 +885,34 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
         reversed.extend(suffix_bytes.iter().rev());
 
         // Insert into suffix arena (separate DFA trie from main_arena)
-        let mut suffix_arena = self.suffix_arena.borrow_mut();
-        if let Some((ref mut arena, start)) = *suffix_arena {
-            insert_suffix(arena, start, &reversed, next_arc);
-        } else {
-            let (arena, start) = make_suffix_dfa(&reversed, next_arc);
-            *suffix_arena = Some((arena, start));
+        let had_suffix_arena = self.suffix_arena.borrow().is_some();
+        let insert_rollback = {
+            let mut suffix_arena = self.suffix_arena.borrow_mut();
+            if let Some((ref mut arena, start)) = *suffix_arena {
+                Some(insert_suffix(
+                    arena,
+                    start,
+                    &reversed,
+                    registered.next_arc.clone(),
+                ))
+            } else {
+                let (arena, start) = make_suffix_dfa(&reversed, registered.next_arc.clone());
+                *suffix_arena = Some((arena, start));
+                None
+            }
+        };
+
+        if let Err(err) = self.check_suffix_arena_budget(budget) {
+            self.rollback_suffix_arena_insert(had_suffix_arena, insert_rollback);
+            self.rollback_direct_main_arena_insert(
+                main_snapshot,
+                Some(registered.transition_key),
+                Vec::new(),
+            );
+            return Err(err);
         }
 
-        Ok(next_fm)
+        Ok(registered.next_fm)
     }
 
     fn add_wildcard_transition(
@@ -3477,7 +3652,12 @@ mod tests {
         );
     }
 
+    // MIRI SKIP RATIONALE: This uses a shellstyle merge and full transition
+    // traversal to prove the native rollback shape. Coverage:
+    // test_failed_append_merge_rollbacks_miri_friendly exercises the same
+    // post-merge budget failure with a shorter pattern.
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_failed_append_merge_rolls_back_main_arena_state() {
         let accepted_prefix = b"\"keep";
         let rejected_shell = quote_wrap(b"reject*");
@@ -3556,7 +3736,12 @@ mod tests {
         );
     }
 
+    // MIRI SKIP RATIONALE: This builds both a singleton arena and a prefix arena
+    // to cover native rollback details. Coverage:
+    // test_failed_append_merge_rollbacks_miri_friendly keeps the append-merge
+    // failure path live under Miri with smaller inputs.
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_failed_append_merge_rolls_back_singleton_state() {
         let rejected_prefix = b"\"reject";
 
@@ -3631,6 +3816,775 @@ mod tests {
             vm.transition_on(&qv(b"rejecting"), false, &mut bufs)
                 .is_empty(),
             "rejected prefix must not match"
+        );
+    }
+
+    // MIRI SKIP RATIONALE: The 256-byte rejected value is intentionally large
+    // enough to prove appended state truncation in native tests. Coverage:
+    // test_failed_direct_string_rollbacks_miri_friendly covers the same rollback
+    // path with short strings.
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_failed_direct_string_insert_rolls_back_main_arena_state() {
+        let accepted_values = [qv(b"keep"), qv(b"stay")];
+        let accepted_refs: Vec<_> = accepted_values.iter().map(Vec::as_slice).collect();
+        let rejected_raw = vec![b'x'; 256];
+        let rejected = qv(&rejected_raw);
+
+        let budget = {
+            let probe: MutableValueMatcher<String> = MutableValueMatcher::new();
+            probe
+                .add_string_transitions_bulk(&accepted_refs, 0)
+                .unwrap();
+            let before_size = probe
+                .main_arena
+                .borrow()
+                .as_ref()
+                .expect("main arena should exist")
+                .0
+                .estimated_byte_size();
+            probe.add_string_transition(&rejected, 0).unwrap();
+            let after_size = probe
+                .main_arena
+                .borrow()
+                .as_ref()
+                .expect("main arena should exist")
+                .0
+                .estimated_byte_size();
+            assert!(
+                before_size < after_size,
+                "test data must grow the arena budget"
+            );
+            after_size - 1
+        };
+
+        let vm: MutableValueMatcher<String> = MutableValueMatcher::new();
+        let accepted_fm = vm.add_string_transitions_bulk(&accepted_refs, 0).unwrap();
+        let (old_start, old_len, old_transition_count) = {
+            let main = vm.main_arena.borrow();
+            let (arena, start) = main.as_ref().expect("main arena should exist");
+            (*start, arena.len(), vm.transition_map.borrow().len())
+        };
+
+        let err = match vm.add_string_transition(&rejected, budget) {
+            Ok(_) => panic!("direct string insertion should exceed the budget"),
+            Err(err) => err,
+        };
+        assert!(matches!(err, crate::QuaminaError::PatternTooComplex(_)));
+
+        {
+            let main = vm.main_arena.borrow();
+            let (arena, start) = main.as_ref().expect("main arena should exist");
+            assert_eq!(*start, old_start, "live start must be restored");
+            assert_eq!(arena.len(), old_len, "appended states must be removed");
+        }
+        assert_eq!(
+            vm.transition_map.borrow().len(),
+            old_transition_count,
+            "rejected transition key must be removed"
+        );
+
+        let mut bufs = NfaBuffers::new();
+        let accepted = vm.transition_on(&accepted_values[0], false, &mut bufs);
+        assert!(
+            accepted.iter().any(|fm| Rc::ptr_eq(fm, &accepted_fm)),
+            "accepted direct string pattern must still match"
+        );
+        assert!(
+            vm.transition_on(&rejected, false, &mut bufs).is_empty(),
+            "rejected direct string pattern must not become visible"
+        );
+    }
+
+    #[test]
+    fn test_failed_existing_string_insert_rolls_back_terminal_transition() {
+        let accepted_values = [qv(b"same"), qv(b"other")];
+        let accepted_refs: Vec<_> = accepted_values.iter().map(Vec::as_slice).collect();
+
+        let vm: MutableValueMatcher<String> = MutableValueMatcher::new();
+        let accepted_fm = vm.add_string_transitions_bulk(&accepted_refs, 0).unwrap();
+        let (old_len, old_transition_count, budget) = {
+            let main = vm.main_arena.borrow();
+            let (arena, _) = main.as_ref().expect("main arena should exist");
+            let size = arena.estimated_byte_size();
+            assert!(size > 1, "test budget must be able to reject current arena");
+            (arena.len(), vm.transition_map.borrow().len(), size - 1)
+        };
+
+        let err = match vm.add_string_transition(&accepted_values[0], budget) {
+            Ok(_) => panic!("existing-path string insertion should exceed the budget"),
+            Err(err) => err,
+        };
+        assert!(matches!(err, crate::QuaminaError::PatternTooComplex(_)));
+
+        {
+            let main = vm.main_arena.borrow();
+            let (arena, _) = main.as_ref().expect("main arena should exist");
+            assert_eq!(
+                arena.len(),
+                old_len,
+                "existing-path insert must not change state count"
+            );
+        }
+        assert_eq!(
+            vm.transition_map.borrow().len(),
+            old_transition_count,
+            "rejected terminal transition key must be removed"
+        );
+
+        let mut bufs = NfaBuffers::new();
+        let accepted = vm.transition_on(&accepted_values[0], false, &mut bufs);
+        assert_eq!(
+            accepted.len(),
+            1,
+            "failed duplicate insert must not leave an extra terminal transition"
+        );
+        assert!(
+            accepted.iter().any(|fm| Rc::ptr_eq(fm, &accepted_fm)),
+            "original exact pattern must still match"
+        );
+    }
+
+    // MIRI SKIP RATIONALE: The long rejected value forces singleton promotion
+    // and rollback after a budget failure. Coverage:
+    // test_failed_direct_string_rollbacks_miri_friendly covers singleton restore
+    // with smaller inputs.
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_failed_direct_string_insert_restores_singleton_state() {
+        let accepted = qv(b"keep");
+        let rejected_raw = vec![b'r'; 256];
+        let rejected = qv(&rejected_raw);
+
+        let budget = {
+            let probe: MutableValueMatcher<String> = MutableValueMatcher::new();
+            probe.add_string_transition(&accepted, 0).unwrap();
+            let singleton_size = {
+                let (arena, _) = make_string_arena_fa(&accepted, Arc::new(FieldMatcher::new()));
+                arena.estimated_byte_size()
+            };
+            probe.add_string_transition(&rejected, 0).unwrap();
+            let after_size = probe
+                .main_arena
+                .borrow()
+                .as_ref()
+                .expect("main arena should exist")
+                .0
+                .estimated_byte_size();
+            assert!(
+                singleton_size < after_size,
+                "test data must grow past the singleton arena"
+            );
+            after_size - 1
+        };
+
+        let vm: MutableValueMatcher<String> = MutableValueMatcher::new();
+        let accepted_fm = vm.add_string_transition(&accepted, 0).unwrap();
+        assert!(vm.main_arena.borrow().is_none());
+        assert_eq!(vm.transition_map.borrow().len(), 0);
+
+        let err = match vm.add_string_transition(&rejected, budget) {
+            Ok(_) => panic!("direct string insertion should exceed the budget"),
+            Err(err) => err,
+        };
+        assert!(matches!(err, crate::QuaminaError::PatternTooComplex(_)));
+
+        assert_eq!(
+            vm.singleton_match.borrow().as_deref(),
+            Some(accepted.as_slice()),
+            "singleton value must be restored"
+        );
+        assert!(
+            vm.singleton_transition
+                .borrow()
+                .as_ref()
+                .is_some_and(|fm| Rc::ptr_eq(fm, &accepted_fm)),
+            "singleton transition must be restored"
+        );
+        assert!(
+            vm.main_arena.borrow().is_none(),
+            "failed direct insert must not install main_arena"
+        );
+        assert_eq!(
+            vm.transition_map.borrow().len(),
+            0,
+            "temporary transition keys must be removed"
+        );
+
+        let mut bufs = NfaBuffers::new();
+        let accepted_match = vm.transition_on(&accepted, false, &mut bufs);
+        assert!(
+            accepted_match.iter().any(|fm| Rc::ptr_eq(fm, &accepted_fm)),
+            "restored singleton must still match"
+        );
+        assert!(
+            vm.transition_on(&rejected, false, &mut bufs).is_empty(),
+            "rejected direct string pattern must not become visible"
+        );
+    }
+
+    // MIRI SKIP RATIONALE: The long rejected values pin rollback of multiple
+    // appended trie branches in native tests. Coverage:
+    // test_failed_direct_string_rollbacks_miri_friendly covers bulk insertion
+    // rollback with short strings.
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_failed_bulk_string_insert_rolls_back_main_arena_state() {
+        let accepted_values = [qv(b"alpha"), qv(b"omega")];
+        let accepted_refs: Vec<_> = accepted_values.iter().map(Vec::as_slice).collect();
+        let rejected_values = [qv(&vec![b'a'; 256]), qv(&vec![b'b'; 320])];
+        let rejected_refs: Vec<_> = rejected_values.iter().map(Vec::as_slice).collect();
+
+        let budget = {
+            let probe: MutableValueMatcher<String> = MutableValueMatcher::new();
+            probe
+                .add_string_transitions_bulk(&accepted_refs, 0)
+                .unwrap();
+            let before_size = probe
+                .main_arena
+                .borrow()
+                .as_ref()
+                .expect("main arena should exist")
+                .0
+                .estimated_byte_size();
+            probe
+                .add_string_transitions_bulk(&rejected_refs, 0)
+                .unwrap();
+            let after_size = probe
+                .main_arena
+                .borrow()
+                .as_ref()
+                .expect("main arena should exist")
+                .0
+                .estimated_byte_size();
+            assert!(
+                before_size < after_size,
+                "test data must grow the arena budget"
+            );
+            after_size - 1
+        };
+
+        let vm: MutableValueMatcher<String> = MutableValueMatcher::new();
+        let accepted_fm = vm.add_string_transitions_bulk(&accepted_refs, 0).unwrap();
+        let (old_start, old_len, old_transition_count) = {
+            let main = vm.main_arena.borrow();
+            let (arena, start) = main.as_ref().expect("main arena should exist");
+            (*start, arena.len(), vm.transition_map.borrow().len())
+        };
+
+        let err = match vm.add_string_transitions_bulk(&rejected_refs, budget) {
+            Ok(_) => panic!("bulk string insertion should exceed the budget"),
+            Err(err) => err,
+        };
+        assert!(matches!(err, crate::QuaminaError::PatternTooComplex(_)));
+
+        {
+            let main = vm.main_arena.borrow();
+            let (arena, start) = main.as_ref().expect("main arena should exist");
+            assert_eq!(*start, old_start, "live start must be restored");
+            assert_eq!(arena.len(), old_len, "appended states must be removed");
+        }
+        assert_eq!(
+            vm.transition_map.borrow().len(),
+            old_transition_count,
+            "rejected transition key must be removed"
+        );
+
+        let mut bufs = NfaBuffers::new();
+        let accepted = vm.transition_on(&accepted_values[1], false, &mut bufs);
+        assert!(
+            accepted.iter().any(|fm| Rc::ptr_eq(fm, &accepted_fm)),
+            "accepted bulk string pattern must still match"
+        );
+        for rejected in &rejected_values {
+            assert!(
+                vm.transition_on(rejected, false, &mut bufs).is_empty(),
+                "rejected bulk string pattern must not become visible"
+            );
+        }
+    }
+
+    // MIRI SKIP RATIONALE: The large numeric literal creates long textual and
+    // Q-number paths to prove native arena truncation. Coverage:
+    // test_failed_numeric_and_suffix_rollbacks_miri_friendly covers numeric
+    // rollback and has_numbers restore with a short value.
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_failed_numeric_exact_insert_rolls_back_main_arena_state() {
+        let accepted_prefix = b"\"keep";
+        let rejected_num = 123_456_789_012_345_670_000_000_000_000_f64;
+
+        let budget = {
+            let probe: MutableValueMatcher<String> = MutableValueMatcher::new();
+            probe.add_prefix_transition(accepted_prefix, 0).unwrap();
+            let before_size = probe
+                .main_arena
+                .borrow()
+                .as_ref()
+                .expect("main arena should exist")
+                .0
+                .estimated_byte_size();
+            probe.add_numeric_transition(rejected_num, 0).unwrap();
+            let after_size = probe
+                .main_arena
+                .borrow()
+                .as_ref()
+                .expect("main arena should exist")
+                .0
+                .estimated_byte_size();
+            assert!(
+                before_size < after_size,
+                "test data must grow the arena budget"
+            );
+            after_size - 1
+        };
+
+        let vm: MutableValueMatcher<String> = MutableValueMatcher::new();
+        let accepted_fm = vm.add_prefix_transition(accepted_prefix, 0).unwrap();
+        assert!(!vm.has_numbers.get());
+        let (old_start, old_len, old_transition_count) = {
+            let main = vm.main_arena.borrow();
+            let (arena, start) = main.as_ref().expect("main arena should exist");
+            (*start, arena.len(), vm.transition_map.borrow().len())
+        };
+
+        let err = match vm.add_numeric_transition(rejected_num, budget) {
+            Ok(_) => panic!("numeric insertion should exceed the budget"),
+            Err(err) => err,
+        };
+        assert!(matches!(err, crate::QuaminaError::PatternTooComplex(_)));
+
+        {
+            let main = vm.main_arena.borrow();
+            let (arena, start) = main.as_ref().expect("main arena should exist");
+            assert_eq!(*start, old_start, "live start must be restored");
+            assert_eq!(arena.len(), old_len, "appended states must be removed");
+        }
+        assert_eq!(
+            vm.transition_map.borrow().len(),
+            old_transition_count,
+            "rejected transition key must be removed"
+        );
+        assert!(
+            !vm.has_numbers.get(),
+            "failed numeric exact add must restore the numeric flag"
+        );
+
+        let mut bufs = NfaBuffers::new();
+        let accepted = vm.transition_on(&qv(b"keep-going"), false, &mut bufs);
+        assert!(
+            accepted.iter().any(|fm| Rc::ptr_eq(fm, &accepted_fm)),
+            "accepted prefix pattern must still match"
+        );
+        let rejected_value = rejected_num.to_string();
+        assert!(
+            vm.transition_on(rejected_value.as_bytes(), true, &mut bufs)
+                .is_empty(),
+            "rejected numeric exact pattern must not become visible"
+        );
+    }
+
+    // MIRI SKIP RATIONALE: The 256-byte suffix proves suffix-arena truncation in
+    // the native test suite. Coverage:
+    // test_failed_numeric_and_suffix_rollbacks_miri_friendly keeps suffix
+    // rollback covered under Miri with a short suffix.
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_failed_suffix_insert_rolls_back_suffix_arena_state() {
+        let accepted_suffix = "ok";
+        let rejected_suffix = "x".repeat(256);
+
+        let budget = {
+            let probe: MutableValueMatcher<String> = MutableValueMatcher::new();
+            probe.add_suffix_transition(accepted_suffix, 0).unwrap();
+            let before_size = probe
+                .suffix_arena
+                .borrow()
+                .as_ref()
+                .expect("suffix arena should exist")
+                .0
+                .estimated_byte_size();
+            probe.add_suffix_transition(&rejected_suffix, 0).unwrap();
+            let after_size = probe
+                .suffix_arena
+                .borrow()
+                .as_ref()
+                .expect("suffix arena should exist")
+                .0
+                .estimated_byte_size();
+            assert!(
+                before_size < after_size,
+                "test data must grow the suffix arena budget"
+            );
+            after_size - 1
+        };
+
+        let vm: MutableValueMatcher<String> = MutableValueMatcher::new();
+        let accepted_fm = vm.add_suffix_transition(accepted_suffix, 0).unwrap();
+        let (old_start, old_len, old_transition_count) = {
+            let suffix = vm.suffix_arena.borrow();
+            let (arena, start) = suffix.as_ref().expect("suffix arena should exist");
+            (*start, arena.len(), vm.transition_map.borrow().len())
+        };
+
+        let err = match vm.add_suffix_transition(&rejected_suffix, budget) {
+            Ok(_) => panic!("suffix insertion should exceed the budget"),
+            Err(err) => err,
+        };
+        assert!(matches!(err, crate::QuaminaError::PatternTooComplex(_)));
+
+        {
+            let suffix = vm.suffix_arena.borrow();
+            let (arena, start) = suffix.as_ref().expect("suffix arena should exist");
+            assert_eq!(*start, old_start, "suffix start must be restored");
+            assert_eq!(
+                arena.len(),
+                old_len,
+                "suffix appended states must be removed"
+            );
+        }
+        assert_eq!(
+            vm.transition_map.borrow().len(),
+            old_transition_count,
+            "rejected suffix transition key must be removed"
+        );
+
+        let mut bufs = NfaBuffers::new();
+        let accepted = vm.transition_on(&qv(b"file.ok"), false, &mut bufs);
+        assert!(
+            accepted.iter().any(|fm| Rc::ptr_eq(fm, &accepted_fm)),
+            "accepted suffix pattern must still match"
+        );
+        let rejected_value = qv(format!("file.{rejected_suffix}").as_bytes());
+        assert!(
+            vm.transition_on(&rejected_value, false, &mut bufs)
+                .is_empty(),
+            "rejected suffix pattern must not become visible"
+        );
+    }
+
+    #[test]
+    #[cfg(miri)]
+    fn test_failed_append_merge_rollbacks_miri_friendly() {
+        let accepted_prefix = b"\"k";
+        let rejected_shell = quote_wrap(b"r*");
+
+        let budget = {
+            let probe: MutableValueMatcher<String> = MutableValueMatcher::new();
+            probe
+                .add_prefix_transition(accepted_prefix, 0)
+                .expect("first pattern should build");
+            probe
+                .add_shellstyle_transition(&rejected_shell, 0)
+                .expect("probe merge should build");
+            let main = probe.main_arena.borrow();
+            let (arena, start) = main.as_ref().expect("main arena should exist");
+            clone_arena_subset(arena, *start).0.estimated_byte_size() - 1
+        };
+
+        let vm: MutableValueMatcher<String> = MutableValueMatcher::new();
+        let accepted_fm = vm
+            .add_prefix_transition(accepted_prefix, 0)
+            .expect("first pattern should build");
+        let (old_start, old_len, old_transition_count) = {
+            let main = vm.main_arena.borrow();
+            let (arena, start) = main.as_ref().expect("main arena should exist");
+            (*start, arena.len(), vm.transition_map.borrow().len())
+        };
+
+        let err = match vm.add_shellstyle_transition(&rejected_shell, budget) {
+            Ok(_) => panic!("second pattern should exceed the merge budget"),
+            Err(err) => err,
+        };
+        assert!(matches!(err, crate::QuaminaError::PatternTooComplex(_)));
+
+        {
+            let main = vm.main_arena.borrow();
+            let (arena, start) = main.as_ref().expect("main arena should exist");
+            assert_eq!(*start, old_start, "live start must be restored");
+            assert_eq!(arena.len(), old_len, "appended states must be truncated");
+        }
+        assert_eq!(
+            vm.transition_map.borrow().len(),
+            old_transition_count,
+            "rejected transition key must be removed"
+        );
+
+        let mut bufs = NfaBuffers::new();
+        let accepted = vm.transition_on(&qv(b"keep"), false, &mut bufs);
+        assert!(
+            accepted.iter().any(|fm| Rc::ptr_eq(fm, &accepted_fm)),
+            "accepted pattern must still match"
+        );
+        assert!(
+            vm.transition_on(&qv(b"reject"), false, &mut bufs)
+                .is_empty(),
+            "rejected pattern must not become visible"
+        );
+    }
+
+    #[test]
+    #[cfg(miri)]
+    fn test_failed_direct_string_rollbacks_miri_friendly() {
+        let accepted_values = [qv(b"a"), qv(b"b")];
+        let accepted_refs: Vec<_> = accepted_values.iter().map(Vec::as_slice).collect();
+        let rejected = qv(b"zz");
+
+        let budget = {
+            let probe: MutableValueMatcher<String> = MutableValueMatcher::new();
+            probe
+                .add_string_transitions_bulk(&accepted_refs, 0)
+                .unwrap();
+            probe.add_string_transition(&rejected, 0).unwrap();
+            probe
+                .main_arena
+                .borrow()
+                .as_ref()
+                .expect("main arena should exist")
+                .0
+                .estimated_byte_size()
+                - 1
+        };
+
+        let vm: MutableValueMatcher<String> = MutableValueMatcher::new();
+        let accepted_fm = vm.add_string_transitions_bulk(&accepted_refs, 0).unwrap();
+        let (old_start, old_len, old_transition_count) = {
+            let main = vm.main_arena.borrow();
+            let (arena, start) = main.as_ref().expect("main arena should exist");
+            (*start, arena.len(), vm.transition_map.borrow().len())
+        };
+
+        let err = match vm.add_string_transition(&rejected, budget) {
+            Ok(_) => panic!("direct string insertion should exceed the budget"),
+            Err(err) => err,
+        };
+        assert!(matches!(err, crate::QuaminaError::PatternTooComplex(_)));
+
+        {
+            let main = vm.main_arena.borrow();
+            let (arena, start) = main.as_ref().expect("main arena should exist");
+            assert_eq!(*start, old_start, "live start must be restored");
+            assert_eq!(arena.len(), old_len, "appended states must be removed");
+        }
+        assert_eq!(
+            vm.transition_map.borrow().len(),
+            old_transition_count,
+            "rejected transition key must be removed"
+        );
+
+        let mut bufs = NfaBuffers::new();
+        let accepted = vm.transition_on(&accepted_values[0], false, &mut bufs);
+        assert!(
+            accepted.iter().any(|fm| Rc::ptr_eq(fm, &accepted_fm)),
+            "accepted direct string pattern must still match"
+        );
+        assert!(
+            vm.transition_on(&rejected, false, &mut bufs).is_empty(),
+            "rejected direct string pattern must not become visible"
+        );
+
+        let singleton_accepted = qv(b"k");
+        let singleton_rejected = qv(b"q");
+        let singleton_budget = {
+            let probe: MutableValueMatcher<String> = MutableValueMatcher::new();
+            probe.add_string_transition(&singleton_accepted, 0).unwrap();
+            probe.add_string_transition(&singleton_rejected, 0).unwrap();
+            probe
+                .main_arena
+                .borrow()
+                .as_ref()
+                .expect("main arena should exist")
+                .0
+                .estimated_byte_size()
+                - 1
+        };
+
+        let singleton_vm: MutableValueMatcher<String> = MutableValueMatcher::new();
+        let singleton_fm = singleton_vm
+            .add_string_transition(&singleton_accepted, 0)
+            .unwrap();
+        let err = match singleton_vm.add_string_transition(&singleton_rejected, singleton_budget) {
+            Ok(_) => panic!("direct string insertion should exceed the budget"),
+            Err(err) => err,
+        };
+        assert!(matches!(err, crate::QuaminaError::PatternTooComplex(_)));
+        assert_eq!(
+            singleton_vm.singleton_match.borrow().as_deref(),
+            Some(singleton_accepted.as_slice()),
+            "singleton value must be restored"
+        );
+        assert!(
+            singleton_vm
+                .singleton_transition
+                .borrow()
+                .as_ref()
+                .is_some_and(|fm| Rc::ptr_eq(fm, &singleton_fm)),
+            "singleton transition must be restored"
+        );
+        assert!(
+            singleton_vm.main_arena.borrow().is_none(),
+            "failed singleton promotion must not install main_arena"
+        );
+
+        let rejected_values = [qv(b"xx"), qv(b"yy")];
+        let rejected_refs: Vec<_> = rejected_values.iter().map(Vec::as_slice).collect();
+        let bulk_budget = {
+            let probe: MutableValueMatcher<String> = MutableValueMatcher::new();
+            probe
+                .add_string_transitions_bulk(&accepted_refs, 0)
+                .unwrap();
+            probe
+                .add_string_transitions_bulk(&rejected_refs, 0)
+                .unwrap();
+            probe
+                .main_arena
+                .borrow()
+                .as_ref()
+                .expect("main arena should exist")
+                .0
+                .estimated_byte_size()
+                - 1
+        };
+
+        let bulk_vm: MutableValueMatcher<String> = MutableValueMatcher::new();
+        bulk_vm
+            .add_string_transitions_bulk(&accepted_refs, 0)
+            .unwrap();
+        let (bulk_old_start, bulk_old_len, bulk_old_transition_count) = {
+            let main = bulk_vm.main_arena.borrow();
+            let (arena, start) = main.as_ref().expect("main arena should exist");
+            (*start, arena.len(), bulk_vm.transition_map.borrow().len())
+        };
+        let err = match bulk_vm.add_string_transitions_bulk(&rejected_refs, bulk_budget) {
+            Ok(_) => panic!("bulk string insertion should exceed the budget"),
+            Err(err) => err,
+        };
+        assert!(matches!(err, crate::QuaminaError::PatternTooComplex(_)));
+        {
+            let main = bulk_vm.main_arena.borrow();
+            let (arena, start) = main.as_ref().expect("main arena should exist");
+            assert_eq!(*start, bulk_old_start, "live start must be restored");
+            assert_eq!(arena.len(), bulk_old_len, "appended states must be removed");
+        }
+        assert_eq!(
+            bulk_vm.transition_map.borrow().len(),
+            bulk_old_transition_count,
+            "bulk rejected transition key must be removed"
+        );
+    }
+
+    #[test]
+    #[cfg(miri)]
+    fn test_failed_numeric_and_suffix_rollbacks_miri_friendly() {
+        let accepted_prefix = b"\"k";
+        let rejected_num = 7.0;
+
+        let budget = {
+            let probe: MutableValueMatcher<String> = MutableValueMatcher::new();
+            probe.add_prefix_transition(accepted_prefix, 0).unwrap();
+            probe.add_numeric_transition(rejected_num, 0).unwrap();
+            probe
+                .main_arena
+                .borrow()
+                .as_ref()
+                .expect("main arena should exist")
+                .0
+                .estimated_byte_size()
+                - 1
+        };
+
+        let vm: MutableValueMatcher<String> = MutableValueMatcher::new();
+        let accepted_fm = vm.add_prefix_transition(accepted_prefix, 0).unwrap();
+        let (old_start, old_len, old_transition_count) = {
+            let main = vm.main_arena.borrow();
+            let (arena, start) = main.as_ref().expect("main arena should exist");
+            (*start, arena.len(), vm.transition_map.borrow().len())
+        };
+        let err = match vm.add_numeric_transition(rejected_num, budget) {
+            Ok(_) => panic!("numeric insertion should exceed the budget"),
+            Err(err) => err,
+        };
+        assert!(matches!(err, crate::QuaminaError::PatternTooComplex(_)));
+        {
+            let main = vm.main_arena.borrow();
+            let (arena, start) = main.as_ref().expect("main arena should exist");
+            assert_eq!(*start, old_start, "live start must be restored");
+            assert_eq!(arena.len(), old_len, "appended states must be removed");
+        }
+        assert_eq!(
+            vm.transition_map.borrow().len(),
+            old_transition_count,
+            "rejected transition key must be removed"
+        );
+        assert!(
+            !vm.has_numbers.get(),
+            "failed numeric exact add must restore the numeric flag"
+        );
+
+        let mut bufs = NfaBuffers::new();
+        let accepted = vm.transition_on(&qv(b"keep"), false, &mut bufs);
+        assert!(
+            accepted.iter().any(|fm| Rc::ptr_eq(fm, &accepted_fm)),
+            "accepted prefix pattern must still match"
+        );
+        assert!(
+            vm.transition_on(rejected_num.to_string().as_bytes(), true, &mut bufs)
+                .is_empty(),
+            "rejected numeric exact pattern must not become visible"
+        );
+
+        let suffix_budget = {
+            let probe: MutableValueMatcher<String> = MutableValueMatcher::new();
+            probe.add_suffix_transition("ok", 0).unwrap();
+            probe.add_suffix_transition("xx", 0).unwrap();
+            probe
+                .suffix_arena
+                .borrow()
+                .as_ref()
+                .expect("suffix arena should exist")
+                .0
+                .estimated_byte_size()
+                - 1
+        };
+
+        let suffix_vm: MutableValueMatcher<String> = MutableValueMatcher::new();
+        let suffix_fm = suffix_vm.add_suffix_transition("ok", 0).unwrap();
+        let (suffix_old_start, suffix_old_len, suffix_old_transition_count) = {
+            let suffix = suffix_vm.suffix_arena.borrow();
+            let (arena, start) = suffix.as_ref().expect("suffix arena should exist");
+            (*start, arena.len(), suffix_vm.transition_map.borrow().len())
+        };
+        let err = match suffix_vm.add_suffix_transition("xx", suffix_budget) {
+            Ok(_) => panic!("suffix insertion should exceed the budget"),
+            Err(err) => err,
+        };
+        assert!(matches!(err, crate::QuaminaError::PatternTooComplex(_)));
+        {
+            let suffix = suffix_vm.suffix_arena.borrow();
+            let (arena, start) = suffix.as_ref().expect("suffix arena should exist");
+            assert_eq!(*start, suffix_old_start, "suffix start must be restored");
+            assert_eq!(
+                arena.len(),
+                suffix_old_len,
+                "suffix appended states must be removed"
+            );
+        }
+        assert_eq!(
+            suffix_vm.transition_map.borrow().len(),
+            suffix_old_transition_count,
+            "rejected suffix transition key must be removed"
+        );
+
+        let accepted = suffix_vm.transition_on(&qv(b"file.ok"), false, &mut bufs);
+        assert!(
+            accepted.iter().any(|fm| Rc::ptr_eq(fm, &suffix_fm)),
+            "accepted suffix pattern must still match"
+        );
+        assert!(
+            suffix_vm
+                .transition_on(&qv(b"file.xx"), false, &mut bufs)
+                .is_empty(),
+            "rejected suffix pattern must not become visible"
         );
     }
 
