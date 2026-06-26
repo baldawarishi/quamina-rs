@@ -972,7 +972,12 @@ fn test_cidr_miri_lightweight() {
     assert_no_match!(q, r#"{"sourceIP": "192.168.1.1"}"#, "192.168.1.1 NOT in /8");
 }
 
+// MIRI SKIP RATIONALE: This goes through full pattern parsing and matcher
+// construction only to verify invalid CIDR literals. Coverage:
+// test_cidr_invalid_patterns_miri_friendly checks the CIDR parser boundary
+// directly under Miri.
 #[test]
+#[cfg_attr(miri, ignore)]
 fn test_cidr_invalid_patterns() {
     let mut q = Quamina::new();
 
@@ -981,6 +986,25 @@ fn test_cidr_invalid_patterns() {
 
     let result = q.add_pattern("p2", r#"{"ip": [{"cidr": "10.0.0.0/33"}]}"#);
     assert!(result.is_err(), "Invalid prefix length should be rejected");
+}
+
+#[test]
+#[cfg(miri)]
+fn test_cidr_invalid_patterns_miri_friendly() {
+    use crate::json::CidrPattern;
+
+    assert!(
+        CidrPattern::parse("not-an-ip/24").is_none(),
+        "Invalid IP should be rejected"
+    );
+    assert!(
+        CidrPattern::parse("10.0.0.0/33").is_none(),
+        "Invalid IPv4 prefix length should be rejected"
+    );
+    assert!(
+        CidrPattern::parse("2001:db8::/129").is_none(),
+        "Invalid IPv6 prefix length should be rejected"
+    );
 }
 
 #[test]

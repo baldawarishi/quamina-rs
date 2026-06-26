@@ -25,35 +25,34 @@ cargo fmt -- --check
 
 # Incremental mutation check: mutate only the lines this commit changes, the
 # same gate CI's `incremental` job runs (and using the same .cargo/mutants.toml,
-# so equivalents listed in exclude_re are already filtered out). Local feedback
-# only — CI is authoritative.
-#
-# Kept under ~1 minute by costing the diff first: `--list` is near-instant, and
-# a mutant runs in ~3s on top of a ~10s baseline build, so anything past
-# MUTANTS_MAX mutants would blow the budget and is left for CI. Skipped entirely
-# when cargo-mutants is absent or SKIP_MUTANTS=1.
-MUTANTS_MAX=${MUTANTS_MAX:-15}
-if [ "${SKIP_MUTANTS:-0}" != "1" ] && command -v cargo-mutants >/dev/null 2>&1; then
-    MUT_DIFF=$(mktemp)
-    trap 'rm -f "$MUT_DIFF"' EXIT
-    # Working tree vs HEAD, matching the source cargo-mutants will mutate.
-    git diff HEAD -- '*.rs' > "$MUT_DIFF"
-    if [ -s "$MUT_DIFF" ]; then
-        N=$(cargo mutants --in-diff "$MUT_DIFF" --list 2>/dev/null | wc -l | tr -d ' ')
-        if [ "$N" -eq 0 ]; then
-            : # no mutable production lines changed
-        elif [ "$N" -gt "$MUTANTS_MAX" ]; then
-            echo "+cargo mutants --in-diff: $N mutants exceeds local budget ($MUTANTS_MAX); leaving to CI"
-        else
-            echo "+cargo mutants --in-diff ($N mutants)"
-            status=0
-            cargo mutants --no-shuffle --in-diff "$MUT_DIFF" --timeout 20 || status=$?
-            if [ "$status" -ne 0 ]; then
-                echo "mutation check failed (exit $status): a changed line has no test"
-                echo "killing it. Add a test, or if the mutant is a genuine equivalent,"
-                echo "add it to .cargo/mutants.toml exclude_re. Bypass: SKIP_MUTANTS=1 git commit"
-                exit 1
-            fi
-        fi
+# so equivalents listed in exclude_re are already filtered out). A commit must
+# not pass with missed or timed-out changed-line mutants.
+if [ "${SKIP_MUTANTS:-0}" = "1" ]; then
+    echo "SKIP_MUTANTS=1: skipping changed-line mutation check"
+    exit 0
+fi
+
+if ! command -v cargo-mutants >/dev/null 2>&1; then
+    echo "cargo-mutants is required for the local mutation check"
+    exit 1
+fi
+
+MUT_DIFF=$(mktemp)
+trap 'rm -f "$MUT_DIFF"' EXIT
+# Working tree vs HEAD, matching the source cargo-mutants will mutate.
+git diff HEAD -- '*.rs' > "$MUT_DIFF"
+if [ -s "$MUT_DIFF" ]; then
+    echo '+cargo mutants -vV -j 4 --timeout 10 --test-tool nextest --in-diff'
+    status=0
+    if command -v caffeinate >/dev/null 2>&1; then
+        caffeinate -i cargo mutants -vV --no-shuffle -j 4 --timeout 10 --test-tool nextest --in-diff "$MUT_DIFF" || status=$?
+    else
+        cargo mutants -vV --no-shuffle -j 4 --timeout 10 --test-tool nextest --in-diff "$MUT_DIFF" || status=$?
+    fi
+    if [ "$status" -ne 0 ]; then
+        echo "mutation check failed (exit $status): changed-line mutants were missed, timed out, or the run failed"
+        echo "Add a test, or if the mutant is a genuine equivalent,"
+        echo "add it to .cargo/mutants.toml exclude_re."
+        exit 1
     fi
 fi
