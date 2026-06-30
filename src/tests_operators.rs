@@ -1445,33 +1445,16 @@ fn test_nwb_start_word_err() {
 }
 
 #[test]
-fn test_wb_whole_word_match() {
+fn test_wb_whole_word() {
+    // `~b` on both sides of `cat` requires it to be a standalone word. The two
+    // `.*` make the NFA large to build, so all positions (mid, start, end,
+    // sole word) and the no-match case share a single built matcher.
     let q = q!("test" => r#"{"name": [{"regexp": ".*~bcat~b.*"}]}"#);
     assert_has_match!(q, r#"{"name": "the cat sat"}"#, "test");
-}
-
-#[test]
-fn test_wb_whole_word_no_match() {
-    let q = q!("test" => r#"{"name": [{"regexp": ".*~bcat~b.*"}]}"#);
-    assert_no_has_match!(q, r#"{"name": "concatenate"}"#, "test");
-}
-
-#[test]
-fn test_wb_whole_word_at_start() {
-    let q = q!("test" => r#"{"name": [{"regexp": ".*~bcat~b.*"}]}"#);
     assert_has_match!(q, r#"{"name": "cat is here"}"#, "test");
-}
-
-#[test]
-fn test_wb_whole_word_at_end() {
-    let q = q!("test" => r#"{"name": [{"regexp": ".*~bcat~b.*"}]}"#);
     assert_has_match!(q, r#"{"name": "the cat"}"#, "test");
-}
-
-#[test]
-fn test_wb_whole_word_only() {
-    let q = q!("test" => r#"{"name": [{"regexp": ".*~bcat~b.*"}]}"#);
     assert_has_match!(q, r#"{"name": "cat"}"#, "test");
+    assert_no_has_match!(q, r#"{"name": "concatenate"}"#, "test");
 }
 
 #[test]
