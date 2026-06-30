@@ -1749,6 +1749,7 @@ fn test_delete_already_deleted_pattern_is_noop() {
 // --- Depth Limit Tests ---
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn test_pattern_depth_at_limit() {
     // Pattern nested exactly 256 levels deep should succeed with default limits
     let mut q = Quamina::new();
@@ -1767,7 +1768,30 @@ fn test_pattern_depth_at_limit() {
     );
 }
 
+/// Miri-friendly variant of test_pattern_depth_at_limit.
+///
+/// Uses 8 nesting levels instead of 256 to keep Miri runtime manageable while
+/// still exercising deep-pattern parsing and automaton construction.
 #[test]
+fn test_pattern_depth_at_limit_miri_friendly() {
+    let mut q = Quamina::new();
+    let mut pattern = String::new();
+    let mut closing = String::new();
+    for i in 0..8 {
+        pattern.push_str(&format!("{{\"f{i}\": "));
+        closing.push('}');
+    }
+    pattern.push_str("[\"val\"]");
+    pattern.push_str(&closing);
+
+    assert!(
+        q.add_pattern("deep", &pattern).is_ok(),
+        "8-level nested pattern should succeed"
+    );
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
 fn test_pattern_depth_exceeds_limit() {
     // Pattern nested 257 levels should fail
     let mut q = Quamina::new();
@@ -1812,7 +1836,21 @@ fn test_pattern_depth_custom_limit() {
         "Pattern at depth 6 should fail with max_depth=5"
     );
     let err_msg = format!("{}", result.unwrap_err());
-    assert!(err_msg.contains("depth"), "Error should mention depth");
+    assert!(
+        err_msg.contains("depth"),
+        "Error should mention depth: {err_msg}"
+    );
+    // The message embeds the actual and configured depths. Asserting them here
+    // keeps that formatting covered under Miri, which skips the 256/257-deep
+    // test_pattern_depth_{at,exceeds}_limit tests.
+    assert!(
+        err_msg.contains('6'),
+        "Error should mention actual depth 6: {err_msg}"
+    );
+    assert!(
+        err_msg.contains('5'),
+        "Error should mention max depth 5: {err_msg}"
+    );
 }
 
 #[test]
@@ -3171,33 +3209,34 @@ fn i_string(n: usize) -> String {
 #[test]
 fn test_arena_budget_rejects_oversized_pattern() {
     // A 1-byte budget can't fit any real arena, so a prefix matcher (which
-    // always builds an arena) over a long literal is rejected outright.
+    // always builds an arena) is rejected outright — the literal's length is
+    // irrelevant once the arena exceeds a single byte.
     let mut q = QuaminaBuilder::<&str>::new()
         .with_arena_byte_budget(1)
         .build()
         .unwrap();
-    let big = i_string(200);
+    let big = i_string(16);
     let pat = format!(r#"{{"x": [{{"prefix": "{big}"}}]}}"#);
     let err = q.add_pattern("big", &pat).unwrap_err();
     assert!(matches!(err, QuaminaError::PatternTooComplex(_)));
 }
 
 /// The build-time budget gates pattern acceptance on the size of the arena
-/// that would be built: a 10 KB budget rejects a 100-byte literal's arena,
-/// while a generous budget accepts the same pattern.
+/// that would be built: a 1 KB budget rejects a prefix literal whose arena is
+/// a few KB, while a generous budget accepts the same pattern.
 #[test]
 fn test_arena_budget_gates_on_arena_size() {
-    let big = i_string(100);
+    let big = i_string(8);
     let big_pat = format!(r#"{{"x": [{{"prefix": "{big}"}}]}}"#);
 
     let mut tight = QuaminaBuilder::<&str>::new()
-        .with_arena_byte_budget(10_000)
+        .with_arena_byte_budget(1024)
         .build()
         .unwrap();
     tight.add_pattern("seed", r#"{"x": ["x"]}"#).unwrap();
     assert!(
         tight.add_pattern("big", &big_pat).is_err(),
-        "100-byte pattern must be rejected under a 10 KB arena budget"
+        "prefix pattern must be rejected under a 1 KB arena budget"
     );
 
     let mut generous = QuaminaBuilder::<&str>::new()
