@@ -733,12 +733,15 @@ impl StateArena {
             return;
         }
 
+        // Reused across states (cleared per state) so the DFS cost is amortized
+        // over the whole arena.
         let mut seen = SparseSet::new(arena_len);
         let mut stack: Vec<StateId> = Vec::new();
 
-        // Build all closures into a single flat buffer
+        // Every state's closure lives back-to-back in `closure_data`, indexed by
+        // its `closure_start`/`closure_len`; `closure_buf` accumulates one
+        // state's closure before it is appended.
         let mut closure_data: Vec<StateId> = Vec::with_capacity(arena_len);
-        // Temporary per-state closure for NFA states
         let mut closure_buf: Vec<StateId> = Vec::new();
 
         for state_idx in 0..arena_len {
