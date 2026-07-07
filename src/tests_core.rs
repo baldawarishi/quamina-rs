@@ -3305,9 +3305,10 @@ fn test_matcher_stats_cost_grows() {
 /// optimization (a stored comparison buffer, no automaton) must not panic and
 /// must still report non-zero bytes via the buffer's capacity.
 ///
-/// A single literal value — `{"Animated": [false]}` — takes that path: the
-/// matcher stores the literal bytes and compares directly instead of building
-/// an arena, so it has no automaton to walk.
+/// That optimization fires for any field with a single string or literal
+/// value: the matcher stores the literal bytes and compares them directly
+/// instead of building an arena, so it has no automaton to walk. Minimal
+/// repro: `{"Animated": [false]}`.
 #[test]
 fn test_matcher_stats_singleton() {
     let mut q = QuaminaBuilder::<&str>::new().build().unwrap();
