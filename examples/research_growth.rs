@@ -10,15 +10,29 @@
 //! plotting build cost and automaton complexity versus pattern count.
 //!
 //! Run with: cargo run --release --example research_growth > growth.csv
+//!
+//! Pass `--cpuprofile <file>` to also capture a CPU profile of the whole run in
+//! pprof's protobuf format (inspect with `go tool pprof <file>`):
+//!   cargo run --release --example research_growth -- --cpuprofile prof.pb > growth.csv
 
+use std::fs::File;
 use std::time::Instant;
 
+use pprof::protos::Message;
 use quamina::Quamina;
 use rand::{RngExt, SeedableRng};
 
 const MAX_WORDS: usize = 10_000;
 
 fn main() {
+    // Start sampling before any work so the profile covers the full harness.
+    // 1 kHz trades a little overhead for finer resolution over this
+    // seconds-long run (Go's runtime/pprof samples at 100 Hz).
+    let cpuprofile = parse_cpuprofile_arg();
+    let guard = cpuprofile
+        .as_ref()
+        .map(|_| pprof::ProfilerGuard::new(1000).expect("failed to start CPU profiler"));
+
     let contents =
         std::fs::read_to_string("testdata/wwords.txt").expect("Failed to read testdata/wwords.txt");
     let words: Vec<&str> = contents
@@ -93,6 +107,45 @@ fn main() {
     let elapsed = overall_start.elapsed().as_secs_f64();
     eprintln!("Done adding {} patterns", words.len());
     eprintln!("Patterns/sec: {:.1}", count_f64(words.len()) / elapsed);
+
+    if let (Some(guard), Some(path)) = (guard, cpuprofile) {
+        write_cpu_profile(&guard, &path);
+    }
+}
+
+/// Scans the command line for `--cpuprofile <file>` (or `--cpuprofile=<file>`),
+/// mirroring the `-cpuprofile` flag of the Go research harness, and returns the
+/// destination path when present. Exits if the flag is given without a path.
+fn parse_cpuprofile_arg() -> Option<String> {
+    let mut args = std::env::args().skip(1);
+    while let Some(arg) = args.next() {
+        if let Some(path) = arg.strip_prefix("--cpuprofile=") {
+            return Some(path.to_owned());
+        }
+        if arg == "--cpuprofile" {
+            let Some(path) = args.next() else {
+                eprintln!("--cpuprofile requires a file path");
+                std::process::exit(2);
+            };
+            return Some(path);
+        }
+    }
+    None
+}
+
+/// Writes the sampled CPU profile to `path` in pprof's protobuf format, matching
+/// the artifact Go's `runtime/pprof` produces so the same tooling can read it.
+fn write_cpu_profile(guard: &pprof::ProfilerGuard, path: &str) {
+    let report = guard
+        .report()
+        .build()
+        .expect("failed to build CPU profile report");
+    let profile = report.pprof().expect("failed to encode pprof profile");
+    let mut file = File::create(path).expect("failed to create CPU profile file");
+    profile
+        .write_to_writer(&mut file)
+        .expect("failed to write CPU profile");
+    eprintln!("wrote CPU profile to {path}");
 }
 
 /// Converts a count to `f64` losslessly. Pattern, state, and fanout counts in
