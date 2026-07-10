@@ -1,6 +1,6 @@
 //! Operator tests for quamina-rs
 //!
-//! Go lineage: anything_but_test.go, shellstyle_test.go, regexp_test.go, monocase_test.go, nfa_test.go
+//! Go lineage: anything_but_test.go, shellstyle_test.go, regexp_test.go, monocase_test.go, nfa_test.go, incremental_closure_test.go
 //!
 //! This module covers:
 //! - Prefix/suffix operators
@@ -387,6 +387,93 @@ fn test_three_level_nesting_miri_friendly() {
     assert!(
         pattern_ids.contains(&"side"),
         "missing side, got {pattern_ids:?}"
+    );
+}
+
+// Patterns chosen to maximize merge interleaving on a single field: shared
+// prefixes/suffixes, multiple stars, and one exact value.
+const INCR_CLOSURE_PATTERNS: [(&str, &str); 7] = [
+    ("p1", r#"{"x":[{"shellstyle":"*foo*"}]}"#),
+    ("p2", r#"{"x":[{"shellstyle":"*foobar*"}]}"#),
+    ("p3", r#"{"x":[{"shellstyle":"foo*"}]}"#),
+    ("p4", r#"{"x":[{"shellstyle":"*bar"}]}"#),
+    ("p5", r#"{"x":[{"shellstyle":"a*b*c"}]}"#),
+    ("p6", r#"{"x":[{"shellstyle":"*x*y*"}]}"#),
+    ("p7", r#"{"x":["foobar"]}"#),
+];
+
+const INCR_CLOSURE_EVENTS: [&str; 10] = [
+    r#"{"x":"foobar"}"#,
+    r#"{"x":"afoob"}"#,
+    r#"{"x":"foo"}"#,
+    r#"{"x":"xxbar"}"#,
+    r#"{"x":"abc"}"#,
+    r#"{"x":"axbyc"}"#,
+    r#"{"x":"nomatch"}"#,
+    r#"{"x":"foobarbaz"}"#,
+    r#"{"x":"axxbyyc"}"#,
+    r#"{"x":"bar"}"#,
+];
+
+/// Add the patterns in the given order, then match every event and return a
+/// map of event to its sorted pattern IDs (sorted so the comparison ignores
+/// the order matches happen to come back in).
+fn incr_closure_build_and_match(
+    order: &[usize],
+) -> std::collections::BTreeMap<&'static str, Vec<&'static str>> {
+    let mut q = Quamina::new();
+    for &i in order {
+        let (name, pattern) = INCR_CLOSURE_PATTERNS[i];
+        q.add_pattern(name, pattern)
+            .unwrap_or_else(|e| panic!("add_pattern {name}: {e:?}"));
+    }
+
+    INCR_CLOSURE_EVENTS
+        .iter()
+        .map(|&ev| {
+            let mut matches = q.matches_for_event(ev.as_bytes()).unwrap();
+            matches.sort_unstable();
+            (ev, matches)
+        })
+        .collect()
+}
+
+/// Go lineage: incremental_closure_test.go TestIncrementalClosureOrderIndependence
+///
+/// Adding the same shellstyle patterns to a single field must yield identical
+/// match results regardless of insertion order. Each `add_pattern` merges a new
+/// automaton into the shared one and recomputes the epsilon closures over the
+/// merged NFA; a closure whose contents depended on merge order would make
+/// matching non-deterministic. This guards that order-independence ahead of any
+/// future move to incremental (prune-the-walk) closure construction.
+///
+/// Miri-skipped: merging seven shellstyle automata three times (once per order)
+/// is far heavier than a single `add_pattern`, and the merge-then-reclose path
+/// it exercises is already covered under Miri by the multi-pattern same-field
+/// shellstyle tests (e.g. `test_multiple_shellstyle_same_field`).
+#[test]
+#[cfg_attr(miri, ignore)]
+fn test_incremental_closure_order_independence() {
+    let forward = [0, 1, 2, 3, 4, 5, 6];
+    let reverse = [6, 5, 4, 3, 2, 1, 0];
+    let shuffled = [3, 0, 6, 1, 5, 2, 4];
+
+    let base = incr_closure_build_and_match(&forward);
+    assert_eq!(
+        incr_closure_build_and_match(&reverse),
+        base,
+        "reverse-order matches differ from forward"
+    );
+    assert_eq!(
+        incr_closure_build_and_match(&shuffled),
+        base,
+        "shuffled-order matches differ from forward"
+    );
+
+    // Sanity: the exact-value event must at least match p7 and the wildcards.
+    assert!(
+        !base[r#"{"x":"foobar"}"#].is_empty(),
+        "expected matches for foobar event, got none"
     );
 }
 
