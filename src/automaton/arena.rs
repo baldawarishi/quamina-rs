@@ -896,7 +896,6 @@ impl StateArena {
         let mut unpacked = [StateId::NONE; BYTE_CEILING];
         let mut dfa_unpacked = [StateId::NONE; BYTE_CEILING];
         let mut closure_set: Vec<StateId> = Vec::new();
-        let mut seen: FxHashSet<StateId> = FxHashSet::default();
         // Per-byte next-state collector, hoisted out of the loop to reuse capacity.
         // Each entry is a Vec of NFA states reachable via that byte value.
         let mut byte_to_next: Vec<Vec<StateId>> = (0..BYTE_CEILING).map(|_| Vec::new()).collect();
@@ -952,15 +951,13 @@ impl StateArena {
                     continue;
                 }
 
-                // Deduplicate and sort
-                seen.clear();
+                // Deduplicate by sorting then dropping adjacent equal states.
+                // The sort also produces the canonical set key built below, so
+                // no separate dedup set is needed.
                 closure_set.clear();
-                for &s in &byte_to_next[byte] {
-                    if seen.insert(s) {
-                        closure_set.push(s);
-                    }
-                }
+                closure_set.extend_from_slice(&byte_to_next[byte]);
                 closure_set.sort_unstable_by_key(|s| s.0);
+                closure_set.dedup();
 
                 let key = Self::make_state_set_key(&closure_set);
 
@@ -1216,7 +1213,6 @@ impl LazyDfa {
         let nfa_states = &self.nfa_sets[state_idx.index()];
 
         scratch.next_nfa_states.clear();
-        scratch.seen.clear();
 
         for &nfa_state in nfa_states {
             if nfa_state.is_none() {
@@ -1225,11 +1221,7 @@ impl LazyDfa {
             let next = self.nfa_arena.dstep(nfa_state, byte);
             if !next.is_none() {
                 let closure = self.nfa_arena.closure_of(next);
-                for &cs in closure {
-                    if scratch.seen.insert(cs) {
-                        scratch.next_nfa_states.push(cs);
-                    }
-                }
+                scratch.next_nfa_states.extend_from_slice(closure);
             }
         }
 
@@ -1238,8 +1230,10 @@ impl LazyDfa {
             return StateId::DEAD;
         }
 
-        // Sort for canonical key
+        // Sort for the canonical key, which also makes duplicates adjacent so
+        // dedup drops them without a separate set.
         scratch.next_nfa_states.sort_unstable_by_key(|s| s.0);
+        scratch.next_nfa_states.dedup();
 
         let next_idx = self.intern_state(&scratch.next_nfa_states, true);
 
@@ -1291,7 +1285,6 @@ impl LazyDfa {
 #[derive(Default)]
 struct LazyDfaScratch {
     next_nfa_states: Vec<StateId>,
-    seen: FxHashSet<StateId>,
 }
 
 /// Traverse a value through a lazy DFA, collecting field transitions.
