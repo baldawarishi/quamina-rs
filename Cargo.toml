@@ -27,6 +27,7 @@ flate2 = "1.0"
 rand = "0.10"
 regex = "1"  # For benchmarking comparisons
 dhat = "0.3"
+pprof = { version = "0.15", features = ["protobuf-codec"] }  # CPU profiling for the research example
 
 [dev-dependencies.cargo-husky]
 version = "1"
