@@ -485,12 +485,27 @@ impl StateArena {
     pub fn closure_of(&self, id: StateId) -> &[StateId] {
         // SAFETY: `id` was returned by `alloc()` on this arena, so `state_unchecked` is valid.
         // `closure_start` and `closure_len` are set by `precompute_epsilon_closures()` to
-        // valid indices within `closure_data`.
+        // valid indices within `closure_data`, except len==0 which encodes a
+        // self-only closure and does not read from `closure_data`.
         unsafe {
             let state = self.state_unchecked(id);
-            let start = state.closure_start as usize;
             let len = state.closure_len as usize;
+            if len == 0 {
+                return &[];
+            }
+            let start = state.closure_start as usize;
             self.closure_data.get_unchecked(start..start + len)
+        }
+    }
+
+    /// Append a state's closure to `out`; an empty stored closure means {self}.
+    #[inline(always)]
+    fn extend_closure_or_self(&self, id: StateId, out: &mut Vec<StateId>) {
+        let closure = self.closure_of(id);
+        if closure.is_empty() {
+            out.push(id);
+        } else {
+            out.extend_from_slice(closure);
         }
     }
 
@@ -927,8 +942,12 @@ impl StateArena {
         }
 
         debug_assert!(
-            !self.closure_data.is_empty(),
-            "epsilon closures must be precomputed before nfa_to_dfa"
+            self.states.iter().all(|state| {
+                state.closure_len == 0
+                    || state.closure_start as usize + state.closure_len as usize
+                        <= self.closure_data.len()
+            }),
+            "epsilon closure metadata must be valid before nfa_to_dfa"
         );
 
         let mut dfa_arena = Self::with_capacity(self.states.len());
@@ -949,18 +968,19 @@ impl StateArena {
         let mut byte_to_next: Vec<Vec<StateId>> = (0..BYTE_CEILING).map(|_| Vec::new()).collect();
 
         // Step 1: Compute the start DFA state = epsilon closure of NFA start
-        let start_closure = self.closure_of(start);
-        let start_key = Self::make_state_set_key(start_closure);
+        let mut start_set = Vec::new();
+        self.extend_closure_or_self(start, &mut start_set);
+        let start_key = Self::make_state_set_key(&start_set);
         let dfa_start = dfa_arena.alloc();
         state_map.insert(start_key, dfa_start);
         worklist.push(dfa_start);
 
         // Store the NFA state-set for each DFA state (indexed by DFA state index)
         let mut dfa_nfa_sets: Vec<Vec<StateId>> = Vec::new();
-        dfa_nfa_sets.push(start_closure.to_vec());
+        dfa_nfa_sets.push(start_set);
 
         // Copy field transitions from the start closure
-        Self::collect_field_transitions(self, start_closure, &mut dfa_arena[dfa_start]);
+        Self::collect_field_transitions(self, &dfa_nfa_sets[0], &mut dfa_arena[dfa_start]);
 
         // Step 2: Process worklist
         while let Some(dfa_state) = worklist.pop() {
@@ -984,8 +1004,7 @@ impl StateArena {
                     let target = unpacked[byte];
                     if !target.is_none() {
                         // Expand target through epsilon closure
-                        let target_closure = self.closure_of(target);
-                        byte_to_next[byte].extend_from_slice(target_closure);
+                        self.extend_closure_or_self(target, &mut byte_to_next[byte]);
                     }
                 }
             }
@@ -1194,7 +1213,9 @@ impl LazyDfa {
 
         // Create the start state from the NFA start's epsilon closure
         if !nfa_start.is_none() {
-            let closure = lazy.nfa_arena.closure_of(nfa_start).to_vec();
+            let mut closure = Vec::new();
+            lazy.nfa_arena
+                .extend_closure_or_self(nfa_start, &mut closure);
             lazy.intern_state(&closure, true);
         }
 
@@ -1268,8 +1289,8 @@ impl LazyDfa {
             }
             let next = self.nfa_arena.dstep(nfa_state, byte);
             if !next.is_none() {
-                let closure = self.nfa_arena.closure_of(next);
-                scratch.next_nfa_states.extend_from_slice(closure);
+                self.nfa_arena
+                    .extend_closure_or_self(next, &mut scratch.next_nfa_states);
             }
         }
 
@@ -1519,7 +1540,7 @@ pub fn traverse_arena_nfa(arena: &StateArena, start: StateId, val: &[u8], bufs: 
             for &state_id in current_states.iter() {
                 let closure = arena.closure_of(state_id);
 
-                if closure.len() == 1 {
+                if closure.len() <= 1 {
                     for ft in &arena[state_id].field_transitions {
                         let ptr = Arc::as_ptr(ft) as usize;
                         if seen_transitions.insert(ptr) {
@@ -1550,7 +1571,7 @@ pub fn traverse_arena_nfa(arena: &StateArena, start: StateId, val: &[u8], bufs: 
             for &state_id in current_states.iter() {
                 let closure = arena.closure_of(state_id);
 
-                if closure.len() == 1 {
+                if closure.len() <= 1 {
                     for &ptr in arena.ft_ptrs_of(state_id) {
                         if seen_transitions.insert(ptr) {
                             transitions.push(ptr);
@@ -1614,7 +1635,7 @@ pub fn traverse_arena_nfa(arena: &StateArena, start: StateId, val: &[u8], bufs: 
     if arena.ft_ptrs.is_empty() {
         for &state_id in current_states {
             let closure = arena.closure_of(state_id);
-            if closure.len() == 1 {
+            if closure.len() <= 1 {
                 for ft in &arena[state_id].field_transitions {
                     let ptr = Arc::as_ptr(ft) as usize;
                     if seen_transitions.insert(ptr) {
@@ -1635,7 +1656,7 @@ pub fn traverse_arena_nfa(arena: &StateArena, start: StateId, val: &[u8], bufs: 
     } else {
         for &state_id in current_states {
             let closure = arena.closure_of(state_id);
-            if closure.len() == 1 {
+            if closure.len() <= 1 {
                 for &ptr in arena.ft_ptrs_of(state_id) {
                     if seen_transitions.insert(ptr) {
                         transitions.push(ptr);
@@ -5912,6 +5933,66 @@ mod arena_stats_utility_tests {
         assert_eq!(arena.closure_of(s0), &[s0]);
         assert_eq!(arena.closure_of(s1), &[s1]);
         assert_eq!(arena.closure_of(s2), &[s2]);
+    }
+
+    #[test]
+    fn test_empty_closure_is_self_only_for_consumers() {
+        // Upstream Go e5b1370 prepares for a zero-alloc self-only closure
+        // sentinel: closure consumers must treat len==0 as {self}. This tiny
+        // automaton forces all consumers through that encoding without changing
+        // closure construction yet.
+        let mut arena = StateArena::new();
+        let fm = Arc::new(FieldMatcher::with_match_id(29));
+        let accept = arena.alloc();
+        arena[accept].field_transitions.push(fm);
+        let vt_state = arena.alloc_with_table(SmallTable::with_mappings(
+            StateId::NONE,
+            &[ARENA_VALUE_TERMINATOR],
+            &[accept],
+        ));
+        let start =
+            arena.alloc_with_table(SmallTable::with_mappings(StateId::NONE, b"a", &[vt_state]));
+        for state in &mut arena.states {
+            state.closure_len = 0;
+        }
+        arena.closure_data.clear();
+
+        let mut bufs = NfaBuffers::new();
+        traverse_arena_nfa(&arena, start, b"a", &mut bufs);
+        assert_eq!(
+            bufs.transitions.len(),
+            1,
+            "unfrozen NFA traversal must process empty closures as self-only"
+        );
+
+        let (dfa, dfa_start) = arena
+            .nfa_to_dfa(start, 16)
+            .expect("self-only sentinel DFA conversion should stay within budget");
+        let mut dfa_transitions = Vec::new();
+        traverse_arena_dfa(&dfa, dfa_start, b"a", &mut dfa_transitions);
+        assert_eq!(
+            dfa_transitions.len(),
+            1,
+            "NFA-to-DFA must expand empty closures as self-only"
+        );
+
+        let mut lazy = LazyDfa::new(arena.clone(), start, 16);
+        let mut lazy_transitions = Vec::new();
+        traverse_lazy_dfa(&mut lazy, b"a", &mut lazy_transitions);
+        assert_eq!(
+            lazy_transitions.len(),
+            1,
+            "lazy DFA must expand empty closures as self-only"
+        );
+
+        arena.flatten_tables();
+        let mut bufs = NfaBuffers::new();
+        traverse_arena_nfa(&arena, start, b"a", &mut bufs);
+        assert_eq!(
+            bufs.transitions.len(),
+            1,
+            "frozen NFA traversal must process empty closures as self-only"
+        );
     }
 
     #[test]
