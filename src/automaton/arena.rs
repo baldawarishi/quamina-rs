@@ -743,10 +743,13 @@ impl StateArena {
     /// were closed by an earlier call, and merges only ever append new states
     /// without touching already-closed ones (see [`Self::truncate_states`]), so
     /// their closures are unchanged and already sit as a prefix of
-    /// `closure_data`. Only the newly appended states are walked, so a sequence
-    /// of adds stays linear instead of re-walking the whole growing arena each
-    /// time (which was quadratic). This mirrors upstream Go's `closureForNfa`
-    /// pruning at states that already carry a computed closure.
+    /// `closure_data`. Skipping them is safe because a merge adds new states
+    /// only as ancestors of (never descendants of) already-closed states: an
+    /// already-closed state never gains an epsilon path to a newly added state,
+    /// so its closure cannot grow. Only the newly appended states are walked, so
+    /// a sequence of adds stays linear instead of re-walking the whole growing
+    /// arena each time (which was quadratic). This mirrors upstream Go's
+    /// `closureForNfa` pruning at states that already carry a computed closure.
     ///
     /// Must be called after the arena structure is finalized (e.g., after
     /// merging). Returns the number of states closed by this call, which is
