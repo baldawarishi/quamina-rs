@@ -12,6 +12,7 @@ Style inspired by [ripgrep's CHANGELOG](https://github.com/BurntSushi/ripgrep/bl
 - Memory and automaton statistics via `Quamina::matcher_stats()`, reporting states, bytes, fanouts, and max fanout (ported from Go upstream's `GetMatcherStats`) (#152)
 
 ### Changed
+- Precompute epsilon closures incrementally, re-closing only the states an added pattern introduces instead of the whole automaton on every add (matching Go upstream's `closureForNfa` prune)
 - Merge each added non-exact pattern by appending to the live automaton and compacting unreachable history at freeze, instead of rebuilding the whole accumulated arena on every add (#162)
 - Build regexp alternations by byte-merging branches into a deterministic entry instead of a Thompson epsilon hub (matching Go upstream's `makeNFAFromBranches`), shrinking alternation automata and speeding up their construction (#154)
 - Synced Go upstream through 5c6e2df (#152)

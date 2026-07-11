@@ -58,6 +58,12 @@ exclude_re = [
   # Post-fold compaction is cleanup-only: a pattern with no dead states (every
   # non-alternation one) clones to itself, so >1 vs >=1 changes nothing.
   'replace > with >= in regexp_has_alternation',
+  # The incremental closure branch reserves capacity as a hint only; the Vec
+  # grows as needed, so a wrong reservation (arena_len / or + start_idx) changes
+  # how often the buffer reallocates, never the closures it ends up holding.
+  # Column-anchored so the return-value arithmetic (caught at another column)
+  # stays tested.
+  ':40: replace - with .+ in .*precompute_epsilon_closures',
 ]
 
 # Don't mutate logging/debug/panic macros — not worth testing

@@ -378,6 +378,12 @@ pub struct StateArena {
     /// All epsilon closures concatenated. Each state indexes into this via
     /// `closure_start`/`closure_len`. Populated by `precompute_epsilon_closures()`.
     closure_data: Vec<StateId>,
+    /// Number of leading states whose full closures are already computed and
+    /// stored as a prefix of `closure_data`. Merges only append new states and
+    /// never edit already-closed ones (see [`Self::truncate_states`]), so
+    /// `precompute_epsilon_closures()` re-closes only states `>=` this
+    /// watermark, keeping a sequence of adds linear rather than quadratic.
+    closures_computed: usize,
     /// All field transition raw pointers (as `usize`) concatenated. Each state
     /// indexes into this via `ft_start`/`ft_len`. Populated by `flatten_tables()`.
     ft_ptrs: Vec<usize>,
@@ -401,6 +407,7 @@ impl StateArena {
         Self {
             states: Vec::new(),
             closure_data: Vec::new(),
+            closures_computed: 0,
             ft_ptrs: Vec::new(),
             dfa_lookup: Vec::new(),
         }
@@ -411,6 +418,7 @@ impl StateArena {
         Self {
             states: Vec::with_capacity(capacity),
             closure_data: Vec::with_capacity(capacity),
+            closures_computed: 0,
             ft_ptrs: Vec::new(),
             dfa_lookup: Vec::new(),
         }
@@ -631,6 +639,9 @@ impl StateArena {
         };
         self.states.truncate(n);
         self.closure_data.truncate(closure_end);
+        // Any dropped state that had been closed is no longer present, so the
+        // watermark can point no further than the retained prefix.
+        self.closures_computed = self.closures_computed.min(n);
     }
 
     /// Compute statistics about this arena's structure.
@@ -720,31 +731,63 @@ impl StateArena {
             .any(|state| !state.table.epsilons.is_empty())
     }
 
-    /// Precompute epsilon closures for all states in the arena.
+    /// Precompute epsilon closures for the states added since the last call.
     ///
-    /// For each state, computes the set of all states reachable via epsilon
-    /// transitions (including the state itself) and stores it on the state.
-    /// This eliminates per-byte DFS computation during NFA traversal.
+    /// For each state, the closure is the set of all states reachable via
+    /// epsilon transitions (including the state itself); it is stored as a run
+    /// in `closure_data` indexed by the state's `closure_start`/`closure_len`.
+    /// Precomputing here eliminates per-byte DFS computation during NFA
+    /// traversal.
     ///
-    /// Must be called after the arena structure is finalized (e.g., after merging).
-    pub fn precompute_epsilon_closures(&mut self) {
+    /// The pass is incremental. States below the `closures_computed` watermark
+    /// were closed by an earlier call, and merges only ever append new states
+    /// without touching already-closed ones (see [`Self::truncate_states`]), so
+    /// their closures are unchanged and already sit as a prefix of
+    /// `closure_data`. Only the newly appended states are walked, so a sequence
+    /// of adds stays linear instead of re-walking the whole growing arena each
+    /// time (which was quadratic). This mirrors upstream Go's `closureForNfa`
+    /// pruning at states that already carry a computed closure.
+    ///
+    /// Must be called after the arena structure is finalized (e.g., after
+    /// merging). Returns the number of states closed by this call, which is
+    /// zero when every state was already closed.
+    pub fn precompute_epsilon_closures(&mut self) -> usize {
         let arena_len = self.states.len();
-        if arena_len == 0 {
-            return;
+        let start_idx = self.closures_computed;
+        if start_idx >= arena_len {
+            return 0;
         }
 
+        // Keep the closures already computed for states below the watermark:
+        // they form a prefix of `closure_data` that merges never change. `alloc`
+        // gives every newly added state a trivial {self} closure so it stays
+        // visible to traversal before this pass runs; those slots sit
+        // contiguously at the tail, starting at the first new state's
+        // `closure_start`, and are rebuilt here with the full closures.
+        //
+        // A from-scratch pass (`start_idx == 0`) has no prefix to keep, so it
+        // builds a fresh, tightly-sized buffer. The many callers that close an
+        // arena exactly once take this path, which keeps `estimated_byte_size`
+        // (and thus the pattern budget) identical to computing every closure at
+        // once. Incremental passes reuse the existing allocation instead.
+        let mut closure_data = if start_idx == 0 {
+            Vec::with_capacity(arena_len)
+        } else {
+            let tail_start = self.states[start_idx].closure_start as usize;
+            let mut existing = std::mem::take(&mut self.closure_data);
+            existing.truncate(tail_start);
+            existing.reserve(arena_len - start_idx);
+            existing
+        };
+
         // Reused across states (cleared per state) so the DFS cost is amortized
-        // over the whole arena.
+        // over the whole pass; `closure_buf` accumulates one state's closure
+        // before it is appended.
         let mut seen = SparseSet::new(arena_len);
         let mut stack: Vec<StateId> = Vec::new();
-
-        // Every state's closure lives back-to-back in `closure_data`, indexed by
-        // its `closure_start`/`closure_len`; `closure_buf` accumulates one
-        // state's closure before it is appended.
-        let mut closure_data: Vec<StateId> = Vec::with_capacity(arena_len);
         let mut closure_buf: Vec<StateId> = Vec::new();
 
-        for state_idx in 0..arena_len {
+        for state_idx in start_idx..arena_len {
             let state_id = StateId::from_index(state_idx);
             let start = buffer_offset_u32(closure_data.len(), "closure_data length");
 
@@ -787,6 +830,8 @@ impl StateArena {
         }
 
         self.closure_data = closure_data;
+        self.closures_computed = arena_len;
+        arena_len - start_idx
     }
 
     /// Build frozen lookup structures for fast traversal.
@@ -7338,6 +7383,43 @@ mod nfa_merge_tests {
         arena.truncate_states(0);
         assert!(arena.is_empty());
         assert!(arena.closure_data.is_empty());
+    }
+
+    #[test]
+    fn test_precompute_epsilon_closures_is_incremental() {
+        // Mirrors Go's TestClosureWalkPrunesClosedSubtree: a builder fully
+        // closes every state, so re-running the closure pass over an unchanged
+        // arena must recompute nothing.
+        let (mut arena, arena_start) =
+            make_shellstyle_arena_fa(br#""*foo*bar*""#, Arc::new(FieldMatcher::with_match_id(1)));
+        assert!(
+            arena.is_nondeterministic(),
+            "shellstyle FA should carry epsilons to exercise the closure walk"
+        );
+        assert_eq!(
+            arena.precompute_epsilon_closures(),
+            0,
+            "re-closing a fully-closed arena must recompute no states"
+        );
+
+        // Appending a pattern only adds new states; the closure pass then walks
+        // exactly those and leaves the already-closed prefix untouched.
+        let closed = arena.len();
+        let (source, source_start) =
+            make_shellstyle_arena_fa(br#""*baz*""#, Arc::new(FieldMatcher::with_match_id(2)));
+        let _ = append_merge_arena_nfas(&mut arena, arena_start, &source, source_start);
+        let added = arena.len() - closed;
+        assert!(added > 0, "append should introduce new states");
+        assert_eq!(
+            arena.precompute_epsilon_closures(),
+            added,
+            "the closure pass should walk only the appended states"
+        );
+        assert_eq!(
+            arena.precompute_epsilon_closures(),
+            0,
+            "a second pass with no new states is a no-op"
+        );
     }
 
     #[test]
