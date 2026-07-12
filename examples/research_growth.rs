@@ -5,8 +5,9 @@
 //!
 //! Each CSV row reports, against the running pattern count: milliseconds spent
 //! on the last 100 `add_pattern` calls, total state count, estimated byte size,
-//! average fanout (epsilon-closure size), max fanout, and matches/sec measured
-//! over the previous 100 words. The result is an offline-analysis artifact for
+//! average stored fanout (explicit epsilon-closure entries, with self-only
+//! closures contributing zero), max stored fanout, and matches/sec measured over
+//! the previous 100 words. The result is an offline-analysis artifact for
 //! plotting build cost and automaton complexity versus pattern count.
 //!
 //! Run with: cargo run --release --example research_growth > growth.csv

@@ -2619,7 +2619,9 @@ struct StatsWorkload {
     patterns: &'static [&'static str], // shellstyle patterns
     regexps: &'static [&'static str],  // regexp patterns
     state_count: u32,
+    // Total explicit closure entries; self-only states contribute 0 (sentinel).
     total_closure_entries: u32,
+    // Maximum explicit closure size; self-only closures count as 0.
     max_closure_len: u16,
     pattern_ids: [usize; 3], // expected match counts for 3 events
 }
@@ -2640,7 +2642,7 @@ const STATS_WORKLOADS: &[StatsWorkload] = &[
             "([pqr]+)*s",
         ],
         state_count: 153,
-        total_closure_entries: 322,
+        total_closure_entries: 235,
         max_closure_len: 33,
         pattern_ids: [3, 2, 7],
     },
@@ -2670,8 +2672,8 @@ const STATS_WORKLOADS: &[StatsWorkload] = &[
             "(g*)*h",
         ],
         state_count: 112,
-        total_closure_entries: 112,
-        max_closure_len: 1,
+        total_closure_entries: 0,
+        max_closure_len: 0,
         pattern_ids: [0, 0, 0],
     },
     StatsWorkload {
@@ -2686,8 +2688,8 @@ const STATS_WORKLOADS: &[StatsWorkload] = &[
             "((((x?)*y?)*z?)*w?)*",
         ],
         state_count: 25,
-        total_closure_entries: 25,
-        max_closure_len: 1,
+        total_closure_entries: 0,
+        max_closure_len: 0,
         pattern_ids: [0, 0, 0],
     },
     StatsWorkload {
@@ -2708,8 +2710,8 @@ const STATS_WORKLOADS: &[StatsWorkload] = &[
             "(([lmn]?)*)+",
         ],
         state_count: 103,
-        total_closure_entries: 103,
-        max_closure_len: 1,
+        total_closure_entries: 0,
+        max_closure_len: 0,
         pattern_ids: [0, 0, 0],
     },
     StatsWorkload {
@@ -2727,7 +2729,7 @@ const STATS_WORKLOADS: &[StatsWorkload] = &[
             "(([cdef]?)*)+",
         ],
         state_count: 130,
-        total_closure_entries: 524,
+        total_closure_entries: 465,
         max_closure_len: 57,
         pattern_ids: [10, 10, 10],
     },
@@ -3326,9 +3328,9 @@ fn test_matcher_stats_singleton() {
     assert!(q.matcher_stats().bytes > 0);
 }
 
-/// A `*z` wildcard's epsilon-closure structure yields small positive fanout
-/// figures: every state contributes its closure size to `fanouts`, and
-/// `max_fanout` is the largest single closure and never exceeds `fanouts`.
+/// A `*z` wildcard's multi-state epsilon closures yield small positive fanout
+/// figures. Self-only closures contribute zero via the sentinel;
+/// `max_fanout` is the largest stored closure and never exceeds `fanouts`.
 #[test]
 fn test_matcher_stats_nfa_shape() {
     let mut q = QuaminaBuilder::<&str>::new().build().unwrap();

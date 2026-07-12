@@ -131,9 +131,11 @@ pub struct MatcherStats {
     /// Estimated bytes consumed by the matcher's data structures.
     /// Capacity-based: counts allocated buffer space, not just occupied space.
     pub bytes: usize,
-    /// Sum of the epsilon-closure sizes of all states.
+    /// Sum of the stored epsilon-closure sizes of all states.
+    /// Self-only closures use the zero-length sentinel and contribute zero.
     pub fanouts: usize,
-    /// Size of the largest single epsilon closure.
+    /// Size of the largest stored epsilon closure.
+    /// Zero means every closure is self-only.
     pub max_fanout: usize,
 }
 
