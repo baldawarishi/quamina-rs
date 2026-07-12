@@ -118,9 +118,11 @@ pub struct FaState {
     /// Field matchers to transition to when this state is reached at end of value.
     /// SmallVec<[_; 1]> avoids heap allocation for the common case (0 or 1 transitions).
     pub field_transitions: SmallVec<[Arc<FieldMatcher>; 1]>,
-    /// Start index into `StateArena::closure_data` for this state's epsilon closure.
+    /// Offset into `StateArena::closure_data` where this state's closure begins.
     pub closure_start: u32,
-    /// Number of states in this state's epsilon closure (max 65535).
+    /// Number of states in this state's stored epsilon closure. Zero means the
+    /// closure is just this state — or, until `StateArena::closures_computed`
+    /// reaches it, that the closure has not been computed yet.
     pub closure_len: u16,
     /// Start index into `StateArena::ft_ptrs` for this state's field transition pointers.
     /// Populated by `flatten_tables()`.
@@ -297,11 +299,11 @@ pub struct Stats {
     pub states_with_field_transitions: u32,
     /// Total entries in the flattened closure_data buffer.
     pub closure_data_len: u32,
-    /// States that have precomputed closures.
+    /// States with a stored closure; None for state that is its own closure stores.
     pub states_with_closures: u32,
-    /// Sum of all closure_len values.
+    /// Sum of all stored `closure_len` values if `states_with_closures` is set.
     pub total_closure_entries: u32,
-    /// Max closure_len of any single state.
+    /// Max stored `closure_len` of any single state.
     pub max_closure_len: u16,
     /// Total entries in the flattened ft_ptrs buffer.
     pub ft_ptrs_len: u32,
@@ -375,9 +377,13 @@ impl Stats {
 #[derive(Clone, Default)]
 pub struct StateArena {
     states: Vec<FaState>,
-    /// All epsilon closures concatenated. Each state indexes into this via
-    /// `closure_start`/`closure_len`. Populated by `precompute_epsilon_closures()`.
+    /// Shared buffer for every stored epsilon closure; states index into it via
+    /// `closure_start`/`closure_len`.
     closure_data: Vec<StateId>,
+    /// Number of states (from index 0) whose closures are already computed, so a
+    /// rebuild can skip them and `closure_of` can tell a real self-closure from
+    /// an uncomputed one.
+    closures_computed: usize,
     /// All field transition raw pointers (as `usize`) concatenated. Each state
     /// indexes into this via `ft_start`/`ft_len`. Populated by `flatten_tables()`.
     ft_ptrs: Vec<usize>,
@@ -401,6 +407,7 @@ impl StateArena {
         Self {
             states: Vec::new(),
             closure_data: Vec::new(),
+            closures_computed: 0,
             ft_ptrs: Vec::new(),
             dfa_lookup: Vec::new(),
         }
@@ -410,7 +417,9 @@ impl StateArena {
     pub fn with_capacity(capacity: usize) -> Self {
         Self {
             states: Vec::with_capacity(capacity),
-            closure_data: Vec::with_capacity(capacity),
+            // Grown on demand by precompute; most states store no closure.
+            closure_data: Vec::new(),
+            closures_computed: 0,
             ft_ptrs: Vec::new(),
             dfa_lookup: Vec::new(),
         }
@@ -432,7 +441,8 @@ impl StateArena {
     /// capacity of any per-state SmallVec that has spilled past its inline slots.
     /// Inline slots are not counted here — `size_of::<FaState>()` already covers
     /// them, so adding them again would double-count. `fanouts`/`max_fanout`
-    /// come from each state's precomputed epsilon closure.
+    /// come from each state's stored epsilon closure; a state that is its own
+    /// closure contributes zero.
     pub fn accumulate_matcher_stats(&self, stats: &mut crate::MatcherStats) {
         stats.states += self.states.len();
         let mut bytes = self.estimated_byte_size();
@@ -470,19 +480,35 @@ impl StateArena {
         unsafe { self.states.get_unchecked(id.index()) }
     }
 
-    /// Get the epsilon closure for a state as a slice.
+    /// The states in `id`'s epsilon closure. An empty slice means the closure is
+    /// just `id` itself. Only meaningful once `id` has been closed by
+    /// [`Self::precompute_epsilon_closures`]; reading it before then is a bug.
     #[inline(always)]
     #[allow(unsafe_code)]
     #[must_use]
     pub fn closure_of(&self, id: StateId) -> &[StateId] {
-        // SAFETY: `id` was returned by `alloc()` on this arena, so `state_unchecked` is valid.
-        // `closure_start` and `closure_len` are set by `precompute_epsilon_closures()` to
-        // valid indices within `closure_data`.
+        // SAFETY: `id` came from `alloc()` on this arena, so `state_unchecked` is
+        // valid. A nonzero `closure_len` is a valid range within `closure_data`;
+        // len==0 returns early and never indexes it.
         unsafe {
             let state = self.state_unchecked(id);
-            let start = state.closure_start as usize;
             let len = state.closure_len as usize;
+            if len == 0 {
+                return &[];
+            }
+            let start = state.closure_start as usize;
             self.closure_data.get_unchecked(start..start + len)
+        }
+    }
+
+    /// Append a state's closure to `out`; an empty closure means just that state.
+    #[inline(always)]
+    fn extend_closure_or_self(&self, id: StateId, out: &mut Vec<StateId>) {
+        let closure = self.closure_of(id);
+        if closure.is_empty() {
+            out.push(id);
+        } else {
+            out.extend_from_slice(closure);
         }
     }
 
@@ -548,14 +574,11 @@ impl StateArena {
     /// out of memory long before either counter saturates.
     pub fn alloc(&mut self) -> StateId {
         let id = StateId::from_index(self.states.len());
-        // Set trivial epsilon closure so states added after
-        // precompute_epsilon_closures() are visible during NFA traversal.
+        // Closure computed later by precompute; a fresh state stores none.
         let state = FaState {
             closure_start: buffer_offset_u32(self.closure_data.len(), "closure_data length"),
-            closure_len: 1,
             ..Default::default()
         };
-        self.closure_data.push(id);
         self.states.push(state);
         id
     }
@@ -569,8 +592,6 @@ impl StateArena {
         let id = StateId::from_index(self.states.len());
         let mut state = FaState::with_table(table);
         state.closure_start = buffer_offset_u32(self.closure_data.len(), "closure_data length");
-        state.closure_len = 1;
-        self.closure_data.push(id);
         self.states.push(state);
         id
     }
@@ -631,6 +652,9 @@ impl StateArena {
         };
         self.states.truncate(n);
         self.closure_data.truncate(closure_end);
+        // Some of the dropped states may have been closed, so lower the
+        // computed count to cover only the states that remain.
+        self.closures_computed = self.closures_computed.min(n);
     }
 
     /// Compute statistics about this arena's structure.
@@ -720,41 +744,45 @@ impl StateArena {
             .any(|state| !state.table.epsilons.is_empty())
     }
 
-    /// Precompute epsilon closures for all states in the arena.
+    /// Compute and store the epsilon closure of every state not yet closed.
     ///
-    /// For each state, computes the set of all states reachable via epsilon
-    /// transitions (including the state itself) and stores it on the state.
-    /// This eliminates per-byte DFS computation during NFA traversal.
-    ///
-    /// Must be called after the arena structure is finalized (e.g., after merging).
-    pub fn precompute_epsilon_closures(&mut self) {
+    /// Only states added since the last call are walked; earlier closures are
+    /// left alone because a merge never adds an epsilon edge to an existing
+    /// state, so its closure cannot change. Call once the structure is final
+    /// (after any merges) and before matching. Returns how many states it closed.
+    pub fn precompute_epsilon_closures(&mut self) -> usize {
         let arena_len = self.states.len();
-        if arena_len == 0 {
-            return;
+        let start_idx = self.closures_computed;
+        if start_idx >= arena_len {
+            return 0;
         }
 
-        // Reused across states (cleared per state) so the DFS cost is amortized
-        // over the whole arena.
+        // Reuse the settled prefix and re-close only the new tail; a
+        // from-scratch pass starts fresh.
+        let mut closure_data = if start_idx == 0 {
+            Vec::new()
+        } else {
+            let tail_start = self.states[start_idx].closure_start as usize;
+            let mut existing = std::mem::take(&mut self.closure_data);
+            existing.truncate(tail_start);
+            existing
+        };
+
+        // Reused across states to avoid a per-state allocation.
         let mut seen = SparseSet::new(arena_len);
         let mut stack: Vec<StateId> = Vec::new();
-
-        // Every state's closure lives back-to-back in `closure_data`, indexed by
-        // its `closure_start`/`closure_len`; `closure_buf` accumulates one
-        // state's closure before it is appended.
-        let mut closure_data: Vec<StateId> = Vec::with_capacity(arena_len);
         let mut closure_buf: Vec<StateId> = Vec::new();
 
-        for state_idx in 0..arena_len {
+        for state_idx in start_idx..arena_len {
             let state_id = StateId::from_index(state_idx);
             let start = buffer_offset_u32(closure_data.len(), "closure_data length");
 
             if self.states[state_idx].table.epsilons.is_empty() {
-                // DFA state: closure is just [self]
-                closure_data.push(state_id);
+                // No epsilons, so the closure is just this state; store nothing.
                 self.states[state_idx].closure_start = start;
-                self.states[state_idx].closure_len = 1;
+                self.states[state_idx].closure_len = 0;
             } else {
-                // NFA state: compute full epsilon closure via DFS
+                // Walk the epsilon graph to collect the full closure.
                 seen.clear();
                 stack.clear();
                 closure_buf.clear();
@@ -778,15 +806,23 @@ impl StateArena {
                     }
                 }
 
-                let len = u16::try_from(closure_buf.len())
-                    .expect("epsilon closure exceeds u16::MAX states");
-                closure_data.extend_from_slice(&closure_buf);
                 self.states[state_idx].closure_start = start;
-                self.states[state_idx].closure_len = len;
+                if closure_buf.len() == 1 {
+                    // The epsilons only cycled back here, so the closure is again
+                    // just this state; store nothing.
+                    self.states[state_idx].closure_len = 0;
+                } else {
+                    let len = u16::try_from(closure_buf.len())
+                        .expect("epsilon closure exceeds u16::MAX states");
+                    closure_data.extend_from_slice(&closure_buf);
+                    self.states[state_idx].closure_len = len;
+                }
             }
         }
 
         self.closure_data = closure_data;
+        self.closures_computed = arena_len;
+        arena_len - start_idx
     }
 
     /// Build frozen lookup structures for fast traversal.
@@ -872,15 +908,26 @@ impl StateArena {
     ///
     /// Returns `None` if `state_budget` is exceeded (caller should fall back to NFA).
     /// Inspired by Go quamina's `nfa2Dfa` and the two-tier strategy.
+    /// [`Self::precompute_epsilon_closures`] must have been called after the
+    /// arena's last structural change.
     #[must_use]
     pub fn nfa_to_dfa(&self, start: StateId, state_budget: usize) -> Option<(Self, StateId)> {
         if start.is_none() || self.states.is_empty() {
             return Some((Self::new(), StateId::NONE));
         }
 
-        debug_assert!(
-            !self.closure_data.is_empty(),
+        debug_assert_eq!(
+            self.closures_computed,
+            self.states.len(),
             "epsilon closures must be precomputed before nfa_to_dfa"
+        );
+        debug_assert!(
+            self.states.iter().all(|state| {
+                state.closure_len == 0
+                    || state.closure_start as usize + state.closure_len as usize
+                        <= self.closure_data.len()
+            }),
+            "epsilon closure metadata must be valid before nfa_to_dfa"
         );
 
         let mut dfa_arena = Self::with_capacity(self.states.len());
@@ -901,18 +948,19 @@ impl StateArena {
         let mut byte_to_next: Vec<Vec<StateId>> = (0..BYTE_CEILING).map(|_| Vec::new()).collect();
 
         // Step 1: Compute the start DFA state = epsilon closure of NFA start
-        let start_closure = self.closure_of(start);
-        let start_key = Self::make_state_set_key(start_closure);
+        let mut start_set = Vec::new();
+        self.extend_closure_or_self(start, &mut start_set);
+        let start_key = Self::make_state_set_key(&start_set);
         let dfa_start = dfa_arena.alloc();
         state_map.insert(start_key, dfa_start);
         worklist.push(dfa_start);
 
         // Store the NFA state-set for each DFA state (indexed by DFA state index)
         let mut dfa_nfa_sets: Vec<Vec<StateId>> = Vec::new();
-        dfa_nfa_sets.push(start_closure.to_vec());
+        dfa_nfa_sets.push(start_set);
 
         // Copy field transitions from the start closure
-        Self::collect_field_transitions(self, start_closure, &mut dfa_arena[dfa_start]);
+        Self::collect_field_transitions(self, &dfa_nfa_sets[0], &mut dfa_arena[dfa_start]);
 
         // Step 2: Process worklist
         while let Some(dfa_state) = worklist.pop() {
@@ -936,8 +984,7 @@ impl StateArena {
                     let target = unpacked[byte];
                     if !target.is_none() {
                         // Expand target through epsilon closure
-                        let target_closure = self.closure_of(target);
-                        byte_to_next[byte].extend_from_slice(target_closure);
+                        self.extend_closure_or_self(target, &mut byte_to_next[byte]);
                     }
                 }
             }
@@ -1134,7 +1181,16 @@ pub(crate) struct LazyDfa {
 }
 
 impl LazyDfa {
+    /// Create a lazy DFA over a fully closed NFA arena.
+    ///
+    /// `nfa_arena.precompute_epsilon_closures()` must have been called after
+    /// the arena's last structural change.
     pub fn new(nfa_arena: StateArena, nfa_start: StateId, state_budget: usize) -> Self {
+        debug_assert_eq!(
+            nfa_arena.closures_computed,
+            nfa_arena.states.len(),
+            "epsilon closures must be precomputed before LazyDfa::new"
+        );
         let mut lazy = Self {
             nfa_arena,
             states: Vec::new(),
@@ -1146,7 +1202,9 @@ impl LazyDfa {
 
         // Create the start state from the NFA start's epsilon closure
         if !nfa_start.is_none() {
-            let closure = lazy.nfa_arena.closure_of(nfa_start).to_vec();
+            let mut closure = Vec::new();
+            lazy.nfa_arena
+                .extend_closure_or_self(nfa_start, &mut closure);
             lazy.intern_state(&closure, true);
         }
 
@@ -1220,8 +1278,8 @@ impl LazyDfa {
             }
             let next = self.nfa_arena.dstep(nfa_state, byte);
             if !next.is_none() {
-                let closure = self.nfa_arena.closure_of(next);
-                scratch.next_nfa_states.extend_from_slice(closure);
+                self.nfa_arena
+                    .extend_closure_or_self(next, &mut scratch.next_nfa_states);
             }
         }
 
@@ -1414,6 +1472,8 @@ fn try_accelerate_arena(table: &SmallTable, remaining: &[u8]) -> Option<NonZero<
 ///
 /// This is the arena equivalent of `traverse_nfa` but uses index-based
 /// state references, allowing true cyclic structures.
+/// [`StateArena::precompute_epsilon_closures`] must have been called after the
+/// arena's last structural change.
 #[inline]
 #[allow(clippy::too_many_lines)] // hot loop kept monolithic so the inliner sees the whole stepping path
 pub fn traverse_arena_nfa(arena: &StateArena, start: StateId, val: &[u8], bufs: &mut NfaBuffers) {
@@ -1421,6 +1481,11 @@ pub fn traverse_arena_nfa(arena: &StateArena, start: StateId, val: &[u8], bufs: 
     if start.is_none() {
         return;
     }
+    debug_assert_eq!(
+        arena.closures_computed,
+        arena.states.len(),
+        "epsilon closures must be precomputed before NFA traversal"
+    );
 
     bufs.current_states.push(start);
 
@@ -1471,7 +1536,7 @@ pub fn traverse_arena_nfa(arena: &StateArena, start: StateId, val: &[u8], bufs: 
             for &state_id in current_states.iter() {
                 let closure = arena.closure_of(state_id);
 
-                if closure.len() == 1 {
+                if closure.is_empty() {
                     for ft in &arena[state_id].field_transitions {
                         let ptr = Arc::as_ptr(ft) as usize;
                         if seen_transitions.insert(ptr) {
@@ -1502,7 +1567,7 @@ pub fn traverse_arena_nfa(arena: &StateArena, start: StateId, val: &[u8], bufs: 
             for &state_id in current_states.iter() {
                 let closure = arena.closure_of(state_id);
 
-                if closure.len() == 1 {
+                if closure.is_empty() {
                     for &ptr in arena.ft_ptrs_of(state_id) {
                         if seen_transitions.insert(ptr) {
                             transitions.push(ptr);
@@ -1566,7 +1631,7 @@ pub fn traverse_arena_nfa(arena: &StateArena, start: StateId, val: &[u8], bufs: 
     if arena.ft_ptrs.is_empty() {
         for &state_id in current_states {
             let closure = arena.closure_of(state_id);
-            if closure.len() == 1 {
+            if closure.is_empty() {
                 for ft in &arena[state_id].field_transitions {
                     let ptr = Arc::as_ptr(ft) as usize;
                     if seen_transitions.insert(ptr) {
@@ -1587,7 +1652,7 @@ pub fn traverse_arena_nfa(arena: &StateArena, start: StateId, val: &[u8], bufs: 
     } else {
         for &state_id in current_states {
             let closure = arena.closure_of(state_id);
-            if closure.len() == 1 {
+            if closure.is_empty() {
                 for &ptr in arena.ft_ptrs_of(state_id) {
                     if seen_transitions.insert(ptr) {
                         transitions.push(ptr);
@@ -5534,17 +5599,18 @@ mod tests {
         assert_eq!(stats.total_epsilons, 1);
         assert_eq!(stats.max_epsilons, 1);
         assert_eq!(stats.states_with_field_transitions, 1);
-        // alloc() gives each state a trivial self-closure (len=1)
-        assert_eq!(stats.states_with_closures, 3);
-        assert_eq!(stats.max_closure_len, 1);
+        // A state that is its own closure stores nothing, so none count here.
+        assert_eq!(stats.states_with_closures, 0);
+        assert_eq!(stats.max_closure_len, 0);
+        assert_eq!(stats.closure_data_len, 0);
         assert_eq!(stats.dfa_lookup_states, 0);
 
         // After precomputing closures — s1's closure should include s2 (via epsilon)
         arena.precompute_epsilon_closures();
         let stats = arena.stats();
-        assert_eq!(stats.states_with_closures, 3);
-        assert!(stats.max_closure_len >= 2); // s1 closure includes s1 + s2
-        assert!(stats.closure_data_len > 0);
+        assert_eq!(stats.states_with_closures, 1);
+        assert_eq!(stats.max_closure_len, 2); // s1 closure includes s1 + s2
+        assert_eq!(stats.closure_data_len, 2);
 
         // After flattening
         arena.flatten_tables();
@@ -5682,7 +5748,7 @@ mod arena_stats_utility_tests {
         assert!(arena.is_empty());
         assert_eq!(arena.len(), 0);
         assert!(arena.states.capacity() >= 10);
-        assert!(arena.closure_data.capacity() >= 10);
+        assert_eq!(arena.closure_data.capacity(), 0);
         let id = arena.alloc();
         assert_eq!(id.index(), 0);
         assert!(!arena.is_empty());
@@ -5855,15 +5921,101 @@ mod arena_stats_utility_tests {
     }
 
     #[test]
-    fn test_alloc_sets_per_state_closure() {
-        // Each alloc() seeds the new state's singleton closure with its own id.
+    fn test_alloc_sets_self_only_closure_sentinel() {
+        // A freshly alloc'd state reads as the empty self-only closure both
+        // before and after the closure pass, including one whose only epsilon
+        // loops back to itself.
         let mut arena = StateArena::new();
         let s0 = arena.alloc();
         let s1 = arena.alloc();
         let s2 = arena.alloc();
-        assert_eq!(arena.closure_of(s0), &[s0]);
-        assert_eq!(arena.closure_of(s1), &[s1]);
-        assert_eq!(arena.closure_of(s2), &[s2]);
+        let looped = arena.alloc();
+        arena[looped].table.epsilons.push(looped);
+        assert!(arena.closure_of(s0).is_empty());
+        assert!(arena.closure_of(s1).is_empty());
+        assert!(arena.closure_of(s2).is_empty());
+        assert!(arena.closure_of(looped).is_empty());
+        assert!(arena.closure_data.is_empty());
+        assert_eq!(arena.closure_data.capacity(), 0);
+
+        arena.precompute_epsilon_closures();
+        assert_eq!(arena.closures_computed, arena.len());
+        assert!(arena.closure_of(s0).is_empty());
+        assert!(arena.closure_of(s1).is_empty());
+        assert!(arena.closure_of(s2).is_empty());
+        assert!(arena.closure_of(looped).is_empty());
+        assert!(arena.closure_data.is_empty());
+        assert_eq!(arena.closure_data.capacity(), 0);
+    }
+
+    #[test]
+    #[cfg(debug_assertions)]
+    #[should_panic(expected = "epsilon closures must be precomputed before NFA traversal")]
+    fn test_nfa_traversal_rejects_uncomputed_self_only_closure() {
+        // Matching a state whose closure was never computed is a bug; the
+        // traversal guard should catch it even for a state with no epsilons.
+        let mut arena = StateArena::new();
+        let start = arena.alloc();
+        let mut bufs = NfaBuffers::new();
+        traverse_arena_nfa(&arena, start, b"", &mut bufs);
+    }
+
+    #[test]
+    fn test_empty_closure_is_self_only_for_consumers() {
+        // A state with no epsilons stores an empty closure. Check that every
+        // matching path reads that as "just this state" rather than "no states".
+        let mut arena = StateArena::new();
+        let fm = Arc::new(FieldMatcher::with_match_id(29));
+        let accept = arena.alloc();
+        arena[accept].field_transitions.push(fm);
+        let vt_state = arena.alloc_with_table(SmallTable::with_mappings(
+            StateId::NONE,
+            &[ARENA_VALUE_TERMINATOR],
+            &[accept],
+        ));
+        let start =
+            arena.alloc_with_table(SmallTable::with_mappings(StateId::NONE, b"a", &[vt_state]));
+        arena.precompute_epsilon_closures();
+        assert!(arena.states.iter().all(|state| state.closure_len == 0));
+        assert!(arena.closure_data.is_empty());
+        assert_eq!(arena.closure_data.capacity(), 0);
+
+        let mut bufs = NfaBuffers::new();
+        traverse_arena_nfa(&arena, start, b"a", &mut bufs);
+        assert_eq!(
+            bufs.transitions.len(),
+            1,
+            "unfrozen NFA traversal must process empty closures as self-only"
+        );
+
+        let (dfa, dfa_start) = arena
+            .nfa_to_dfa(start, 16)
+            .expect("empty-closure NFA should convert to a DFA within budget");
+        let mut dfa_transitions = Vec::new();
+        traverse_arena_dfa(&dfa, dfa_start, b"a", &mut dfa_transitions);
+        assert_eq!(
+            dfa_transitions.len(),
+            1,
+            "NFA-to-DFA must expand empty closures as self-only"
+        );
+
+        let mut lazy = LazyDfa::new(arena.clone(), start, 16);
+        let mut lazy_transitions = Vec::new();
+        traverse_lazy_dfa(&mut lazy, b"a", &mut lazy_transitions);
+        assert_eq!(
+            lazy_transitions.len(),
+            1,
+            "lazy DFA must expand empty closures as self-only"
+        );
+
+        arena.flatten_tables();
+        let mut bufs = NfaBuffers::new();
+        traverse_arena_nfa(&arena, start, b"a", &mut bufs);
+        assert_eq!(
+            bufs.transitions.len(),
+            1,
+            "frozen NFA traversal must process empty closures as self-only"
+        );
     }
 
     #[test]
@@ -7320,24 +7472,71 @@ mod nfa_merge_tests {
 
     #[test]
     fn test_truncate_states_drops_tail_and_trims_closures() {
-        // alloc() appends one closure slot per state in state order, so after
-        // five states closure_data is [s0..s4] and state i owns closure slot i.
+        // State 0 has a stored closure followed by state 1's sentinel, while the
+        // last two states have stored closures in the tail. Truncating after the
+        // sentinel must use its closure_start + 0: preserve state 0's stored
+        // prefix while dropping the tail.
         let mut arena = StateArena::new();
         let ids: Vec<_> = (0..5).map(|_| arena.alloc()).collect();
+        arena[ids[0]].table.epsilons.push(ids[1]);
+        arena[ids[3]].table.epsilons.push(ids[4]);
+        arena[ids[4]].table.epsilons.push(ids[3]);
+        arena.precompute_epsilon_closures();
         assert_eq!(arena.len(), 5);
-        assert_eq!(arena.closure_data.len(), 5);
+        assert_eq!(arena.closure_data.len(), 6);
+        assert_eq!(arena.closure_of(ids[0]), &[ids[0], ids[1]]);
+        assert!(arena.closure_of(ids[1]).is_empty());
 
         // Truncating below the current length drops the tail states and trims
-        // their closure slots back to the surviving prefix, which is untouched.
+        // their closure slots without discarding the stored surviving closure.
         arena.truncate_states(2);
         assert_eq!(arena.len(), 2);
         assert_eq!(arena.closure_data.len(), 2);
-        assert_eq!(arena[ids[1]].closure_start, 1);
+        assert_eq!(arena.closure_of(ids[0]), &[ids[0], ids[1]]);
+        assert!(arena.closure_of(ids[1]).is_empty());
+        assert_eq!(arena[ids[1]].closure_start, 2);
 
         // Truncating to zero clears the arena and its closure buffer entirely.
         arena.truncate_states(0);
         assert!(arena.is_empty());
         assert!(arena.closure_data.is_empty());
+    }
+
+    #[test]
+    fn test_precompute_epsilon_closures_is_incremental() {
+        // Mirrors Go's TestClosureWalkPrunesClosedSubtree: a builder fully
+        // closes every state, so re-running the closure pass over an unchanged
+        // arena must recompute nothing.
+        let (mut arena, arena_start) =
+            make_shellstyle_arena_fa(br#""*foo*bar*""#, Arc::new(FieldMatcher::with_match_id(1)));
+        assert!(
+            arena.is_nondeterministic(),
+            "shellstyle FA should carry epsilons to exercise the closure walk"
+        );
+        assert_eq!(
+            arena.precompute_epsilon_closures(),
+            0,
+            "re-closing a fully-closed arena must recompute no states"
+        );
+
+        // Appending a pattern only adds new states; the closure pass then walks
+        // exactly those and leaves the already-closed prefix untouched.
+        let closed = arena.len();
+        let (source, source_start) =
+            make_shellstyle_arena_fa(br#""*baz*""#, Arc::new(FieldMatcher::with_match_id(2)));
+        let _ = append_merge_arena_nfas(&mut arena, arena_start, &source, source_start);
+        let added = arena.len() - closed;
+        assert!(added > 0, "append should introduce new states");
+        assert_eq!(
+            arena.precompute_epsilon_closures(),
+            added,
+            "the closure pass should walk only the appended states"
+        );
+        assert_eq!(
+            arena.precompute_epsilon_closures(),
+            0,
+            "a second pass with no new states is a no-op"
+        );
     }
 
     #[test]

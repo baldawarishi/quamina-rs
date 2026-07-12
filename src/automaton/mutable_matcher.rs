@@ -3607,12 +3607,12 @@ mod tests {
         // exceeds the live reachable arena budget. Compute the compacted live
         // size so this stays valid across append-history capacity changes.
         let p1 = crate::json::parse_pattern(
-            r#"{"x": [{"regexp": "aaaa"}]}"#,
+            r#"{"x": [{"regexp": "aaaaaaaa"}]}"#,
             &crate::PatternLimits::default(),
         )
         .unwrap();
         let p2 = crate::json::parse_pattern(
-            r#"{"x": [{"regexp": "bbbb"}]}"#,
+            r#"{"x": [{"regexp": "bbbbbbbb"}]}"#,
             &crate::PatternLimits::default(),
         )
         .unwrap();
@@ -3659,7 +3659,7 @@ mod tests {
     #[test]
     #[cfg_attr(miri, ignore)]
     fn test_failed_append_merge_rolls_back_main_arena_state() {
-        let accepted_prefix = b"\"keep";
+        let accepted_prefix = b"\"keepkeepkeepkeep";
         let rejected_shell = quote_wrap(b"reject*");
 
         let probe: MutableValueMatcher<String> = MutableValueMatcher::new();
@@ -3724,7 +3724,7 @@ mod tests {
         );
 
         let mut bufs = NfaBuffers::new();
-        let accepted = vm.transition_on(&qv(b"keep-going"), false, &mut bufs);
+        let accepted = vm.transition_on(&qv(b"keepkeepkeepkeep-going"), false, &mut bufs);
         assert!(
             accepted.iter().any(|fm| Rc::ptr_eq(fm, &accepted_fm)),
             "accepted pattern must still match"

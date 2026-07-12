@@ -832,16 +832,16 @@ fn test_alternation_merged_on_one_field() {
 #[test]
 fn test_alternation_has_no_epsilon_hub() {
     // The whole point of folding branches: a pure (quantifier-free) alternation
-    // determinizes to a byte-dispatch automaton with no epsilon-only hub, so the
-    // largest epsilon closure is a single state.
+    // determinizes to a byte-dispatch automaton with no epsilon-only hub, so
+    // every epsilon closure is self-only and therefore uses the len-0 sentinel.
     let mut q = Quamina::new();
     q.add_pattern("p", r#"{"x": [{"regexp": "(a|b|c)(d|e|f)(g|h|i)"}]}"#)
         .unwrap();
     let _ = q.matches_for_event(br#"{"x": "adg"}"#).unwrap();
     let stats = q.matcher_stats();
     assert_eq!(
-        stats.max_fanout, 1,
-        "pure alternation must have no epsilon hub (max_fanout {} > 1)",
+        stats.max_fanout, 0,
+        "pure alternation must have only self closures (max_fanout {} > 0)",
         stats.max_fanout
     );
     // A hub would add one state per branch on top of the byte states; without it
