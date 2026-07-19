@@ -783,7 +783,15 @@ impl StateArena {
     /// The stored closure is the raw reachable set. Upstream Go additionally
     /// runs a table-pointer dedup post-pass that collapses states sharing a
     /// `steps` backing array; this arena dedups states by `StateId` index and
-    /// never aliases transition tables, so that pass has no analogue here.
+    /// never aliases transition tables, so that pass has no analogue here. With
+    /// no dedup pass, the single self-only check below is the only place the
+    /// "no length-1 closure" invariant is upheld: a stored closure is always
+    /// either empty (the self-only sentinel) or two-plus states, never a lone
+    /// `{self}`, since consumers read `closure_len == 0` as self-only and
+    /// otherwise iterate a closure that already includes self, so a one-element
+    /// `{self}` slice would behave identically. (Go re-checks this after its
+    /// dedup pass — a pure optimization, not a correctness guard — but with no
+    /// dedup here the pre-dedup check suffices.)
     ///
     /// Call once the structure is final (after any merges) and before matching.
     /// Returns how many states it closed.
