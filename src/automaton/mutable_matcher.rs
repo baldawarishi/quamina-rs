@@ -17,7 +17,7 @@ use super::arena::{
     make_anything_but_arena_fa, make_cidr_arena_fa, make_monocase_arena_fa,
     make_numeric_greater_arena_fa, make_numeric_less_arena_fa, make_numeric_range_arena_fa,
     make_prefix_arena_fa, make_shellstyle_arena_fa, make_string_arena_fa, make_suffix_dfa,
-    make_wildcard_arena_fa, merge_arena_nfas, traverse_arena_dfa, traverse_arena_dfa_backward,
+    make_wildcard_arena_fa, merge_start_states, traverse_arena_dfa, traverse_arena_dfa_backward,
     traverse_arena_nfa,
 };
 use super::small_table::{FieldMatcher, NfaBuffers, TL_MATCH_BUFS};
@@ -539,7 +539,7 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
     ) -> Result<(), crate::QuaminaError> {
         if let Some(singleton) = self.take_singleton_as_arena() {
             let (merged, merged_start) =
-                merge_arena_nfas(&singleton.arena, singleton.start, &new_arena, new_start);
+                merge_start_states(&singleton.arena, singleton.start, &new_arena, new_start);
             let result = self.merge_into_main_arena(merged, merged_start, budget);
             if let Err(err) = result {
                 self.restore_singleton(singleton);
@@ -1743,6 +1743,7 @@ impl<X: Clone + Eq + std::hash::Hash> CoreMatcher<X> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::automaton::arena::merge_arena_nfas;
     use crate::json::Matcher;
     use crate::regexp::parse_regexp;
 

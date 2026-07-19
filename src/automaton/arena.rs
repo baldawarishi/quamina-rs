@@ -2325,6 +2325,24 @@ pub fn merge_arena_nfas(
     (new_arena, start)
 }
 
+/// Merge two FA start states into a combined start state.
+///
+/// This is the named entry point for the value-matcher start merges, mirroring
+/// Go's `mergeStartStates`. It exists so those call sites read as "merge these
+/// two start states" rather than reaching for the general merge helper. An arena
+/// start is already a state — the `arena` plus its `StateId` — so this delegates
+/// straight to [`merge_arena_nfas`]; that general entry point stays for callers
+/// composing arenas directly (regexp NFA construction, tests).
+#[must_use]
+pub fn merge_start_states(
+    arena1: &StateArena,
+    start1: StateId,
+    arena2: &StateArena,
+    start2: StateId,
+) -> (StateArena, StateId) {
+    merge_arena_nfas(arena1, start1, arena2, start2)
+}
+
 /// Append the union of `target_start` and `source_start` into `target`.
 ///
 /// Existing target states are treated as immutable. Target-only branches reuse
