@@ -746,10 +746,35 @@ impl StateArena {
 
     /// Compute and store the epsilon closure of every state not yet closed.
     ///
-    /// Only states added since the last call are walked; earlier closures are
-    /// left alone because a merge never adds an epsilon edge to an existing
-    /// state, so its closure cannot change. Call once the structure is final
-    /// (after any merges) and before matching. Returns how many states it closed.
+    /// A state's epsilon closure is the set of states reachable from it through
+    /// epsilon (zero-input) transitions, including the state itself. NFA
+    /// traversal needs a state's closure on every step, so instead of chasing
+    /// epsilon edges live at match time we compute each closure once here and
+    /// store it flat in `closure_data`, ready for [`Self::closure_of`] to hand
+    /// back as a slice.
+    ///
+    /// Each not-yet-closed state gets a DFS over its epsilon edges; the reachable
+    /// set is deduplicated through the `seen` [`SparseSet`] and recorded as a
+    /// `(closure_start, closure_len)` window into `closure_data`.
+    ///
+    /// Two properties are worth knowing before changing this:
+    ///
+    /// 1. **It runs incrementally.** `closures_computed` marks how far the arena
+    ///    has already been closed, and only states past that mark are walked.
+    ///    This is safe because a merge only appends states and never adds an
+    ///    epsilon edge to an existing one, so a closure that is already computed
+    ///    can never grow. Re-closing the whole arena on every pattern add would
+    ///    be O(N²) over N adds.
+    ///
+    /// 2. **Self-only closures are implicit.** Most states close to just
+    ///    `{self}` — they have no epsilons, or only ones that loop back. These
+    ///    store `closure_len == 0` and take no room in `closure_data`;
+    ///    [`Self::closure_of`] returns an empty slice, which callers read as
+    ///    "self only" (see [`Self::extend_closure_or_self`]). So a stored closure
+    ///    is never a one-element `{self}`: it is either empty or two-plus states.
+    ///
+    /// Call once the arena is final (after any merges) and before matching.
+    /// Returns how many states were closed.
     pub fn precompute_epsilon_closures(&mut self) -> usize {
         let arena_len = self.states.len();
         let start_idx = self.closures_computed;
@@ -1487,6 +1512,10 @@ pub fn traverse_arena_nfa(arena: &StateArena, start: StateId, val: &[u8], bufs: 
         "epsilon closures must be precomputed before NFA traversal"
     );
 
+    // Seed with the start state directly rather than its closure: the entry
+    // state only ever has byte transitions. Epsilon edges (spinner loopbacks,
+    // splices, regexp branching) first appear in states reached after at least
+    // one input byte, so the start state's closure is always just itself.
     bufs.current_states.push(start);
 
     let mut remaining = val;
