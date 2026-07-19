@@ -1524,6 +1524,15 @@ pub fn traverse_arena_nfa(arena: &StateArena, start: StateId, val: &[u8], bufs: 
         "epsilon closures must be precomputed before NFA traversal"
     );
 
+    // The start state always has a trivial epsilon closure (just itself), so we
+    // can seed current_states with it directly. Epsilon transitions (spinner
+    // loopbacks, splices, regexp branching) are only ever introduced in states
+    // reached after the first input byte is consumed; the entry state itself
+    // carries only byte transitions and never epsilons. (The leading byte is
+    // usually the opening quote 0x22, since nondeterminism arises from
+    // string-valued patterns — shellstyle/wildcard/regexp — but not always:
+    // this path is also taken with an unquoted Q-number value when the matcher
+    // has both numeric and nondeterministic string patterns.)
     bufs.current_states.push(start);
 
     let mut remaining = val;
