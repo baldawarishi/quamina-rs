@@ -905,6 +905,52 @@ fn test_alternation_top_level_is_compacted() {
     }
 }
 
+/// Go lineage: value_matcher_test.go TestEpsilonClosureRequired.
+///
+/// The interior-spinner wildcard `a*z` (its start matches 'a', so the `*`
+/// spinner is an interior state) is merged with the string `az`, which the
+/// wildcard also matches with `*` standing for the empty string. Their accepting
+/// states end up behind a merged splice reachable only through a multi-member
+/// epsilon closure, so the value `az` matches both patterns only when those
+/// closures were recomputed after the merge — a self-only view of the splice
+/// state (the len-0 sentinel) cannot reach the accepting states on its own.
+#[test]
+fn test_epsilon_closure_required_after_merge() {
+    // Add the wildcard first, then the string, so the string merges into the
+    // wildcard's NFA rather than taking the standalone singleton-buffer path.
+    let q = q!(
+        "wild" => r#"{"x": [{"wildcard": "a*z"}]}"#,
+        "str"  => r#"{"x": ["az"]}"#,
+    );
+
+    // The `a*z` spinner makes matching depend on epsilon-closure expansion
+    // rather than pure byte dispatch, so a stored closure spans more than its
+    // own state (contrast test_alternation_has_no_epsilon_hub, where a
+    // quantifier-free alternation leaves only self-only len-0 closures). The
+    // merged-splice behavior itself is pinned by the match assertions below.
+    assert!(
+        q.matcher_stats().max_fanout > 0,
+        "the a*z spinner must leave a multi-member epsilon closure to traverse"
+    );
+
+    // "az" satisfies the string literal directly and the wildcard with `*`
+    // matching the empty string; reaching both accepting states requires the
+    // merged splice's epsilon closure.
+    let mut both = q.matches_for_event(br#"{"x": "az"}"#).unwrap();
+    both.sort_unstable();
+    assert_eq!(
+        both,
+        vec!["str", "wild"],
+        "\"az\" must match both the string and the interior-spinner wildcard"
+    );
+
+    // Only the wildcard matches when `*` stands for a nonempty run, and neither
+    // matches without the leading 'a' or the trailing 'z'.
+    assert_matches!(q, r#"{"x": "abz"}"#, vec!["wild"]);
+    assert_no_match!(q, r#"{"x": "z"}"#);
+    assert_no_match!(q, r#"{"x": "a"}"#);
+}
+
 // ============================================================================
 // Nested-quantifier over-match tests
 //
