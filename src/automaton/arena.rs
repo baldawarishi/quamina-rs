@@ -746,55 +746,35 @@ impl StateArena {
 
     /// Compute and store the epsilon closure of every state not yet closed.
     ///
-    /// # Epsilon-closure construction
+    /// A state's epsilon closure is the set of states reachable from it through
+    /// epsilon (zero-input) transitions, including the state itself. NFA
+    /// traversal needs a state's closure on every step, so instead of chasing
+    /// epsilon edges live at match time we compute each closure once here and
+    /// store it flat in `closure_data`, ready for [`Self::closure_of`] to hand
+    /// back as a slice.
     ///
-    /// A state's epsilon closure is the set of states reachable from it by
-    /// following epsilon (zero-input) transitions, plus itself. At match time
-    /// [`traverse_arena_nfa`] consumes a state's precomputed closure (through
-    /// [`Self::closure_of`]) instead of chasing epsilons live, so the closures
-    /// are built eagerly: after a value's FA has been merged into the arena,
-    /// this walks the states the merge added and closes each one. Closures sit
-    /// on the match hot path, which is why they are precomputed once and stored
-    /// flat rather than rebuilt on demand.
+    /// Each not-yet-closed state gets a DFS over its epsilon edges; the reachable
+    /// set is deduplicated through the `seen` [`SparseSet`] and recorded as a
+    /// `(closure_start, closure_len)` window into `closure_data`.
     ///
-    /// Construction is a single pass. For each not-yet-closed state we DFS its
-    /// epsilon graph, collect the reachable states, and record the state's
-    /// `(closure_start, closure_len)` window into the shared `closure_data`
-    /// buffer. A per-call [`SparseSet`] (`seen`) keeps the collected set free of
-    /// duplicate states — the role Go's generation-counted scratch maps play —
-    /// while a reused stack and scratch buffer avoid a per-state allocation.
+    /// Two properties are worth knowing before changing this:
     ///
-    /// Two optimizations keep this cheap:
+    /// 1. **It runs incrementally.** `closures_computed` marks how far the arena
+    ///    has already been closed, and only states past that mark are walked.
+    ///    This is safe because a merge only appends states and never adds an
+    ///    epsilon edge to an existing one, so a closure that is already computed
+    ///    can never grow. Re-closing the whole arena on every pattern add would
+    ///    be O(N²) over N adds.
     ///
-    /// 1. **Incremental walk.** `closures_computed` records how far the arena
-    ///    has already been closed. A merge only ever appends states (it never
-    ///    adds an epsilon edge to a state that already has a closure), so only
-    ///    the new tail needs walking and the settled prefix of `closure_data` is
-    ///    reused verbatim. Without this the whole, ever-growing arena would be
-    ///    re-closed on every add — O(N²) over N adds.
+    /// 2. **Self-only closures are implicit.** Most states close to just
+    ///    `{self}` — they have no epsilons, or only ones that loop back. These
+    ///    store `closure_len == 0` and take no room in `closure_data`;
+    ///    [`Self::closure_of`] returns an empty slice, which callers read as
+    ///    "self only" (see [`Self::extend_closure_or_self`]). So a stored closure
+    ///    is never a one-element `{self}`: it is either empty or two-plus states.
     ///
-    /// 2. **Self-only encoding.** The vast majority of states close to just
-    ///    `{self}`, either because they have no epsilons or because their
-    ///    epsilons only cycle back. Those store `closure_len == 0` and nothing in
-    ///    `closure_data`; [`Self::closure_of`] returns an empty slice and callers
-    ///    take their self-only branch (see [`Self::extend_closure_or_self`]),
-    ///    keeping `closure_data` proportional to the states that genuinely branch.
-    ///
-    /// The stored closure is the raw reachable set. Upstream Go additionally
-    /// runs a table-pointer dedup post-pass that collapses states sharing a
-    /// `steps` backing array; this arena dedups states by `StateId` index and
-    /// never aliases transition tables, so that pass has no analogue here. With
-    /// no dedup pass, the single self-only check below is the only place the
-    /// "no length-1 closure" invariant is upheld: a stored closure is always
-    /// either empty (the self-only sentinel) or two-plus states, never a lone
-    /// `{self}`, since consumers read `closure_len == 0` as self-only and
-    /// otherwise iterate a closure that already includes self, so a one-element
-    /// `{self}` slice would behave identically. (Go re-checks this after its
-    /// dedup pass — a pure optimization, not a correctness guard — but with no
-    /// dedup here the pre-dedup check suffices.)
-    ///
-    /// Call once the structure is final (after any merges) and before matching.
-    /// Returns how many states it closed.
+    /// Call once the arena is final (after any merges) and before matching.
+    /// Returns how many states were closed.
     pub fn precompute_epsilon_closures(&mut self) -> usize {
         let arena_len = self.states.len();
         let start_idx = self.closures_computed;
@@ -1532,15 +1512,10 @@ pub fn traverse_arena_nfa(arena: &StateArena, start: StateId, val: &[u8], bufs: 
         "epsilon closures must be precomputed before NFA traversal"
     );
 
-    // The start state always has a trivial epsilon closure (just itself), so we
-    // can seed current_states with it directly. Epsilon transitions (spinner
-    // loopbacks, splices, regexp branching) are only ever introduced in states
-    // reached after the first input byte is consumed; the entry state itself
-    // carries only byte transitions and never epsilons. (The leading byte is
-    // usually the opening quote 0x22, since nondeterminism arises from
-    // string-valued patterns — shellstyle/wildcard/regexp — but not always:
-    // this path is also taken with an unquoted Q-number value when the matcher
-    // has both numeric and nondeterministic string patterns.)
+    // Seed with the start state directly rather than its closure: the entry
+    // state only ever has byte transitions. Epsilon edges (spinner loopbacks,
+    // splices, regexp branching) first appear in states reached after at least
+    // one input byte, so the start state's closure is always just itself.
     bufs.current_states.push(start);
 
     let mut remaining = val;
