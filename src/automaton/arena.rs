@@ -746,10 +746,47 @@ impl StateArena {
 
     /// Compute and store the epsilon closure of every state not yet closed.
     ///
-    /// Only states added since the last call are walked; earlier closures are
-    /// left alone because a merge never adds an epsilon edge to an existing
-    /// state, so its closure cannot change. Call once the structure is final
-    /// (after any merges) and before matching. Returns how many states it closed.
+    /// # Epsilon-closure construction
+    ///
+    /// A state's epsilon closure is the set of states reachable from it by
+    /// following epsilon (zero-input) transitions, plus itself. At match time
+    /// [`traverse_arena_nfa`] consumes a state's precomputed closure (through
+    /// [`Self::closure_of`]) instead of chasing epsilons live, so the closures
+    /// are built eagerly: after a value's FA has been merged into the arena,
+    /// this walks the states the merge added and closes each one. Closures sit
+    /// on the match hot path, which is why they are precomputed once and stored
+    /// flat rather than rebuilt on demand.
+    ///
+    /// Construction is a single pass. For each not-yet-closed state we DFS its
+    /// epsilon graph, collect the reachable states, and record the state's
+    /// `(closure_start, closure_len)` window into the shared `closure_data`
+    /// buffer. A per-call [`SparseSet`] (`seen`) keeps the collected set free of
+    /// duplicate states — the role Go's generation-counted scratch maps play —
+    /// while a reused stack and scratch buffer avoid a per-state allocation.
+    ///
+    /// Two optimizations keep this cheap:
+    ///
+    /// 1. **Incremental walk.** `closures_computed` records how far the arena
+    ///    has already been closed. A merge only ever appends states (it never
+    ///    adds an epsilon edge to a state that already has a closure), so only
+    ///    the new tail needs walking and the settled prefix of `closure_data` is
+    ///    reused verbatim. Without this the whole, ever-growing arena would be
+    ///    re-closed on every add — O(N²) over N adds.
+    ///
+    /// 2. **Self-only encoding.** The vast majority of states close to just
+    ///    `{self}`, either because they have no epsilons or because their
+    ///    epsilons only cycle back. Those store `closure_len == 0` and nothing in
+    ///    `closure_data`; [`Self::closure_of`] returns an empty slice and callers
+    ///    take their self-only branch (see [`Self::extend_closure_or_self`]),
+    ///    keeping `closure_data` proportional to the states that genuinely branch.
+    ///
+    /// The stored closure is the raw reachable set. Upstream Go additionally
+    /// runs a table-pointer dedup post-pass that collapses states sharing a
+    /// `steps` backing array; this arena dedups states by `StateId` index and
+    /// never aliases transition tables, so that pass has no analogue here.
+    ///
+    /// Call once the structure is final (after any merges) and before matching.
+    /// Returns how many states it closed.
     pub fn precompute_epsilon_closures(&mut self) -> usize {
         let arena_len = self.states.len();
         let start_idx = self.closures_computed;
