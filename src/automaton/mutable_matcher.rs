@@ -12,7 +12,7 @@ use std::sync::Arc;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::arena::{
-    ArenaInsertRollback, NfaBuffers as ArenaNfaBuffers, StateArena, StateId,
+    ArenaInsertRollback, ClosureScratch, NfaBuffers as ArenaNfaBuffers, StateArena, StateId,
     append_merge_arena_nfas, clone_arena_subset, insert_string, insert_suffix,
     make_anything_but_arena_fa, make_cidr_arena_fa, make_monocase_arena_fa,
     make_numeric_greater_arena_fa, make_numeric_less_arena_fa, make_numeric_range_arena_fa,
@@ -232,6 +232,9 @@ pub struct MutableValueMatcher<X: Clone + Eq + std::hash::Hash> {
     /// Separate DFA trie for suffix patterns, traversed backward (right-to-left).
     /// Contains reversed suffix bytes; uses traverse_arena_dfa_backward at match time.
     pub(crate) suffix_arena: RefCell<Option<(StateArena, StateId)>>,
+    /// Reused scratch for the epsilon-closure pass run on each pattern add, so its
+    /// buffers are grown once and reused rather than reallocated per add.
+    pub(crate) closure_scratch: RefCell<ClosureScratch>,
 }
 
 struct TakenSingleton<X: Clone + Eq + std::hash::Hash> {
@@ -276,6 +279,7 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
             main_arena: RefCell::new(None),
             main_arena_is_nfa: RefCell::new(false),
             suffix_arena: RefCell::new(None),
+            closure_scratch: RefCell::new(ClosureScratch::new()),
         }
     }
 
@@ -445,7 +449,8 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
             let merged_start =
                 append_merge_arena_nfas(existing_arena, old_start, &new_arena, new_start);
             if *self.main_arena_is_nfa.borrow() {
-                existing_arena.precompute_epsilon_closures();
+                existing_arena
+                    .precompute_epsilon_closures_into(&mut self.closure_scratch.borrow_mut());
             }
 
             if budget != 0 {

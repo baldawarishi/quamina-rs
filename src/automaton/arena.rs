@@ -401,6 +401,54 @@ impl std::fmt::Debug for StateArena {
     }
 }
 
+/// Reusable scratch for epsilon-closure precomputation.
+///
+/// [`StateArena::precompute_epsilon_closures_into`] needs a visited set sized to
+/// the whole arena plus a DFS stack and a per-closure accumulator. Building a
+/// matcher adds patterns incrementally, calling the closure pass once per add on
+/// an ever-growing arena; allocating this scratch fresh each call would cost
+/// O(arena length) every add — O(N²) over N adds — even though the walk itself
+/// is incremental. Owning one of these on the build-time matcher and threading
+/// it in lets the buffers be grown once and reused, keeping per-add scratch cost
+/// proportional to the new states rather than the whole matcher. A one-shot
+/// [`StateArena::precompute_epsilon_closures`] wrapper allocates a throwaway
+/// instance for tests and cold callers.
+pub(crate) struct ClosureScratch {
+    /// Deduplicates states as a closure is collected; must be able to index any
+    /// state in the arena, so it is grown to the arena length on demand.
+    seen: SparseSet,
+    /// DFS work list for the epsilon walk.
+    stack: Vec<StateId>,
+    /// Accumulates one state's closure before it is copied into `closure_data`.
+    closure_buf: Vec<StateId>,
+}
+
+impl ClosureScratch {
+    pub(crate) fn new() -> Self {
+        Self {
+            seen: SparseSet::new(0),
+            stack: Vec::new(),
+            closure_buf: Vec::new(),
+        }
+    }
+
+    /// Ensure `seen` can index every state in an arena of `arena_len` states.
+    /// Grows in power-of-two steps so the reallocations across a build sum to
+    /// O(final arena length), not O(N²). `arena_len` is a `StateId` count and so
+    /// fits in `u32`, so `next_power_of_two` never overflows past it.
+    fn ensure_seen_capacity(&mut self, arena_len: usize) {
+        if self.seen.capacity() < arena_len {
+            self.seen = SparseSet::new(arena_len.next_power_of_two());
+        }
+    }
+}
+
+impl Default for ClosureScratch {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl StateArena {
     #[must_use]
     pub const fn new() -> Self {
@@ -776,6 +824,20 @@ impl StateArena {
     /// Call once the arena is final (after any merges) and before matching.
     /// Returns how many states were closed.
     pub fn precompute_epsilon_closures(&mut self) -> usize {
+        self.precompute_epsilon_closures_into(&mut ClosureScratch::new())
+    }
+
+    /// [`Self::precompute_epsilon_closures`] with caller-supplied scratch.
+    ///
+    /// Identical to the wrapper except the visited/stack/accumulator buffers come
+    /// from `scratch` instead of being allocated per call. The build path passes
+    /// the value matcher's long-lived [`ClosureScratch`] so those buffers are
+    /// grown once and reused across every pattern add; see [`ClosureScratch`] for
+    /// why allocating them per add would be O(N²) over a build.
+    pub(crate) fn precompute_epsilon_closures_into(
+        &mut self,
+        scratch: &mut ClosureScratch,
+    ) -> usize {
         let arena_len = self.states.len();
         let start_idx = self.closures_computed;
         if start_idx >= arena_len {
@@ -793,10 +855,13 @@ impl StateArena {
             existing
         };
 
-        // Reused across states to avoid a per-state allocation.
-        let mut seen = SparseSet::new(arena_len);
-        let mut stack: Vec<StateId> = Vec::new();
-        let mut closure_buf: Vec<StateId> = Vec::new();
+        // Grow the visited set to span the whole arena, then reuse it (and the
+        // stack/accumulator) across states — and, via `scratch`, across pattern
+        // adds. Each is cleared per state below.
+        scratch.ensure_seen_capacity(arena_len);
+        let seen = &mut scratch.seen;
+        let stack = &mut scratch.stack;
+        let closure_buf = &mut scratch.closure_buf;
 
         for state_idx in start_idx..arena_len {
             let state_id = StateId::from_index(state_idx);
@@ -823,9 +888,20 @@ impl StateArena {
                     for &eps_id in &self.states[current_id.index()].table.epsilons {
                         if !eps_id.is_none() {
                             let idx = eps_id.index();
-                            if idx < seen.capacity() && seen.insert(idx) {
+                            // Skip targets outside the arena. `seen` may be sized
+                            // larger than the arena (it is reused and grown in
+                            // power-of-two steps), so bound on arena_len, not on
+                            // seen.capacity().
+                            if idx < arena_len && seen.insert(idx) {
                                 closure_buf.push(eps_id);
                                 stack.push(eps_id);
+                                // `seen` admits each state once, so a closure can
+                                // never hold more states than the arena; a broken
+                                // dedup would spin here instead of terminating.
+                                debug_assert!(
+                                    closure_buf.len() <= arena_len,
+                                    "epsilon closure exceeded arena size; dedup invariant broken"
+                                );
                             }
                         }
                     }
@@ -839,7 +915,7 @@ impl StateArena {
                 } else {
                     let len = u16::try_from(closure_buf.len())
                         .expect("epsilon closure exceeds u16::MAX states");
-                    closure_data.extend_from_slice(&closure_buf);
+                    closure_data.extend_from_slice(closure_buf.as_slice());
                     self.states[state_idx].closure_len = len;
                 }
             }
@@ -6080,6 +6156,53 @@ mod arena_stats_utility_tests {
         assert!(c.contains(&s0));
         assert!(c.contains(&s1));
         assert_eq!(c.len(), 2);
+    }
+
+    #[test]
+    fn test_precompute_epsilon_closures_into_reuses_scratch() {
+        // The build reuses one ClosureScratch across adds on ever-larger arenas.
+        // Growing the visited set between calls must not corrupt closures, and
+        // stray epsilon targets must be gated on the arena length, not on the
+        // reused (and possibly oversized) visited set's capacity.
+        let mut scratch = ClosureScratch::new();
+
+        // Small arena first: a two-state closure.
+        let mut small = StateArena::new();
+        let a0 = small.alloc();
+        let a1 = small.alloc();
+        small[a0].table.epsilons.push(a1);
+        small.precompute_epsilon_closures_into(&mut scratch);
+        let c = small.closure_of(a0);
+        assert!(c.contains(&a0) && c.contains(&a1) && c.len() == 2);
+
+        // Reuse the scratch on a bigger arena, forcing the visited set to grow.
+        // Chain each state's epsilon to the next so state 0 closes over all 40,
+        // and add a dangling target one past the last state: with the old
+        // capacity-based guard the now-oversized set would wrongly admit it.
+        let mut big = StateArena::new();
+        let states: Vec<StateId> = (0..40).map(|_| big.alloc()).collect();
+        for w in states.windows(2) {
+            big[w[0]].table.epsilons.push(w[1]);
+        }
+        let dangling = StateId::from_index(big.len());
+        big[states[0]].table.epsilons.push(dangling);
+        big.precompute_epsilon_closures_into(&mut scratch);
+        let head = big.closure_of(states[0]);
+        assert_eq!(head.len(), 40, "state 0 closes over the whole chain");
+        assert!(
+            !head.contains(&dangling),
+            "out-of-range target must be skipped"
+        );
+
+        // A third, smaller arena reuses the now-large scratch without growing it
+        // and must not inherit stale visited state from the bigger arena.
+        let mut third = StateArena::new();
+        let t0 = third.alloc();
+        let t1 = third.alloc();
+        third[t0].table.epsilons.push(t1);
+        third.precompute_epsilon_closures_into(&mut scratch);
+        let tc = third.closure_of(t0);
+        assert!(tc.contains(&t0) && tc.contains(&t1) && tc.len() == 2);
     }
 
     #[test]
