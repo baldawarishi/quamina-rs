@@ -905,41 +905,29 @@ fn test_alternation_top_level_is_compacted() {
     }
 }
 
-/// Go lineage: value_matcher_test.go TestEpsilonClosureRequired.
-///
-/// Merging the interior-spinner wildcard `a*z` with the string `az` (which the
-/// wildcard also matches, `*` = empty) puts both accepting states behind a merged
-/// splice reachable only through a multi-member epsilon closure. So `az` matches
-/// both patterns only if closures were recomputed after the merge — the splice's
-/// self-only sentinel cannot reach the accepting states alone.
 #[test]
 fn test_epsilon_closure_required_after_merge() {
-    // Add the wildcard first, then the string, so the string merges into the
-    // wildcard's NFA rather than taking the standalone singleton-buffer path.
+    // Go lineage: value_matcher_test.go TestEpsilonClosureRequired. Merging the
+    // interior-spinner wildcard `a*z` with the string `az` (which `a*z` also
+    // matches, `*` = empty) leaves both accepting states behind a merged splice
+    // reachable only through a multi-member epsilon closure, so `az` matches both
+    // only if closures were recomputed after the merge. Add the wildcard first so
+    // the string merges into its NFA instead of taking the singleton path.
     let q = q!(
         "wild" => r#"{"x": [{"wildcard": "a*z"}]}"#,
         "str"  => r#"{"x": ["az"]}"#,
     );
 
-    // The spinner forces a stored closure that spans more than its own state
-    // (contrast test_alternation_has_no_epsilon_hub, whose quantifier-free
-    // alternation leaves only self-only len-0 closures).
     assert!(
         q.matcher_stats().max_fanout > 0,
-        "the a*z spinner must leave a multi-member epsilon closure to traverse"
+        "a*z must leave a multi-member epsilon closure to traverse"
     );
 
-    // "az" matches the literal directly and the wildcard with `*` = empty.
     let mut both = q.matches_for_event(br#"{"x": "az"}"#).unwrap();
     both.sort_unstable();
-    assert_eq!(
-        both,
-        vec!["str", "wild"],
-        "\"az\" must match both the string and the interior-spinner wildcard"
-    );
+    assert_eq!(both, vec!["str", "wild"], "\"az\" must match both patterns");
 
-    // Only the wildcard matches when `*` stands for a nonempty run, and neither
-    // matches without the leading 'a' or the trailing 'z'.
+    // `*` = nonempty run matches only the wildcard; dropping an anchor matches neither.
     assert_matches!(q, r#"{"x": "abz"}"#, vec!["wild"]);
     assert_no_match!(q, r#"{"x": "z"}"#);
     assert_no_match!(q, r#"{"x": "a"}"#);
