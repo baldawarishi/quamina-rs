@@ -907,13 +907,11 @@ fn test_alternation_top_level_is_compacted() {
 
 /// Go lineage: value_matcher_test.go TestEpsilonClosureRequired.
 ///
-/// The interior-spinner wildcard `a*z` (its start matches 'a', so the `*`
-/// spinner is an interior state) is merged with the string `az`, which the
-/// wildcard also matches with `*` standing for the empty string. Their accepting
-/// states end up behind a merged splice reachable only through a multi-member
-/// epsilon closure, so the value `az` matches both patterns only when those
-/// closures were recomputed after the merge — a self-only view of the splice
-/// state (the len-0 sentinel) cannot reach the accepting states on its own.
+/// Merging the interior-spinner wildcard `a*z` with the string `az` (which the
+/// wildcard also matches, `*` = empty) puts both accepting states behind a merged
+/// splice reachable only through a multi-member epsilon closure. So `az` matches
+/// both patterns only if closures were recomputed after the merge — the splice's
+/// self-only sentinel cannot reach the accepting states alone.
 #[test]
 fn test_epsilon_closure_required_after_merge() {
     // Add the wildcard first, then the string, so the string merges into the
@@ -923,19 +921,15 @@ fn test_epsilon_closure_required_after_merge() {
         "str"  => r#"{"x": ["az"]}"#,
     );
 
-    // The `a*z` spinner makes matching depend on epsilon-closure expansion
-    // rather than pure byte dispatch, so a stored closure spans more than its
-    // own state (contrast test_alternation_has_no_epsilon_hub, where a
-    // quantifier-free alternation leaves only self-only len-0 closures). The
-    // merged-splice behavior itself is pinned by the match assertions below.
+    // The spinner forces a stored closure that spans more than its own state
+    // (contrast test_alternation_has_no_epsilon_hub, whose quantifier-free
+    // alternation leaves only self-only len-0 closures).
     assert!(
         q.matcher_stats().max_fanout > 0,
         "the a*z spinner must leave a multi-member epsilon closure to traverse"
     );
 
-    // "az" satisfies the string literal directly and the wildcard with `*`
-    // matching the empty string; reaching both accepting states requires the
-    // merged splice's epsilon closure.
+    // "az" matches the literal directly and the wildcard with `*` = empty.
     let mut both = q.matches_for_event(br#"{"x": "az"}"#).unwrap();
     both.sort_unstable();
     assert_eq!(

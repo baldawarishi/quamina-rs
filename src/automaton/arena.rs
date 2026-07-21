@@ -401,18 +401,13 @@ impl std::fmt::Debug for StateArena {
     }
 }
 
-/// Reusable scratch for epsilon-closure precomputation.
+/// Reusable scratch for the epsilon-closure pass: a visited set sized to the
+/// arena, a DFS stack, and a per-closure accumulator.
 ///
-/// [`StateArena::precompute_epsilon_closures_into`] needs a visited set sized to
-/// the whole arena plus a DFS stack and a per-closure accumulator. Building a
-/// matcher adds patterns incrementally, calling the closure pass once per add on
-/// an ever-growing arena; allocating this scratch fresh each call would cost
-/// O(arena length) every add — O(N²) over N adds — even though the walk itself
-/// is incremental. Owning one of these on the build-time matcher and threading
-/// it in lets the buffers be grown once and reused, keeping per-add scratch cost
-/// proportional to the new states rather than the whole matcher. A one-shot
-/// [`StateArena::precompute_epsilon_closures`] wrapper allocates a throwaway
-/// instance for tests and cold callers.
+/// The build-time matcher owns one and threads it through every pattern add so
+/// the buffers grow once and are reused, instead of reallocating on each add.
+/// Cold callers use the one-shot [`StateArena::precompute_epsilon_closures`]
+/// wrapper.
 pub(crate) struct ClosureScratch {
     /// Deduplicates states as a closure is collected; must be able to index any
     /// state in the arena, so it is grown to the arena length on demand.
@@ -432,10 +427,9 @@ impl ClosureScratch {
         }
     }
 
-    /// Ensure `seen` can index every state in an arena of `arena_len` states.
-    /// Grows in power-of-two steps so the reallocations across a build sum to
-    /// O(final arena length), not O(N²). `arena_len` is a `StateId` count and so
-    /// fits in `u32`, so `next_power_of_two` never overflows past it.
+    /// Ensure `seen` can index every state in an arena of `arena_len` states,
+    /// growing in power-of-two steps so reallocations across a build stay
+    /// amortized cheap.
     fn ensure_seen_capacity(&mut self, arena_len: usize) {
         if self.seen.capacity() < arena_len {
             self.seen = SparseSet::new(arena_len.next_power_of_two());
@@ -829,11 +823,9 @@ impl StateArena {
 
     /// [`Self::precompute_epsilon_closures`] with caller-supplied scratch.
     ///
-    /// Identical to the wrapper except the visited/stack/accumulator buffers come
-    /// from `scratch` instead of being allocated per call. The build path passes
-    /// the value matcher's long-lived [`ClosureScratch`] so those buffers are
-    /// grown once and reused across every pattern add; see [`ClosureScratch`] for
-    /// why allocating them per add would be O(N²) over a build.
+    /// The build path passes the value matcher's long-lived [`ClosureScratch`] so
+    /// its buffers are reused across every pattern add rather than reallocated per
+    /// call; see [`ClosureScratch`].
     pub(crate) fn precompute_epsilon_closures_into(
         &mut self,
         scratch: &mut ClosureScratch,
@@ -855,9 +847,9 @@ impl StateArena {
             existing
         };
 
-        // Grow the visited set to span the whole arena, then reuse it (and the
-        // stack/accumulator) across states — and, via `scratch`, across pattern
-        // adds. Each is cleared per state below.
+        // Grow the visited set to span the arena; it and the stack/accumulator
+        // are reused across states (and, via `scratch`, across adds), cleared
+        // per state below.
         scratch.ensure_seen_capacity(arena_len);
         let seen = &mut scratch.seen;
         let stack = &mut scratch.stack;
@@ -888,16 +880,14 @@ impl StateArena {
                     for &eps_id in &self.states[current_id.index()].table.epsilons {
                         if !eps_id.is_none() {
                             let idx = eps_id.index();
-                            // Skip targets outside the arena. `seen` may be sized
-                            // larger than the arena (it is reused and grown in
-                            // power-of-two steps), so bound on arena_len, not on
-                            // seen.capacity().
+                            // `seen` may be larger than the arena (reused and
+                            // grown in power-of-two steps), so gate stray targets
+                            // on arena_len, not seen.capacity().
                             if idx < arena_len && seen.insert(idx) {
                                 closure_buf.push(eps_id);
                                 stack.push(eps_id);
-                                // `seen` admits each state once, so a closure can
-                                // never hold more states than the arena; a broken
-                                // dedup would spin here instead of terminating.
+                                // A broken dedup would grow closure_buf past the
+                                // arena size instead of terminating.
                                 debug_assert!(
                                     closure_buf.len() <= arena_len,
                                     "epsilon closure exceeded arena size; dedup invariant broken"
@@ -2403,12 +2393,10 @@ pub fn merge_arena_nfas(
 
 /// Merge two FA start states into a combined start state.
 ///
-/// This is the named entry point for the value-matcher start merges, mirroring
-/// Go's `mergeStartStates`. It exists so those call sites read as "merge these
-/// two start states" rather than reaching for the general merge helper. An arena
-/// start is already a state — the `arena` plus its `StateId` — so this delegates
-/// straight to [`merge_arena_nfas`]; that general entry point stays for callers
-/// composing arenas directly (regexp NFA construction, tests).
+/// The named entry point for the value-matcher start merges, mirroring Go's
+/// `mergeStartStates`. An arena start is already a state (`arena` + `StateId`),
+/// so this delegates to [`merge_arena_nfas`], which stays for callers composing
+/// arenas directly (regexp NFA construction, tests).
 #[must_use]
 pub fn merge_start_states(
     arena1: &StateArena,
