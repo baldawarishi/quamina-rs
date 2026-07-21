@@ -14,7 +14,7 @@ use std::time::Duration;
 use criterion::{
     BenchmarkId, Criterion, PlotConfiguration, Throughput, criterion_group, criterion_main,
 };
-use quamina::Quamina;
+use quamina::{Quamina, QuaminaBuilder};
 
 const PATTERN_COUNTS: [usize; 8] = [64, 128, 256, 512, 1_024, 2_048, 4_096, 8_192];
 
@@ -30,8 +30,29 @@ fn prefix_patterns(count: usize) -> Vec<String> {
         .collect()
 }
 
+fn shellstyle_patterns(count: usize) -> Vec<String> {
+    (0..count)
+        .map(|i| format!(r#"{{"field": [{{"shellstyle": "value_{i:06}*end"}}]}}"#))
+        .collect()
+}
+
 fn add_patterns(patterns: &[String]) {
     let mut q = Quamina::<usize>::new();
+    for (i, pattern) in patterns.iter().enumerate() {
+        q.add_pattern(i, black_box(pattern.as_str())).unwrap();
+    }
+    black_box(q);
+}
+
+fn add_shellstyle_patterns(patterns: &[String]) {
+    // Shellstyle values build NFA arenas whose epsilon closures are recomputed
+    // on every add, so this exercises the incremental epsilon-closure scratch.
+    // A large byte budget keeps the growing arena from hitting the default
+    // compaction cliff, isolating per-add build cost.
+    let mut q = QuaminaBuilder::<usize>::new()
+        .with_arena_byte_budget(1 << 30)
+        .build()
+        .unwrap();
     for (i, pattern) in patterns.iter().enumerate() {
         q.add_pattern(i, black_box(pattern.as_str())).unwrap();
     }
@@ -62,6 +83,18 @@ fn bench_add_pattern_scaling(c: &mut Criterion) {
             BenchmarkId::new("prefix_same_field", count),
             &patterns,
             |b, patterns| b.iter(|| add_patterns(black_box(patterns))),
+        );
+    }
+
+    for count in PATTERN_COUNTS {
+        let patterns = shellstyle_patterns(count);
+        group.throughput(Throughput::Elements(
+            u64::try_from(count).expect("pattern count fits in u64"),
+        ));
+        group.bench_with_input(
+            BenchmarkId::new("shellstyle_same_field", count),
+            &patterns,
+            |b, patterns| b.iter(|| add_shellstyle_patterns(black_box(patterns))),
         );
     }
 

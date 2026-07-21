@@ -14,6 +14,7 @@ Style inspired by [ripgrep's CHANGELOG](https://github.com/BurntSushi/ripgrep/bl
 ### Changed
 - Store self-only epsilon closures as an implicit zero-length sentinel, avoiding one `StateId` in the flattened closure buffer for the common case (#173)
 - Precompute epsilon closures incrementally, re-closing only the states an added pattern introduces instead of the whole automaton on every add (matching Go upstream's `closureForNfa` prune) (#173)
+- Reuse the epsilon-closure scratch buffers across pattern adds instead of reallocating them per add, speeding up incremental builds of NFA-heavy pattern sets (~20% faster adding many shellstyle patterns) (matching the spirit of Go upstream's matcher-owned `closureBuffers`) (#177)
 - Merge each added non-exact pattern by appending to the live automaton and compacting unreachable history at freeze, instead of rebuilding the whole accumulated arena on every add (#162)
 - Build regexp alternations by byte-merging branches into a deterministic entry instead of a Thompson epsilon hub (matching Go upstream's `makeNFAFromBranches`), shrinking alternation automata and speeding up their construction (#154)
 - Synced Go upstream through 5c6e2df (#152)

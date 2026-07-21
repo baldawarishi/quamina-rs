@@ -905,6 +905,34 @@ fn test_alternation_top_level_is_compacted() {
     }
 }
 
+#[test]
+fn test_epsilon_closure_required_after_merge() {
+    // Go lineage: value_matcher_test.go TestEpsilonClosureRequired. Merging the
+    // interior-spinner wildcard `a*z` with the string `az` (which `a*z` also
+    // matches, `*` = empty) leaves both accepting states behind a merged splice
+    // reachable only through a multi-member epsilon closure, so `az` matches both
+    // only if closures were recomputed after the merge. Add the wildcard first so
+    // the string merges into its NFA instead of taking the singleton path.
+    let q = q!(
+        "wild" => r#"{"x": [{"wildcard": "a*z"}]}"#,
+        "str"  => r#"{"x": ["az"]}"#,
+    );
+
+    assert!(
+        q.matcher_stats().max_fanout > 0,
+        "a*z must leave a multi-member epsilon closure to traverse"
+    );
+
+    let mut both = q.matches_for_event(br#"{"x": "az"}"#).unwrap();
+    both.sort_unstable();
+    assert_eq!(both, vec!["str", "wild"], "\"az\" must match both patterns");
+
+    // `*` = nonempty run matches only the wildcard; dropping an anchor matches neither.
+    assert_matches!(q, r#"{"x": "abz"}"#, vec!["wild"]);
+    assert_no_match!(q, r#"{"x": "z"}"#);
+    assert_no_match!(q, r#"{"x": "a"}"#);
+}
+
 // ============================================================================
 // Nested-quantifier over-match tests
 //

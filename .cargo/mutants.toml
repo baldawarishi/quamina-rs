@@ -58,6 +58,10 @@ exclude_re = [
   # Post-fold compaction is cleanup-only: a pattern with no dead states (every
   # non-alternation one) clones to itself, so >1 vs >=1 changes nothing.
   'replace > with >= in regexp_has_alternation',
+  # A visited set of capacity == arena_len already covers every index in
+  # [0, arena_len), so growing on `<=` instead of `<` only reallocates one extra
+  # time when they are equal — same closures, just a wasted alloc.
+  'replace < with <= in ClosureScratch::ensure_seen_capacity',
 ]
 
 # Don't mutate logging/debug/panic macros — not worth testing
