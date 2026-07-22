@@ -16,7 +16,7 @@
 use std::hash::Hash;
 use std::rc::Rc;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
@@ -33,6 +33,7 @@ use super::mutable_matcher::{
     EventField, EventFieldRef, MultiConditionNfa, MutableFieldMatcher, MutableValueMatcher,
 };
 use super::small_table::{FieldMatcher, NfaBuffers, TL_MATCH_BUFS};
+use crate::MatcherBuildMode;
 
 // =============================================================================
 // NFA→DFA conversion budget constants
@@ -467,6 +468,10 @@ pub struct ThreadSafeCoreMatcher<X: Clone + Eq + Hash + Send + Sync> {
     arena_byte_budget: usize,
     /// Maximum field-matcher states during add_pattern (prevents 2^N blowup)
     max_states_per_pattern: usize,
+    /// Current [`MatcherBuildMode`] discriminant. Read at freeze time to decide
+    /// whether wildcard/regexp NFAs are converted to DFAs. Stored as a `u8` so
+    /// it can live in an atomic and be updated without the build lock.
+    build_mode: AtomicU8,
 }
 
 // ThreadSafeCoreMatcher is Send + Sync because:
@@ -493,80 +498,99 @@ impl<X: Clone + Eq + Hash + Send + Sync> ThreadSafeCoreMatcher<X> {
             needs_freeze: AtomicBool::new(false),
             arena_byte_budget,
             max_states_per_pattern,
+            build_mode: AtomicU8::new(MatcherBuildMode::BuiltForComfort as u8),
         }
     }
 
-    /// Walk the mutable matcher DAG and accumulate resource-consumption
-    /// statistics for every distinct automaton. The DAG is deduplicated by
-    /// `MutableValueMatcher` identity so arenas reachable via multiple field
-    /// paths are only counted once. Value matchers in singleton mode (a
-    /// stored comparison buffer, no automaton) contribute the buffer's
-    /// capacity to the byte estimate.
+    /// Set the build mode. The next freeze — triggered by the following match —
+    /// rebuilds the frozen snapshot under the new mode.
+    pub fn set_build_mode(&self, mode: MatcherBuildMode) {
+        self.build_mode.store(mode as u8, Ordering::Release);
+        self.needs_freeze.store(true, Ordering::Release);
+    }
+
+    /// Return the current build mode.
+    #[must_use]
+    pub fn build_mode(&self) -> MatcherBuildMode {
+        if self.build_mode.load(Ordering::Acquire) == MatcherBuildMode::BuiltForSpeed as u8 {
+            MatcherBuildMode::BuiltForSpeed
+        } else {
+            MatcherBuildMode::BuiltForComfort
+        }
+    }
+
+    /// Walk the frozen matcher DAG and accumulate resource-consumption
+    /// statistics for every distinct automaton. Because it measures the
+    /// materialized matcher (the structures matching actually traverses), the
+    /// result reflects the current [`MatcherBuildMode`]: `BuiltForSpeed`
+    /// reports the converted DFAs, which are typically larger than the NFAs
+    /// reported under `BuiltForComfort`. The DAG is deduplicated by
+    /// frozen-matcher identity so arenas reachable via multiple field paths are
+    /// only counted once. Value matchers in singleton mode (a stored comparison
+    /// buffer, no automaton) contribute the buffer's capacity to the byte
+    /// estimate.
     ///
-    /// Acquires `build_lock`, so this contends with `add_pattern` callers.
+    /// Freezes the mutable structures first if patterns were added since the
+    /// last match, so this may briefly acquire `build_lock`.
     #[must_use]
     pub fn matcher_stats(&self) -> crate::MatcherStats {
-        let build_state = self.build_lock.lock();
-        let mut field_seen: FxHashSet<*const MutableFieldMatcher<X>> = FxHashSet::default();
-        let mut value_seen: FxHashSet<*const MutableValueMatcher<X>> = FxHashSet::default();
+        self.ensure_frozen();
+        let root = self.root.load();
+        let mut field_seen: FxHashSet<usize> = FxHashSet::default();
+        let mut value_seen: FxHashSet<usize> = FxHashSet::default();
         let mut stats = crate::MatcherStats::default();
-        Self::walk_field_matcher(
-            &build_state.root,
-            &mut field_seen,
-            &mut value_seen,
-            &mut stats,
-        );
+        Self::walk_field_matcher(&root, &mut field_seen, &mut value_seen, &mut stats);
         stats
     }
 
     fn walk_field_matcher(
-        fm: &Rc<MutableFieldMatcher<X>>,
-        field_seen: &mut FxHashSet<*const MutableFieldMatcher<X>>,
-        value_seen: &mut FxHashSet<*const MutableValueMatcher<X>>,
+        fm: &FrozenFieldMatcher<X>,
+        field_seen: &mut FxHashSet<usize>,
+        value_seen: &mut FxHashSet<usize>,
         stats: &mut crate::MatcherStats,
     ) {
-        if !field_seen.insert(Rc::as_ptr(fm)) {
+        if !field_seen.insert(std::ptr::from_ref(fm) as usize) {
             return;
         }
-        for vm in fm.transitions.borrow().values() {
+        for vm in fm.transitions.values() {
             Self::walk_value_matcher(vm, field_seen, value_seen, stats);
         }
-        for next in fm.exists_true.borrow().values() {
+        for next in fm.exists_true.values() {
             Self::walk_field_matcher(next, field_seen, value_seen, stats);
         }
-        for next in fm.exists_false.borrow().values() {
+        for next in fm.exists_false.values() {
             Self::walk_field_matcher(next, field_seen, value_seen, stats);
         }
     }
 
     fn walk_value_matcher(
-        vm: &Rc<MutableValueMatcher<X>>,
-        field_seen: &mut FxHashSet<*const MutableFieldMatcher<X>>,
-        value_seen: &mut FxHashSet<*const MutableValueMatcher<X>>,
+        vm: &FrozenValueMatcher<X>,
+        field_seen: &mut FxHashSet<usize>,
+        value_seen: &mut FxHashSet<usize>,
         stats: &mut crate::MatcherStats,
     ) {
-        if !value_seen.insert(Rc::as_ptr(vm)) {
+        if !value_seen.insert(std::ptr::from_ref(vm) as usize) {
             return;
         }
-        if let Some(singleton) = vm.singleton_match.borrow().as_ref() {
+        if let Some(singleton) = vm.singleton_match.as_ref() {
             stats.bytes += singleton.capacity();
         }
-        if let Some((arena, _)) = vm.main_arena.borrow().as_ref() {
+        if let Some((ref arena, _)) = vm.main_arena {
             arena.accumulate_matcher_stats(stats);
         }
-        if let Some((arena, _)) = vm.suffix_arena.borrow().as_ref() {
+        if let Some((ref arena, _)) = vm.suffix_arena {
             arena.accumulate_matcher_stats(stats);
         }
-        for mc in vm.multi_condition_nfas.borrow().iter() {
+        for mc in &vm.multi_condition_nfas {
             mc.primary_arena.accumulate_matcher_stats(stats);
             for cond in &mc.conditions {
                 cond.arena.accumulate_matcher_stats(stats);
             }
         }
-        for next in vm.transition_map.borrow().values() {
+        for next in vm.transition_map.values() {
             Self::walk_field_matcher(next, field_seen, value_seen, stats);
         }
-        if let Some(ref next) = *vm.singleton_transition.borrow() {
+        if let Some(ref next) = vm.singleton_transition {
             Self::walk_field_matcher(next, field_seen, value_seen, stats);
         }
     }
@@ -820,10 +844,12 @@ impl<X: Clone + Eq + Hash + Send + Sync> ThreadSafeCoreMatcher<X> {
             // freeze the compacted reachable subset rather than the build arena.
             let (mut arena, start) = clone_arena_subset(arena, *start);
 
-            // Under Miri, skip DFA conversion (FxHashMap/Mutex are ~200× slower
-            // under interpretation). Fall straight to Tier 3 (NFA traversal).
+            // DFA conversion only runs in BuiltForSpeed mode; BuiltForComfort
+            // (the default) keeps the NFA and falls straight to Tier 3.
+            // Under Miri, skip DFA conversion regardless of mode (FxHashMap/Mutex
+            // are ~200× slower under interpretation).
             #[cfg(not(miri))]
-            if main_arena_is_nfa {
+            if main_arena_is_nfa && self.build_mode() == MatcherBuildMode::BuiltForSpeed {
                 // Tier 1: Attempt eager NFA→DFA conversion.
                 let eager_budget =
                     (arena.len() * EAGER_DFA_BUDGET_MULTIPLIER).min(EAGER_DFA_BUDGET_CAP);
@@ -1345,6 +1371,47 @@ mod tests {
         assert!(should_build_lazy_dfa(EAGER_DFA_BUDGET_CAP));
         assert!(!should_build_lazy_dfa(EAGER_DFA_BUDGET_CAP + 1));
         assert!(!should_build_lazy_dfa(usize::MAX));
+    }
+
+    /// A shellstyle pattern compiles to a nondeterministic arena. In the default
+    /// `BuiltForComfort` mode the frozen matcher keeps that NFA; in
+    /// `BuiltForSpeed` it is converted to a DFA at freeze time. Skipped under
+    /// Miri, which never runs the DFA-conversion path.
+    #[cfg(not(miri))]
+    #[test]
+    fn test_build_mode_controls_freeze_dfa_conversion() {
+        fn frozen_main_arena_is_nfa(mode: MatcherBuildMode) -> bool {
+            let matcher: ThreadSafeCoreMatcher<String> = ThreadSafeCoreMatcher::new();
+            matcher.set_build_mode(mode);
+            matcher
+                .add_pattern(
+                    "p".to_string(),
+                    &[("x".to_string(), vec![Matcher::Shellstyle("*z".to_string())])],
+                )
+                .unwrap();
+            // Trigger the lazy freeze so the tier decision is recorded.
+            let _ = matcher.matches_for_fields(&[EventField {
+                path: "x".to_string(),
+                value: "\"az\"".to_string(),
+                array_trail: vec![],
+                is_number: false,
+            }]);
+            let root = matcher.root.load();
+            let vm = root
+                .transitions
+                .get("x")
+                .expect("value matcher for field x");
+            vm.main_arena_is_nfa
+        }
+
+        assert!(
+            frozen_main_arena_is_nfa(MatcherBuildMode::BuiltForComfort),
+            "BuiltForComfort must keep the NFA"
+        );
+        assert!(
+            !frozen_main_arena_is_nfa(MatcherBuildMode::BuiltForSpeed),
+            "BuiltForSpeed must convert the NFA to a DFA at freeze time"
+        );
     }
 
     /// Guard against replacing Transitions with a larger type (e.g. SmallVec<[...; 4]> = 48 bytes).

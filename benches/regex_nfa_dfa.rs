@@ -11,9 +11,18 @@
 use std::hint::black_box;
 
 use criterion::{Criterion, criterion_group, criterion_main};
-use quamina::Quamina;
+use quamina::{MatcherBuildMode, Quamina};
 use rand::rngs::StdRng;
 use rand::{RngExt, SeedableRng};
+
+/// These benchmarks probe the NFA→DFA conversion, which only runs in
+/// `BuiltForSpeed` mode; the default `BuiltForComfort` keeps every pattern an
+/// NFA and would defeat the comparison.
+fn new_speed_matcher() -> Quamina<String> {
+    let mut q = Quamina::new();
+    q.set_matcher_build_mode(MatcherBuildMode::BuiltForSpeed);
+    q
+}
 
 /// Number of pre-built events each benchmark cycles through, so per-iteration
 /// cost reflects a mix of inputs rather than a single hot event.
@@ -84,7 +93,7 @@ fn bench_shellstyle_simple_wildcard(c: &mut Criterion) {
     let lowercase: Vec<char> = ('a'..='z').collect();
 
     for shellstyle in simple_patterns {
-        let mut q = Quamina::new();
+        let mut q = new_speed_matcher();
         add_shellstyle(&mut q, shellstyle.to_string(), shellstyle);
 
         // Build events that match — random lowercase filler between the
@@ -147,7 +156,7 @@ fn bench_shellstyle_narrow_input(c: &mut Criterion) {
                     "shellstyle_narrow_input/anchors={anchors_name}/input={alphabet_name}/patterns={pattern_count}"
                 );
 
-                let mut q = Quamina::new();
+                let mut q = new_speed_matcher();
                 let mut rng = StdRng::seed_from_u64(99);
 
                 // Build patterns like *<anchor1>*<anchor2>* — each wildcard
@@ -202,7 +211,7 @@ fn bench_shellstyle_wide_patterns_scaling(c: &mut Criterion) {
     ];
 
     for pattern_count in [8usize, 16, 32, 64, 128, 256, 512] {
-        let mut q = Quamina::new();
+        let mut q = new_speed_matcher();
         let mut rng = StdRng::seed_from_u64(77);
 
         let mut pairs: Vec<(&str, &str)> = Vec::with_capacity(pattern_count);
@@ -247,7 +256,7 @@ fn bench_shellstyle_simple_wildcard_scaling(c: &mut Criterion) {
     let lowercase: Vec<char> = ('a'..='z').collect();
 
     for pattern_count in [1usize, 4, 8, 16, 26] {
-        let mut q = Quamina::new();
+        let mut q = new_speed_matcher();
 
         for i in 0..pattern_count {
             let shellstyle = format!("{}*{}", prefixes[i] as char, suffixes[i] as char);
@@ -324,7 +333,7 @@ fn bench_shellstyle_zwj_emoji(c: &mut Criterion) {
     // must handle both Japanese multi-byte text and ZWJ byte sequences,
     // forcing the NFA to branch heavily on shared leading bytes.
     for pattern_count in [4usize, 8, 16, 32, 64] {
-        let mut q = Quamina::new();
+        let mut q = new_speed_matcher();
         let mut rng = StdRng::seed_from_u64(2025);
 
         let mut pattern_emojis: Vec<(&str, &str)> = Vec::with_capacity(pattern_count);

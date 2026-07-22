@@ -217,6 +217,37 @@ impl Default for PatternLimits {
 
 impl std::error::Error for QuaminaError {}
 
+/// Controls how Quamina builds matchers for wildcard and regexp patterns,
+/// trading `add_pattern` cost against `matches_for_event` speed. The default is
+/// [`BuiltForComfort`](Self::BuiltForComfort).
+///
+/// Wildcard and regexp patterns compile to nondeterministic automata (NFAs).
+/// In [`BuiltForComfort`](Self::BuiltForComfort) mode Quamina keeps them as
+/// NFAs: matchers stay compact and `add_pattern` stays cheap, but
+/// `matches_for_event` slows down roughly linearly with the number of such
+/// patterns added.
+///
+/// In [`BuiltForSpeed`](Self::BuiltForSpeed) mode Quamina converts those NFAs
+/// to deterministic automata (DFAs) when it freezes the matcher for the first
+/// match after an add. Matching then runs in time only weakly related to the
+/// pattern count, but certain combinations of patterns can make the DFA — and
+/// the freeze cost — grow explosively, as bad as O(2ⁿ) in the number of
+/// patterns. Use [`matcher_stats`](Quamina::matcher_stats) to watch the
+/// automaton size for your workload.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[repr(u8)]
+pub enum MatcherBuildMode {
+    /// Keep wildcard and regexp matchers as NFAs: compact and cheap to build,
+    /// with matching that slows down roughly linearly in the number of such
+    /// patterns. This is the default.
+    #[default]
+    BuiltForComfort = 0,
+    /// Convert wildcard and regexp matchers to DFAs at freeze time: near
+    /// constant-time matching regardless of pattern count, at the cost of
+    /// slower adds and possible explosive growth in matcher size.
+    BuiltForSpeed = 1,
+}
+
 /// Builder for configuring a Quamina instance
 ///
 /// This provides a Go-compatible builder pattern for creating Quamina instances
@@ -556,6 +587,7 @@ impl<X: Clone + Eq + Hash + Send + Sync> Clone for Quamina<X> {
             self.pattern_limits.arena_byte_budget,
             self.pattern_limits.max_states_per_pattern,
         );
+        automaton.set_build_mode(self.automaton.build_mode());
 
         self.replay_patterns_into(&automaton);
 
@@ -908,9 +940,12 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
         self.automaton.arena_stats()
     }
 
-    /// Retrieves resource-consumption data for this instance; the results
-    /// depend only on the [`add_pattern`](Self::add_pattern) calls made
-    /// previously.
+    /// Retrieves resource-consumption data for the materialized matcher. The
+    /// results depend on the [`add_pattern`](Self::add_pattern) calls made
+    /// previously and on the current [`MatcherBuildMode`]: under
+    /// [`BuiltForSpeed`](MatcherBuildMode::BuiltForSpeed) the reported figures
+    /// cover the converted DFAs, which are typically larger than the NFAs
+    /// reported under [`BuiltForComfort`](MatcherBuildMode::BuiltForComfort).
     ///
     /// The most useful figure is [`MatcherStats::bytes`], an estimate of the
     /// memory consumed by the matcher's data structures. Its growth
@@ -932,6 +967,33 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
     #[must_use]
     pub fn matcher_stats(&self) -> MatcherStats {
         self.automaton.matcher_stats()
+    }
+
+    /// Set the [`MatcherBuildMode`] used when freezing wildcard and regexp
+    /// matchers; see [`MatcherBuildMode`] for the comfort/speed trade-off.
+    ///
+    /// The mode applies to the whole matcher: the next match after this call
+    /// re-freezes the automaton under the new mode. Unlike Go upstream — which
+    /// disables this API once pattern deletion is enabled — Quamina always
+    /// permits it, because deletion is built in and preserves the mode across
+    /// rebuilds.
+    ///
+    /// ```
+    /// # use quamina::{Quamina, MatcherBuildMode};
+    /// let mut q = Quamina::<String>::new();
+    /// assert_eq!(q.matcher_build_mode(), MatcherBuildMode::BuiltForComfort);
+    /// q.set_matcher_build_mode(MatcherBuildMode::BuiltForSpeed);
+    /// assert_eq!(q.matcher_build_mode(), MatcherBuildMode::BuiltForSpeed);
+    /// ```
+    pub fn set_matcher_build_mode(&mut self, mode: MatcherBuildMode) {
+        self.automaton.set_build_mode(mode);
+    }
+
+    /// Return the current [`MatcherBuildMode`] (default
+    /// [`BuiltForComfort`](MatcherBuildMode::BuiltForComfort)).
+    #[must_use]
+    pub fn matcher_build_mode(&self) -> MatcherBuildMode {
+        self.automaton.build_mode()
     }
 
     /// Enable or disable auto-rebuild
@@ -972,6 +1034,7 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
             self.pattern_limits.arena_byte_budget,
             self.pattern_limits.max_states_per_pattern,
         );
+        new_automaton.set_build_mode(self.automaton.build_mode());
 
         self.replay_patterns_into(&new_automaton);
 
@@ -1039,10 +1102,12 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
     /// # }
     /// ```
     pub fn clear(&mut self) {
+        let build_mode = self.automaton.build_mode();
         self.automaton = ThreadSafeCoreMatcher::with_limits(
             self.pattern_limits.arena_byte_budget,
             self.pattern_limits.max_states_per_pattern,
         );
+        self.automaton.set_build_mode(build_mode);
         self.pattern_defs.clear();
         self.deleted_patterns.clear();
         self.pruner_stats.reset();

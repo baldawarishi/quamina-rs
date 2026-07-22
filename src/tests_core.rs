@@ -2671,9 +2671,9 @@ const STATS_WORKLOADS: &[StatsWorkload] = &[
             "(e*)*f",
             "(g*)*h",
         ],
-        state_count: 112,
-        total_closure_entries: 0,
-        max_closure_len: 0,
+        state_count: 143,
+        total_closure_entries: 313,
+        max_closure_len: 68,
         pattern_ids: [0, 0, 0],
     },
     StatsWorkload {
@@ -2687,9 +2687,9 @@ const STATS_WORKLOADS: &[StatsWorkload] = &[
             "((((a?)*b?)*c?)*d?)*",
             "((((x?)*y?)*z?)*w?)*",
         ],
-        state_count: 25,
-        total_closure_entries: 0,
-        max_closure_len: 0,
+        state_count: 74,
+        total_closure_entries: 613,
+        max_closure_len: 61,
         pattern_ids: [0, 0, 0],
     },
     StatsWorkload {
@@ -2709,9 +2709,9 @@ const STATS_WORKLOADS: &[StatsWorkload] = &[
             "(([klm]?)*)+",
             "(([lmn]?)*)+",
         ],
-        state_count: 103,
-        total_closure_entries: 0,
-        max_closure_len: 0,
+        state_count: 86,
+        total_closure_entries: 301,
+        max_closure_len: 61,
         pattern_ids: [0, 0, 0],
     },
     StatsWorkload {
@@ -2762,6 +2762,9 @@ fn build_stats_matcher(wl: &StatsWorkload) -> Quamina<String> {
 /// Verify arena stats and match correctness for complex multi-pattern workloads.
 /// Exact stats assertions catch regressions in NFA construction, merging, and
 /// epsilon closure computation. Match counts verify end-to-end correctness.
+/// Stats reflect the default `BuiltForComfort` mode, so every workload freezes
+/// to an NFA (non-zero closures); `BuiltForSpeed` would convert to DFAs and
+/// change these figures.
 /// (Inspired by Go's TestTablePointerDedup — ecfe50f)
 #[test]
 #[cfg_attr(miri, ignore)]
@@ -2799,6 +2802,44 @@ fn test_arena_stats_workloads() {
             );
         }
     }
+}
+
+/// The build mode is a performance knob only: `BuiltForComfort` (NFA) and
+/// `BuiltForSpeed` (DFA) must return identical matches for the same patterns
+/// and events. Mirrors Go upstream's TestBuildModeCalls, which checks that both
+/// modes work end-to-end. Runs under Miri too — there `BuiltForSpeed` also
+/// stays an NFA, so the two runs are trivially equal.
+#[test]
+fn test_matcher_build_mode_matching_parity() {
+    let pattern = r#"{"x": [{"regexp": "a.*z.j*"}]}"#;
+    let events: &[&[u8]] = &[
+        br#"{"x": "abczxj"}"#,
+        br#"{"x": "azq"}"#,
+        br#"{"x": "nope"}"#,
+        br#"{"x": "azzzj"}"#,
+    ];
+
+    let match_counts = |mode: MatcherBuildMode| {
+        let mut q: Quamina<String> = Quamina::new();
+        q.set_matcher_build_mode(mode);
+        assert_eq!(q.matcher_build_mode(), mode);
+        q.add_pattern("p".to_string(), pattern).unwrap();
+        events
+            .iter()
+            .map(|ev| q.matches_for_event(ev).unwrap().len())
+            .collect::<Vec<_>>()
+    };
+
+    let comfort = match_counts(MatcherBuildMode::BuiltForComfort);
+    let speed = match_counts(MatcherBuildMode::BuiltForSpeed);
+    assert_eq!(
+        comfort, speed,
+        "BuiltForComfort and BuiltForSpeed must match identically",
+    );
+    assert!(
+        comfort.iter().any(|&n| n > 0),
+        "test pattern should match at least one event",
+    );
 }
 
 // ============================================================================
@@ -3367,5 +3408,42 @@ fn test_matcher_stats_dedups_shared_subgraphs() {
     assert_eq!(
         one, two,
         "identical patterns should not inflate accounted bytes"
+    );
+}
+
+/// `matcher_stats()` measures the materialized (frozen) matcher, so it reflects
+/// the build mode: `BuiltForComfort` keeps an NFA (non-zero epsilon-closure
+/// fanouts) while `BuiltForSpeed` converts to a DFA (no epsilon closures, so
+/// zero fanouts). Mirrors Go upstream's TestBuildModeCalls, which asserts the
+/// two modes report different matcher sizes. Skipped under Miri, which never
+/// runs the DFA conversion (so speed would also report an NFA).
+#[cfg(not(miri))]
+#[test]
+fn test_matcher_build_mode_reflected_in_stats() {
+    let pattern = r#"{"x": [{"regexp": "a.*z.j*"}]}"#;
+
+    let stats_for = |mode: MatcherBuildMode| {
+        let mut q: Quamina<String> = Quamina::new();
+        q.set_matcher_build_mode(mode);
+        q.add_pattern("p".to_string(), pattern).unwrap();
+        q.matcher_stats()
+    };
+
+    let comfort = stats_for(MatcherBuildMode::BuiltForComfort);
+    let speed = stats_for(MatcherBuildMode::BuiltForSpeed);
+
+    assert!(
+        comfort.fanouts > 0 && comfort.max_fanout > 0,
+        "BuiltForComfort should keep an NFA with epsilon closures",
+    );
+    assert_eq!(
+        (speed.fanouts, speed.max_fanout),
+        (0, 0),
+        "BuiltForSpeed should convert to a DFA with no epsilon closures",
+    );
+    assert_ne!(
+        (comfort.states, comfort.bytes, comfort.fanouts),
+        (speed.states, speed.bytes, speed.fanouts),
+        "the two modes must report different matcher sizes",
     );
 }
