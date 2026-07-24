@@ -522,13 +522,11 @@ impl<X: Clone + Eq + Hash + Send + Sync> ThreadSafeCoreMatcher<X> {
     /// Walk the frozen matcher DAG and accumulate resource-consumption
     /// statistics for every distinct automaton. Because it measures the
     /// materialized matcher (the structures matching actually traverses), the
-    /// result reflects the current [`MatcherBuildMode`]: `BuiltForSpeed`
-    /// reports the converted DFAs, which are typically larger than the NFAs
-    /// reported under `BuiltForComfort`. The DAG is deduplicated by
-    /// frozen-matcher identity so arenas reachable via multiple field paths are
-    /// only counted once. Value matchers in singleton mode (a stored comparison
-    /// buffer, no automaton) contribute the buffer's capacity to the byte
-    /// estimate.
+    /// result reflects the current [`MatcherBuildMode`]: `BuiltForSpeed` reports
+    /// the converted DFAs. The DAG is deduplicated by frozen-matcher identity so
+    /// arenas reachable via multiple field paths are only counted once. Value
+    /// matchers in singleton mode (a stored comparison buffer, no automaton)
+    /// contribute the buffer's capacity to the byte estimate.
     ///
     /// Freezes the mutable structures first if patterns were added since the
     /// last match, so this may briefly acquire `build_lock`.

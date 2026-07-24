@@ -222,18 +222,16 @@ impl std::error::Error for QuaminaError {}
 /// [`BuiltForComfort`](Self::BuiltForComfort).
 ///
 /// Wildcard and regexp patterns compile to nondeterministic automata (NFAs).
-/// In [`BuiltForComfort`](Self::BuiltForComfort) mode Quamina keeps them as
-/// NFAs: matchers stay compact and `add_pattern` stays cheap, but
-/// `matches_for_event` slows down roughly linearly with the number of such
-/// patterns added.
+/// [`BuiltForComfort`](Self::BuiltForComfort) keeps them as NFAs: matchers stay
+/// small and adds stay cheap, but `matches_for_event` slows down about linearly
+/// as you add more such patterns.
 ///
-/// In [`BuiltForSpeed`](Self::BuiltForSpeed) mode Quamina converts those NFAs
-/// to deterministic automata (DFAs) when it freezes the matcher for the first
-/// match after an add. Matching then runs in time only weakly related to the
-/// pattern count, but certain combinations of patterns can make the DFA — and
-/// the freeze cost — grow explosively, as bad as O(2ⁿ) in the number of
-/// patterns. Use [`matcher_stats`](Quamina::matcher_stats) to watch the
-/// automaton size for your workload.
+/// [`BuiltForSpeed`](Self::BuiltForSpeed) converts the NFAs to deterministic
+/// automata (DFAs) at the next freeze after an add. Matching then no longer
+/// scales with pattern count. But some pattern sets make the DFA — and the
+/// freeze — grow explosively, up to O(2ⁿ). Call
+/// [`matcher_stats`](Quamina::matcher_stats) to track the size for your
+/// patterns.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[repr(u8)]
 pub enum MatcherBuildMode {
@@ -940,12 +938,12 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
         self.automaton.arena_stats()
     }
 
-    /// Retrieves resource-consumption data for the materialized matcher. The
-    /// results depend on the [`add_pattern`](Self::add_pattern) calls made
-    /// previously and on the current [`MatcherBuildMode`]: under
-    /// [`BuiltForSpeed`](MatcherBuildMode::BuiltForSpeed) the reported figures
-    /// cover the converted DFAs, which are typically larger than the NFAs
-    /// reported under [`BuiltForComfort`](MatcherBuildMode::BuiltForComfort).
+    /// Reports resource-consumption data for the materialized matcher. The
+    /// figures depend on the [`add_pattern`](Self::add_pattern) calls you made
+    /// and on the current [`MatcherBuildMode`]:
+    /// [`BuiltForSpeed`](MatcherBuildMode::BuiltForSpeed) reports the converted
+    /// DFAs, which are usually larger than the NFAs
+    /// [`BuiltForComfort`](MatcherBuildMode::BuiltForComfort) reports.
     ///
     /// The most useful figure is [`MatcherStats::bytes`], an estimate of the
     /// memory consumed by the matcher's data structures. Its growth
@@ -972,10 +970,11 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
     /// Set the [`MatcherBuildMode`] used when freezing wildcard and regexp
     /// matchers; see [`MatcherBuildMode`] for the comfort/speed trade-off.
     ///
-    /// The mode applies to the whole matcher: the next match after this call
-    /// re-freezes the automaton under the new mode. Unlike Go upstream — which
-    /// disables this API once pattern deletion is enabled — Quamina always
-    /// permits it, because deletion is built in and preserves the mode across
+    /// The mode applies to the whole matcher. The next match after this call
+    /// re-freezes the automaton under the new mode.
+    ///
+    /// Go upstream disables this call once pattern deletion is enabled. Quamina
+    /// always allows it: deletion is built in and keeps the mode across
     /// rebuilds.
     ///
     /// ```
