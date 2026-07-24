@@ -259,6 +259,19 @@ Matching time is sublinear in pattern count because all patterns share one autom
 - **Unique fields**: More unique field paths across patterns = more work per event
 - **Event size**: Larger JSON takes longer to parse and flatten
 - **Pattern complexity**: Regexps with Unicode categories (e.g., `~p{L}`) are slower to compile
+- **Build mode**: `BuiltForSpeed` trades slower adds for faster matching of wildcard/regexp patterns (see below)
+
+### Comfort vs speed
+
+Wildcard and regexp patterns compile to NFAs. By default (`BuiltForComfort`) they stay NFAs: cheap to add, but `matches_for_event` slows down roughly linearly as you add more such patterns. `BuiltForSpeed` converts them to DFAs when the matcher freezes, giving matching time only weakly related to the pattern count — at the cost of slower adds and, for some pattern combinations, explosive matcher growth (as bad as O(2ⁿ)). Watch `matcher_stats()` if you enable it.
+
+```rust
+use quamina::MatcherBuildMode;
+
+let mut q = Quamina::<String>::new();
+q.set_matcher_build_mode(MatcherBuildMode::BuiltForSpeed);
+assert_eq!(q.matcher_build_mode(), MatcherBuildMode::BuiltForSpeed);
+```
 
 ### Running benchmarks
 

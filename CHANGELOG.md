@@ -10,8 +10,11 @@ Style inspired by [ripgrep's CHANGELOG](https://github.com/BurntSushi/ripgrep/bl
 
 ### Added
 - Memory and automaton statistics via `Quamina::matcher_stats()`, reporting states, bytes, fanouts, and max fanout (ported from Go upstream's `GetMatcherStats`) (#152)
+- `Quamina::set_matcher_build_mode`/`matcher_build_mode` with the `MatcherBuildMode` enum (`BuiltForComfort`, `BuiltForSpeed`), letting you trade `add_pattern` cost against `matches_for_event` speed for wildcard and regexp patterns (ported from Go upstream's Get/Set MatcherBuildMode) (#178)
+- `matcher_stats()` now measures the materialized (frozen) matcher, so it reflects the build mode — `BuiltForSpeed` reports the converted DFAs — letting you watch the size effect of the mode you chose (#178)
 
 ### Changed
+- Default to `BuiltForComfort`, keeping wildcard and regexp matchers as NFAs; the NFA→DFA conversion now runs only under `BuiltForSpeed`. This favors cheaper `add_pattern` over faster `matches_for_event`, matching Go upstream's default (#178)
 - Store self-only epsilon closures as an implicit zero-length sentinel, avoiding one `StateId` in the flattened closure buffer for the common case (#173)
 - Precompute epsilon closures incrementally, re-closing only the states an added pattern introduces instead of the whole automaton on every add (matching Go upstream's `closureForNfa` prune) (#173)
 - Reuse the epsilon-closure scratch buffers across pattern adds instead of reallocating them per add, speeding up incremental builds of NFA-heavy pattern sets (~20% faster adding many shellstyle patterns) (matching the spirit of Go upstream's matcher-owned `closureBuffers`) (#177)

@@ -1,14 +1,23 @@
 //! Emits a growth-curve CSV describing how the matcher scales as shellstyle
 //! patterns accumulate. Builds patterns incrementally from `testdata/wwords.txt`
-//! (a star inserted at a deterministic position in each word) and, every 100
-//! `add_pattern` calls, samples `matcher_stats()` and a short matching run.
+//! (a star inserted at a deterministic position in each word) and, at a fixed
+//! sampling interval of `add_pattern` calls, samples `matcher_stats()` and a
+//! short matching run.
+//!
+//! The harness runs twice: once in `BuiltForComfort` (NFA, many patterns,
+//! coarse interval) and once in `BuiltForSpeed` (eager DFA, fewer patterns,
+//! fine interval — DFA builds are costlier, matching cheaper). Each row is
+//! tagged with its mode in the first column, so a single CSV holds both curves.
+//! Because `matcher_stats()` reflects the materialized matcher, the speed rows
+//! report DFA sizes and the comfort rows report NFA sizes.
 //!
 //! Each CSV row reports, against the running pattern count: milliseconds spent
-//! on the last 100 `add_pattern` calls, total state count, estimated byte size,
-//! average stored fanout (explicit epsilon-closure entries, with self-only
-//! closures contributing zero), max stored fanout, and matches/sec measured over
-//! the previous 100 words. The result is an offline-analysis artifact for
-//! plotting build cost and automaton complexity versus pattern count.
+//! on the last sampling window of `add_pattern` calls, total state count,
+//! estimated byte size, average stored fanout (explicit epsilon-closure
+//! entries, with self-only closures contributing zero), max stored fanout, and
+//! matches/sec measured over the words in the previous window. The result is an
+//! offline-analysis artifact for plotting build cost and automaton complexity
+//! versus pattern count.
 //!
 //! Run with: cargo run --release --example research_growth > growth.csv
 //!
@@ -20,10 +29,15 @@ use std::fs::File;
 use std::time::Instant;
 
 use pprof::protos::Message;
-use quamina::Quamina;
+use quamina::{MatcherBuildMode, Quamina};
 use rand::{RngExt, SeedableRng};
 
 const MAX_WORDS: usize = 10_000;
+/// Sampling interval for the comfort (NFA) run.
+const COMFORT_INTERVAL: usize = 100;
+/// Speed (DFA) builds are far costlier, so fewer patterns and a finer interval.
+const SPEED_WORDS: usize = 300;
+const SPEED_INTERVAL: usize = 10;
 
 fn main() {
     // Start sampling before any work so the profile covers the full harness.
@@ -55,63 +69,101 @@ fn main() {
         patterns.push(pattern);
     }
 
-    let mut q = Quamina::new();
-    let overall_start = Instant::now();
-    let mut window_start = overall_start;
-
-    // CSV header, then one row per 100-pattern sample point.
+    // One header for the combined CSV; the `mode` column separates the curves.
     println!(
-        "patterns,ms/100 AddP calls,state count,byte count,average fanout,max fanout,matches/sec"
+        "mode,patterns,ms/window AddP calls,state count,byte count,average fanout,max fanout,matches/sec"
     );
 
-    for i in 0..words.len() {
-        q.add_pattern(star_words[i].clone(), &patterns[i]).unwrap();
-
-        if i % 100 == 0 {
-            let add_ms = window_start.elapsed().as_millis();
-            let stats = q.matcher_stats();
-            let avg_fanout = if stats.states == 0 {
-                0.0
-            } else {
-                count_f64(stats.fanouts) / count_f64(stats.states)
-            };
-
-            // Measure matches/sec over the previous 100 words. Each was turned
-            // into a pattern, so every word must match at least its own pattern.
-            let per_second = if i < 100 {
-                0.0
-            } else {
-                let match_start = Instant::now();
-                for word in &words[i - 100..i] {
-                    let event = format!(r#"{{"x": "{word}"}}"#);
-                    let matches = q.matches_for_event(event.as_bytes()).unwrap();
-                    assert!(!matches.is_empty(), "0 matches for {word}");
-                }
-                100.0 / match_start.elapsed().as_secs_f64()
-            };
-
-            println!(
-                "{},{},{},{},{:.1},{},{:.1}",
-                i + 1,
-                add_ms,
-                stats.states,
-                stats.bytes,
-                avg_fanout,
-                stats.max_fanout,
-                per_second,
-            );
-
-            window_start = Instant::now();
-        }
-    }
-
-    let elapsed = overall_start.elapsed().as_secs_f64();
-    eprintln!("Done adding {} patterns", words.len());
-    eprintln!("Patterns/sec: {:.1}", count_f64(words.len()) / elapsed);
+    run_growth(
+        MatcherBuildMode::BuiltForComfort,
+        "comfort",
+        &star_words,
+        &patterns,
+        &words,
+        words.len(),
+        COMFORT_INTERVAL,
+    );
+    run_growth(
+        MatcherBuildMode::BuiltForSpeed,
+        "speed",
+        &star_words,
+        &patterns,
+        &words,
+        SPEED_WORDS.min(words.len()),
+        SPEED_INTERVAL,
+    );
 
     if let (Some(guard), Some(path)) = (guard, cpuprofile) {
         write_cpu_profile(&guard, &path);
     }
+}
+
+/// Builds `count` patterns into a fresh matcher in the given `mode`, emitting a
+/// CSV row (tagged with `label`) every `interval` adds. Each row's matches/sec
+/// is measured over the `interval` words in the window just added.
+fn run_growth(
+    mode: MatcherBuildMode,
+    label: &str,
+    star_words: &[String],
+    patterns: &[String],
+    words: &[&str],
+    count: usize,
+    interval: usize,
+) {
+    let mut q = Quamina::new();
+    q.set_matcher_build_mode(mode);
+
+    let overall_start = Instant::now();
+    let mut window_start = overall_start;
+
+    for i in 0..count {
+        q.add_pattern(star_words[i].clone(), &patterns[i]).unwrap();
+
+        if i % interval != 0 {
+            continue;
+        }
+        // Skip the degenerate first sample (no window to measure yet).
+        if i == 0 {
+            window_start = Instant::now();
+            continue;
+        }
+
+        let add_ms = window_start.elapsed().as_millis();
+        let stats = q.matcher_stats();
+        let avg_fanout = if stats.states == 0 {
+            0.0
+        } else {
+            count_f64(stats.fanouts) / count_f64(stats.states)
+        };
+
+        // Measure matches/sec over the previous window of words. Each was turned
+        // into a pattern, so every word must match at least its own pattern.
+        let match_start = Instant::now();
+        for word in &words[i - interval..i] {
+            let event = format!(r#"{{"x": "{word}"}}"#);
+            let matches = q.matches_for_event(event.as_bytes()).unwrap();
+            assert!(!matches.is_empty(), "0 matches for {word}");
+        }
+        let per_second = count_f64(interval) / match_start.elapsed().as_secs_f64();
+
+        println!(
+            "{},{},{},{},{},{:.1},{},{:.1}",
+            label,
+            i + 1,
+            add_ms,
+            stats.states,
+            stats.bytes,
+            avg_fanout,
+            stats.max_fanout,
+            per_second,
+        );
+
+        window_start = Instant::now();
+    }
+
+    let elapsed = overall_start.elapsed().as_secs_f64();
+    eprintln!("Done adding {count} {label} patterns");
+    eprintln!("{label} patterns/sec: {:.1}", count_f64(count) / elapsed);
 }
 
 /// Scans the command line for `--cpuprofile <file>` (or `--cpuprofile=<file>`),
