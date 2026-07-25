@@ -1022,12 +1022,10 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
     /// Set the [`MatcherBuildMode`] used when freezing wildcard and regexp
     /// matchers; see [`MatcherBuildMode`] for the comfort/speed trade-off.
     ///
-    /// The mode applies to the whole matcher. The next match after this call
-    /// re-freezes the automaton under the new mode.
-    ///
-    /// Go upstream disables this call once pattern deletion is enabled. Quamina
-    /// always allows it: deletion is built in and keeps the mode across
-    /// rebuilds.
+    /// The mode applies to the whole matcher, and the next match after this call
+    /// re-freezes the automaton under it. Deleting patterns does not disturb the
+    /// choice: [`rebuild`](Self::rebuild) and cloning replay under whichever mode
+    /// is set. Go upstream instead pins each pattern's mode when it is added.
     ///
     /// ```
     /// # use quamina::{Quamina, MatcherBuildMode};

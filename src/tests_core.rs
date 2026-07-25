@@ -3578,3 +3578,112 @@ fn test_matcher_build_mode_reflected_in_stats() {
         "the two modes must report different matcher sizes",
     );
 }
+
+/// Four wildcard shapes — interior, prefix, suffix, and a second interior —
+/// merged into one field's value matcher, so a mode applied to them covers every
+/// automaton that matcher builds.
+const BUILD_MODE_WILDCARDS: [(&str, &str); 4] = [
+    ("p1", r#"{"x": [{"wildcard": "t*ortilla"}]}"#),
+    ("p2", r#"{"x": [{"wildcard": "tortilla*"}]}"#),
+    ("p3", r#"{"x": [{"wildcard": "*tortilla"}]}"#),
+    ("p4", r#"{"x": [{"wildcard": "tortil*la"}]}"#),
+];
+
+/// Replaying the live patterns — into a clone, or into the matcher a rebuild
+/// installs — has to carry the build mode along, or the replayed matcher freezes
+/// back to comfort's NFAs and comes out a different size than the one the caller
+/// built. Mirrors Go upstream's TestPrunerBuildMode, which pins the byte count
+/// across a forced rebuild. Go stores a mode per pattern because it applies the
+/// mode as each pattern is added; Quamina applies it at freeze, so whichever mode
+/// is set when the matcher freezes covers all of it.
+///
+/// Skipped under Miri, which never runs the DFA conversion: both sides would be
+/// NFAs and the comparison would hold for the wrong reason.
+#[cfg(not(miri))]
+#[test]
+fn test_replay_preserves_build_mode() {
+    let mut q = Quamina::new();
+    q.set_matcher_build_mode(MatcherBuildMode::BuiltForSpeed);
+    for (id, pattern) in BUILD_MODE_WILDCARDS {
+        q.add_pattern(id, pattern).unwrap();
+    }
+    let built = q.matcher_stats();
+    assert_eq!(
+        built.fanouts, 0,
+        "BuiltForSpeed should have converted the merged wildcards to a DFA",
+    );
+
+    let snapshot = q.clone();
+    assert_eq!(
+        snapshot.matcher_build_mode(),
+        MatcherBuildMode::BuiltForSpeed,
+        "a clone must inherit the mode it was replayed under",
+    );
+    assert_eq!(
+        snapshot.matcher_stats(),
+        built,
+        "a clone must be the same matcher, not a comfort-mode re-merge",
+    );
+
+    // A pattern on a field of its own, added and dropped, is what leaves the
+    // automaton holding states no live pattern needs — the condition a rebuild
+    // reclaims. All four wildcards stay live across it, so the rebuild has real
+    // work to do and still has to land back on the matcher they built.
+    q.add_pattern("throwaway", r#"{"y": [{"wildcard": "*gone*"}]}"#)
+        .unwrap();
+    q.delete_patterns(&"throwaway").unwrap();
+    assert_eq!(q.rebuild(), 1);
+    assert_eq!(
+        q.matcher_build_mode(),
+        MatcherBuildMode::BuiltForSpeed,
+        "a rebuild must keep the mode the caller set",
+    );
+    assert_eq!(
+        q.matcher_stats(),
+        built,
+        "a rebuild must give back the matcher the live patterns built",
+    );
+}
+
+/// The mode is read when the matcher freezes, so setting it on a matcher that
+/// already holds patterns re-freezes them under the new mode. Setting it back has
+/// to land exactly where it started: a `BuiltForSpeed` freeze converts a copy and
+/// leaves the mutable automaton the next freeze reads untouched. That the
+/// conversion is freeze-local is what lets a replay carry the mode at all, so it
+/// is worth pinning on its own. Go has no analogue — there a pattern's mode is
+/// fixed when it is added.
+///
+/// Skipped under Miri, which never runs the DFA conversion, leaving nothing for
+/// either direction to change.
+#[cfg(not(miri))]
+#[test]
+fn test_build_mode_change_refreezes_existing_patterns() {
+    let mut q = Quamina::new();
+    for (id, pattern) in BUILD_MODE_WILDCARDS {
+        q.add_pattern(id, pattern).unwrap();
+    }
+    let comfort = q.matcher_stats();
+    assert!(
+        comfort.fanouts > 0,
+        "BuiltForComfort is the default, so the wildcards should still be an NFA",
+    );
+
+    q.set_matcher_build_mode(MatcherBuildMode::BuiltForSpeed);
+    let speed = q.matcher_stats();
+    assert_eq!(
+        speed.fanouts, 0,
+        "switching to BuiltForSpeed must convert patterns that were already added",
+    );
+    assert_ne!(
+        speed.states, comfort.states,
+        "the converted DFA should be a different size than the NFA it replaced",
+    );
+
+    q.set_matcher_build_mode(MatcherBuildMode::BuiltForComfort);
+    assert_eq!(
+        q.matcher_stats(),
+        comfort,
+        "switching back must give the NFA again, the conversion having been \
+         applied to a copy",
+    );
+}
