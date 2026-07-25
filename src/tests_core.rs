@@ -335,6 +335,62 @@ fn test_rebuild_after_delete() {
     assert_no_match!(q, r#"{"status": "active"}"#);
 }
 
+/// Patterns whose automaton depends on the order they are added in: merging
+/// these four in a different order yields a matcher that accepts the same
+/// events but has a different state count. Replaying them out of order would
+/// therefore hand back a matcher the caller never built.
+const ORDER_SENSITIVE_PATTERNS: [(&str, &str); 4] = [
+    ("p1", r#"{"a": [{"regexp": "a+b"}]}"#),
+    ("p2", r#"{"a": [{"wildcard": "*foo*"}]}"#),
+    ("p3", r#"{"a": ["literal"]}"#),
+    ("p4", r#"{"a": [{"regexp": "a.*c"}]}"#),
+];
+
+/// Drop `deleted` from a matcher holding all of `ORDER_SENSITIVE_PATTERNS`,
+/// rebuild, and require the result to be the matcher that adding only the
+/// survivors — in the same order — would have built.
+fn assert_rebuild_matches_fresh_adds(deleted: &'static str) {
+    let mut q = Quamina::new();
+    for (id, pattern) in ORDER_SENSITIVE_PATTERNS {
+        q.add_pattern(id, pattern).unwrap();
+    }
+    q.delete_patterns(&deleted).unwrap();
+    q.rebuild();
+
+    let mut survivors_only = Quamina::new();
+    for (id, pattern) in ORDER_SENSITIVE_PATTERNS {
+        if id != deleted {
+            survivors_only.add_pattern(id, pattern).unwrap();
+        }
+    }
+
+    assert_eq!(
+        q.matcher_stats(),
+        survivors_only.matcher_stats(),
+        "rebuild after deleting {deleted} must produce the matcher the surviving adds built"
+    );
+}
+
+// MIRI SKIP RATIONALE: builds eight regexp/wildcard matchers, ~58s under Miri.
+// Coverage: test_rebuild_replays_patterns_in_add_order_miri_friendly runs the
+// same check for a single deletion.
+#[test]
+#[cfg_attr(miri, ignore)]
+fn test_rebuild_replays_patterns_in_add_order() {
+    for (deleted, _) in ORDER_SENSITIVE_PATTERNS {
+        assert_rebuild_matches_fresh_adds(deleted);
+    }
+}
+
+/// Miri-only: checks one deletion instead of all four. Dropping "p1" is the
+/// case where the surviving patterns' hashed order and their add order
+/// disagree, so it is the one that catches an unordered replay.
+#[test]
+#[cfg(miri)]
+fn test_rebuild_replays_patterns_in_add_order_miri_friendly() {
+    assert_rebuild_matches_fresh_adds("p1");
+}
+
 #[test]
 fn test_pruner_stats() {
     let mut q = Quamina::new();
@@ -585,6 +641,20 @@ fn test_clone_for_snapshot() {
 
     // Original has p2
     assert_has_match!(q, r#"{"status": "pending"}"#, "p2");
+}
+
+#[test]
+fn test_clone_replays_patterns_in_add_order() {
+    let mut q = Quamina::new();
+    for (id, pattern) in ORDER_SENSITIVE_PATTERNS {
+        q.add_pattern(id, pattern).unwrap();
+    }
+
+    assert_eq!(
+        q.clone().matcher_stats(),
+        q.matcher_stats(),
+        "a clone must be the same matcher, not a re-merge in another order"
+    );
 }
 
 #[test]

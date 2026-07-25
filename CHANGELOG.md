@@ -26,6 +26,7 @@ Style inspired by [ripgrep's CHANGELOG](https://github.com/BurntSushi/ripgrep/bl
 - Removed the runtime memory-budget API (`get_memory_budget`/`set_memory_budget`), matching Go upstream dropping it; the build-time `QuaminaBuilder::with_arena_byte_budget` cap remains (#152)
 
 ### Fixed
+- `Quamina::rebuild` and cloning a `Quamina` now replay the live patterns in the order they were added, instead of in hash order. The rebuilt matcher is the one those `add_pattern` calls would have built on their own; previously it could come out a different size (ported from Go upstream's ordered `LivePatternsState`) (#178)
 - Regexps no longer over-match when one unbounded quantifier nests inside another (e.g. `(.+c)*`, `(a*)*b`): a quantifier's "match zero copies" skip could leak across an inner loop's back-edge and let the construct exit before its body matched (#156)
 
 ## [0.6.0] — 2026-06-11
