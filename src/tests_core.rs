@@ -335,6 +335,67 @@ fn test_rebuild_after_delete() {
     assert_no_match!(q, r#"{"status": "active"}"#);
 }
 
+/// A delete drops its definitions for good. Adding the id again must not bring
+/// them back, or the definition the caller deleted would keep matching in every
+/// matcher built from the stored definitions afterwards.
+#[test]
+fn test_re_add_does_not_revive_deleted_definition() {
+    let mut q = Quamina::new();
+    q.add_pattern("p", r#"{"x": ["old"]}"#).unwrap();
+    q.delete_patterns(&"p").unwrap();
+    q.add_pattern("p", r#"{"x": ["new"]}"#).unwrap();
+
+    let clone = q.clone();
+    assert_no_match!(
+        clone,
+        r#"{"x": "old"}"#,
+        "a clone must not revive the deleted definition"
+    );
+    assert_has_match!(clone, r#"{"x": "new"}"#, "p");
+
+    // The re-add left nothing in the deleted set, so the rebuild has to notice
+    // the stale definition some other way.
+    q.rebuild();
+    assert_no_match!(
+        q,
+        r#"{"x": "old"}"#,
+        "rebuild must purge the deleted definition"
+    );
+    assert_has_match!(q, r#"{"x": "new"}"#, "p");
+}
+
+/// The segments tree decides which fields the flattener bothers to extract, so
+/// a rebuild or a clear that leaves it alone keeps paying for fields no live
+/// pattern mentions any more.
+#[test]
+fn test_rebuild_and_clear_reset_segments_tree() {
+    let mut q = Quamina::new();
+    q.add_pattern("keep", r#"{"a": ["x"]}"#).unwrap();
+    q.add_pattern("drop", r#"{"b": ["y"]}"#).unwrap();
+    assert_eq!(q.segments_tree().fields_count(), 2);
+
+    q.delete_patterns(&"drop").unwrap();
+    assert_eq!(
+        q.clone().segments_tree().fields_count(),
+        1,
+        "a clone's tree must cover only the fields its live patterns use"
+    );
+
+    q.rebuild();
+    assert_eq!(
+        q.segments_tree().fields_count(),
+        1,
+        "rebuild must drop the field only the deleted pattern used"
+    );
+
+    q.clear();
+    assert_eq!(
+        q.segments_tree().fields_count(),
+        0,
+        "clear must reset the tree along with the patterns"
+    );
+}
+
 /// Patterns whose automaton depends on the order they are added in: merging
 /// these four in a different order yields a matcher that accepts the same
 /// events but has a different state count. Replaying them out of order would
