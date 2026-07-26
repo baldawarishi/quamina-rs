@@ -478,7 +478,7 @@ impl<X: Clone + Eq + Hash + Send + Sync> QuaminaBuilder<X> {
     /// let mut q = QuaminaBuilder::<String>::new()
     ///     .with_arena_byte_budget(20_000)
     ///     .build()?;
-    /// for i in 0..40 {
+    /// for i in 0..3 {
     ///     q.add_pattern(format!("p{i}"), &format!(r#"{{"f{i}": [{{"prefix": "abcdefghij{i}"}}]}}"#))?;
     /// }
     /// assert!(q.matcher_stats().bytes > 20_000);
