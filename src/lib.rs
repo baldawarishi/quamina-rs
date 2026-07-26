@@ -768,7 +768,7 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
     /// Returns [`QuaminaError::InvalidJson`] when `event` is not a valid JSON
     /// object (encoding issues such as invalid UTF-8 inside strings surface as
     /// `InvalidJson` from the parser). If a custom
-    /// [`Flattener`](flattener::Flattener) was configured via the builder, this
+    /// [`Flattener`] was configured via the builder, this
     /// method propagates any [`QuaminaError`] its
     /// [`flatten`](flattener::Flattener::flatten) implementation returns.
     pub fn matches_for_event(&self, event: &[u8]) -> Result<Vec<X>, QuaminaError> {
