@@ -3612,6 +3612,15 @@ fn test_lookaround_primary_match() {
         !pattern_ids.contains(&"lookahead".to_string()),
         "foo(?=bar) should NOT match 'foo' (lookahead fails)"
     );
+
+    // Nothing follows the assertion, so "bar" is the last of the value the
+    // pattern accounts for — "foobarbaz" runs past it.
+    let event = r#"{"status": "foobarbaz"}"#;
+    let pattern_ids = q.matches_for_event(event.as_bytes()).unwrap();
+    assert!(
+        !pattern_ids.contains(&"lookahead".to_string()),
+        "foo(?=bar) should NOT match 'foobarbaz' (the lookahead ends the pattern)"
+    );
 }
 
 /// Regression test: lookaround buffer reuse must not carry stale state.
@@ -4129,6 +4138,25 @@ fn test_lookahead_primary_checked_past_the_assertion() {
     // assertion but has no "bar".
     let q = q!("p1" => r#"{"v": [{"regexp": "(?=.*foo).*bar.*"}]}"#);
     assert_no_match!(q, r#"{"v": "foo"}"#);
+}
+
+#[test]
+fn test_lookahead_condition_stops_where_the_primary_resumes() {
+    // (?=.*foo).*bar.* asserts "foo" turns up somewhere; the atoms after the
+    // assertion cover the rest of the value, so the assertion itself must not
+    // be held to the whole value. "foobar" carries "foo" and ends in "bar".
+    let q = q!("p1" => r#"{"v": [{"regexp": "(?=.*foo).*bar.*"}]}"#);
+    assert_has_match!(q, r#"{"v": "foobar"}"#, "p1");
+    assert_no_match!(q, r#"{"v": "foozzz"}"#);
+}
+
+#[test]
+fn test_lookahead_condition_leaves_room_for_later_primary_atoms() {
+    // foo(?=bar)barbaz asserts "bar" follows "foo"; "baz" then runs past what
+    // the assertion covers, and holding the value to it is the primary's job.
+    let q = q!("p1" => r#"{"v": [{"regexp": "foo(?=bar)barbaz"}]}"#);
+    assert_has_match!(q, r#"{"v": "foobarbaz"}"#, "p1");
+    assert_no_match!(q, r#"{"v": "foobazbaz"}"#);
 }
 
 #[test]

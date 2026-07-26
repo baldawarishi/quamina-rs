@@ -115,19 +115,12 @@ fn build_primary_verify_pattern(
     leading_slack: bool,
     trailing_slack: bool,
 ) -> crate::regexp::RegexpRoot {
-    use crate::regexp::{QuantifiedAtom, REGEXP_QUANTIFIER_MAX, RegexpBranch};
-
-    let any_run = || QuantifiedAtom {
-        is_dot: true,
-        quant_min: 0,
-        quant_max: REGEXP_QUANTIFIER_MAX,
-        ..QuantifiedAtom::default()
-    };
+    use crate::regexp::{QuantifiedAtom, RegexpBranch};
 
     // An all-lookaround pattern such as `(?=foo)` has no primary of its own; the
     // conditions are the whole constraint, so accept anything here.
     if primary.is_empty() {
-        return vec![vec![any_run()]];
+        return vec![vec![QuantifiedAtom::any_run()]];
     }
 
     primary
@@ -135,11 +128,11 @@ fn build_primary_verify_pattern(
         .map(|branch| {
             let mut padded: RegexpBranch = Vec::with_capacity(branch.len() + 2);
             if leading_slack {
-                padded.push(any_run());
+                padded.push(QuantifiedAtom::any_run());
             }
             padded.extend(branch.iter().cloned());
             if trailing_slack {
-                padded.push(any_run());
+                padded.push(QuantifiedAtom::any_run());
             }
             padded
         })

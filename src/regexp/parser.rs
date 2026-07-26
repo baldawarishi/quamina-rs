@@ -82,6 +82,17 @@ impl Default for QuantifiedAtom {
 }
 
 impl QuantifiedAtom {
+    /// A `.*` atom, matching any run of characters including none.
+    #[must_use]
+    pub fn any_run() -> Self {
+        Self {
+            is_dot: true,
+            quant_min: 0,
+            quant_max: REGEXP_QUANTIFIER_MAX,
+            ..Self::default()
+        }
+    }
+
     /// Returns true if this atom matches exactly once (no quantifier).
     #[inline]
     #[must_use]

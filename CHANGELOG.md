@@ -26,6 +26,7 @@ Style inspired by [ripgrep's CHANGELOG](https://github.com/BurntSushi/ripgrep/bl
 - Removed the runtime memory-budget API (`get_memory_budget`/`set_memory_budget`), matching Go upstream dropping it; the build-time `QuaminaBuilder::with_arena_byte_budget` cap remains (#152)
 
 ### Fixed
+- A lookaround assertion that the pattern continues past now only has to account for the front of the value, leaving the rest to the atoms that follow it. Previously every assertion was checked against the whole value, so `(?=.*foo).*bar.*` matched nothing at all — not even `foobar` (#183)
 - Lookaround regexps now verify the primary pattern against the value, not just the lookaround assertions. Previously the assertions alone decided the match, so `foo(?!bar)baz` matched any value that merely lacked `foobar` — including `myfoo` and `totally-unrelated` — and `(?<!foo)bar` matched everything except `foobar` (#182)
 - A pattern the automaton rejects part-way through now marks the matcher for rebuild, so `Quamina::rebuild` reclaims the states its earlier fields already merged. Previously nothing marked the matcher stale, the rebuild returned early, and that memory was unreachable for the life of the instance (#181)
 - `Quamina::delete_patterns` now drops the pattern's stored definitions, so adding the same id again no longer brings the deleted ones back alongside the new one. Previously a rebuild or a clone replayed both, and because the re-add emptied the deleted set, no rebuild could ever purge the stale definition (matching Go upstream's `memState.Delete`) (#180)
