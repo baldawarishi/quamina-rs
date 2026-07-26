@@ -380,8 +380,7 @@ impl<X: Clone + Eq + Hash> FrozenValueMatcher<X> {
         // - Lookbehind conditions are pre-combined with primary during build
         if !self.multi_condition_nfas.is_empty() {
             for mc_nfa in &self.multi_condition_nfas {
-                // The assertions qualify a match, they don't stand in for one:
-                // unless the value matches the primary there is nothing to qualify.
+                // The assertions qualify a match, they don't stand in for one.
                 traverse_lookaround_arena(
                     &mc_nfa.primary_arena,
                     mc_nfa.primary_start,
@@ -843,9 +842,9 @@ impl<X: Clone + Eq + Hash + Send + Sync> ThreadSafeCoreMatcher<X> {
             transition_map.insert(*ptr as usize, Arc::new(frozen_fm));
         }
 
-        // Copy the multi-condition NFAs (for lookaround patterns), converting
-        // each of a pattern's automata under BuiltForSpeed the same way the
-        // main arena is converted — a lookaround regexp is a regexp too.
+        // Copy the multi-condition NFAs (for lookaround patterns). Under
+        // BuiltForSpeed each of a pattern's automata converts the same way the
+        // main arena does, subject to the same state cap and byte budget.
         let mut multi_condition_nfas = mutable.multi_condition_nfas.borrow().clone();
         #[cfg(not(miri))]
         if self.build_mode() == MatcherBuildMode::BuiltForSpeed {
@@ -896,11 +895,9 @@ impl<X: Clone + Eq + Hash + Send + Sync> ThreadSafeCoreMatcher<X> {
                 // Tier 1: Attempt eager NFA→DFA conversion.
                 let eager_budget =
                     (arena.len() * EAGER_DFA_BUDGET_MULTIPLIER).min(EAGER_DFA_BUDGET_CAP);
-                // The byte budget admitted this pattern on the size of its NFA,
-                // so whatever replaces or supplements that arena answers to the
-                // same cap: a caller who ruled out the memory does not get it
-                // spent behind a mode chosen for speed. Falling back a tier
-                // costs match speed and nothing else.
+                // The pattern was admitted on the size of its NFA, so whatever
+                // replaces that arena answers to the same cap. Falling back a
+                // tier costs match speed and nothing else.
                 if let Some((dfa_arena, dfa_start)) = arena.nfa_to_dfa(start, eager_budget)
                     && self.within_arena_budget(dfa_arena.byte_size())
                 {
@@ -976,12 +973,10 @@ impl<X: Clone + Eq + Hash + Send + Sync> ThreadSafeCoreMatcher<X> {
     /// How many states a lazy DFA cache over `nfa` may hold; zero means the
     /// value matcher is better off staying on NFA traversal.
     ///
-    /// Two things limit it. Building each cached state costs O(nfa_states), so
-    /// a very large NFA (`[^u-z]{13}` expands to ~229k states) would spend
-    /// seconds in `LazyDfa::new` for no match-time gain — those go without a
-    /// cache. And the cache keeps its own copy of the NFA plus a transition
-    /// table per state it caches, so the byte budget has to cover the copy
-    /// first and buys states out of what is left.
+    /// An NFA too large to cache cheaply gets none at all, per
+    /// [`should_build_lazy_dfa`]. Otherwise the cache keeps its own copy of the
+    /// NFA plus a transition table per state, so the byte budget has to cover
+    /// the copy first and buys states out of what is left.
     #[cfg(not(miri))]
     fn lazy_dfa_state_budget(&self, eager_budget: usize, nfa: &StateArena) -> usize {
         if !should_build_lazy_dfa(nfa.len()) {

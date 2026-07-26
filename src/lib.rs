@@ -145,10 +145,9 @@ type PatternDef = FxHashMap<String, Vec<Matcher>>;
 /// A stored pattern definition, stamped with the position of the
 /// [`add_pattern`](Quamina::add_pattern) call that produced it.
 ///
-/// Merging the same patterns in a different order yields an automaton that
-/// accepts the same events but differs in size and layout. The stamp lets
-/// rebuilds and clones replay the live patterns in add order, so the matcher
-/// they hand back is the one the caller's adds built.
+/// Merge order decides an automaton's size and layout, not which events it
+/// accepts, so rebuilds and clones replay in add order to reproduce the
+/// matcher the caller's adds built.
 #[derive(Clone)]
 struct StoredPattern {
     added_at: usize,
@@ -634,10 +633,8 @@ pub struct Quamina<X: Clone + Eq + Hash + Send + Sync = String> {
 
 impl<X: Clone + Eq + Hash + Send + Sync> Clone for Quamina<X> {
     fn clone(&self) -> Self {
-        // A clone is built from the live definitions alone, so it starts out
-        // with nothing left to reclaim: no soft-deleted ids to filter, no
-        // filtering counted against a future rebuild, and a segments tree
-        // covering only the fields those definitions mention.
+        // Built from the live definitions alone, so the clone starts with
+        // nothing left to reclaim and nothing to filter out.
         let (automaton, segments_tree) = self.build_from_live_patterns();
 
         // Copy custom flattener if present
@@ -724,8 +721,7 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
         if let Err(e) = self.automaton.add_pattern(x.clone(), &pattern_fields) {
             // The automaton merges fields one at a time and does not unwind the
             // ones it merged before the failure. Nothing here records the
-            // pattern, so those states answer to no identifier the caller holds
-            // and only a rebuild can reclaim them.
+            // pattern, so only a rebuild can reclaim those states.
             self.automaton_is_stale = true;
             return Err(e);
         }
@@ -844,10 +840,9 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
     /// Build a fresh automaton and segments tree from the live pattern
     /// definitions, replaying them in the order they were originally added.
     ///
-    /// This is the same work [`add_pattern`](Self::add_pattern) does, so the
-    /// pair handed back is what the surviving adds would have produced on
-    /// their own — including a tree that has forgotten the fields only
-    /// deleted patterns mentioned.
+    /// This repeats the work [`add_pattern`](Self::add_pattern) does, so the
+    /// pair comes back as the surviving adds would have built it — including a
+    /// tree that has forgotten the fields only deleted patterns mentioned.
     fn build_from_live_patterns(&self) -> (ThreadSafeCoreMatcher<X>, SegmentsTree) {
         let automaton = ThreadSafeCoreMatcher::with_limits(
             self.pattern_limits.arena_byte_budget,
@@ -945,9 +940,8 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
     /// (such as a [`LivePatternsState`](https://github.com/timbray/quamina#dynamic-pattern-storage)
     /// store) that may need to surface I/O or storage errors.
     pub fn delete_patterns(&mut self, x: &X) -> Result<(), QuaminaError> {
-        // Drop the definitions here, so that nothing can replay them later:
-        // left in place, they would come back to life alongside the new
-        // definition if this id were ever added again.
+        // Drop the definitions outright so nothing can replay them later, the
+        // way Go's memState.Delete filters the id's entries out at delete time.
         if self.pattern_defs.remove(x).is_none() {
             return Ok(()); // Pattern doesn't exist or is already deleted
         }

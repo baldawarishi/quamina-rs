@@ -72,9 +72,8 @@ pub struct MultiConditionNfa {
 
 /// Run one of a lookaround pattern's automata over the whole value.
 ///
-/// The primary and each condition are checked against the value from its first
-/// byte, and `BuiltForSpeed` may have converted any of them to a DFA at freeze
-/// time, so the traversal follows the arena rather than the caller.
+/// `BuiltForSpeed` may have converted any of them to a DFA at freeze time, so
+/// the traversal follows the arena rather than the caller.
 pub fn traverse_lookaround_arena(
     arena: &StateArena,
     start: StateId,
@@ -95,10 +94,9 @@ pub fn traverse_lookaround_arena(
 /// For `(?<=foo)bar`: lookbehind="foo", primary="bar" -> combined="foobar"
 /// The combined pattern is used to check if the full value matches.
 ///
-/// Like every condition it is checked against the whole value, so when a
-/// lookahead closes the pattern and accounts for a run past the primary, the
-/// combined pattern ends in `.*` to leave room for it: `(?<=foo)bar(?=baz)`
-/// gives `foobar.*`, not `foobar`.
+/// A closing lookahead accounts for a run past the primary, so the combined
+/// pattern ends in `.*` to leave room for it: `(?<=foo)bar(?=baz)` gives
+/// `foobar.*`, not `foobar`.
 fn build_lookbehind_combined_pattern(
     lookbehind: &crate::regexp::RegexpRoot,
     primary: &crate::regexp::RegexpRoot,
@@ -119,12 +117,10 @@ fn build_lookbehind_combined_pattern(
 
 /// Build the pattern used to verify the primary against a whole value.
 ///
-/// Satisfying the assertions is not enough for a match — the value has to match
-/// the primary too. The primary alone rarely spans the whole value, though,
-/// because assertion text counts toward it: a lookbehind covers a run ahead of
-/// the primary, and a lookahead in final position covers a run past it. Each of
-/// those gets a `.*` so verification holds the value to the primary without
-/// re-imposing what the conditions already check.
+/// The primary alone rarely spans the whole value, since assertion text counts
+/// toward it: a lookbehind covers a run ahead of the primary, a closing
+/// lookahead a run past it. Each gets a `.*`, so verification holds the value
+/// to the primary without re-imposing what the conditions already check.
 fn build_primary_verify_pattern(
     primary: &crate::regexp::RegexpRoot,
     leading_slack: bool,
@@ -1316,8 +1312,7 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
         let mut condition_bufs = self.arena_bufs.borrow_mut();
 
         for mc_nfa in multi_condition_nfas.iter() {
-            // The assertions qualify a match, they don't stand in for one: unless
-            // the value matches the primary there is nothing to qualify.
+            // The assertions qualify a match, they don't stand in for one.
             traverse_lookaround_arena(
                 &mc_nfa.primary_arena,
                 mc_nfa.primary_start,

@@ -282,6 +282,12 @@ impl LookaroundCondition {
 /// must all be satisfied for a match. Conditions are stored in cost order
 /// (cheapest first) for fast-fail optimization.
 ///
+/// Two rules shape how the parts are built. Assertion text counts toward the
+/// value, so `foo(?=bar)` matches `"foobar"` and the primary `foo` covers only
+/// its front. And every condition is checked anchored against the whole value,
+/// so each has to span the value from its first byte — a condition that stops
+/// short fails on values the primary would have matched.
+///
 /// # Example patterns
 /// - `foo(?=bar)` → primary="foo", conditions=[PositiveLookahead("foobar")]
 /// - `foo(?!bar)` → primary="foo", conditions=[NegativeLookahead("foobar")]
@@ -299,10 +305,7 @@ pub struct MultiConditionPattern {
     pub conditions: Vec<LookaroundCondition>,
 
     /// True when a lookahead closes the pattern, with no primary atom after it.
-    ///
-    /// The asserted text counts toward the value, so in `foo(?=bar)` the primary
-    /// `foo` covers only the front of `"foobar"`. Verifying the primary against
-    /// such a value has to tolerate the stretch the lookahead accounts for.
+    /// Verifying the primary then has to tolerate the run it asserts.
     pub trailing_lookahead: bool,
 }
 
@@ -363,8 +366,7 @@ pub fn transform_lookaround_pattern(tree: &RegexpRoot) -> Result<MultiConditionP
     let mut conditions = Vec::new();
     let mut primary_atoms: RegexpBranch = Vec::new();
     // Value text the lookbehinds seen so far account for, ahead of the primary.
-    // Conditions are checked from the first byte of the value, so a lookahead
-    // condition has to open with this run.
+    // A lookahead condition has to open with this run to reach the first byte.
     let mut lookbehind_prefix: RegexpRoot = Vec::new();
 
     for (index, atom) in branch.iter().enumerate() {
@@ -373,8 +375,7 @@ pub fn transform_lookaround_pattern(tree: &RegexpRoot) -> Result<MultiConditionP
                 .subtree
                 .as_ref()
                 .ok_or("lookaround atom missing subtree")?;
-            // Anything after this atom is verified by the primary, so the
-            // condition must stop where the assertion does.
+            // Anything after this atom is the primary's to verify.
             let primary_follows = index + 1 < branch.len();
 
             match la_type {
@@ -418,8 +419,7 @@ pub fn transform_lookaround_pattern(tree: &RegexpRoot) -> Result<MultiConditionP
                         pattern: la_subtree.clone(),
                         byte_length,
                     });
-                    // The assertion only rules a shape out, so what precedes the
-                    // primary stays unconstrained.
+                    // Ruling a shape out says nothing about the run itself.
                     lookbehind_prefix =
                         concat_roots(&lookbehind_prefix, &[vec![QuantifiedAtom::any_run()]]);
                 }
@@ -438,8 +438,7 @@ pub fn transform_lookaround_pattern(tree: &RegexpRoot) -> Result<MultiConditionP
         vec![primary_atoms]
     };
 
-    // A lookahead in final position asserts text that runs past everything the
-    // primary spells out, so the primary can only be held to a prefix of the value.
+    // A closing lookahead asserts a run past everything the primary spells out.
     let ends_with_lookahead = branch.last().is_some_and(|atom| {
         matches!(
             atom.lookaround,
@@ -458,13 +457,11 @@ pub fn transform_lookaround_pattern(tree: &RegexpRoot) -> Result<MultiConditionP
 /// Build the pattern a lookahead condition is checked against. For `A(?=B)`,
 /// that is `AB`.
 ///
-/// The condition is checked against the whole value, so it spans the value from
-/// the first byte: `lookbehind_prefix` is the run any lookbehind accounts for
-/// ahead of the primary, then the primary atoms up to the assertion, then the
-/// assertion itself. Whatever is left over belongs to the atoms that follow —
-/// in `A(?=B)C` the assertion covers `AB` and `C` is the primary's to verify —
-/// so with `primary_follows` the condition ends in `.*`. A lookahead that
-/// closes the pattern accounts for the value all the way to its end.
+/// The condition spans the value from its first byte: `lookbehind_prefix`, then
+/// the primary atoms up to the assertion, then the assertion itself. With
+/// `primary_follows` it ends in `.*`, leaving the rest to the atoms after the
+/// assertion — in `A(?=B)C` the condition covers `AB`, and `C` is the primary's
+/// to verify.
 fn build_combined_pattern(
     lookbehind_prefix: &RegexpRoot,
     primary_atoms: &RegexpBranch,

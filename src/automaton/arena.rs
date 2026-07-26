@@ -501,8 +501,8 @@ impl StateArena {
     /// [`estimated_byte_size`](Self::estimated_byte_size) covers only the flat
     /// buffers and is O(1); this walks the states, so it is the figure to use
     /// where an arena's real footprint matters more than the cost of measuring
-    /// it. Transition tables can dwarf the flat buffers — several times over for
-    /// a DFA — so the two are far apart for anything but a trivial automaton.
+    /// it. Transition tables can dwarf the flat buffers, several times over for
+    /// a DFA, so the two are far apart for anything but a trivial automaton.
     #[must_use]
     pub fn byte_size(&self) -> usize {
         let mut bytes = self.estimated_byte_size();
@@ -1344,7 +1344,7 @@ impl LazyDfa {
 
         let state = LazyDfaState {
             // Only a cached state ever has its table written, so a state past
-            // the budget goes without one instead of holding 256 idle entries.
+            // the budget goes without one.
             transitions: if can_cache {
                 vec![StateId::NONE; BYTE_CEILING]
             } else {
@@ -1458,9 +1458,9 @@ impl LazyDfa {
 
     /// Accumulate the cache's contribution to matcher-level resource statistics.
     ///
-    /// The cache holds its own copy of the NFA it was built from and interns DFA
-    /// states as values are matched, so its footprint grows with use and is
-    /// counted on top of the arena the copy came from.
+    /// The cache holds its own copy of the NFA and interns DFA states as values
+    /// are matched, so its footprint grows with use and counts on top of the
+    /// arena the copy came from.
     pub(crate) fn accumulate_matcher_stats(&self, stats: &mut crate::MatcherStats) {
         self.nfa_arena.accumulate_matcher_stats(stats);
         stats.states += self.states.len();
@@ -1480,8 +1480,8 @@ impl LazyDfa {
 
     /// Estimated bytes held by the interned DFA states, excluding the NFA copy.
     ///
-    /// Every state carries a full 256-entry transition table, so this dwarfs the
-    /// NFA the cache was built from once matching has filled it in.
+    /// Every cached state carries a full 256-entry transition table, so this
+    /// outgrows the NFA the cache was built from as matching fills it in.
     fn cached_state_byte_size(&self) -> usize {
         let mut bytes = self.states.capacity() * size_of::<LazyDfaState>()
             + self.nfa_sets.capacity() * size_of::<Vec<StateId>>()
@@ -10228,11 +10228,8 @@ mod lazy_dfa_tests {
         );
     }
 
-    /// The byte estimate has to cover every buffer the cache owns, at the
-    /// capacity each currently holds: the states and their 256-entry transition
-    /// tables, the NFA state-set behind each one, and the map keyed on those
-    /// sets. Checked against a buffer-by-buffer tally, on a fresh cache and
-    /// again once matching has grown it.
+    /// The estimate has to cover every buffer the cache owns, at the capacity
+    /// each currently holds, both fresh and once matching has grown it.
     #[test]
     fn test_lazy_dfa_byte_size_covers_every_owned_buffer() {
         let owned_bytes = |lazy: &LazyDfa| {
@@ -10270,9 +10267,8 @@ mod lazy_dfa_tests {
         );
     }
 
-    /// A byte allowance buys cached states at the price of one: the state
-    /// record plus the full transition table that is the point of caching it.
-    /// Anything short of that price buys none.
+    /// A state costs its record plus the full transition table that is the
+    /// point of caching it, so anything short of that price buys none.
     #[test]
     fn test_lazy_dfa_states_within_bytes_prices_a_state_at_its_table() {
         let one_state = size_of::<LazyDfaState>() + BYTE_CEILING * size_of::<StateId>();
@@ -10282,9 +10278,8 @@ mod lazy_dfa_tests {
         assert_eq!(LazyDfa::states_within_bytes(one_state * 9), 9);
     }
 
-    /// The cache's figures are added on top of whatever the walk has tallied so
-    /// far: its NFA copy counts as an arena of its own, and the states it has
-    /// interned count beyond that.
+    /// The cache adds to the running tally rather than replacing it: its NFA
+    /// copy counts as an arena, and the interned states count beyond that.
     #[test]
     fn test_lazy_dfa_matcher_stats_add_to_the_running_tally() {
         let (nfa, nfa_start) = build_regexp_nfa("[abc]+");

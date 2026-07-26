@@ -3620,10 +3620,9 @@ fn test_matcher_build_mode_reflected_in_stats() {
     );
 }
 
-/// A lookaround pattern is a regexp too, so `BuiltForSpeed` has to convert the
-/// automata behind it — the primary and each condition — rather than leave the
-/// mode with nothing to do. The conditions are where the epsilon closures live
-/// here, so converting them shows up as fanout going to zero.
+/// `BuiltForSpeed` has to convert the automata behind a lookaround pattern, the
+/// primary and each condition alike. The conditions are where the epsilon
+/// closures live here, so converting them shows up as fanout going to zero.
 ///
 /// Skipped under Miri, which never runs the DFA conversion.
 #[cfg(not(miri))]
@@ -3729,9 +3728,8 @@ fn stats_under_budget(
 const WIDE_DFA_PATTERN: &str = r#"{"x": [{"regexp": ".*a[ab]{6}"}]}"#;
 
 /// The byte budget admits a pattern on the size of the arena it builds, so the
-/// DFA `BuiltForSpeed` swaps in at freeze time answers to it too: a mode chosen
-/// for speed must not spend memory the caller ruled out. Falling back to the
-/// NFA costs match speed and nothing else, so the pattern still matches.
+/// DFA `BuiltForSpeed` swaps in at freeze time answers to it too. Falling back
+/// to the NFA costs match speed and nothing else, so the pattern still matches.
 ///
 /// Skipped under Miri, which never runs the DFA conversion.
 #[cfg(not(miri))]
