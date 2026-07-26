@@ -3620,6 +3620,98 @@ fn test_matcher_build_mode_reflected_in_stats() {
     );
 }
 
+/// A pattern whose subset construction overruns the eager DFA budget falls back
+/// to a lazy DFA: a cache holding its own copy of the NFA plus the DFA states
+/// matching interns as it goes. That is the matcher's memory, so the stats have
+/// to report it — including the part that only appears once events flow.
+///
+/// Skipped under Miri, which never runs the DFA conversion, so no lazy cache
+/// would exist to account for.
+#[cfg(not(miri))]
+#[test]
+fn test_matcher_stats_counts_the_lazy_dfa() {
+    let mut comfort: Quamina<String> = Quamina::new();
+    comfort
+        .add_pattern("p".to_string(), LAZY_DFA_PATTERN)
+        .unwrap();
+    let comfort_bytes = comfort.matcher_stats().bytes;
+
+    let mut speed: Quamina<String> = Quamina::new();
+    speed.set_matcher_build_mode(MatcherBuildMode::BuiltForSpeed);
+    speed
+        .add_pattern("p".to_string(), LAZY_DFA_PATTERN)
+        .unwrap();
+    let frozen = speed.matcher_stats();
+    assert!(
+        frozen.bytes > comfort_bytes,
+        "the lazy cache's copy of the NFA is memory comfort mode never spends: {} vs {comfort_bytes}",
+        frozen.bytes,
+    );
+
+    for value in lazy_dfa_values() {
+        speed.matches_for_event(value.as_bytes()).unwrap();
+    }
+    let filled = speed.matcher_stats();
+    assert!(
+        filled.bytes > frozen.bytes,
+        "DFA states interned while matching must show up in bytes: {} vs {}",
+        filled.bytes,
+        frozen.bytes,
+    );
+    assert!(
+        filled.states > frozen.states,
+        "those states must show up in the state count too: {} vs {}",
+        filled.states,
+        frozen.states,
+    );
+}
+
+/// The lazy cache owns a full copy of the NFA arena, so the aggregate arena
+/// figures have to count it alongside the arena it was cloned from.
+///
+/// Skipped under Miri for the same reason as
+/// `test_matcher_stats_counts_the_lazy_dfa`.
+#[cfg(not(miri))]
+#[test]
+fn test_arena_stats_counts_the_lazy_dfa_arena() {
+    let mut comfort: Quamina<String> = Quamina::new();
+    comfort
+        .add_pattern("p".to_string(), LAZY_DFA_PATTERN)
+        .unwrap();
+    comfort.matches_for_event(br#"{"x": "aab"}"#).unwrap();
+
+    let mut speed: Quamina<String> = Quamina::new();
+    speed.set_matcher_build_mode(MatcherBuildMode::BuiltForSpeed);
+    speed
+        .add_pattern("p".to_string(), LAZY_DFA_PATTERN)
+        .unwrap();
+    speed.matches_for_event(br#"{"x": "aab"}"#).unwrap();
+
+    assert!(
+        speed.arena_stats().state_count > comfort.arena_stats().state_count,
+        "the cache's NFA copy is a second arena: {:?} vs {:?}",
+        speed.arena_stats().state_count,
+        comfort.arena_stats().state_count,
+    );
+}
+
+/// A regexp whose DFA is far larger than its NFA, so `BuiltForSpeed` overruns
+/// the eager conversion budget and settles for a lazy DFA cache.
+#[cfg(not(miri))]
+const LAZY_DFA_PATTERN: &str = r#"{"x": [{"regexp": ".*a[ab]{9}"}]}"#;
+
+/// Values that walk [`LAZY_DFA_PATTERN`] down distinct byte paths, so matching
+/// them interns a fresh DFA state for each.
+#[cfg(not(miri))]
+fn lazy_dfa_values() -> impl Iterator<Item = String> {
+    (0..64u32).map(|bits| {
+        let tail: String = (0..9)
+            .map(|i| if bits >> i & 1 == 0 { 'a' } else { 'b' })
+            .collect();
+        format!(r#"{{"x": "a{tail}"}}"#)
+    })
+}
+
 /// Four wildcard shapes — interior, prefix, suffix, and a second interior —
 /// merged into one field's value matcher, so a mode applied to them covers every
 /// automaton that matcher builds.

@@ -1004,6 +1004,10 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
     /// DFAs, which are usually larger than the NFAs
     /// [`BuiltForComfort`](MatcherBuildMode::BuiltForComfort) reports.
     ///
+    /// A pattern too costly to convert up front gets a DFA cached as matching
+    /// visits it instead, so under `BuiltForSpeed` these figures can also grow
+    /// with the events you feed [`matches_for_event`](Self::matches_for_event).
+    ///
     /// The most useful figure is [`MatcherStats::bytes`], an estimate of the
     /// memory consumed by the matcher's data structures. Its growth
     /// correlates well with the slowdown in `add_pattern` and

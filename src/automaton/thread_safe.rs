@@ -598,6 +598,9 @@ impl<X: Clone + Eq + Hash + Send + Sync> ThreadSafeCoreMatcher<X> {
                 cond.arena.accumulate_matcher_stats(stats);
             }
         }
+        if let Some(ref lazy_dfa) = vm.lazy_dfa {
+            lazy_dfa.lock().accumulate_matcher_stats(stats);
+        }
         for next in vm.transition_map.values() {
             Self::walk_field_matcher(next, field_seen, value_seen, stats);
         }
@@ -751,6 +754,9 @@ impl<X: Clone + Eq + Hash + Send + Sync> ThreadSafeCoreMatcher<X> {
             for cond in &mc.conditions {
                 stats.add(&cond.arena.stats());
             }
+        }
+        if let Some(ref lazy_dfa) = vm.lazy_dfa {
+            stats.add(&lazy_dfa.lock().nfa_arena_stats());
         }
         // Walk transition_map to reach nested FrozenFieldMatchers
         for fm_next in vm.transition_map.values() {
