@@ -191,7 +191,7 @@ impl fmt::Display for QuaminaError {
 /// Four complementary limits, each catching a different attack vector:
 /// - **Nesting depth**: prevents stack exhaustion and deep-nesting attacks
 /// - **Field count**: prevents wide patterns with hundreds of fields
-/// - **Arena byte budget**: essential backstop that catches all forms of automaton complexity
+/// - **Arena byte budget**: per-field backstop that catches automaton complexity whatever produced it
 /// - **State count**: prevents exponential field-matcher blowup from mixed-type matchers
 ///
 /// # Defaults
@@ -205,7 +205,9 @@ pub struct PatternLimits {
     pub max_pattern_depth: usize,
     /// Maximum number of fields per pattern (default: 256)
     pub max_fields_per_pattern: usize,
-    /// Maximum arena byte size for the automaton (default: 10 MB)
+    /// Maximum arena byte size for any one value matcher (default: 10 MB).
+    /// A pattern is rejected when the arena for one of its fields would exceed
+    /// this; the matcher as a whole holds one such arena per field it matches on.
     pub arena_byte_budget: usize,
     /// Maximum number of field-matcher states during pattern construction (default: 1024).
     ///
@@ -440,7 +442,18 @@ impl<X: Clone + Eq + Hash + Send + Sync> QuaminaBuilder<X> {
         self
     }
 
-    /// Set the arena byte budget for the automaton (default: 10 MB).
+    /// Set the arena byte budget, the cap on how large the automaton for any
+    /// one field may grow (default: 10 MB).
+    ///
+    /// This bounds pattern complexity, not the matcher's total memory: a
+    /// pattern is rejected when the arena for one of its fields would exceed
+    /// the budget, and a matcher holds one such arena per field it matches on,
+    /// so patterns spread across fields add up past it. Admission measures the
+    /// arena's flat buffers, which is cheap but leaves out per-state transition
+    /// tables, so an accepted arena reports more than this in
+    /// [`matcher_stats`](Quamina::matcher_stats). What the budget does hold
+    /// exactly is the memory
+    /// [`BuiltForSpeed`](MatcherBuildMode::BuiltForSpeed) would add on top.
     ///
     /// # Panics
     /// Panics if `budget` is 0.
@@ -453,6 +466,23 @@ impl<X: Clone + Eq + Hash + Send + Sync> QuaminaBuilder<X> {
     ///     .build()?;
     /// let err = q.add_pattern("p", r#"{"x": [{"prefix": "a"}]}"#).unwrap_err();
     /// assert!(matches!(err, QuaminaError::PatternTooComplex(_)));
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// Each field is budgeted on its own, so a matcher can hold much more than
+    /// the budget in total:
+    ///
+    /// ```
+    /// # use quamina::{QuaminaBuilder, QuaminaError};
+    /// # fn main() -> Result<(), QuaminaError> {
+    /// let mut q = QuaminaBuilder::<String>::new()
+    ///     .with_arena_byte_budget(20_000)
+    ///     .build()?;
+    /// for i in 0..40 {
+    ///     q.add_pattern(format!("p{i}"), &format!(r#"{{"f{i}": [{{"prefix": "abcdefghij{i}"}}]}}"#))?;
+    /// }
+    /// assert!(q.matcher_stats().bytes > 20_000);
     /// # Ok(())
     /// # }
     /// ```
