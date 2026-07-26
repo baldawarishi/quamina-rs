@@ -1,6 +1,6 @@
 //! Regexp samples ported from Go quamina.
 //! Original source: https://github.com/qt4cg/xslt40-test
-//! Total samples: 992
+//! Total samples: 993
 
 #[derive(Debug)]
 pub struct RegexpSample {
@@ -7018,5 +7018,13 @@ pub static REGEXP_SAMPLES: &[RegexpSample] = &[
         pattern_ids: &[],
         nomatches: &[],
         valid: false,
+    },
+    // Sample 993
+    // {0,} has no mandatory steps, so it means the same thing as *
+    RegexpSample {
+        regex: "x{0,}y",
+        pattern_ids: &["y", "xy", "xxxy"],
+        nomatches: &["x", "z", "xx"],
+        valid: true,
     },
 ];

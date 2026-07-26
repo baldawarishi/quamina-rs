@@ -497,6 +497,13 @@ mod tests {
         assert_eq!(root[0].len(), 1);
         assert_eq!(root[0][0].quant_min, 2);
         assert_eq!(root[0][0].quant_max, REGEXP_QUANTIFIER_MAX);
+
+        // {0,} has no mandatory steps, so it means the same thing as *. Keeping
+        // it on the star shape is what lets the NFA builder route it through the
+        // loop construction instead of the general {n,m} expansion, which has no
+        // repetition to expand here.
+        let root = parse_regexp("a{0,}").unwrap();
+        assert!(root[0][0].is_star());
     }
 
     #[test]
