@@ -4082,6 +4082,64 @@ fn test_lookbehind_positive_and_negative() {
     assert_no_has_match!(q, r#"{"v": "fix"}"#, "pos_lb");
 }
 
+// ============================================================================
+// Lookaround primary verification
+//
+// A lookaround pattern is a primary pattern plus assertions. Satisfying the
+// assertions is not enough on its own — the value must also match the primary.
+// Assertion text counts toward the value, so the primary carries slack where an
+// assertion covers part of it: a leading `.*` when a lookbehind runs ahead of
+// the primary, a trailing `.*` when a lookahead closes the pattern.
+// ============================================================================
+
+#[test]
+fn test_negative_lookahead_requires_primary_match() {
+    // foo(?!bar)baz needs "foobaz"; a value that merely avoids "foobar" is not enough.
+    let q = q!("p1" => r#"{"v": [{"regexp": "foo(?!bar)baz"}]}"#);
+    assert_has_match!(q, r#"{"v": "foobaz"}"#, "p1");
+    assert_no_match!(q, r#"{"v": "myfoo"}"#);
+    assert_no_match!(q, r#"{"v": "zzzzz"}"#);
+    // "foobarbaz" satisfies the primary's shape nowhere and trips the assertion too.
+    assert_no_match!(q, r#"{"v": "foobarbaz"}"#);
+}
+
+#[test]
+fn test_negative_lookbehind_requires_primary_match() {
+    // (?<!foo)bar needs the value to end in "bar", whatever precedes it.
+    let q = q!("p1" => r#"{"v": [{"regexp": "(?<!foo)bar"}]}"#);
+    assert_has_match!(q, r#"{"v": "xxxbar"}"#, "p1");
+    assert_has_match!(q, r#"{"v": "bar"}"#, "p1");
+    assert_no_match!(q, r#"{"v": "foobar"}"#);
+    assert_no_match!(q, r#"{"v": "zzz"}"#);
+    assert_no_match!(q, r#"{"v": "xxxbaz"}"#);
+}
+
+#[test]
+fn test_positive_lookahead_requires_primary_match() {
+    // (?=.*foo)zzzzz asserts the value holds "foo" while being exactly "zzzzz",
+    // so nothing satisfies it — least of all a value that only carries "foo".
+    let q = q!("p1" => r#"{"v": [{"regexp": "(?=.*foo)zzzzz"}]}"#);
+    assert_no_match!(q, r#"{"v": "myfoo"}"#);
+    assert_no_match!(q, r#"{"v": "zzzzz"}"#);
+}
+
+#[test]
+fn test_lookahead_primary_checked_past_the_assertion() {
+    // The primary trailing a lookahead must still be enforced: "foo" clears the
+    // assertion but has no "bar".
+    let q = q!("p1" => r#"{"v": [{"regexp": "(?=.*foo).*bar.*"}]}"#);
+    assert_no_match!(q, r#"{"v": "foo"}"#);
+}
+
+#[test]
+fn test_negative_lookahead_primary_length_enforced() {
+    // foo(?!bar)... needs three characters after "foo", not merely a non-"foobar" value.
+    let q = q!("p1" => r#"{"v": [{"regexp": "foo(?!bar)..."}]}"#);
+    assert_has_match!(q, r#"{"v": "foobaz"}"#, "p1");
+    assert_no_match!(q, r#"{"v": "foo"}"#);
+    assert_no_match!(q, r#"{"v": "zzzzzz"}"#);
+}
+
 #[test]
 fn test_equals_ignore_case_all_variants() {
     let q = q!("ic" => r#"{"name": [{"equals-ignore-case": "Hello"}]}"#);

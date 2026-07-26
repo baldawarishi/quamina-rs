@@ -297,6 +297,13 @@ pub struct MultiConditionPattern {
     /// Stored in cost order (cheapest first) for fast-fail optimization.
     /// All conditions must be satisfied for the overall match to succeed.
     pub conditions: Vec<LookaroundCondition>,
+
+    /// True when a lookahead closes the pattern, with no primary atom after it.
+    ///
+    /// The asserted text counts toward the value, so in `foo(?=bar)` the primary
+    /// `foo` covers only the front of `"foobar"`. Verifying the primary against
+    /// such a value has to tolerate the stretch the lookahead accounts for.
+    pub trailing_lookahead: bool,
 }
 
 impl MultiConditionPattern {
@@ -308,7 +315,15 @@ impl MultiConditionPattern {
         Self {
             primary,
             conditions,
+            trailing_lookahead: false,
         }
+    }
+
+    /// Mark the pattern as ending in a lookahead assertion.
+    #[must_use]
+    pub const fn with_trailing_lookahead(mut self) -> Self {
+        self.trailing_lookahead = true;
+        self
     }
 }
 
@@ -348,7 +363,7 @@ pub fn transform_lookaround_pattern(tree: &RegexpRoot) -> Result<MultiConditionP
     let mut conditions = Vec::new();
     let mut primary_atoms: RegexpBranch = Vec::new();
 
-    for (i, atom) in branch.iter().enumerate() {
+    for atom in branch {
         if let Some(la_type) = atom.lookaround {
             let la_subtree = atom
                 .subtree
@@ -390,10 +405,6 @@ pub fn transform_lookaround_pattern(tree: &RegexpRoot) -> Result<MultiConditionP
             // Non-lookaround atom - add to primary pattern
             primary_atoms.push(atom.clone());
         }
-
-        // For lookaheads at the end, we need to track position
-        // This is handled by the combined pattern approach
-        let _ = i; // suppress unused warning for now
     }
 
     // If no primary atoms, the pattern is just lookarounds (e.g., (?=foo))
@@ -404,7 +415,21 @@ pub fn transform_lookaround_pattern(tree: &RegexpRoot) -> Result<MultiConditionP
         vec![primary_atoms]
     };
 
-    Ok(MultiConditionPattern::new(primary, conditions))
+    // A lookahead in final position asserts text that runs past everything the
+    // primary spells out, so the primary can only be held to a prefix of the value.
+    let ends_with_lookahead = branch.last().is_some_and(|atom| {
+        matches!(
+            atom.lookaround,
+            Some(LookaroundType::PositiveLookahead | LookaroundType::NegativeLookahead)
+        )
+    });
+
+    let mc = MultiConditionPattern::new(primary, conditions);
+    Ok(if ends_with_lookahead {
+        mc.with_trailing_lookahead()
+    } else {
+        mc
+    })
 }
 
 /// Build a combined pattern from primary atoms and a lookahead subtree.

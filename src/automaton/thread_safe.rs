@@ -379,6 +379,19 @@ impl<X: Clone + Eq + Hash> FrozenValueMatcher<X> {
         // - Lookbehind conditions are pre-combined with primary during build
         if !self.multi_condition_nfas.is_empty() {
             for mc_nfa in &self.multi_condition_nfas {
+                // The assertions qualify a match, they don't stand in for one:
+                // unless the value matches the primary there is nothing to qualify.
+                bufs.arena_bufs.clear();
+                traverse_arena_nfa(
+                    &mc_nfa.primary_arena,
+                    mc_nfa.primary_start,
+                    value_to_match,
+                    &mut bufs.arena_bufs,
+                );
+                if bufs.arena_bufs.transitions.is_empty() {
+                    continue;
+                }
+
                 // Verify all conditions against the full value
                 let mut all_conditions_pass = true;
 

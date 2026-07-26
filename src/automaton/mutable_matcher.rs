@@ -102,6 +102,50 @@ fn build_lookbehind_combined_pattern(
     combined_branches
 }
 
+/// Build the pattern used to verify the primary against a whole value.
+///
+/// Satisfying the assertions is not enough for a match — the value has to match
+/// the primary too. The primary alone rarely spans the whole value, though,
+/// because assertion text counts toward it: a lookbehind covers a run ahead of
+/// the primary, and a lookahead in final position covers a run past it. Each of
+/// those gets a `.*` so verification holds the value to the primary without
+/// re-imposing what the conditions already check.
+fn build_primary_verify_pattern(
+    primary: &crate::regexp::RegexpRoot,
+    leading_slack: bool,
+    trailing_slack: bool,
+) -> crate::regexp::RegexpRoot {
+    use crate::regexp::{QuantifiedAtom, REGEXP_QUANTIFIER_MAX, RegexpBranch};
+
+    let any_run = || QuantifiedAtom {
+        is_dot: true,
+        quant_min: 0,
+        quant_max: REGEXP_QUANTIFIER_MAX,
+        ..QuantifiedAtom::default()
+    };
+
+    // An all-lookaround pattern such as `(?=foo)` has no primary of its own; the
+    // conditions are the whole constraint, so accept anything here.
+    if primary.is_empty() {
+        return vec![vec![any_run()]];
+    }
+
+    primary
+        .iter()
+        .map(|branch| {
+            let mut padded: RegexpBranch = Vec::with_capacity(branch.len() + 2);
+            if leading_slack {
+                padded.push(any_run());
+            }
+            padded.extend(branch.iter().cloned());
+            if trailing_slack {
+                padded.push(any_run());
+            }
+            padded
+        })
+        .collect()
+}
+
 /// A mutable field matcher used during pattern building.
 /// This is similar to Go's fieldMatcher with its updateable atomic pointer.
 #[derive(Default)]
@@ -1006,9 +1050,14 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
 
         let next_fm = Rc::new(MutableFieldMatcher::new());
 
-        // Build primary pattern automaton (with quote transitions for field values)
+        // Build primary pattern automaton (with quote transitions for field values).
+        // A lookbehind runs ahead of the primary and a trailing lookahead runs past
+        // it, so those stretches of the value are the conditions' to account for.
+        let has_lookbehind = mc.conditions.iter().any(LookaroundCondition::is_lookbehind);
+        let primary_verify =
+            build_primary_verify_pattern(&mc.primary, has_lookbehind, mc.trailing_lookahead);
         let (primary_arena, primary_start, field_matcher_arc) =
-            make_regexp_nfa_arena(mc.primary.clone());
+            make_regexp_nfa_arena(primary_verify);
         let registered = self.register_transition(next_fm, field_matcher_arc);
 
         // Build condition automata
@@ -1247,6 +1296,18 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
         let mut condition_bufs = self.arena_bufs.borrow_mut();
 
         for mc_nfa in multi_condition_nfas.iter() {
+            // The assertions qualify a match, they don't stand in for one: unless
+            // the value matches the primary there is nothing to qualify.
+            traverse_arena_nfa(
+                &mc_nfa.primary_arena,
+                mc_nfa.primary_start,
+                value_to_match,
+                &mut condition_bufs,
+            );
+            if condition_bufs.transitions.is_empty() {
+                continue;
+            }
+
             let mut all_conditions_pass = true;
 
             for condition in &mc_nfa.conditions {
