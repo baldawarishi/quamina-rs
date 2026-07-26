@@ -68,38 +68,27 @@ pub struct MultiConditionNfa {
 ///
 /// For `(?<=foo)bar`: lookbehind="foo", primary="bar" -> combined="foobar"
 /// The combined pattern is used to check if the full value matches.
+///
+/// Like every condition it is checked against the whole value, so when a
+/// lookahead closes the pattern and accounts for a run past the primary, the
+/// combined pattern ends in `.*` to leave room for it: `(?<=foo)bar(?=baz)`
+/// gives `foobar.*`, not `foobar`.
 fn build_lookbehind_combined_pattern(
     lookbehind: &crate::regexp::RegexpRoot,
     primary: &crate::regexp::RegexpRoot,
+    trailing_lookahead: bool,
 ) -> crate::regexp::RegexpRoot {
-    use crate::regexp::RegexpBranch;
+    use crate::regexp::{QuantifiedAtom, concat_roots};
 
-    // Handle empty cases
-    if lookbehind.is_empty() {
-        return primary.clone();
-    }
-    if primary.is_empty() {
-        return lookbehind.clone();
-    }
+    let mut combined = concat_roots(lookbehind, primary);
 
-    // Simple case: single branch in each
-    if lookbehind.len() == 1 && primary.len() == 1 {
-        let mut combined: RegexpBranch = lookbehind[0].clone();
-        combined.extend(primary[0].clone());
-        return vec![combined];
-    }
-
-    // Complex case: alternation in one or both
-    // Create all combinations: (lb1|lb2)(p1|p2) -> lb1p1|lb1p2|lb2p1|lb2p2
-    let mut combined_branches = Vec::new();
-    for lb_branch in lookbehind {
-        for p_branch in primary {
-            let mut combined: RegexpBranch = lb_branch.clone();
-            combined.extend(p_branch.clone());
-            combined_branches.push(combined);
+    if trailing_lookahead {
+        for branch in &mut combined {
+            branch.push(QuantifiedAtom::any_run());
         }
     }
-    combined_branches
+
+    combined
 }
 
 /// Build the pattern used to verify the primary against a whole value.
@@ -1069,12 +1058,20 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
                 LookaroundCondition::PositiveLookbehind { pattern, .. } => {
                     // Lookbehind stores just the prefix pattern, combine with primary
                     // (?<=foo)bar: pattern="foo", primary="bar" -> combined="foobar"
-                    let combined = build_lookbehind_combined_pattern(pattern, &mc.primary);
+                    let combined = build_lookbehind_combined_pattern(
+                        pattern,
+                        &mc.primary,
+                        mc.trailing_lookahead,
+                    );
                     (combined, false)
                 }
                 LookaroundCondition::NegativeLookbehind { pattern, .. } => {
                     // Same as positive, but negative check
-                    let combined = build_lookbehind_combined_pattern(pattern, &mc.primary);
+                    let combined = build_lookbehind_combined_pattern(
+                        pattern,
+                        &mc.primary,
+                        mc.trailing_lookahead,
+                    );
                     (combined, true)
                 }
             };
@@ -3568,11 +3565,11 @@ mod tests {
     fn test_lookbehind_combined_keeps_primary_alternation() {
         // When the primary pattern has top-level alternation, combining it with
         // a lookbehind must produce one branch per primary alternative rather
-        // than the single-branch shortcut (which would drop the alternatives).
+        // than a single branch (which would drop the alternatives).
         let lb = parse_regexp("a").unwrap();
         let primary = parse_regexp("x|y").unwrap();
         assert_eq!(primary.len(), 2);
-        let combined = build_lookbehind_combined_pattern(&lb, &primary);
+        let combined = build_lookbehind_combined_pattern(&lb, &primary, false);
         assert_eq!(combined.len(), 2, "both primary alternatives must survive");
     }
 

@@ -4160,6 +4160,36 @@ fn test_lookahead_condition_leaves_room_for_later_primary_atoms() {
 }
 
 #[test]
+fn test_lookahead_condition_carries_the_lookbehind_prefix() {
+    // (?<=foo)bar(?=baz)baz: the lookbehind accounts for "foo" ahead of the
+    // primary, so the lookahead's condition has to start there too — every
+    // condition is checked against the value from its very first byte.
+    let q = q!("p1" => r#"{"v": [{"regexp": "(?<=foo)bar(?=baz)baz"}]}"#);
+    assert_has_match!(q, r#"{"v": "foobarbaz"}"#, "p1");
+    assert_no_match!(q, r#"{"v": "zzzbarbaz"}"#);
+}
+
+#[test]
+fn test_negative_lookbehind_leaves_the_run_ahead_of_the_primary_open() {
+    // (?<!foo)bar(?=baz) says nothing about what precedes "bar", only that it
+    // is not "foo", so the lookahead's condition must accept any run there.
+    let q = q!("p1" => r#"{"v": [{"regexp": "(?<!foo)bar(?=baz)"}]}"#);
+    assert_has_match!(q, r#"{"v": "zzzbarbaz"}"#, "p1");
+    assert_no_match!(q, r#"{"v": "foobarbaz"}"#);
+}
+
+#[test]
+fn test_lookbehind_condition_allows_for_a_trailing_lookahead() {
+    // (?<=foo)bar(?=baz): the lookahead accounts for "baz" past the primary, so
+    // the lookbehind's condition — "foo" plus the primary — must leave room
+    // for it rather than claim the value ends at "foobar".
+    let q = q!("p1" => r#"{"v": [{"regexp": "(?<=foo)bar(?=baz)"}]}"#);
+    assert_has_match!(q, r#"{"v": "foobarbaz"}"#, "p1");
+    assert_no_match!(q, r#"{"v": "zzzbarbaz"}"#);
+    assert_no_match!(q, r#"{"v": "foobarzzz"}"#);
+}
+
+#[test]
 fn test_negative_lookahead_primary_length_enforced() {
     // foo(?!bar)... needs three characters after "foo", not merely a non-"foobar" value.
     let q = q!("p1" => r#"{"v": [{"regexp": "foo(?!bar)..."}]}"#);
