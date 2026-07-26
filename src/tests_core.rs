@@ -396,6 +396,47 @@ fn test_rebuild_and_clear_reset_segments_tree() {
     );
 }
 
+/// The automaton merges a pattern's fields one at a time, so a pattern rejected
+/// part-way through has already merged the fields ahead of the one that failed.
+/// Those states belong to no pattern the caller holds, and a rebuild is the only
+/// thing that can reclaim them.
+#[test]
+fn test_rebuild_reclaims_states_left_by_a_rejected_add() {
+    const LIVE: &str = r#"{"c": [{"prefix": "q"}]}"#;
+    fn budgeted() -> Quamina<&'static str> {
+        QuaminaBuilder::<&'static str>::new()
+            .with_arena_byte_budget(4_000)
+            .build()
+            .unwrap()
+    }
+
+    let mut q = budgeted();
+    // Fields are merged in lexical order, so "a" lands before "zb" runs the
+    // arena past the budget.
+    let rejected = format!(
+        r#"{{"a": [{{"prefix": "p"}}], "zb": [{{"prefix": "{}"}}]}}"#,
+        "z".repeat(20)
+    );
+    assert!(
+        matches!(
+            q.add_pattern("rejected", &rejected),
+            Err(QuaminaError::PatternTooComplex(_))
+        ),
+        "the oversized field has to be rejected for this test to mean anything"
+    );
+    q.add_pattern("live", LIVE).unwrap();
+
+    q.rebuild();
+
+    let mut live_only = budgeted();
+    live_only.add_pattern("live", LIVE).unwrap();
+    assert_eq!(
+        q.matcher_stats(),
+        live_only.matcher_stats(),
+        "rebuild must leave only what the accepted pattern built"
+    );
+}
+
 /// Patterns whose automaton depends on the order they are added in: merging
 /// these four in a different order yields a matcher that accepts the same
 /// events but has a different state count. Replaying them out of order would

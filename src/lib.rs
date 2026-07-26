@@ -691,7 +691,14 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
         // Route to automaton first — if this fails (e.g. budget exceeded),
         // we must NOT store the pattern in pattern_defs, segments_tree, etc.
         let pattern_fields: Vec<(String, Vec<Matcher>)> = fields.clone().into_iter().collect();
-        self.automaton.add_pattern(x.clone(), &pattern_fields)?;
+        if let Err(e) = self.automaton.add_pattern(x.clone(), &pattern_fields) {
+            // The automaton merges fields one at a time and does not unwind the
+            // ones it merged before the failure. Nothing here records the
+            // pattern, so those states answer to no identifier the caller holds
+            // and only a rebuild can reclaim them.
+            self.automaton_is_stale = true;
+            return Err(e);
+        }
 
         // Automaton accepted — now commit to bookkeeping state
         for field_path in fields.keys() {
