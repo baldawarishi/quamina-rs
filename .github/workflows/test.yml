@@ -86,8 +86,14 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
+      # CI has no criterion baseline to compare against — a fresh checkout
+      # starts with an empty target/criterion, so no run ever reports a change.
+      # What CI gets from this job is that the benchmarks build and run without
+      # panicking, which does not need full measurement time. Regression
+      # detection happens locally, where a baseline exists, and a bare
+      # `cargo bench` there is unaffected by these flags.
       - name: Run matching benchmarks
-        run: cargo bench --bench matching
+        run: cargo bench --bench matching -- --warm-up-time 1 --measurement-time 3 --noplot
       - name: Run memory benchmarks
         run: cargo bench --bench memory --features dhat-heap
 
