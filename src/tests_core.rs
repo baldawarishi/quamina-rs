@@ -3620,6 +3620,117 @@ fn test_matcher_build_mode_reflected_in_stats() {
     );
 }
 
+/// Build a matcher for one pattern under a byte budget and a build mode, run
+/// the given values through it, and report what the frozen matcher came to.
+#[cfg(not(miri))]
+fn stats_under_budget(
+    pattern: &str,
+    budget: usize,
+    mode: MatcherBuildMode,
+    values: impl Iterator<Item = String>,
+) -> MatcherStats {
+    let mut q: Quamina<String> = QuaminaBuilder::new()
+        .with_arena_byte_budget(budget)
+        .build()
+        .unwrap();
+    q.set_matcher_build_mode(mode);
+    q.add_pattern("p".to_string(), pattern).unwrap();
+    for value in values {
+        q.matches_for_event(value.as_bytes()).unwrap();
+    }
+    q.matcher_stats()
+}
+
+/// A regexp whose NFA is small while its DFA is several times larger, so the
+/// budget is what decides whether `BuiltForSpeed` may convert it.
+#[cfg(not(miri))]
+const WIDE_DFA_PATTERN: &str = r#"{"x": [{"regexp": ".*a[ab]{6}"}]}"#;
+
+/// The byte budget admits a pattern on the size of the arena it builds, so the
+/// DFA `BuiltForSpeed` swaps in at freeze time answers to it too: a mode chosen
+/// for speed must not spend memory the caller ruled out. Falling back to the
+/// NFA costs match speed and nothing else, so the pattern still matches.
+///
+/// Skipped under Miri, which never runs the DFA conversion.
+#[cfg(not(miri))]
+#[test]
+fn test_build_mode_speed_leaves_an_over_budget_dfa_unbuilt() {
+    // The DFA for this pattern runs to roughly 175 KB, so a 30 KB budget rules
+    // it out while leaving the NFA it was admitted with well within reach.
+    const TIGHT: usize = 30_000;
+
+    let tight = stats_under_budget(
+        WIDE_DFA_PATTERN,
+        TIGHT,
+        MatcherBuildMode::BuiltForSpeed,
+        std::iter::empty(),
+    );
+    assert!(
+        tight.fanouts > 0,
+        "a DFA the budget has no room for must leave the NFA — and its epsilon closures — in place",
+    );
+    assert!(
+        tight.bytes <= TIGHT,
+        "the frozen matcher must fit the {TIGHT}-byte budget, got {}",
+        tight.bytes,
+    );
+
+    // The budget is what held the conversion back, not the pattern.
+    let roomy = stats_under_budget(
+        WIDE_DFA_PATTERN,
+        10_000_000,
+        MatcherBuildMode::BuiltForSpeed,
+        std::iter::empty(),
+    );
+    assert_eq!(roomy.fanouts, 0, "with room, speed converts to a DFA");
+
+    let mut q: Quamina<String> = QuaminaBuilder::new()
+        .with_arena_byte_budget(TIGHT)
+        .build()
+        .unwrap();
+    q.set_matcher_build_mode(MatcherBuildMode::BuiltForSpeed);
+    q.add_pattern("p".to_string(), WIDE_DFA_PATTERN).unwrap();
+    assert_matches!(q, r#"{"x": "zaababab"}"#, vec!["p"]);
+}
+
+/// The lazy DFA cache is the other way `BuiltForSpeed` spends memory after the
+/// budget has admitted a pattern: a copy of the NFA that caches a transition
+/// table per state as events arrive. How many of those tables it may hold is
+/// the budget's call, so a tight budget buys far fewer of them than a generous
+/// one — and the pattern matches the same either way.
+///
+/// Skipped under Miri, which never runs the DFA conversion.
+#[cfg(not(miri))]
+#[test]
+fn test_lazy_dfa_cache_is_sized_by_the_arena_budget() {
+    let tight = stats_under_budget(
+        LAZY_DFA_PATTERN,
+        30_000,
+        MatcherBuildMode::BuiltForSpeed,
+        lazy_dfa_values(),
+    );
+    let roomy = stats_under_budget(
+        LAZY_DFA_PATTERN,
+        10_000_000,
+        MatcherBuildMode::BuiltForSpeed,
+        lazy_dfa_values(),
+    );
+    assert!(
+        tight.bytes * 2 < roomy.bytes,
+        "a tight budget must cache far fewer transition tables: {} vs {}",
+        tight.bytes,
+        roomy.bytes,
+    );
+
+    let mut q: Quamina<String> = QuaminaBuilder::new()
+        .with_arena_byte_budget(30_000)
+        .build()
+        .unwrap();
+    q.set_matcher_build_mode(MatcherBuildMode::BuiltForSpeed);
+    q.add_pattern("p".to_string(), LAZY_DFA_PATTERN).unwrap();
+    assert_matches!(q, r#"{"x": "zaaaaaaaaaa"}"#, vec!["p"]);
+}
+
 /// A pattern whose subset construction overruns the eager DFA budget falls back
 /// to a lazy DFA: a cache holding its own copy of the NFA plus the DFA states
 /// matching interns as it goes. That is the matcher's memory, so the stats have

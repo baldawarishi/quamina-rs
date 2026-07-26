@@ -870,25 +870,25 @@ impl<X: Clone + Eq + Hash + Send + Sync> ThreadSafeCoreMatcher<X> {
                 // Tier 1: Attempt eager NFA→DFA conversion.
                 let eager_budget =
                     (arena.len() * EAGER_DFA_BUDGET_MULTIPLIER).min(EAGER_DFA_BUDGET_CAP);
-                if let Some((dfa_arena, dfa_start)) = arena.nfa_to_dfa(start, eager_budget) {
+                // The byte budget admitted this pattern on the size of its NFA,
+                // so whatever replaces or supplements that arena answers to the
+                // same cap: a caller who ruled out the memory does not get it
+                // spent behind a mode chosen for speed. Falling back a tier
+                // costs match speed and nothing else.
+                if let Some((dfa_arena, dfa_start)) = arena.nfa_to_dfa(start, eager_budget)
+                    && self.within_arena_budget(dfa_arena.byte_size())
+                {
                     arena = dfa_arena;
                     main_arena_is_nfa = false;
                     arena.flatten_tables();
                     return (arena, dfa_start);
                 }
 
-                // Tier 2: Eager DFA budget exceeded — create a lazy DFA cache,
-                // but only when the NFA is small enough that LazyDfa::new is fast.
-                // Each cached DFA state requires O(nfa_states) work to construct,
-                // so for very large NFAs (e.g. [^u-z]{13} expands to ~229k states)
-                // initialisation takes seconds with no match-time benefit over NFA.
-                // Patterns with nfa_states ≤ EAGER_DFA_BUDGET_CAP initialise in
-                // < 300 µs (empirically ~28 ns/state); beyond that, fall through to
-                // Tier 3 (NFA traversal).
-                if should_build_lazy_dfa(arena.len()) {
-                    let lazy_budget = eager_budget
-                        .saturating_mul(LAZY_DFA_BUDGET_MULTIPLIER)
-                        .min(LAZY_DFA_BUDGET_CAP);
+                // Tier 2: Eager DFA budget exceeded — cache DFA states lazily
+                // instead, for as many states as this NFA and the byte budget
+                // between them allow. None means Tier 3 (NFA traversal).
+                let lazy_budget = self.lazy_dfa_state_budget(eager_budget, &arena);
+                if lazy_budget > 0 {
                     lazy_dfa = Some(Box::new(Mutex::new(LazyDfa::new(
                         arena.clone(),
                         start,
@@ -924,6 +924,39 @@ impl<X: Clone + Eq + Hash + Send + Sync> ThreadSafeCoreMatcher<X> {
             lazy_dfa,
             suffix_arena,
         }
+    }
+
+    /// Whether an arena of `bytes` fits the matcher's cap (0 = unlimited).
+    #[cfg(not(miri))]
+    const fn within_arena_budget(&self, bytes: usize) -> bool {
+        self.arena_byte_budget == 0 || bytes <= self.arena_byte_budget
+    }
+
+    /// How many states a lazy DFA cache over `nfa` may hold; zero means the
+    /// value matcher is better off staying on NFA traversal.
+    ///
+    /// Two things limit it. Building each cached state costs O(nfa_states), so
+    /// a very large NFA (`[^u-z]{13}` expands to ~229k states) would spend
+    /// seconds in `LazyDfa::new` for no match-time gain — those go without a
+    /// cache. And the cache keeps its own copy of the NFA plus a transition
+    /// table per state it caches, so the byte budget has to cover the copy
+    /// first and buys states out of what is left.
+    #[cfg(not(miri))]
+    fn lazy_dfa_state_budget(&self, eager_budget: usize, nfa: &StateArena) -> usize {
+        if !should_build_lazy_dfa(nfa.len()) {
+            return 0;
+        }
+
+        let states = eager_budget
+            .saturating_mul(LAZY_DFA_BUDGET_MULTIPLIER)
+            .min(LAZY_DFA_BUDGET_CAP);
+
+        if self.arena_byte_budget == 0 {
+            return states;
+        }
+
+        let spare = self.arena_byte_budget.saturating_sub(nfa.byte_size());
+        states.min(LazyDfa::states_within_bytes(spare))
     }
 
     /// Match fields against patterns and return matching pattern identifiers.

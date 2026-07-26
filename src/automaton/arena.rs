@@ -487,6 +487,24 @@ impl StateArena {
     /// closure contributes zero.
     pub fn accumulate_matcher_stats(&self, stats: &mut crate::MatcherStats) {
         stats.states += self.states.len();
+        stats.bytes += self.byte_size();
+        for state in &self.states {
+            let fanout = state.closure_len as usize;
+            stats.fanouts += fanout;
+            stats.max_fanout = stats.max_fanout.max(fanout);
+        }
+    }
+
+    /// Bytes this arena holds, flat buffers plus every per-state buffer that
+    /// spilled past its inline slots.
+    ///
+    /// [`estimated_byte_size`](Self::estimated_byte_size) covers only the flat
+    /// buffers and is O(1); this walks the states, so it is the figure to use
+    /// where an arena's real footprint matters more than the cost of measuring
+    /// it. Transition tables can dwarf the flat buffers — several times over for
+    /// a DFA — so the two are far apart for anything but a trivial automaton.
+    #[must_use]
+    pub fn byte_size(&self) -> usize {
         let mut bytes = self.estimated_byte_size();
         for state in &self.states {
             let table = &state.table;
@@ -504,11 +522,8 @@ impl StateArena {
                 bytes +=
                     state.field_transitions.capacity() * std::mem::size_of::<Arc<FieldMatcher>>();
             }
-            let fanout = state.closure_len as usize;
-            stats.fanouts += fanout;
-            stats.max_fanout = stats.max_fanout.max(fanout);
         }
-        stats.bytes += bytes;
+        bytes
     }
 
     /// Get a state reference without bounds checking.
@@ -1328,7 +1343,13 @@ impl LazyDfa {
         }
 
         let state = LazyDfaState {
-            transitions: vec![StateId::NONE; BYTE_CEILING],
+            // Only a cached state ever has its table written, so a state past
+            // the budget goes without one instead of holding 256 idle entries.
+            transitions: if can_cache {
+                vec![StateId::NONE; BYTE_CEILING]
+            } else {
+                Vec::new()
+            },
             field_transition_ptrs,
             cached: can_cache,
             accel: None,
@@ -1353,9 +1374,12 @@ impl LazyDfa {
     }
 
     fn step(&mut self, state_idx: StateId, byte: u8, scratch: &mut LazyDfaScratch) -> StateId {
-        let cached = self.states[state_idx.index()].transitions[byte as usize];
-        if !cached.is_none() {
-            return cached;
+        let state = &self.states[state_idx.index()];
+        if state.cached {
+            let cached = state.transitions[byte as usize];
+            if !cached.is_none() {
+                return cached;
+            }
         }
 
         // Compute the next NFA state-set for this byte
@@ -1375,7 +1399,9 @@ impl LazyDfa {
         }
 
         if scratch.next_nfa_states.is_empty() {
-            self.states[state_idx.index()].transitions[byte as usize] = StateId::DEAD;
+            if self.states[state_idx.index()].cached {
+                self.states[state_idx.index()].transitions[byte as usize] = StateId::DEAD;
+            }
             return StateId::DEAD;
         }
 
@@ -1444,6 +1470,12 @@ impl LazyDfa {
     /// Arena statistics for the copy of the NFA the cache holds.
     pub(crate) fn nfa_arena_stats(&self) -> Stats {
         self.nfa_arena.stats()
+    }
+
+    /// How many states the cache may hold within `bytes`, for sizing its state
+    /// budget against a byte cap.
+    pub(crate) const fn states_within_bytes(bytes: usize) -> usize {
+        bytes / (size_of::<LazyDfaState>() + BYTE_CEILING * size_of::<StateId>())
     }
 
     /// Estimated bytes held by the interned DFA states, excluding the NFA copy.
@@ -10236,6 +10268,18 @@ mod lazy_dfa_tests {
             grown > fresh,
             "states interned while matching must add to the estimate: {grown} vs {fresh}",
         );
+    }
+
+    /// A byte allowance buys cached states at the price of one: the state
+    /// record plus the full transition table that is the point of caching it.
+    /// Anything short of that price buys none.
+    #[test]
+    fn test_lazy_dfa_states_within_bytes_prices_a_state_at_its_table() {
+        let one_state = size_of::<LazyDfaState>() + BYTE_CEILING * size_of::<StateId>();
+
+        assert_eq!(LazyDfa::states_within_bytes(one_state), 1);
+        assert_eq!(LazyDfa::states_within_bytes(one_state - 1), 0);
+        assert_eq!(LazyDfa::states_within_bytes(one_state * 9), 9);
     }
 
     /// The cache's figures are added on top of whatever the walk has tallied so
