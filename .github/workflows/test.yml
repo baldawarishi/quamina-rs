@@ -24,17 +24,60 @@ jobs:
       - name: Check benchmarks compile
         run: cargo bench --no-run
 
+  # Miri interprets every test, so the cost is a flat per-test tax spread evenly
+  # across the suite rather than a few hot spots that could be trimmed. Splitting
+  # the lib tests round-robin across parallel shards is what keeps the job inside
+  # its timeout; to split further, raise SHARDS and extend the matrix together.
   miri:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2]
+    env:
+      SHARDS: 3
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@nightly
         with:
           toolchain: nightly-2026-01-26
           components: miri
-      - name: Run Miri
-        run: cargo +nightly-2026-01-26 miri test
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: miri
+      - name: Cache Miri sysroot
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/miri
+          key: miri-sysroot-${{ runner.os }}-nightly-2026-01-26
+      - name: Run Miri (shard ${{ matrix.shard }}/3)
+        shell: bash
+        env:
+          SHARD: ${{ matrix.shard }}
+        run: |
+          set -euo pipefail
+          # The list has to come from a Miri build: cfg(not(miri)) gates mean the
+          # suite has different members here than under a plain cargo test.
+          cargo +nightly-2026-01-26 miri test --lib -- --list \
+            | sed -n 's/: test$//p' > all-tests.txt
+          test -s all-tests.txt
+          awk -v n="$SHARDS" -v k="$SHARD" 'NR % n == k' all-tests.txt > shard.txt
+          expected=$(awk 'END {print NR}' shard.txt)
+          cargo +nightly-2026-01-26 miri test --lib -- \
+            --exact $(tr '\n' ' ' < shard.txt) 2>&1 | tee out.txt
+          # libtest exits 0 when a filter matches nothing, so without this check a
+          # shard that ran none of its tests would still report green.
+          grep -q "running $expected tests" out.txt \
+            || { echo "shard $SHARD: expected $expected tests, filters matched a different count"; exit 1; }
+      # Neither of these is worth sharding: the doctests take a few seconds and the
+      # integration target's only test is cfg-ignored under Miri.
+      - name: Run Miri on doctests
+        if: matrix.shard == 0
+        run: cargo +nightly-2026-01-26 miri test --doc
+      - name: Run Miri on integration tests
+        if: matrix.shard == 0
+        run: cargo +nightly-2026-01-26 miri test --test no_alloc_nfa_step
 
   fuzz:
     runs-on: ubuntu-latest
