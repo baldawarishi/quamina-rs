@@ -26,6 +26,7 @@ Style inspired by [ripgrep's CHANGELOG](https://github.com/BurntSushi/ripgrep/bl
 - Removed the runtime memory-budget API (`get_memory_budget`/`set_memory_budget`), matching Go upstream dropping it; the build-time `QuaminaBuilder::with_arena_byte_budget` cap remains (#152)
 
 ### Fixed
+- `BuiltForSpeed` now converts the automata behind a lookaround regexp — the primary and each condition — instead of leaving them as NFAs. The mode was a no-op for such a pattern: it froze byte-for-byte identical to `BuiltForComfort`, matching and reporting the same either way (#188)
 - Documented what `with_arena_byte_budget` actually caps: the automaton for any one field, not the matcher's total memory. Patterns spread across fields add up past it, and admission measures an arena's flat buffers, so an accepted arena reports more than the budget in `matcher_stats()` (#187)
 - `BuiltForSpeed` now holds its freeze-time DFA to the arena byte budget, keeping the NFA when the converted automaton has no room, and sizes the lazy DFA cache by what the budget leaves over. Previously the conversion ignored the budget: a pattern admitted as a 25 KB NFA under a 30 KB cap came back as a 175 KB DFA, and its cache could reach 400 KB as events arrived (#186)
 - The lazy DFA cache no longer allocates a 256-entry transition table for a state it declines to cache; only a cached state's table is ever written, so the rest was 1 KB apiece of untouched memory (#186)

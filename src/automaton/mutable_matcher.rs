@@ -48,6 +48,9 @@ pub struct ConditionNfa {
     pub start: StateId,
     /// True for negative conditions ((?!...) or (?<!...))
     pub is_negative: bool,
+    /// Whether `arena` still holds epsilon transitions, so traversal must take
+    /// the NFA path. `BuiltForSpeed` clears it by converting the arena at freeze.
+    pub is_nfa: bool,
 }
 
 /// Arena NFA with conditions for multi-condition patterns (lookarounds).
@@ -58,10 +61,33 @@ pub struct ConditionNfa {
 pub struct MultiConditionNfa {
     pub primary_arena: StateArena,
     pub primary_start: StateId,
+    /// Whether `primary_arena` still holds epsilon transitions; see
+    /// [`ConditionNfa::is_nfa`].
+    pub primary_is_nfa: bool,
     /// Field matcher pointer for transition mapping
     pub field_matcher_ptr: *const FieldMatcher,
     /// Conditions to verify after primary matches
     pub conditions: Vec<ConditionNfa>,
+}
+
+/// Run one of a lookaround pattern's automata over the whole value.
+///
+/// The primary and each condition are checked against the value from its first
+/// byte, and `BuiltForSpeed` may have converted any of them to a DFA at freeze
+/// time, so the traversal follows the arena rather than the caller.
+pub fn traverse_lookaround_arena(
+    arena: &StateArena,
+    start: StateId,
+    is_nfa: bool,
+    value: &[u8],
+    bufs: &mut ArenaNfaBuffers,
+) {
+    if is_nfa {
+        traverse_arena_nfa(arena, start, value, bufs);
+    } else {
+        bufs.clear();
+        traverse_arena_dfa(arena, start, value, &mut bufs.transitions);
+    }
 }
 
 /// Build a combined pattern for lookbehind verification.
@@ -1078,10 +1104,12 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
 
             // Build automaton for the combined pattern (with quote transitions)
             let (arena, start, _) = make_regexp_nfa_arena(combined_pattern);
+            let is_nfa = arena.is_nondeterministic();
             condition_nfas.push(ConditionNfa {
                 arena,
                 start,
                 is_negative,
+                is_nfa,
             });
         }
 
@@ -1098,11 +1126,13 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
         }
 
         // Store in multi_condition_nfas for condition verification during matching
+        let primary_is_nfa = primary_arena.is_nondeterministic();
         self.multi_condition_nfas
             .borrow_mut()
             .push(MultiConditionNfa {
                 primary_arena,
                 primary_start,
+                primary_is_nfa,
                 field_matcher_ptr: registered.transition_key,
                 conditions: condition_nfas,
             });
@@ -1288,9 +1318,10 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
         for mc_nfa in multi_condition_nfas.iter() {
             // The assertions qualify a match, they don't stand in for one: unless
             // the value matches the primary there is nothing to qualify.
-            traverse_arena_nfa(
+            traverse_lookaround_arena(
                 &mc_nfa.primary_arena,
                 mc_nfa.primary_start,
+                mc_nfa.primary_is_nfa,
                 value_to_match,
                 &mut condition_bufs,
             );
@@ -1301,9 +1332,10 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
             let mut all_conditions_pass = true;
 
             for condition in &mc_nfa.conditions {
-                traverse_arena_nfa(
+                traverse_lookaround_arena(
                     &condition.arena,
                     condition.start,
+                    condition.is_nfa,
                     value_to_match,
                     &mut condition_bufs,
                 );

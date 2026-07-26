@@ -3620,6 +3620,88 @@ fn test_matcher_build_mode_reflected_in_stats() {
     );
 }
 
+/// A lookaround pattern is a regexp too, so `BuiltForSpeed` has to convert the
+/// automata behind it — the primary and each condition — rather than leave the
+/// mode with nothing to do. The conditions are where the epsilon closures live
+/// here, so converting them shows up as fanout going to zero.
+///
+/// Skipped under Miri, which never runs the DFA conversion.
+#[cfg(not(miri))]
+#[test]
+fn test_build_mode_speed_converts_lookaround_automata() {
+    // The condition's DFA runs to several times its NFA, so converting it is
+    // real work and not a relabelling.
+    let pattern = r#"{"x": [{"regexp": "(?=.*a[ab]{5}).*bar.*"}]}"#;
+
+    let stats_for = |mode: MatcherBuildMode| {
+        let mut q: Quamina<String> = Quamina::new();
+        q.set_matcher_build_mode(mode);
+        q.add_pattern("p".to_string(), pattern).unwrap();
+        assert_matches!(q, r#"{"x": "aababbar"}"#, vec!["p"]);
+        assert_no_match!(q, r#"{"x": "zzzbar"}"#);
+        q.matcher_stats()
+    };
+
+    let comfort = stats_for(MatcherBuildMode::BuiltForComfort);
+    let speed = stats_for(MatcherBuildMode::BuiltForSpeed);
+
+    assert!(
+        comfort.fanouts > 0,
+        "BuiltForComfort should keep the lookaround automata as NFAs",
+    );
+    assert_eq!(
+        (speed.fanouts, speed.max_fanout),
+        (0, 0),
+        "BuiltForSpeed should convert them to DFAs, closures and all",
+    );
+}
+
+/// Converting a lookaround pattern's automata must not change what it matches:
+/// every shape — lookahead and lookbehind, positive and negative, assertions
+/// mid-pattern and closing it — decides the same values either way.
+///
+/// Skipped under Miri, which never runs the DFA conversion, so both modes would
+/// be answering off the same NFAs.
+#[cfg(not(miri))]
+#[test]
+fn test_lookaround_decides_the_same_values_under_both_build_modes() {
+    const CASES: [(&str, &[(&str, bool)]); 6] = [
+        ("foo(?=bar)bar", &[("foobar", true), ("foobaz", false)]),
+        ("foo(?!bar)baz", &[("foobaz", true), ("foobarbaz", false)]),
+        ("(?<=pre)fix", &[("prefix", true), ("suffix", false)]),
+        ("(?<!pre)fix", &[("suffix", true), ("prefix", false)]),
+        (
+            "(?=.*foo).*bar.*",
+            &[("foobar", true), ("foozzz", false), ("zzzbar", false)],
+        ),
+        (
+            "(?<=foo)bar(?=baz)baz",
+            &[("foobarbaz", true), ("zzzbarbaz", false)],
+        ),
+    ];
+
+    for (regexp, cases) in CASES {
+        let pattern = format!(r#"{{"x": [{{"regexp": "{regexp}"}}]}}"#);
+        for mode in [
+            MatcherBuildMode::BuiltForComfort,
+            MatcherBuildMode::BuiltForSpeed,
+        ] {
+            let mut q: Quamina<String> = Quamina::new();
+            q.set_matcher_build_mode(mode);
+            q.add_pattern("p".to_string(), &pattern).unwrap();
+
+            for (value, should_match) in cases {
+                let event = format!(r#"{{"x": "{value}"}}"#);
+                let matched = q.has_matches(event.as_bytes()).unwrap();
+                assert_eq!(
+                    matched, *should_match,
+                    "{regexp} on {value:?} under {mode:?}",
+                );
+            }
+        }
+    }
+}
+
 /// Build a matcher for one pattern under a byte budget and a build mode, run
 /// the given values through it, and report what the frozen matcher came to.
 #[cfg(not(miri))]
