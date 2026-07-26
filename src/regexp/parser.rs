@@ -82,6 +82,17 @@ impl Default for QuantifiedAtom {
 }
 
 impl QuantifiedAtom {
+    /// A `.*` atom, matching any run of characters including none.
+    #[must_use]
+    pub fn any_run() -> Self {
+        Self {
+            is_dot: true,
+            quant_min: 0,
+            quant_max: REGEXP_QUANTIFIER_MAX,
+            ..Self::default()
+        }
+    }
+
     /// Returns true if this atom matches exactly once (no quantifier).
     #[inline]
     #[must_use]
@@ -116,6 +127,31 @@ pub type Branch = Vec<QuantifiedAtom>;
 
 /// The root of a parsed regexp (alternatives separated by |).
 pub type Root = Vec<Branch>;
+
+/// Concatenate two trees: `a|b` followed by `c|d` gives `ac|ad|bc|bd`.
+///
+/// Every branch on the left is paired with every branch on the right. A tree
+/// with no branches stands for empty text, so the other side comes back
+/// unchanged.
+#[must_use]
+pub fn concat_roots(left: &[Branch], right: &[Branch]) -> Root {
+    if left.is_empty() {
+        return right.to_vec();
+    }
+    if right.is_empty() {
+        return left.to_vec();
+    }
+
+    let mut branches = Root::with_capacity(left.len() * right.len());
+    for left_branch in left {
+        for right_branch in right {
+            let mut combined = left_branch.clone();
+            combined.extend(right_branch.iter().cloned());
+            branches.push(combined);
+        }
+    }
+    branches
+}
 
 /// Type of lookaround assertion
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

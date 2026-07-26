@@ -335,6 +335,164 @@ fn test_rebuild_after_delete() {
     assert_no_match!(q, r#"{"status": "active"}"#);
 }
 
+/// A delete drops its definitions for good. Adding the id again must not bring
+/// them back, or the definition the caller deleted would keep matching in every
+/// matcher built from the stored definitions afterwards.
+#[test]
+fn test_re_add_does_not_revive_deleted_definition() {
+    let mut q = Quamina::new();
+    q.add_pattern("p", r#"{"x": ["old"]}"#).unwrap();
+    q.delete_patterns(&"p").unwrap();
+    q.add_pattern("p", r#"{"x": ["new"]}"#).unwrap();
+
+    let clone = q.clone();
+    assert_no_match!(
+        clone,
+        r#"{"x": "old"}"#,
+        "a clone must not revive the deleted definition"
+    );
+    assert_has_match!(clone, r#"{"x": "new"}"#, "p");
+
+    // The re-add left nothing in the deleted set, so the rebuild has to notice
+    // the stale definition some other way.
+    q.rebuild();
+    assert_no_match!(
+        q,
+        r#"{"x": "old"}"#,
+        "rebuild must purge the deleted definition"
+    );
+    assert_has_match!(q, r#"{"x": "new"}"#, "p");
+}
+
+/// The segments tree decides which fields the flattener bothers to extract, so
+/// a rebuild or a clear that leaves it alone keeps paying for fields no live
+/// pattern mentions any more.
+#[test]
+fn test_rebuild_and_clear_reset_segments_tree() {
+    let mut q = Quamina::new();
+    q.add_pattern("keep", r#"{"a": ["x"]}"#).unwrap();
+    q.add_pattern("drop", r#"{"b": ["y"]}"#).unwrap();
+    assert_eq!(q.segments_tree().fields_count(), 2);
+
+    q.delete_patterns(&"drop").unwrap();
+    assert_eq!(
+        q.clone().segments_tree().fields_count(),
+        1,
+        "a clone's tree must cover only the fields its live patterns use"
+    );
+
+    q.rebuild();
+    assert_eq!(
+        q.segments_tree().fields_count(),
+        1,
+        "rebuild must drop the field only the deleted pattern used"
+    );
+
+    q.clear();
+    assert_eq!(
+        q.segments_tree().fields_count(),
+        0,
+        "clear must reset the tree along with the patterns"
+    );
+}
+
+/// The automaton merges a pattern's fields one at a time, so a pattern rejected
+/// part-way through has already merged the fields ahead of the one that failed.
+/// Those states belong to no pattern the caller holds, and a rebuild is the only
+/// thing that can reclaim them.
+#[test]
+fn test_rebuild_reclaims_states_left_by_a_rejected_add() {
+    const LIVE: &str = r#"{"c": [{"prefix": "q"}]}"#;
+    fn budgeted() -> Quamina<&'static str> {
+        QuaminaBuilder::<&'static str>::new()
+            .with_arena_byte_budget(4_000)
+            .build()
+            .unwrap()
+    }
+
+    let mut q = budgeted();
+    // Fields are merged in lexical order, so "a" lands before "zb" runs the
+    // arena past the budget.
+    let rejected = format!(
+        r#"{{"a": [{{"prefix": "p"}}], "zb": [{{"prefix": "{}"}}]}}"#,
+        "z".repeat(20)
+    );
+    assert!(
+        matches!(
+            q.add_pattern("rejected", &rejected),
+            Err(QuaminaError::PatternTooComplex(_))
+        ),
+        "the oversized field has to be rejected for this test to mean anything"
+    );
+    q.add_pattern("live", LIVE).unwrap();
+
+    q.rebuild();
+
+    let mut live_only = budgeted();
+    live_only.add_pattern("live", LIVE).unwrap();
+    assert_eq!(
+        q.matcher_stats(),
+        live_only.matcher_stats(),
+        "rebuild must leave only what the accepted pattern built"
+    );
+}
+
+/// Patterns whose automaton depends on the order they are added in: merging
+/// these four in a different order yields a matcher that accepts the same
+/// events but has a different state count. Replaying them out of order would
+/// therefore hand back a matcher the caller never built.
+const ORDER_SENSITIVE_PATTERNS: [(&str, &str); 4] = [
+    ("p1", r#"{"a": [{"regexp": "a+b"}]}"#),
+    ("p2", r#"{"a": [{"wildcard": "*foo*"}]}"#),
+    ("p3", r#"{"a": ["literal"]}"#),
+    ("p4", r#"{"a": [{"regexp": "a.*c"}]}"#),
+];
+
+/// Drop `deleted` from a matcher holding all of `ORDER_SENSITIVE_PATTERNS`,
+/// rebuild, and require the result to be the matcher that adding only the
+/// survivors — in the same order — would have built.
+fn assert_rebuild_matches_fresh_adds(deleted: &'static str) {
+    let mut q = Quamina::new();
+    for (id, pattern) in ORDER_SENSITIVE_PATTERNS {
+        q.add_pattern(id, pattern).unwrap();
+    }
+    q.delete_patterns(&deleted).unwrap();
+    q.rebuild();
+
+    let mut survivors_only = Quamina::new();
+    for (id, pattern) in ORDER_SENSITIVE_PATTERNS {
+        if id != deleted {
+            survivors_only.add_pattern(id, pattern).unwrap();
+        }
+    }
+
+    assert_eq!(
+        q.matcher_stats(),
+        survivors_only.matcher_stats(),
+        "rebuild after deleting {deleted} must produce the matcher the surviving adds built"
+    );
+}
+
+// MIRI SKIP RATIONALE: builds eight regexp/wildcard matchers, ~58s under Miri.
+// Coverage: test_rebuild_replays_patterns_in_add_order_miri_friendly runs the
+// same check for a single deletion.
+#[test]
+#[cfg_attr(miri, ignore)]
+fn test_rebuild_replays_patterns_in_add_order() {
+    for (deleted, _) in ORDER_SENSITIVE_PATTERNS {
+        assert_rebuild_matches_fresh_adds(deleted);
+    }
+}
+
+/// Miri-only: checks one deletion instead of all four. Dropping "p1" is the
+/// case where the surviving patterns' hashed order and their add order
+/// disagree, so it is the one that catches an unordered replay.
+#[test]
+#[cfg(miri)]
+fn test_rebuild_replays_patterns_in_add_order_miri_friendly() {
+    assert_rebuild_matches_fresh_adds("p1");
+}
+
 #[test]
 fn test_pruner_stats() {
     let mut q = Quamina::new();
@@ -585,6 +743,20 @@ fn test_clone_for_snapshot() {
 
     // Original has p2
     assert_has_match!(q, r#"{"status": "pending"}"#, "p2");
+}
+
+#[test]
+fn test_clone_replays_patterns_in_add_order() {
+    let mut q = Quamina::new();
+    for (id, pattern) in ORDER_SENSITIVE_PATTERNS {
+        q.add_pattern(id, pattern).unwrap();
+    }
+
+    assert_eq!(
+        q.clone().matcher_stats(),
+        q.matcher_stats(),
+        "a clone must be the same matcher, not a re-merge in another order"
+    );
 }
 
 #[test]
@@ -3445,5 +3617,397 @@ fn test_matcher_build_mode_reflected_in_stats() {
         (comfort.states, comfort.bytes, comfort.fanouts),
         (speed.states, speed.bytes, speed.fanouts),
         "the two modes must report different matcher sizes",
+    );
+}
+
+/// `BuiltForSpeed` has to convert the automata behind a lookaround pattern, the
+/// primary and each condition alike. The conditions are where the epsilon
+/// closures live here, so converting them shows up as fanout going to zero.
+///
+/// Skipped under Miri, which never runs the DFA conversion.
+#[cfg(not(miri))]
+#[test]
+fn test_build_mode_speed_converts_lookaround_automata() {
+    // The condition's DFA runs to several times its NFA, so converting it is
+    // real work and not a relabelling.
+    let pattern = r#"{"x": [{"regexp": "(?=.*a[ab]{5}).*bar.*"}]}"#;
+
+    let stats_for = |mode: MatcherBuildMode| {
+        let mut q: Quamina<String> = Quamina::new();
+        q.set_matcher_build_mode(mode);
+        q.add_pattern("p".to_string(), pattern).unwrap();
+        assert_matches!(q, r#"{"x": "aababbar"}"#, vec!["p"]);
+        assert_no_match!(q, r#"{"x": "zzzbar"}"#);
+        q.matcher_stats()
+    };
+
+    let comfort = stats_for(MatcherBuildMode::BuiltForComfort);
+    let speed = stats_for(MatcherBuildMode::BuiltForSpeed);
+
+    assert!(
+        comfort.fanouts > 0,
+        "BuiltForComfort should keep the lookaround automata as NFAs",
+    );
+    assert_eq!(
+        (speed.fanouts, speed.max_fanout),
+        (0, 0),
+        "BuiltForSpeed should convert them to DFAs, closures and all",
+    );
+}
+
+/// Converting a lookaround pattern's automata must not change what it matches:
+/// every shape — lookahead and lookbehind, positive and negative, assertions
+/// mid-pattern and closing it — decides the same values either way.
+///
+/// Skipped under Miri, which never runs the DFA conversion, so both modes would
+/// be answering off the same NFAs.
+#[cfg(not(miri))]
+#[test]
+fn test_lookaround_decides_the_same_values_under_both_build_modes() {
+    const CASES: [(&str, &[(&str, bool)]); 6] = [
+        ("foo(?=bar)bar", &[("foobar", true), ("foobaz", false)]),
+        ("foo(?!bar)baz", &[("foobaz", true), ("foobarbaz", false)]),
+        ("(?<=pre)fix", &[("prefix", true), ("suffix", false)]),
+        ("(?<!pre)fix", &[("suffix", true), ("prefix", false)]),
+        (
+            "(?=.*foo).*bar.*",
+            &[("foobar", true), ("foozzz", false), ("zzzbar", false)],
+        ),
+        (
+            "(?<=foo)bar(?=baz)baz",
+            &[("foobarbaz", true), ("zzzbarbaz", false)],
+        ),
+    ];
+
+    for (regexp, cases) in CASES {
+        let pattern = format!(r#"{{"x": [{{"regexp": "{regexp}"}}]}}"#);
+        for mode in [
+            MatcherBuildMode::BuiltForComfort,
+            MatcherBuildMode::BuiltForSpeed,
+        ] {
+            let mut q: Quamina<String> = Quamina::new();
+            q.set_matcher_build_mode(mode);
+            q.add_pattern("p".to_string(), &pattern).unwrap();
+
+            for (value, should_match) in cases {
+                let event = format!(r#"{{"x": "{value}"}}"#);
+                let matched = q.has_matches(event.as_bytes()).unwrap();
+                assert_eq!(
+                    matched, *should_match,
+                    "{regexp} on {value:?} under {mode:?}",
+                );
+            }
+        }
+    }
+}
+
+/// Build a matcher for one pattern under a byte budget and a build mode, run
+/// the given values through it, and report what the frozen matcher came to.
+#[cfg(not(miri))]
+fn stats_under_budget(
+    pattern: &str,
+    budget: usize,
+    mode: MatcherBuildMode,
+    values: impl Iterator<Item = String>,
+) -> MatcherStats {
+    let mut q: Quamina<String> = QuaminaBuilder::new()
+        .with_arena_byte_budget(budget)
+        .build()
+        .unwrap();
+    q.set_matcher_build_mode(mode);
+    q.add_pattern("p".to_string(), pattern).unwrap();
+    for value in values {
+        q.matches_for_event(value.as_bytes()).unwrap();
+    }
+    q.matcher_stats()
+}
+
+/// A regexp whose NFA is small while its DFA is several times larger, so the
+/// budget is what decides whether `BuiltForSpeed` may convert it.
+#[cfg(not(miri))]
+const WIDE_DFA_PATTERN: &str = r#"{"x": [{"regexp": ".*a[ab]{6}"}]}"#;
+
+/// The byte budget admits a pattern on the size of the arena it builds, so the
+/// DFA `BuiltForSpeed` swaps in at freeze time answers to it too. Falling back
+/// to the NFA costs match speed and nothing else, so the pattern still matches.
+///
+/// Skipped under Miri, which never runs the DFA conversion.
+#[cfg(not(miri))]
+#[test]
+fn test_build_mode_speed_leaves_an_over_budget_dfa_unbuilt() {
+    // The DFA for this pattern runs to roughly 175 KB, so a 30 KB budget rules
+    // it out while leaving the NFA it was admitted with well within reach.
+    const TIGHT: usize = 30_000;
+
+    let tight = stats_under_budget(
+        WIDE_DFA_PATTERN,
+        TIGHT,
+        MatcherBuildMode::BuiltForSpeed,
+        std::iter::empty(),
+    );
+    assert!(
+        tight.fanouts > 0,
+        "a DFA the budget has no room for must leave the NFA — and its epsilon closures — in place",
+    );
+    assert!(
+        tight.bytes <= TIGHT,
+        "the frozen matcher must fit the {TIGHT}-byte budget, got {}",
+        tight.bytes,
+    );
+
+    // The budget is what held the conversion back, not the pattern.
+    let roomy = stats_under_budget(
+        WIDE_DFA_PATTERN,
+        10_000_000,
+        MatcherBuildMode::BuiltForSpeed,
+        std::iter::empty(),
+    );
+    assert_eq!(roomy.fanouts, 0, "with room, speed converts to a DFA");
+
+    let mut q: Quamina<String> = QuaminaBuilder::new()
+        .with_arena_byte_budget(TIGHT)
+        .build()
+        .unwrap();
+    q.set_matcher_build_mode(MatcherBuildMode::BuiltForSpeed);
+    q.add_pattern("p".to_string(), WIDE_DFA_PATTERN).unwrap();
+    assert_matches!(q, r#"{"x": "zaababab"}"#, vec!["p"]);
+}
+
+/// The lazy DFA cache is the other way `BuiltForSpeed` spends memory after the
+/// budget has admitted a pattern: a copy of the NFA that caches a transition
+/// table per state as events arrive. How many of those tables it may hold is
+/// the budget's call, so a tight budget buys far fewer of them than a generous
+/// one — and the pattern matches the same either way.
+///
+/// Skipped under Miri, which never runs the DFA conversion.
+#[cfg(not(miri))]
+#[test]
+fn test_lazy_dfa_cache_is_sized_by_the_arena_budget() {
+    let tight = stats_under_budget(
+        LAZY_DFA_PATTERN,
+        30_000,
+        MatcherBuildMode::BuiltForSpeed,
+        lazy_dfa_values(),
+    );
+    let roomy = stats_under_budget(
+        LAZY_DFA_PATTERN,
+        10_000_000,
+        MatcherBuildMode::BuiltForSpeed,
+        lazy_dfa_values(),
+    );
+    assert!(
+        tight.bytes * 2 < roomy.bytes,
+        "a tight budget must cache far fewer transition tables: {} vs {}",
+        tight.bytes,
+        roomy.bytes,
+    );
+
+    let mut q: Quamina<String> = QuaminaBuilder::new()
+        .with_arena_byte_budget(30_000)
+        .build()
+        .unwrap();
+    q.set_matcher_build_mode(MatcherBuildMode::BuiltForSpeed);
+    q.add_pattern("p".to_string(), LAZY_DFA_PATTERN).unwrap();
+    assert_matches!(q, r#"{"x": "zaaaaaaaaaa"}"#, vec!["p"]);
+}
+
+/// A pattern whose subset construction overruns the eager DFA budget falls back
+/// to a lazy DFA: a cache holding its own copy of the NFA plus the DFA states
+/// matching interns as it goes. That is the matcher's memory, so the stats have
+/// to report it — including the part that only appears once events flow.
+///
+/// Skipped under Miri, which never runs the DFA conversion, so no lazy cache
+/// would exist to account for.
+#[cfg(not(miri))]
+#[test]
+fn test_matcher_stats_counts_the_lazy_dfa() {
+    let mut comfort: Quamina<String> = Quamina::new();
+    comfort
+        .add_pattern("p".to_string(), LAZY_DFA_PATTERN)
+        .unwrap();
+    let comfort_bytes = comfort.matcher_stats().bytes;
+
+    let mut speed: Quamina<String> = Quamina::new();
+    speed.set_matcher_build_mode(MatcherBuildMode::BuiltForSpeed);
+    speed
+        .add_pattern("p".to_string(), LAZY_DFA_PATTERN)
+        .unwrap();
+    let frozen = speed.matcher_stats();
+    assert!(
+        frozen.bytes > comfort_bytes,
+        "the lazy cache's copy of the NFA is memory comfort mode never spends: {} vs {comfort_bytes}",
+        frozen.bytes,
+    );
+
+    for value in lazy_dfa_values() {
+        speed.matches_for_event(value.as_bytes()).unwrap();
+    }
+    let filled = speed.matcher_stats();
+    assert!(
+        filled.bytes > frozen.bytes,
+        "DFA states interned while matching must show up in bytes: {} vs {}",
+        filled.bytes,
+        frozen.bytes,
+    );
+    assert!(
+        filled.states > frozen.states,
+        "those states must show up in the state count too: {} vs {}",
+        filled.states,
+        frozen.states,
+    );
+}
+
+/// The lazy cache owns a full copy of the NFA arena, so the aggregate arena
+/// figures have to count it alongside the arena it was cloned from.
+///
+/// Skipped under Miri for the same reason as
+/// `test_matcher_stats_counts_the_lazy_dfa`.
+#[cfg(not(miri))]
+#[test]
+fn test_arena_stats_counts_the_lazy_dfa_arena() {
+    let mut comfort: Quamina<String> = Quamina::new();
+    comfort
+        .add_pattern("p".to_string(), LAZY_DFA_PATTERN)
+        .unwrap();
+    comfort.matches_for_event(br#"{"x": "aab"}"#).unwrap();
+
+    let mut speed: Quamina<String> = Quamina::new();
+    speed.set_matcher_build_mode(MatcherBuildMode::BuiltForSpeed);
+    speed
+        .add_pattern("p".to_string(), LAZY_DFA_PATTERN)
+        .unwrap();
+    speed.matches_for_event(br#"{"x": "aab"}"#).unwrap();
+
+    assert!(
+        speed.arena_stats().state_count > comfort.arena_stats().state_count,
+        "the cache's NFA copy is a second arena: {:?} vs {:?}",
+        speed.arena_stats().state_count,
+        comfort.arena_stats().state_count,
+    );
+}
+
+/// A regexp whose DFA is far larger than its NFA, so `BuiltForSpeed` overruns
+/// the eager conversion budget and settles for a lazy DFA cache.
+#[cfg(not(miri))]
+const LAZY_DFA_PATTERN: &str = r#"{"x": [{"regexp": ".*a[ab]{9}"}]}"#;
+
+/// Values that walk [`LAZY_DFA_PATTERN`] down distinct byte paths, so matching
+/// them interns a fresh DFA state for each.
+#[cfg(not(miri))]
+fn lazy_dfa_values() -> impl Iterator<Item = String> {
+    (0..64u32).map(|bits| {
+        let tail: String = (0..9)
+            .map(|i| if bits >> i & 1 == 0 { 'a' } else { 'b' })
+            .collect();
+        format!(r#"{{"x": "a{tail}"}}"#)
+    })
+}
+
+/// Four wildcard shapes — interior, prefix, suffix, and a second interior —
+/// merged into one field's value matcher, so a mode applied to them covers every
+/// automaton that matcher builds.
+const BUILD_MODE_WILDCARDS: [(&str, &str); 4] = [
+    ("p1", r#"{"x": [{"wildcard": "t*ortilla"}]}"#),
+    ("p2", r#"{"x": [{"wildcard": "tortilla*"}]}"#),
+    ("p3", r#"{"x": [{"wildcard": "*tortilla"}]}"#),
+    ("p4", r#"{"x": [{"wildcard": "tortil*la"}]}"#),
+];
+
+/// Replaying the live patterns — into a clone, or into the matcher a rebuild
+/// installs — has to carry the build mode along, or the replayed matcher freezes
+/// back to comfort's NFAs and comes out a different size than the one the caller
+/// built. Mirrors Go upstream's TestPrunerBuildMode, which pins the byte count
+/// across a forced rebuild. Go stores a mode per pattern because it applies the
+/// mode as each pattern is added; Quamina applies it at freeze, so whichever mode
+/// is set when the matcher freezes covers all of it.
+///
+/// Skipped under Miri, which never runs the DFA conversion: both sides would be
+/// NFAs and the comparison would hold for the wrong reason.
+#[cfg(not(miri))]
+#[test]
+fn test_replay_preserves_build_mode() {
+    let mut q = Quamina::new();
+    q.set_matcher_build_mode(MatcherBuildMode::BuiltForSpeed);
+    for (id, pattern) in BUILD_MODE_WILDCARDS {
+        q.add_pattern(id, pattern).unwrap();
+    }
+    let built = q.matcher_stats();
+    assert_eq!(
+        built.fanouts, 0,
+        "BuiltForSpeed should have converted the merged wildcards to a DFA",
+    );
+
+    let snapshot = q.clone();
+    assert_eq!(
+        snapshot.matcher_build_mode(),
+        MatcherBuildMode::BuiltForSpeed,
+        "a clone must inherit the mode it was replayed under",
+    );
+    assert_eq!(
+        snapshot.matcher_stats(),
+        built,
+        "a clone must be the same matcher, not a comfort-mode re-merge",
+    );
+
+    // A pattern on a field of its own, added and dropped, is what leaves the
+    // automaton holding states no live pattern needs — the condition a rebuild
+    // reclaims. All four wildcards stay live across it, so the rebuild has real
+    // work to do and still has to land back on the matcher they built.
+    q.add_pattern("throwaway", r#"{"y": [{"wildcard": "*gone*"}]}"#)
+        .unwrap();
+    q.delete_patterns(&"throwaway").unwrap();
+    assert_eq!(q.rebuild(), 1);
+    assert_eq!(
+        q.matcher_build_mode(),
+        MatcherBuildMode::BuiltForSpeed,
+        "a rebuild must keep the mode the caller set",
+    );
+    assert_eq!(
+        q.matcher_stats(),
+        built,
+        "a rebuild must give back the matcher the live patterns built",
+    );
+}
+
+/// The mode is read when the matcher freezes, so setting it on a matcher that
+/// already holds patterns re-freezes them under the new mode. Setting it back has
+/// to land exactly where it started: a `BuiltForSpeed` freeze converts a copy and
+/// leaves the mutable automaton the next freeze reads untouched. That the
+/// conversion is freeze-local is what lets a replay carry the mode at all, so it
+/// is worth pinning on its own. Go has no analogue — there a pattern's mode is
+/// fixed when it is added.
+///
+/// Skipped under Miri, which never runs the DFA conversion, leaving nothing for
+/// either direction to change.
+#[cfg(not(miri))]
+#[test]
+fn test_build_mode_change_refreezes_existing_patterns() {
+    let mut q = Quamina::new();
+    for (id, pattern) in BUILD_MODE_WILDCARDS {
+        q.add_pattern(id, pattern).unwrap();
+    }
+    let comfort = q.matcher_stats();
+    assert!(
+        comfort.fanouts > 0,
+        "BuiltForComfort is the default, so the wildcards should still be an NFA",
+    );
+
+    q.set_matcher_build_mode(MatcherBuildMode::BuiltForSpeed);
+    let speed = q.matcher_stats();
+    assert_eq!(
+        speed.fanouts, 0,
+        "switching to BuiltForSpeed must convert patterns that were already added",
+    );
+    assert_ne!(
+        speed.states, comfort.states,
+        "the converted DFA should be a different size than the NFA it replaced",
+    );
+
+    q.set_matcher_build_mode(MatcherBuildMode::BuiltForComfort);
+    assert_eq!(
+        q.matcher_stats(),
+        comfort,
+        "switching back must give the NFA again, the conversion having been \
+         applied to a copy",
     );
 }

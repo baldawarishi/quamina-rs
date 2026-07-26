@@ -142,6 +142,18 @@ pub struct MatcherStats {
 /// Pattern definition: field matchers
 type PatternDef = FxHashMap<String, Vec<Matcher>>;
 
+/// A stored pattern definition, stamped with the position of the
+/// [`add_pattern`](Quamina::add_pattern) call that produced it.
+///
+/// Merge order decides an automaton's size and layout, not which events it
+/// accepts, so rebuilds and clones replay in add order to reproduce the
+/// matcher the caller's adds built.
+#[derive(Clone)]
+struct StoredPattern {
+    added_at: usize,
+    fields: PatternDef,
+}
+
 /// Errors that can occur during pattern matching
 #[derive(Debug)]
 pub enum QuaminaError {
@@ -178,7 +190,7 @@ impl fmt::Display for QuaminaError {
 /// Four complementary limits, each catching a different attack vector:
 /// - **Nesting depth**: prevents stack exhaustion and deep-nesting attacks
 /// - **Field count**: prevents wide patterns with hundreds of fields
-/// - **Arena byte budget**: essential backstop that catches all forms of automaton complexity
+/// - **Arena byte budget**: per-field backstop that catches automaton complexity whatever produced it
 /// - **State count**: prevents exponential field-matcher blowup from mixed-type matchers
 ///
 /// # Defaults
@@ -192,7 +204,9 @@ pub struct PatternLimits {
     pub max_pattern_depth: usize,
     /// Maximum number of fields per pattern (default: 256)
     pub max_fields_per_pattern: usize,
-    /// Maximum arena byte size for the automaton (default: 10 MB)
+    /// Maximum arena byte size for any one value matcher (default: 10 MB).
+    /// A pattern is rejected when the arena for one of its fields would exceed
+    /// this; the matcher as a whole holds one such arena per field it matches on.
     pub arena_byte_budget: usize,
     /// Maximum number of field-matcher states during pattern construction (default: 1024).
     ///
@@ -427,7 +441,18 @@ impl<X: Clone + Eq + Hash + Send + Sync> QuaminaBuilder<X> {
         self
     }
 
-    /// Set the arena byte budget for the automaton (default: 10 MB).
+    /// Set the arena byte budget, the cap on how large the automaton for any
+    /// one field may grow (default: 10 MB).
+    ///
+    /// This bounds pattern complexity, not the matcher's total memory: a
+    /// pattern is rejected when the arena for one of its fields would exceed
+    /// the budget, and a matcher holds one such arena per field it matches on,
+    /// so patterns spread across fields add up past it. Admission measures the
+    /// arena's flat buffers, which is cheap but leaves out per-state transition
+    /// tables, so an accepted arena reports more than this in
+    /// [`matcher_stats`](Quamina::matcher_stats). What the budget does hold
+    /// exactly is the memory
+    /// [`BuiltForSpeed`](MatcherBuildMode::BuiltForSpeed) would add on top.
     ///
     /// # Panics
     /// Panics if `budget` is 0.
@@ -440,6 +465,23 @@ impl<X: Clone + Eq + Hash + Send + Sync> QuaminaBuilder<X> {
     ///     .build()?;
     /// let err = q.add_pattern("p", r#"{"x": [{"prefix": "a"}]}"#).unwrap_err();
     /// assert!(matches!(err, QuaminaError::PatternTooComplex(_)));
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// Each field is budgeted on its own, so a matcher can hold much more than
+    /// the budget in total:
+    ///
+    /// ```
+    /// # use quamina::{QuaminaBuilder, QuaminaError};
+    /// # fn main() -> Result<(), QuaminaError> {
+    /// let mut q = QuaminaBuilder::<String>::new()
+    ///     .with_arena_byte_budget(4_000)
+    ///     .build()?;
+    /// for i in 0..3 {
+    ///     q.add_pattern(format!("p{i}"), &format!(r#"{{"f{i}": [{{"prefix": "abcdefghij{i}"}}]}}"#))?;
+    /// }
+    /// assert!(q.matcher_stats().bytes > 4_000);
     /// # Ok(())
     /// # }
     /// ```
@@ -519,7 +561,9 @@ impl<X: Clone + Eq + Hash + Send + Sync> QuaminaBuilder<X> {
                 self.pattern_limits.max_states_per_pattern,
             ),
             pattern_defs: FxHashMap::default(),
+            next_add_position: 0,
             deleted_patterns: FxHashSet::default(),
+            automaton_is_stale: false,
             segments_tree: SegmentsTree::new(),
             custom_flattener: self.custom_flattener.map(Mutex::new),
             pruner_stats: PrunerStats::new(),
@@ -562,10 +606,19 @@ impl<X: Clone + Eq + Hash + Send + Sync> Default for QuaminaBuilder<X> {
 pub struct Quamina<X: Clone + Eq + Hash + Send + Sync = String> {
     /// Automaton-based matcher
     automaton: ThreadSafeCoreMatcher<X>,
-    /// All pattern definitions (source of truth for cloning)
-    pattern_defs: FxHashMap<X, Vec<PatternDef>>,
-    /// Deleted patterns (filtered from automaton results since automaton doesn't support deletion)
+    /// The live pattern definitions, and the source of truth for rebuilding
+    /// and cloning. A delete drops its definitions from here, so an id in this
+    /// map is never also in `deleted_patterns`.
+    pattern_defs: FxHashMap<X, Vec<StoredPattern>>,
+    /// Stamp given to the next stored pattern, recording add order
+    next_add_position: usize,
+    /// Ids whose definitions are gone but whose states the automaton still
+    /// holds, so their matches have to be filtered out of results until a
+    /// rebuild reclaims them. Adding an id again lifts the filter.
     deleted_patterns: FxHashSet<X>,
+    /// Whether the automaton holds states for definitions that are no longer
+    /// live, which makes it bigger than a fresh build from `pattern_defs`.
+    automaton_is_stale: bool,
     /// Segments tree for fast field skipping during event parsing
     segments_tree: SegmentsTree,
     /// Custom flattener for non-JSON formats (if provided)
@@ -580,14 +633,9 @@ pub struct Quamina<X: Clone + Eq + Hash + Send + Sync = String> {
 
 impl<X: Clone + Eq + Hash + Send + Sync> Clone for Quamina<X> {
     fn clone(&self) -> Self {
-        // Rebuild automaton from pattern_defs.
-        let automaton = ThreadSafeCoreMatcher::with_limits(
-            self.pattern_limits.arena_byte_budget,
-            self.pattern_limits.max_states_per_pattern,
-        );
-        automaton.set_build_mode(self.automaton.build_mode());
-
-        self.replay_patterns_into(&automaton);
+        // Built from the live definitions alone, so the clone starts with
+        // nothing left to reclaim and nothing to filter out.
+        let (automaton, segments_tree) = self.build_from_live_patterns();
 
         // Copy custom flattener if present
         let custom_flattener = self.custom_flattener.as_ref().map(|f| {
@@ -598,10 +646,12 @@ impl<X: Clone + Eq + Hash + Send + Sync> Clone for Quamina<X> {
         Self {
             automaton,
             pattern_defs: self.pattern_defs.clone(),
-            deleted_patterns: self.deleted_patterns.clone(),
-            segments_tree: self.segments_tree.clone(),
+            next_add_position: self.next_add_position,
+            deleted_patterns: FxHashSet::default(),
+            automaton_is_stale: false,
+            segments_tree,
             custom_flattener,
-            pruner_stats: self.pruner_stats.clone(),
+            pruner_stats: PrunerStats::new(),
             auto_rebuild_enabled: self.auto_rebuild_enabled,
             pattern_limits: self.pattern_limits.clone(),
         }
@@ -625,7 +675,9 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
                 limits.max_states_per_pattern,
             ),
             pattern_defs: FxHashMap::default(),
+            next_add_position: 0,
             deleted_patterns: FxHashSet::default(),
+            automaton_is_stale: false,
             segments_tree: SegmentsTree::new(),
             custom_flattener: None,
             pruner_stats: PrunerStats::new(),
@@ -666,7 +718,13 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
         // Route to automaton first — if this fails (e.g. budget exceeded),
         // we must NOT store the pattern in pattern_defs, segments_tree, etc.
         let pattern_fields: Vec<(String, Vec<Matcher>)> = fields.clone().into_iter().collect();
-        self.automaton.add_pattern(x.clone(), &pattern_fields)?;
+        if let Err(e) = self.automaton.add_pattern(x.clone(), &pattern_fields) {
+            // The automaton merges fields one at a time and does not unwind the
+            // ones it merged before the failure. Nothing here records the
+            // pattern, so only a rebuild can reclaim those states.
+            self.automaton_is_stale = true;
+            return Err(e);
+        }
 
         // Automaton accepted — now commit to bookkeeping state
         for field_path in fields.keys() {
@@ -678,7 +736,11 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
         self.deleted_patterns.remove(&x);
 
         // Store pattern definition for cloning/rebuild
-        self.pattern_defs.entry(x).or_default().push(fields);
+        self.pattern_defs.entry(x).or_default().push(StoredPattern {
+            added_at: self.next_add_position,
+            fields,
+        });
+        self.next_add_position += 1;
 
         Ok(())
     }
@@ -706,7 +768,7 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
     /// Returns [`QuaminaError::InvalidJson`] when `event` is not a valid JSON
     /// object (encoding issues such as invalid UTF-8 inside strings surface as
     /// `InvalidJson` from the parser). If a custom
-    /// [`Flattener`](flattener::Flattener) was configured via the builder, this
+    /// [`Flattener`] was configured via the builder, this
     /// method propagates any [`QuaminaError`] its
     /// [`flatten`](flattener::Flattener::flatten) implementation returns.
     pub fn matches_for_event(&self, event: &[u8]) -> Result<Vec<X>, QuaminaError> {
@@ -775,20 +837,42 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
         Ok(matches)
     }
 
-    /// Replay all live (non-deleted) pattern definitions into the given automaton.
-    fn replay_patterns_into(&self, automaton: &ThreadSafeCoreMatcher<X>) {
-        for (id, patterns) in &self.pattern_defs {
-            if self.deleted_patterns.contains(id) {
-                continue;
+    /// Build a fresh automaton and segments tree from the live pattern
+    /// definitions, replaying them in the order they were originally added.
+    ///
+    /// This repeats the work [`add_pattern`](Self::add_pattern) does, so the
+    /// pair comes back as the surviving adds would have built it — including a
+    /// tree that has forgotten the fields only deleted patterns mentioned.
+    fn build_from_live_patterns(&self) -> (ThreadSafeCoreMatcher<X>, SegmentsTree) {
+        let automaton = ThreadSafeCoreMatcher::with_limits(
+            self.pattern_limits.arena_byte_budget,
+            self.pattern_limits.max_states_per_pattern,
+        );
+        automaton.set_build_mode(self.automaton.build_mode());
+
+        let mut live: Vec<(&X, &StoredPattern)> = self
+            .pattern_defs
+            .iter()
+            .flat_map(|(id, patterns)| patterns.iter().map(move |stored| (id, stored)))
+            .collect();
+        live.sort_unstable_by_key(|(_, stored)| stored.added_at);
+
+        let mut segments_tree = SegmentsTree::new();
+        for (id, stored) in live {
+            for field_path in stored.fields.keys() {
+                segments_tree.add(&field_path.replace('.', "\n"));
             }
-            for fields in patterns {
-                let pattern_fields: Vec<(String, Vec<Matcher>)> =
-                    fields.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
-                automaton
-                    .add_pattern(id.clone(), &pattern_fields)
-                    .expect("pre-validated pattern should not fail on rebuild");
-            }
+            let pattern_fields: Vec<(String, Vec<Matcher>)> = stored
+                .fields
+                .iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect();
+            automaton
+                .add_pattern(id.clone(), &pattern_fields)
+                .expect("pre-validated pattern should not fail on rebuild");
         }
+
+        (automaton, segments_tree)
     }
 
     /// Remove soft-deleted patterns from raw match results and update pruner stats.
@@ -856,14 +940,16 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
     /// (such as a [`LivePatternsState`](https://github.com/timbray/quamina#dynamic-pattern-storage)
     /// store) that may need to surface I/O or storage errors.
     pub fn delete_patterns(&mut self, x: &X) -> Result<(), QuaminaError> {
-        // Check if pattern exists
-        if !self.pattern_defs.contains_key(x) || self.deleted_patterns.contains(x) {
-            return Ok(()); // Pattern doesn't exist or already deleted
+        // Drop the definitions outright so nothing can replay them later, the
+        // way Go's memState.Delete filters the id's entries out at delete time.
+        if self.pattern_defs.remove(x).is_none() {
+            return Ok(()); // Pattern doesn't exist or is already deleted
         }
 
-        // Add to deleted set (automaton doesn't support deletion)
-        // This will filter the pattern from automaton results
+        // The automaton keeps the states it built for those definitions until a
+        // rebuild, so its matches for this id have to be suppressed meanwhile.
         self.deleted_patterns.insert(x.clone());
+        self.automaton_is_stale = true;
 
         Ok(())
     }
@@ -913,10 +999,7 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
 
     /// Returns the number of unique pattern IDs stored
     pub fn pattern_count(&self) -> usize {
-        self.pattern_defs
-            .keys()
-            .filter(|k| !self.deleted_patterns.contains(*k))
-            .count()
+        self.pattern_defs.len()
     }
 
     /// Returns true if no patterns are stored
@@ -945,6 +1028,10 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
     /// DFAs, which are usually larger than the NFAs
     /// [`BuiltForComfort`](MatcherBuildMode::BuiltForComfort) reports.
     ///
+    /// A pattern too costly to convert up front gets a DFA cached as matching
+    /// visits it instead, so under `BuiltForSpeed` these figures can also grow
+    /// with the events you feed [`matches_for_event`](Self::matches_for_event).
+    ///
     /// The most useful figure is [`MatcherStats::bytes`], an estimate of the
     /// memory consumed by the matcher's data structures. Its growth
     /// correlates well with the slowdown in `add_pattern` and
@@ -970,12 +1057,10 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
     /// Set the [`MatcherBuildMode`] used when freezing wildcard and regexp
     /// matchers; see [`MatcherBuildMode`] for the comfort/speed trade-off.
     ///
-    /// The mode applies to the whole matcher. The next match after this call
-    /// re-freezes the automaton under the new mode.
-    ///
-    /// Go upstream disables this call once pattern deletion is enabled. Quamina
-    /// always allows it: deletion is built in and keeps the mode across
-    /// rebuilds.
+    /// The mode applies to the whole matcher, and the next match after this call
+    /// re-freezes the automaton under it. Deleting patterns does not disturb the
+    /// choice: [`rebuild`](Self::rebuild) and cloning replay under whichever mode
+    /// is set. Go upstream instead pins each pattern's mode when it is added.
     ///
     /// ```
     /// # use quamina::{Quamina, MatcherBuildMode};
@@ -1007,6 +1092,14 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
 
     /// Rebuild the automaton from only live patterns, reclaiming memory from soft-deleted patterns.
     ///
+    /// The live patterns are replayed in the order they were added, so the
+    /// rebuilt matcher is the one those [`add_pattern`](Self::add_pattern)
+    /// calls would have built on their own.
+    ///
+    /// Returns the number of soft-deleted ids dropped. A rebuild also reclaims
+    /// the definitions behind a delete whose id was added again afterwards, but
+    /// those are not counted, the id itself still being live.
+    ///
     /// ```
     /// # use quamina::Quamina;
     /// # fn main() -> Result<(), quamina::QuaminaError> {
@@ -1023,30 +1116,19 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
     /// # }
     /// ```
     pub fn rebuild(&mut self) -> usize {
-        let purged = self.deleted_patterns.len();
-        if purged == 0 {
+        if !self.automaton_is_stale {
             return 0;
         }
 
-        // Create new automaton with only live patterns
-        let new_automaton = ThreadSafeCoreMatcher::with_limits(
-            self.pattern_limits.arena_byte_budget,
-            self.pattern_limits.max_states_per_pattern,
-        );
-        new_automaton.set_build_mode(self.automaton.build_mode());
+        let (new_automaton, new_segments_tree) = self.build_from_live_patterns();
 
-        self.replay_patterns_into(&new_automaton);
-
-        // Remove deleted patterns from pattern_defs (they're now permanently gone)
-        self.pattern_defs
-            .retain(|id, _| !self.deleted_patterns.contains(id));
-
-        // Clear the deleted set and reset stats
+        let purged = self.deleted_patterns.len();
         self.deleted_patterns.clear();
+        self.automaton_is_stale = false;
         self.pruner_stats.reset();
 
-        // Swap in new automaton
         self.automaton = new_automaton;
+        self.segments_tree = new_segments_tree;
 
         purged
     }
@@ -1108,7 +1190,10 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
         );
         self.automaton.set_build_mode(build_mode);
         self.pattern_defs.clear();
+        self.next_add_position = 0;
         self.deleted_patterns.clear();
+        self.automaton_is_stale = false;
+        self.segments_tree = SegmentsTree::new();
         self.pruner_stats.reset();
     }
 
@@ -1128,10 +1213,7 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
     /// assert_eq!(ids.len(), 2);
     /// ```
     pub fn list_pattern_ids(&self) -> Vec<&X> {
-        self.pattern_defs
-            .keys()
-            .filter(|id| !self.deleted_patterns.contains(*id))
-            .collect()
+        self.pattern_defs.keys().collect()
     }
 
     /// Checks if a pattern with the given identifier exists (and hasn't been deleted).
@@ -1147,7 +1229,7 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
     /// assert!(q.contains_pattern(&p1));
     /// ```
     pub fn contains_pattern(&self, id: &X) -> bool {
-        self.pattern_defs.contains_key(id) && !self.deleted_patterns.contains(id)
+        self.pattern_defs.contains_key(id)
     }
 }
 

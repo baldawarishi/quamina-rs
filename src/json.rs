@@ -2,8 +2,8 @@
 
 use crate::QuaminaError;
 use crate::regexp::{
-    LookaroundType, RegexpBranch, RegexpRoot, collect_lookarounds, expand_word_boundaries,
-    has_top_level_lookaround, has_word_boundary, parse_regexp,
+    LookaroundType, QuantifiedAtom, RegexpBranch, RegexpRoot, collect_lookarounds, concat_roots,
+    expand_word_boundaries, has_top_level_lookaround, has_word_boundary, parse_regexp,
 };
 use crate::segments_tree::SEGMENT_SEPARATOR;
 use rustc_hash::FxHashMap;
@@ -282,11 +282,17 @@ impl LookaroundCondition {
 /// must all be satisfied for a match. Conditions are stored in cost order
 /// (cheapest first) for fast-fail optimization.
 ///
+/// Two rules shape how the parts are built. Assertion text counts toward the
+/// value, so `foo(?=bar)` matches `"foobar"` and the primary `foo` covers only
+/// its front. And every condition is checked anchored against the whole value,
+/// so each has to span the value from its first byte — a condition that stops
+/// short fails on values the primary would have matched.
+///
 /// # Example patterns
 /// - `foo(?=bar)` → primary="foo", conditions=[PositiveLookahead("foobar")]
 /// - `foo(?!bar)` → primary="foo", conditions=[NegativeLookahead("foobar")]
 /// - `(?<=foo)bar` → primary="bar", conditions=[PositiveLookbehind("foo", 3)]
-/// - `(?=.*X)(?=.*Y)Z` → primary="Z", conditions=[PositiveLookahead(.*X), PositiveLookahead(.*Y)]
+/// - `(?=.*X)(?=.*Y).*Z.*` → primary=".*Z.*", conditions=[PositiveLookahead(.*X.*), PositiveLookahead(.*Y.*)]
 #[derive(Debug, Clone)]
 pub struct MultiConditionPattern {
     /// Primary pattern (what we're actually matching).
@@ -297,6 +303,10 @@ pub struct MultiConditionPattern {
     /// Stored in cost order (cheapest first) for fast-fail optimization.
     /// All conditions must be satisfied for the overall match to succeed.
     pub conditions: Vec<LookaroundCondition>,
+
+    /// True when a lookahead closes the pattern, with no primary atom after it.
+    /// Verifying the primary then has to tolerate the run it asserts.
+    pub trailing_lookahead: bool,
 }
 
 impl MultiConditionPattern {
@@ -308,7 +318,15 @@ impl MultiConditionPattern {
         Self {
             primary,
             conditions,
+            trailing_lookahead: false,
         }
+    }
+
+    /// Mark the pattern as ending in a lookahead assertion.
+    #[must_use]
+    pub const fn with_trailing_lookahead(mut self) -> Self {
+        self.trailing_lookahead = true;
+        self
     }
 }
 
@@ -347,24 +365,39 @@ pub fn transform_lookaround_pattern(tree: &RegexpRoot) -> Result<MultiConditionP
     let branch = &tree[0];
     let mut conditions = Vec::new();
     let mut primary_atoms: RegexpBranch = Vec::new();
+    // Value text the lookbehinds seen so far account for, ahead of the primary.
+    // A lookahead condition has to open with this run to reach the first byte.
+    let mut lookbehind_prefix: RegexpRoot = Vec::new();
 
-    for (i, atom) in branch.iter().enumerate() {
+    for (index, atom) in branch.iter().enumerate() {
         if let Some(la_type) = atom.lookaround {
             let la_subtree = atom
                 .subtree
                 .as_ref()
                 .ok_or("lookaround atom missing subtree")?;
+            // Anything after this atom is the primary's to verify.
+            let primary_follows = index + 1 < branch.len();
 
             match la_type {
                 LookaroundType::PositiveLookahead => {
                     // A(?=B) → condition checks that AB matches
                     // Build combined pattern: primary atoms so far + lookahead content
-                    let combined = build_combined_pattern(&primary_atoms, la_subtree);
+                    let combined = build_combined_pattern(
+                        &lookbehind_prefix,
+                        &primary_atoms,
+                        la_subtree,
+                        primary_follows,
+                    );
                     conditions.push(LookaroundCondition::PositiveLookahead(combined));
                 }
                 LookaroundType::NegativeLookahead => {
                     // A(?!B) → condition checks that AB does NOT match
-                    let combined = build_combined_pattern(&primary_atoms, la_subtree);
+                    let combined = build_combined_pattern(
+                        &lookbehind_prefix,
+                        &primary_atoms,
+                        la_subtree,
+                        primary_follows,
+                    );
                     conditions.push(LookaroundCondition::NegativeLookahead(combined));
                 }
                 LookaroundType::PositiveLookbehind => {
@@ -376,6 +409,8 @@ pub fn transform_lookaround_pattern(tree: &RegexpRoot) -> Result<MultiConditionP
                         pattern: la_subtree.clone(),
                         byte_length,
                     });
+                    // The assertion spells the preceding run out.
+                    lookbehind_prefix = concat_roots(&lookbehind_prefix, la_subtree);
                 }
                 LookaroundType::NegativeLookbehind => {
                     // (?<!B)A → condition checks B does NOT precede A
@@ -384,16 +419,15 @@ pub fn transform_lookaround_pattern(tree: &RegexpRoot) -> Result<MultiConditionP
                         pattern: la_subtree.clone(),
                         byte_length,
                     });
+                    // Ruling a shape out says nothing about the run itself.
+                    lookbehind_prefix =
+                        concat_roots(&lookbehind_prefix, &[vec![QuantifiedAtom::any_run()]]);
                 }
             }
         } else {
             // Non-lookaround atom - add to primary pattern
             primary_atoms.push(atom.clone());
         }
-
-        // For lookaheads at the end, we need to track position
-        // This is handled by the combined pattern approach
-        let _ = i; // suppress unused warning for now
     }
 
     // If no primary atoms, the pattern is just lookarounds (e.g., (?=foo))
@@ -404,26 +438,46 @@ pub fn transform_lookaround_pattern(tree: &RegexpRoot) -> Result<MultiConditionP
         vec![primary_atoms]
     };
 
-    Ok(MultiConditionPattern::new(primary, conditions))
+    // A closing lookahead asserts a run past everything the primary spells out.
+    let ends_with_lookahead = branch.last().is_some_and(|atom| {
+        matches!(
+            atom.lookaround,
+            Some(LookaroundType::PositiveLookahead | LookaroundType::NegativeLookahead)
+        )
+    });
+
+    let mc = MultiConditionPattern::new(primary, conditions);
+    Ok(if ends_with_lookahead {
+        mc.with_trailing_lookahead()
+    } else {
+        mc
+    })
 }
 
-/// Build a combined pattern from primary atoms and a lookahead subtree.
-/// For A(?=B), this builds AB as a single pattern.
-fn build_combined_pattern(primary_atoms: &RegexpBranch, lookahead: &RegexpRoot) -> RegexpRoot {
-    if lookahead.is_empty() {
-        // Lookahead is empty - just return primary
-        return vec![primary_atoms.clone()];
+/// Build the pattern a lookahead condition is checked against. For `A(?=B)`,
+/// that is `AB`.
+///
+/// The condition spans the value from its first byte: `lookbehind_prefix`, then
+/// the primary atoms up to the assertion, then the assertion itself. With
+/// `primary_follows` it ends in `.*`, leaving the rest to the atoms after the
+/// assertion — in `A(?=B)C` the condition covers `AB`, and `C` is the primary's
+/// to verify.
+fn build_combined_pattern(
+    lookbehind_prefix: &RegexpRoot,
+    primary_atoms: &RegexpBranch,
+    lookahead: &RegexpRoot,
+    primary_follows: bool,
+) -> RegexpRoot {
+    let front = concat_roots(lookbehind_prefix, std::slice::from_ref(primary_atoms));
+    let mut combined = concat_roots(&front, lookahead);
+
+    if primary_follows {
+        for branch in &mut combined {
+            branch.push(QuantifiedAtom::any_run());
+        }
     }
 
-    // Combine each lookahead branch with the primary atoms
-    let mut combined_branches = Vec::new();
-    for la_branch in lookahead {
-        let mut combined: RegexpBranch = primary_atoms.clone();
-        combined.extend(la_branch.clone());
-        combined_branches.push(combined);
-    }
-
-    combined_branches
+    combined
 }
 
 /// Compute the fixed byte length of a lookbehind pattern.

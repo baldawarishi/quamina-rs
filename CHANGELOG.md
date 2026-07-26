@@ -26,6 +26,11 @@ Style inspired by [ripgrep's CHANGELOG](https://github.com/BurntSushi/ripgrep/bl
 - Removed the runtime memory-budget API (`get_memory_budget`/`set_memory_budget`), matching Go upstream dropping it; the build-time `QuaminaBuilder::with_arena_byte_budget` cap remains (#152)
 
 ### Fixed
+- Lookaround regexps now match against the value itself, not just their assertions: `foo(?!bar)baz` no longer matches `totally-unrelated`, `(?=.*foo).*bar.*` matches `foobar`, and `(?<=foo)bar(?=baz)baz` matches `foobarbaz` (#182, #183, #184)
+- `BuiltForSpeed` now holds its freeze-time DFA to the arena byte budget, keeping the NFA when there is no room, and applies to lookaround regexps, which it used to leave as NFAs (#186, #188)
+- `matcher_stats()` and `arena_stats()` now count the lazy DFA cache a `BuiltForSpeed` pattern falls back to, and the cache no longer allocates a transition table for states it declines to cache (#185, #186)
+- `Quamina::delete_patterns` now drops the pattern's stored definitions, so adding the same id again no longer brings the deleted ones back (matching Go upstream's `memState.Delete`) (#180)
+- `Quamina::rebuild` now rebuilds the field-segments index, reclaims the states of patterns the automaton rejected part-way through, and replays live patterns in the order they were added rather than in hash order (#178, #180, #181)
 - Regexps no longer over-match when one unbounded quantifier nests inside another (e.g. `(.+c)*`, `(a*)*b`): a quantifier's "match zero copies" skip could leak across an inner loop's back-edge and let the construct exit before its body matched (#156)
 
 ## [0.6.0] — 2026-06-11

@@ -31,6 +31,7 @@ use super::arena::{
 };
 use super::mutable_matcher::{
     EventField, EventFieldRef, MultiConditionNfa, MutableFieldMatcher, MutableValueMatcher,
+    traverse_lookaround_arena,
 };
 use super::small_table::{FieldMatcher, NfaBuffers, TL_MATCH_BUFS};
 use crate::MatcherBuildMode;
@@ -379,15 +380,27 @@ impl<X: Clone + Eq + Hash> FrozenValueMatcher<X> {
         // - Lookbehind conditions are pre-combined with primary during build
         if !self.multi_condition_nfas.is_empty() {
             for mc_nfa in &self.multi_condition_nfas {
+                // The assertions qualify a match, they don't stand in for one.
+                traverse_lookaround_arena(
+                    &mc_nfa.primary_arena,
+                    mc_nfa.primary_start,
+                    mc_nfa.primary_is_nfa,
+                    value_to_match,
+                    &mut bufs.arena_bufs,
+                );
+                if bufs.arena_bufs.transitions.is_empty() {
+                    continue;
+                }
+
                 // Verify all conditions against the full value
                 let mut all_conditions_pass = true;
 
                 for condition in &mc_nfa.conditions {
                     // Traverse the condition automaton on the full value
-                    bufs.arena_bufs.clear();
-                    traverse_arena_nfa(
+                    traverse_lookaround_arena(
                         &condition.arena,
                         condition.start,
+                        condition.is_nfa,
                         value_to_match,
                         &mut bufs.arena_bufs,
                     );
@@ -585,6 +598,9 @@ impl<X: Clone + Eq + Hash + Send + Sync> ThreadSafeCoreMatcher<X> {
                 cond.arena.accumulate_matcher_stats(stats);
             }
         }
+        if let Some(ref lazy_dfa) = vm.lazy_dfa {
+            lazy_dfa.lock().accumulate_matcher_stats(stats);
+        }
         for next in vm.transition_map.values() {
             Self::walk_field_matcher(next, field_seen, value_seen, stats);
         }
@@ -739,6 +755,9 @@ impl<X: Clone + Eq + Hash + Send + Sync> ThreadSafeCoreMatcher<X> {
                 stats.add(&cond.arena.stats());
             }
         }
+        if let Some(ref lazy_dfa) = vm.lazy_dfa {
+            stats.add(&lazy_dfa.lock().nfa_arena_stats());
+        }
         // Walk transition_map to reach nested FrozenFieldMatchers
         for fm_next in vm.transition_map.values() {
             Self::collect_fm_stats(fm_next, stats, field_seen, value_seen);
@@ -823,8 +842,33 @@ impl<X: Clone + Eq + Hash + Send + Sync> ThreadSafeCoreMatcher<X> {
             transition_map.insert(*ptr as usize, Arc::new(frozen_fm));
         }
 
-        // Copy the multi-condition NFAs (for lookaround patterns)
-        let multi_condition_nfas = mutable.multi_condition_nfas.borrow().clone();
+        // Copy the multi-condition NFAs (for lookaround patterns). Under
+        // BuiltForSpeed each of a pattern's automata converts the same way the
+        // main arena does, subject to the same state cap and byte budget.
+        let mut multi_condition_nfas = mutable.multi_condition_nfas.borrow().clone();
+        #[cfg(not(miri))]
+        if self.build_mode() == MatcherBuildMode::BuiltForSpeed {
+            for mc in &mut multi_condition_nfas {
+                if mc.primary_is_nfa
+                    && let Some((arena, start)) =
+                        self.converted_dfa(&mc.primary_arena, mc.primary_start)
+                {
+                    mc.primary_arena = arena;
+                    mc.primary_start = start;
+                    mc.primary_is_nfa = false;
+                }
+                for condition in &mut mc.conditions {
+                    if condition.is_nfa
+                        && let Some((arena, start)) =
+                            self.converted_dfa(&condition.arena, condition.start)
+                    {
+                        condition.arena = arena;
+                        condition.start = start;
+                        condition.is_nfa = false;
+                    }
+                }
+            }
+        }
 
         // Copy the main_arena (unified arena for all pattern types).
         // Re-freeze table buffers to pick up any in-place modifications
@@ -851,25 +895,23 @@ impl<X: Clone + Eq + Hash + Send + Sync> ThreadSafeCoreMatcher<X> {
                 // Tier 1: Attempt eager NFA→DFA conversion.
                 let eager_budget =
                     (arena.len() * EAGER_DFA_BUDGET_MULTIPLIER).min(EAGER_DFA_BUDGET_CAP);
-                if let Some((dfa_arena, dfa_start)) = arena.nfa_to_dfa(start, eager_budget) {
+                // The pattern was admitted on the size of its NFA, so whatever
+                // replaces that arena answers to the same cap. Falling back a
+                // tier costs match speed and nothing else.
+                if let Some((dfa_arena, dfa_start)) = arena.nfa_to_dfa(start, eager_budget)
+                    && self.within_arena_budget(dfa_arena.byte_size())
+                {
                     arena = dfa_arena;
                     main_arena_is_nfa = false;
                     arena.flatten_tables();
                     return (arena, dfa_start);
                 }
 
-                // Tier 2: Eager DFA budget exceeded — create a lazy DFA cache,
-                // but only when the NFA is small enough that LazyDfa::new is fast.
-                // Each cached DFA state requires O(nfa_states) work to construct,
-                // so for very large NFAs (e.g. [^u-z]{13} expands to ~229k states)
-                // initialisation takes seconds with no match-time benefit over NFA.
-                // Patterns with nfa_states ≤ EAGER_DFA_BUDGET_CAP initialise in
-                // < 300 µs (empirically ~28 ns/state); beyond that, fall through to
-                // Tier 3 (NFA traversal).
-                if should_build_lazy_dfa(arena.len()) {
-                    let lazy_budget = eager_budget
-                        .saturating_mul(LAZY_DFA_BUDGET_MULTIPLIER)
-                        .min(LAZY_DFA_BUDGET_CAP);
+                // Tier 2: Eager DFA budget exceeded — cache DFA states lazily
+                // instead, for as many states as this NFA and the byte budget
+                // between them allow. None means Tier 3 (NFA traversal).
+                let lazy_budget = self.lazy_dfa_state_budget(eager_budget, &arena);
+                if lazy_budget > 0 {
                     lazy_dfa = Some(Box::new(Mutex::new(LazyDfa::new(
                         arena.clone(),
                         start,
@@ -905,6 +947,52 @@ impl<X: Clone + Eq + Hash + Send + Sync> ThreadSafeCoreMatcher<X> {
             lazy_dfa,
             suffix_arena,
         }
+    }
+
+    /// Whether an arena of `bytes` fits the matcher's cap (0 = unlimited).
+    #[cfg(not(miri))]
+    const fn within_arena_budget(&self, bytes: usize) -> bool {
+        self.arena_byte_budget == 0 || bytes <= self.arena_byte_budget
+    }
+
+    /// Convert an NFA arena to a DFA, ready to be traversed in its place.
+    ///
+    /// `None` when the subset construction runs past its state cap or the
+    /// result past the byte budget, leaving the caller on the NFA.
+    #[cfg(not(miri))]
+    fn converted_dfa(&self, arena: &StateArena, start: StateId) -> Option<(StateArena, StateId)> {
+        let state_budget = (arena.len() * EAGER_DFA_BUDGET_MULTIPLIER).min(EAGER_DFA_BUDGET_CAP);
+        let (mut dfa_arena, dfa_start) = arena.nfa_to_dfa(start, state_budget)?;
+        if !self.within_arena_budget(dfa_arena.byte_size()) {
+            return None;
+        }
+        dfa_arena.flatten_tables();
+        Some((dfa_arena, dfa_start))
+    }
+
+    /// How many states a lazy DFA cache over `nfa` may hold; zero means the
+    /// value matcher is better off staying on NFA traversal.
+    ///
+    /// An NFA too large to cache cheaply gets none at all, per
+    /// [`should_build_lazy_dfa`]. Otherwise the cache keeps its own copy of the
+    /// NFA plus a transition table per state, so the byte budget has to cover
+    /// the copy first and buys states out of what is left.
+    #[cfg(not(miri))]
+    fn lazy_dfa_state_budget(&self, eager_budget: usize, nfa: &StateArena) -> usize {
+        if !should_build_lazy_dfa(nfa.len()) {
+            return 0;
+        }
+
+        let states = eager_budget
+            .saturating_mul(LAZY_DFA_BUDGET_MULTIPLIER)
+            .min(LAZY_DFA_BUDGET_CAP);
+
+        if self.arena_byte_budget == 0 {
+            return states;
+        }
+
+        let spare = self.arena_byte_budget.saturating_sub(nfa.byte_size());
+        states.min(LazyDfa::states_within_bytes(spare))
     }
 
     /// Match fields against patterns and return matching pattern identifiers.

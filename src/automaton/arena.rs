@@ -487,6 +487,24 @@ impl StateArena {
     /// closure contributes zero.
     pub fn accumulate_matcher_stats(&self, stats: &mut crate::MatcherStats) {
         stats.states += self.states.len();
+        stats.bytes += self.byte_size();
+        for state in &self.states {
+            let fanout = state.closure_len as usize;
+            stats.fanouts += fanout;
+            stats.max_fanout = stats.max_fanout.max(fanout);
+        }
+    }
+
+    /// Bytes this arena holds, flat buffers plus every per-state buffer that
+    /// spilled past its inline slots.
+    ///
+    /// [`estimated_byte_size`](Self::estimated_byte_size) covers only the flat
+    /// buffers and is O(1); this walks the states, so it is the figure to use
+    /// where an arena's real footprint matters more than the cost of measuring
+    /// it. Transition tables can dwarf the flat buffers, several times over for
+    /// a DFA, so the two are far apart for anything but a trivial automaton.
+    #[must_use]
+    pub fn byte_size(&self) -> usize {
         let mut bytes = self.estimated_byte_size();
         for state in &self.states {
             let table = &state.table;
@@ -504,11 +522,8 @@ impl StateArena {
                 bytes +=
                     state.field_transitions.capacity() * std::mem::size_of::<Arc<FieldMatcher>>();
             }
-            let fanout = state.closure_len as usize;
-            stats.fanouts += fanout;
-            stats.max_fanout = stats.max_fanout.max(fanout);
         }
-        stats.bytes += bytes;
+        bytes
     }
 
     /// Get a state reference without bounds checking.
@@ -1328,7 +1343,13 @@ impl LazyDfa {
         }
 
         let state = LazyDfaState {
-            transitions: vec![StateId::NONE; BYTE_CEILING],
+            // Only a cached state ever has its table written, so a state past
+            // the budget goes without one.
+            transitions: if can_cache {
+                vec![StateId::NONE; BYTE_CEILING]
+            } else {
+                Vec::new()
+            },
             field_transition_ptrs,
             cached: can_cache,
             accel: None,
@@ -1353,9 +1374,12 @@ impl LazyDfa {
     }
 
     fn step(&mut self, state_idx: StateId, byte: u8, scratch: &mut LazyDfaScratch) -> StateId {
-        let cached = self.states[state_idx.index()].transitions[byte as usize];
-        if !cached.is_none() {
-            return cached;
+        let state = &self.states[state_idx.index()];
+        if state.cached {
+            let cached = state.transitions[byte as usize];
+            if !cached.is_none() {
+                return cached;
+            }
         }
 
         // Compute the next NFA state-set for this byte
@@ -1375,7 +1399,9 @@ impl LazyDfa {
         }
 
         if scratch.next_nfa_states.is_empty() {
-            self.states[state_idx.index()].transitions[byte as usize] = StateId::DEAD;
+            if self.states[state_idx.index()].cached {
+                self.states[state_idx.index()].transitions[byte as usize] = StateId::DEAD;
+            }
             return StateId::DEAD;
         }
 
@@ -1428,6 +1454,51 @@ impl LazyDfa {
         }
 
         self.states[state_idx.index()].accel = Some(accel);
+    }
+
+    /// Accumulate the cache's contribution to matcher-level resource statistics.
+    ///
+    /// The cache holds its own copy of the NFA and interns DFA states as values
+    /// are matched, so its footprint grows with use and counts on top of the
+    /// arena the copy came from.
+    pub(crate) fn accumulate_matcher_stats(&self, stats: &mut crate::MatcherStats) {
+        self.nfa_arena.accumulate_matcher_stats(stats);
+        stats.states += self.states.len();
+        stats.bytes += self.cached_state_byte_size();
+    }
+
+    /// Arena statistics for the copy of the NFA the cache holds.
+    pub(crate) fn nfa_arena_stats(&self) -> Stats {
+        self.nfa_arena.stats()
+    }
+
+    /// How many states the cache may hold within `bytes`, for sizing its state
+    /// budget against a byte cap.
+    pub(crate) const fn states_within_bytes(bytes: usize) -> usize {
+        bytes / (size_of::<LazyDfaState>() + BYTE_CEILING * size_of::<StateId>())
+    }
+
+    /// Estimated bytes held by the interned DFA states, excluding the NFA copy.
+    ///
+    /// Every cached state carries a full 256-entry transition table, so this
+    /// outgrows the NFA the cache was built from as matching fills it in.
+    fn cached_state_byte_size(&self) -> usize {
+        let mut bytes = self.states.capacity() * size_of::<LazyDfaState>()
+            + self.nfa_sets.capacity() * size_of::<Vec<StateId>>()
+            + self.state_map.capacity() * (size_of::<Vec<u32>>() + size_of::<StateId>());
+
+        for state in &self.states {
+            bytes += state.transitions.capacity() * size_of::<StateId>();
+            bytes += state.field_transition_ptrs.capacity() * size_of::<usize>();
+        }
+        for nfa_set in &self.nfa_sets {
+            bytes += nfa_set.capacity() * size_of::<StateId>();
+        }
+        for key in self.state_map.keys() {
+            bytes += key.capacity() * size_of::<u32>();
+        }
+
+        bytes
     }
 }
 
@@ -10154,6 +10225,83 @@ mod lazy_dfa_tests {
         assert!(
             lazy.cached_count > 0,
             "should have cached at least one state"
+        );
+    }
+
+    /// The estimate has to cover every buffer the cache owns, at the capacity
+    /// each currently holds, both fresh and once matching has grown it.
+    #[test]
+    fn test_lazy_dfa_byte_size_covers_every_owned_buffer() {
+        let owned_bytes = |lazy: &LazyDfa| {
+            let mut bytes = lazy.states.capacity() * size_of::<LazyDfaState>()
+                + lazy.nfa_sets.capacity() * size_of::<Vec<StateId>>()
+                + lazy.state_map.capacity() * (size_of::<Vec<u32>>() + size_of::<StateId>());
+            for state in &lazy.states {
+                bytes += state.transitions.capacity() * size_of::<StateId>();
+                bytes += state.field_transition_ptrs.capacity() * size_of::<usize>();
+            }
+            for nfa_set in &lazy.nfa_sets {
+                bytes += nfa_set.capacity() * size_of::<StateId>();
+            }
+            for key in lazy.state_map.keys() {
+                bytes += key.capacity() * size_of::<u32>();
+            }
+            bytes
+        };
+
+        let (nfa, nfa_start) = build_regexp_nfa("[abc]+");
+        let mut lazy = LazyDfa::new(nfa, nfa_start, 100);
+        let fresh = lazy.cached_state_byte_size();
+        assert_eq!(fresh, owned_bytes(&lazy));
+        assert!(
+            fresh >= lazy.states.len() * BYTE_CEILING * size_of::<StateId>(),
+            "a transition table per state is the bulk of it: {fresh}",
+        );
+
+        assert!(lazy_dfa_matches(&mut lazy, b"\"abcabc\""));
+        let grown = lazy.cached_state_byte_size();
+        assert_eq!(grown, owned_bytes(&lazy));
+        assert!(
+            grown > fresh,
+            "states interned while matching must add to the estimate: {grown} vs {fresh}",
+        );
+    }
+
+    /// A state costs its record plus the full transition table that is the
+    /// point of caching it, so anything short of that price buys none.
+    #[test]
+    fn test_lazy_dfa_states_within_bytes_prices_a_state_at_its_table() {
+        let one_state = size_of::<LazyDfaState>() + BYTE_CEILING * size_of::<StateId>();
+
+        assert_eq!(LazyDfa::states_within_bytes(one_state), 1);
+        assert_eq!(LazyDfa::states_within_bytes(one_state - 1), 0);
+        assert_eq!(LazyDfa::states_within_bytes(one_state * 9), 9);
+    }
+
+    /// The cache adds to the running tally rather than replacing it: its NFA
+    /// copy counts as an arena, and the interned states count beyond that.
+    #[test]
+    fn test_lazy_dfa_matcher_stats_add_to_the_running_tally() {
+        let (nfa, nfa_start) = build_regexp_nfa("[abc]+");
+        let mut lazy = LazyDfa::new(nfa, nfa_start, 100);
+        assert!(lazy_dfa_matches(&mut lazy, b"\"abcabc\""));
+
+        // A non-zero starting tally stands in for the arenas walked earlier.
+        let running = crate::MatcherStats {
+            states: 7,
+            bytes: 11,
+            ..crate::MatcherStats::default()
+        };
+        let mut with_cache = running;
+        lazy.accumulate_matcher_stats(&mut with_cache);
+
+        let mut nfa_only = running;
+        lazy.nfa_arena.accumulate_matcher_stats(&mut nfa_only);
+
+        assert_eq!(with_cache.states, nfa_only.states + lazy.states.len());
+        assert_eq!(
+            with_cache.bytes,
+            nfa_only.bytes + lazy.cached_state_byte_size()
         );
     }
 
