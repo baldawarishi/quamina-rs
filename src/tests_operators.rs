@@ -3099,8 +3099,8 @@ fn test_regexp_samples_exist() {
     );
     assert_eq!(
         crate::regexp_samples::REGEXP_SAMPLES.len(),
-        992,
-        "Expected 992 samples"
+        993,
+        "Expected 993 samples"
     );
 }
 
@@ -3215,7 +3215,7 @@ fn evaluate_regexp_sample(sample: &crate::regexp_samples::RegexpSample) -> usize
     problems
 }
 
-// MIRI SKIP RATIONALE: Iterates over 992 REGEXP_SAMPLES, building and traversing NFAs for
+// MIRI SKIP RATIONALE: Iterates over 993 REGEXP_SAMPLES, building and traversing NFAs for
 // each. Under Miri this takes 8+ minutes and causes the CI job to time out.
 #[test]
 #[cfg_attr(miri, ignore)]

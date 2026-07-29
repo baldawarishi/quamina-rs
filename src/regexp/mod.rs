@@ -497,6 +497,10 @@ mod tests {
         assert_eq!(root[0].len(), 1);
         assert_eq!(root[0][0].quant_min, 2);
         assert_eq!(root[0][0].quant_max, REGEXP_QUANTIFIER_MAX);
+
+        // Test {0,} which has no mandatory steps which is same as *
+        let root = parse_regexp("a{0,}").unwrap();
+        assert!(root[0][0].is_star());
     }
 
     #[test]
