@@ -47,7 +47,7 @@ jobs:
         with:
           shared-key: miri
       - name: Cache Miri sysroot
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: ~/.cache/miri
           key: miri-sysroot-${{ runner.os }}-nightly-2026-01-26
