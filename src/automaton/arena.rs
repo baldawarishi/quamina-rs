@@ -2022,60 +2022,81 @@ pub(crate) fn clone_arena_subset(arena: &StateArena, start: StateId) -> (StateAr
     let mut new_arena = StateArena::new();
     let mut id_map: FxHashMap<u32, StateId> = FxHashMap::default();
 
-    clone_state_recursive(arena, start, &mut new_arena, &mut id_map);
-
-    let new_start = id_map.get(&start.0).copied().unwrap_or(StateId::NONE);
+    let new_start = clone_states_into_arena(arena, start, &mut new_arena, &mut id_map);
     new_arena.precompute_epsilon_closures();
     (new_arena, new_start)
 }
 
-/// Recursively clone a state and its descendants.
-fn clone_state_recursive(
-    arena: &StateArena,
-    state_id: StateId,
-    new_arena: &mut StateArena,
+/// Clone `start` and everything reachable from it into `target`, recording
+/// old-to-new ids in `id_map` and returning the new id of `start`.
+///
+/// An entry already in `id_map` is left alone, so several starts can be cloned
+/// into one arena and keep sharing whatever they share.
+///
+/// The walk carries its own stack rather than recursing per state. A prefix,
+/// exact-match or shellstyle pattern is one state per byte, so the graph is as
+/// deep as the pattern is long — deep enough that recursion runs a small thread
+/// out of stack, which aborts the process instead of raising an error anyone
+/// could handle.
+fn clone_states_into_arena(
+    source: &StateArena,
+    start: StateId,
+    target: &mut StateArena,
     id_map: &mut FxHashMap<u32, StateId>,
 ) -> StateId {
-    if state_id.is_none() {
+    if start.is_none() {
         return StateId::NONE;
     }
 
-    // Check if already cloned
-    if let Some(&new_id) = id_map.get(&state_id.0) {
-        return new_id;
+    // Allocate every state the walk reaches, in the order it reaches them.
+    // Tables are remapped afterwards, by which point every state they point at
+    // has an id — including their own, so cycles need no special handling.
+    //
+    // Both scratch buffers are bounded by the source arena, and taking that
+    // much up front keeps their growth from interleaving with the states being
+    // allocated, which scatters the cloned automaton across the heap.
+    let mut cloned: Vec<(StateId, StateId)> = Vec::with_capacity(source.len());
+    let mut pending = Vec::with_capacity(source.len());
+    pending.push(start);
+    while let Some(old_id) = pending.pop() {
+        if old_id.is_none() || id_map.contains_key(&old_id.0) {
+            continue;
+        }
+
+        let new_id = target.alloc();
+        id_map.insert(old_id.0, new_id);
+        cloned.push((old_id, new_id));
+
+        // Reversed, so that popping visits the table in its own order.
+        let table = &source[old_id].table;
+        pending.extend(table.steps.iter().chain(&table.epsilons).rev().copied());
     }
 
-    // Allocate new state first (to handle cycles)
-    let new_id = new_arena.alloc();
-    id_map.insert(state_id.0, new_id);
+    let remap = |id: &StateId| id_map.get(&id.0).copied().unwrap_or(StateId::NONE);
+    for (old_id, new_id) in cloned {
+        let old_state = &source[old_id];
+        let old_table = &old_state.table;
+        // Sized up front: collecting would round the capacity up and leave the
+        // clone holding more than the arena it came from.
+        let mut steps = SmallVec::with_capacity(old_table.steps.len());
+        steps.extend(old_table.steps.iter().map(remap));
+        let mut epsilons = SmallVec::with_capacity(old_table.epsilons.len());
+        epsilons.extend(old_table.epsilons.iter().map(remap));
+        let new_table = SmallTable {
+            ceilings: old_table.ceilings.clone(),
+            steps,
+            epsilons,
+            accel: old_table.accel.clone(),
+        };
+        // Field transitions are cold data; the Arc clone is cheap.
+        let field_transitions = old_state.field_transitions.clone();
 
-    // Clone field transitions (Arc clone is cheap) - cold data
-    new_arena[new_id].field_transitions = arena[state_id].field_transitions.clone();
-
-    let old_state = &arena[state_id];
-
-    // Clone table with remapped state IDs
-    let old_table = &old_state.table;
-    let mut new_table = SmallTable {
-        ceilings: old_table.ceilings.clone(),
-        steps: SmallVec::with_capacity(old_table.steps.len()),
-        epsilons: SmallVec::with_capacity(old_table.epsilons.len()),
-        accel: old_table.accel.clone(),
-    };
-
-    for &step_id in &old_table.steps {
-        let new_step = clone_state_recursive(arena, step_id, new_arena, id_map);
-        new_table.steps.push(new_step);
+        let new_state = &mut target[new_id];
+        new_state.table = new_table;
+        new_state.field_transitions = field_transitions;
     }
 
-    for &eps_id in &old_table.epsilons {
-        let new_eps = clone_state_recursive(arena, eps_id, new_arena, id_map);
-        new_table.epsilons.push(new_eps);
-    }
-
-    new_arena[new_id].table = new_table;
-
-    new_id
+    id_map.get(&start.0).copied().unwrap_or(StateId::NONE)
 }
 
 /// Recursively merge two states from different arenas.
@@ -2309,12 +2330,36 @@ pub(crate) fn determinize_branch_starts(
 
 /// Merge two alternation branch states within a single arena. `boundary` is the
 /// shared continuation, treated as an opaque leaf (never baked or collapsed).
+///
+/// A pair's merged state is allocated as soon as the pair is reached and filled
+/// in from a queue afterwards, rather than while descending into it. A branch is
+/// one state per byte, so descending would put a stack frame on every byte of
+/// the longest branch.
 fn merge_branch_pair(
     arena: &mut StateArena,
     a: StateId,
     b: StateId,
     boundary: StateId,
     memo: &mut FxHashMap<(StateId, StateId), StateId>,
+) -> StateId {
+    let mut pending: Vec<(StateId, StateId, StateId)> = Vec::new();
+    let start = resolve_branch_pair(arena, a, b, memo, &mut pending);
+
+    while let Some((a, b, new_id)) = pending.pop() {
+        fill_merged_branch_state(arena, a, b, new_id, boundary, memo, &mut pending);
+    }
+
+    start
+}
+
+/// The state a pair of branch states merges into, allocating and queueing it
+/// the first time the pair is seen.
+fn resolve_branch_pair(
+    arena: &mut StateArena,
+    a: StateId,
+    b: StateId,
+    memo: &mut FxHashMap<(StateId, StateId), StateId>,
+    pending: &mut Vec<(StateId, StateId, StateId)>,
 ) -> StateId {
     // Converging branches share their state directly; no new node is allocated.
     if a == b {
@@ -2330,16 +2375,29 @@ fn merge_branch_pair(
         return cached;
     }
 
+    // Record the memo entry before queueing so byte cycles terminate.
+    let new_id = arena.alloc();
+    memo.insert((a, b), new_id);
+    pending.push((a, b, new_id));
+    new_id
+}
+
+/// Fill in the state `a` and `b` merge into, queueing the pairs it reaches.
+fn fill_merged_branch_state(
+    arena: &mut StateArena,
+    a: StateId,
+    b: StateId,
+    new_id: StateId,
+    boundary: StateId,
+    memo: &mut FxHashMap<(StateId, StateId), StateId>,
+    pending: &mut Vec<(StateId, StateId, StateId)>,
+) {
     // Epsilon-led entries (a quantifier loop) and the boundary cannot be
     // byte-merged; they are joined behind an epsilon splice instead.
     let needs_splice = !arena[a].table.epsilons.is_empty()
         || !arena[b].table.epsilons.is_empty()
         || a == boundary
         || b == boundary;
-
-    // Insert the memo entry before recursing so byte cycles terminate.
-    let new_id = arena.alloc();
-    memo.insert((a, b), new_id);
 
     if needs_splice {
         // The new state's epsilons are the two entries' real targets, so both
@@ -2354,7 +2412,7 @@ fn merge_branch_pair(
             epsilons: targets,
             accel: None,
         };
-        return new_id;
+        return;
     }
 
     // Byte-wise merge: for each byte value, merge the pair of target states.
@@ -2368,12 +2426,11 @@ fn merge_branch_pair(
 
     let mut merged = [StateId::NONE; BYTE_CEILING];
     for i in 0..BYTE_CEILING {
-        merged[i] = merge_branch_pair(arena, unpacked_a[i], unpacked_b[i], boundary, memo);
+        merged[i] = resolve_branch_pair(arena, unpacked_a[i], unpacked_b[i], memo, pending);
     }
 
     arena[new_id].field_transitions = field_transitions;
     arena[new_id].table.pack(&merged);
-    new_id
 }
 
 /// Collect the real (non-epsilon-only) targets reachable from `state` through
@@ -2391,15 +2448,19 @@ fn collect_branch_epsilon_targets(
     visited: &mut FxHashSet<u32>,
     out: &mut SmallVec<[StateId; 2]>,
 ) {
-    if state.is_none() || !visited.insert(state.0) {
-        return;
-    }
-    if state != boundary && is_epsilon_only_state(arena, state) {
-        for &eps in &arena[state].table.epsilons {
-            collect_branch_epsilon_targets(arena, eps, boundary, visited, out);
+    // Splices chain as far as the merges that built them, so this walk keeps
+    // its own stack rather than recursing through the chain.
+    let mut pending = vec![state];
+    while let Some(state) = pending.pop() {
+        if state.is_none() || !visited.insert(state.0) {
+            continue;
         }
-    } else {
-        out.push(state);
+        if state != boundary && is_epsilon_only_state(arena, state) {
+            // Reversed, so popping walks the splice's targets in their order.
+            pending.extend(arena[state].table.epsilons.iter().rev().copied());
+        } else {
+            out.push(state);
+        }
     }
 }
 
@@ -3089,8 +3150,8 @@ fn merge_arena_nfa_states_recursive(
     if s1_has_epsilons || s2_has_epsilons {
         let mut clone_map1: FxHashMap<u32, StateId> = FxHashMap::default();
         let mut clone_map2: FxHashMap<u32, StateId> = FxHashMap::default();
-        let cloned1 = clone_state_into_arena(arena1, state1, new_arena, &mut clone_map1);
-        let cloned2 = clone_state_into_arena(arena2, state2, new_arena, &mut clone_map2);
+        let cloned1 = clone_states_into_arena(arena1, state1, new_arena, &mut clone_map1);
+        let cloned2 = clone_states_into_arena(arena2, state2, new_arena, &mut clone_map2);
 
         // Flatten: if cloned states are themselves epsilon-only splices,
         // collect their real targets directly instead of nesting splices.
@@ -3358,58 +3419,6 @@ fn merge_asymmetric_spinner_byte(
         new_arena[merged_branch].table.epsilons.push(new_id);
     }
     merged_branch
-}
-
-/// Clone a state and all its reachable states from source arena into target arena.
-///
-/// Uses a separate id_map to track old->new state mappings, allowing multiple
-/// independent clones from different arenas without memo key conflicts.
-fn clone_state_into_arena(
-    source_arena: &StateArena,
-    state_id: StateId,
-    target_arena: &mut StateArena,
-    id_map: &mut FxHashMap<u32, StateId>,
-) -> StateId {
-    if state_id.is_none() {
-        return StateId::NONE;
-    }
-
-    // Check if already cloned
-    if let Some(&new_id) = id_map.get(&state_id.0) {
-        return new_id;
-    }
-
-    // Allocate new state first (to handle cycles)
-    let new_id = target_arena.alloc();
-    id_map.insert(state_id.0, new_id);
-
-    // Clone field transitions (Arc clone is cheap) - cold data
-    target_arena[new_id].field_transitions = source_arena[state_id].field_transitions.clone();
-
-    let old_state = &source_arena[state_id];
-
-    // Clone table with remapped state IDs
-    let old_table = &old_state.table;
-    let mut new_table = SmallTable {
-        ceilings: old_table.ceilings.clone(),
-        steps: SmallVec::with_capacity(old_table.steps.len()),
-        epsilons: SmallVec::with_capacity(old_table.epsilons.len()),
-        accel: old_table.accel.clone(),
-    };
-
-    for &step_id in &old_table.steps {
-        let new_step = clone_state_into_arena(source_arena, step_id, target_arena, id_map);
-        new_table.steps.push(new_step);
-    }
-
-    for &eps_id in &old_table.epsilons {
-        let new_eps = clone_state_into_arena(source_arena, eps_id, target_arena, id_map);
-        new_table.epsilons.push(new_eps);
-    }
-
-    target_arena[new_id].table = new_table;
-
-    new_id
 }
 
 /// Remap a table from source arena to the merged arena (NFA version).
@@ -3873,36 +3882,34 @@ pub fn make_string_arena_fa(val: &[u8], next_field: Arc<FieldMatcher>) -> (State
     arena[match_state].field_transitions.push(next_field);
 
     // Build the FA chain from end to start
-    let start = make_string_arena_fa_step(val, 0, match_state, &mut arena);
+    let start = make_string_arena_fa_step(val, match_state, &mut arena);
 
     arena.precompute_epsilon_closures();
     (arena, start)
 }
 
-/// Recursive helper for building string-matching FA.
-fn make_string_arena_fa_step(
-    val: &[u8],
-    index: usize,
-    match_state: StateId,
-    arena: &mut StateArena,
-) -> StateId {
-    if index >= val.len() {
-        // Final step: transition on VALUE_TERMINATOR to match state
-        return arena.alloc_with_table(SmallTable::with_mappings(
+/// Build the chain of one state per byte of `val`, ending in a state that
+/// reaches `match_state` on the value terminator, and return its first state.
+///
+/// Built back to front, so each state can point at the one already built. The
+/// chain is as long as the value, which is why this is a loop: a recursive
+/// build would put a stack frame on every byte of it.
+fn make_string_arena_fa_step(val: &[u8], match_state: StateId, arena: &mut StateArena) -> StateId {
+    let mut current = arena.alloc_with_table(SmallTable::with_mappings(
+        StateId::NONE,
+        &[ARENA_VALUE_TERMINATOR],
+        &[match_state],
+    ));
+
+    for &byte in val.iter().rev() {
+        current = arena.alloc_with_table(SmallTable::with_mappings(
             StateId::NONE,
-            &[ARENA_VALUE_TERMINATOR],
-            &[match_state],
+            &[byte],
+            &[current],
         ));
     }
 
-    // Recursive step: build rest of chain first, then prepend current byte
-    let continuation = make_string_arena_fa_step(val, index + 1, match_state, arena);
-
-    arena.alloc_with_table(SmallTable::with_mappings(
-        StateId::NONE,
-        &[val[index]],
-        &[continuation],
-    ))
+    current
 }
 
 /// Rollback data for an in-place trie insertion.
@@ -4099,37 +4106,36 @@ pub fn make_prefix_arena_fa(prefix: &[u8], next_field: Arc<FieldMatcher>) -> (St
     arena[match_state].field_transitions.push(next_field);
 
     // Build the FA chain from end to start
-    let start = make_prefix_arena_fa_step(prefix, 0, match_state, &mut arena);
+    let start = make_prefix_arena_fa_step(prefix, match_state, &mut arena);
 
     arena.precompute_epsilon_closures();
     (arena, start)
 }
 
-/// Recursive helper for building prefix-matching FA.
+/// Build the chain of one state per byte of `prefix`, ending in a state that
+/// reaches `match_state` on any byte, and return its first state.
+///
+/// Built back to front, so each state can point at the one already built. The
+/// chain is as long as the prefix, which is why this is a loop: a recursive
+/// build would put a stack frame on every byte of it.
 fn make_prefix_arena_fa_step(
     prefix: &[u8],
-    index: usize,
     match_state: StateId,
     arena: &mut StateArena,
 ) -> StateId {
-    if index >= prefix.len() {
-        // End of prefix: all bytes should transition to match state (default)
-        // Use match_state as default for all byte values
-        return arena.alloc_with_table(SmallTable::with_mappings(
-            match_state, // Default transition for all bytes
-            &[],
-            &[],
+    // Past the prefix everything matches, so the last state takes match_state
+    // as its default transition.
+    let mut current = arena.alloc_with_table(SmallTable::with_mappings(match_state, &[], &[]));
+
+    for &byte in prefix.iter().rev() {
+        current = arena.alloc_with_table(SmallTable::with_mappings(
+            StateId::NONE,
+            &[byte],
+            &[current],
         ));
     }
 
-    // Recursive step: build rest of chain first, then prepend current byte
-    let continuation = make_prefix_arena_fa_step(prefix, index + 1, match_state, arena);
-
-    arena.alloc_with_table(SmallTable::with_mappings(
-        StateId::NONE,
-        &[prefix[index]],
-        &[continuation],
-    ))
+    current
 }
 
 /// Build an arena-based FA that matches shellstyle wildcard patterns.
@@ -4565,8 +4571,7 @@ pub fn make_monocase_arena_fa(val: &[u8], next_field: Arc<FieldMatcher>) -> (Sta
             })
             .collect();
 
-        // Build the FA recursively
-        build_monocase_arena_recursive(&chars, 0, match_state, &mut arena)
+        build_monocase_arena_chain(&chars, match_state, &mut arena)
     } else {
         // Invalid UTF-8 - fall back to ASCII-only case folding
         build_monocase_ascii_chain(val, match_state, &mut arena)
@@ -4619,28 +4624,39 @@ fn build_monocase_ascii_chain(val: &[u8], match_state: StateId, arena: &mut Stat
     current_next
 }
 
-/// Recursively build monocase arena FA
-fn build_monocase_arena_recursive(
+/// Build the monocase arena FA for `chars`, returning its first state.
+///
+/// Built back to front, so each character's states can point at the states of
+/// the character after it. The chain is as long as the string, which is why
+/// this is a loop: a recursive build would put a stack frame on every
+/// character of it.
+fn build_monocase_arena_chain(
     chars: &[(Vec<u8>, Option<Vec<u8>>)],
-    idx: usize,
     match_state: StateId,
     arena: &mut StateArena,
 ) -> StateId {
-    if idx >= chars.len() {
-        // End of string - create state that matches on VALUE_TERMINATOR
-        return arena.alloc_with_table(SmallTable::with_mappings(
-            StateId::NONE,
-            &[ARENA_VALUE_TERMINATOR],
-            &[match_state],
-        ));
+    // End of string - create state that matches on VALUE_TERMINATOR
+    let mut next_state = arena.alloc_with_table(SmallTable::with_mappings(
+        StateId::NONE,
+        &[ARENA_VALUE_TERMINATOR],
+        &[match_state],
+    ));
+
+    for (orig, alt) in chars.iter().rev() {
+        next_state = build_monocase_char(orig, alt.as_deref(), next_state, arena);
     }
 
-    let (orig, alt) = &chars[idx];
+    next_state
+}
 
-    // First, build the state for after this character
-    let next_state = build_monocase_arena_recursive(chars, idx + 1, match_state, arena);
-
-    // Now build the transition(s) for this character
+/// Build the states matching one character — either case of it, where the two
+/// cases differ — all of them reaching `next_state`.
+fn build_monocase_char(
+    orig: &[u8],
+    alt: Option<&[u8]>,
+    next_state: StateId,
+    arena: &mut StateArena,
+) -> StateId {
     if let Some(alt_bytes) = alt {
         // Two paths to next state - handle common prefix
         let common_prefix = orig
