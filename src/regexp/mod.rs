@@ -1381,7 +1381,8 @@ mod tests {
     fn test_range_quantifier_equivalence_plus() {
         use crate::automaton::arena::{ARENA_VALUE_TERMINATOR, NfaBuffers, traverse_arena_nfa};
 
-        // a{1,} should be equivalent to a+ (but capped at REGEXP_QUANTIFIER_MAX)
+        // a{1,} and a+ are both unbounded: each builds the same cyclic loop,
+        // which never consults quant_max.
         let root_range = parse_regexp("a{1,}").unwrap();
         let root_plus = parse_regexp("a+").unwrap();
 
@@ -1437,7 +1438,8 @@ mod tests {
     fn test_range_quantifier_equivalence_star() {
         use crate::automaton::arena::{ARENA_VALUE_TERMINATOR, NfaBuffers, traverse_arena_nfa};
 
-        // a{0,} should be equivalent to a* (but capped at REGEXP_QUANTIFIER_MAX)
+        // a{0,} and a* are both unbounded: each builds the same cyclic loop,
+        // which never consults quant_max.
         let root_range = parse_regexp("a{0,}").unwrap();
         let root_star = parse_regexp("a*").unwrap();
 
