@@ -26,6 +26,7 @@ Style inspired by [ripgrep's CHANGELOG](https://github.com/BurntSushi/ripgrep/bl
 - Removed the runtime memory-budget API (`get_memory_budget`/`set_memory_budget`), matching Go upstream dropping it; the build-time `QuaminaBuilder::with_arena_byte_budget` cap remains (#152)
 
 ### Fixed
+- Long single-chain patterns no longer overflow the stack and abort the process — a 5,000-character `prefix` on a 2 MB thread used to die at freeze — because the arena walks that build, fold and clone a chain now carry their own stack instead of recursing once per state (#189)
 - Lookaround regexps now match against the value itself, not just their assertions: `foo(?!bar)baz` no longer matches `totally-unrelated`, `(?=.*foo).*bar.*` matches `foobar`, and `(?<=foo)bar(?=baz)baz` matches `foobarbaz` (#182, #183, #184)
 - `BuiltForSpeed` now holds its freeze-time DFA to the arena byte budget, keeping the NFA when there is no room, and applies to lookaround regexps, which it used to leave as NFAs (#186, #188)
 - `matcher_stats()` and `arena_stats()` now count the lazy DFA cache a `BuiltForSpeed` pattern falls back to, and the cache no longer allocates a transition table for states it declines to cache (#185, #186)
