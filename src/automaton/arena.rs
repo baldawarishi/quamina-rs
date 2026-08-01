@@ -2552,22 +2552,10 @@ pub fn append_merge_arena_nfas(
     source: &StateArena,
     source_start: StateId,
 ) -> StateId {
-    if target_start.is_none() {
-        let mut memo = FxHashMap::default();
-        return append_merge_nfa_states_recursive(
-            target,
-            StateId::NONE,
-            source,
-            source_start,
-            &mut memo,
-        );
-    }
     if source_start.is_none() {
         return target_start;
     }
-
-    let mut memo = FxHashMap::default();
-    append_merge_nfa_states_recursive(target, target_start, source, source_start, &mut memo)
+    append_merge_nfa_states(target, target_start, source, source_start)
 }
 
 /// Check if a state is an "epsilon-only" splice state created during merges.
@@ -2625,311 +2613,613 @@ fn is_spinout_state(arena: &StateArena, state_id: StateId) -> bool {
     state.table.steps.contains(&state_id) && state.table.epsilons.len() <= 1
 }
 
-fn append_merge_nfa_states_recursive(
+/// Walk two packed tables together, one entry per maximal byte range on which
+/// both sides hold a constant step: the range's exclusive ceiling, and the pair
+/// of steps covering it.
+///
+/// Merging is a function of that pair, so a range resolves once instead of once
+/// per byte. Chain states carry two or three ranges apiece, which is what keeps
+/// a merge frame small enough to hold one per state of a long chain.
+fn joint_table_runs(
+    left: &SmallTable,
+    right: &SmallTable,
+) -> SmallVec<[(u8, StateId, StateId); 8]> {
+    let mut runs = SmallVec::new();
+    let mut left_ranges = left.ceilings.iter().zip(&left.steps).peekable();
+    let mut right_ranges = right.ceilings.iter().zip(&right.steps).peekable();
+
+    while let (Some((&left_ceiling, &left_step)), Some((&right_ceiling, &right_step))) =
+        (left_ranges.peek().copied(), right_ranges.peek().copied())
+    {
+        runs.push((left_ceiling.min(right_ceiling), left_step, right_step));
+        // Whichever range ends first is done with; both tables cover the same
+        // bytes, so they run out together.
+        match left_ceiling.cmp(&right_ceiling) {
+            std::cmp::Ordering::Less => {
+                left_ranges.next();
+            }
+            std::cmp::Ordering::Greater => {
+                right_ranges.next();
+            }
+            std::cmp::Ordering::Equal => {
+                left_ranges.next();
+                right_ranges.next();
+            }
+        }
+    }
+    runs
+}
+
+/// Turn merged byte ranges back into a packed table, coalescing neighbours that
+/// landed on the same state.
+fn pack_merged_runs(runs: &[(u8, StateId)]) -> SmallTable {
+    let mut ceilings: SmallVec<[u8; 8]> = SmallVec::new();
+    let mut steps: SmallVec<[StateId; 8]> = SmallVec::new();
+    for &(ceiling, step) in runs {
+        if steps.last() == Some(&step) {
+            if let Some(last) = ceilings.last_mut() {
+                *last = ceiling;
+            }
+        } else {
+            ceilings.push(ceiling);
+            steps.push(step);
+        }
+    }
+    SmallTable {
+        ceilings,
+        steps,
+        epsilons: SmallVec::new(),
+        accel: None,
+    }
+}
+
+/// A child the merge owes a frame, and how the frame reaches it.
+#[derive(Clone, Copy)]
+enum MergeChild {
+    /// Merge this pair of states, one from each side.
+    Pair(StateId, StateId),
+    /// Copy this target-side subgraph verbatim. Only a spinner merge asks for
+    /// this: the spinner supplies the byte, so the branch it hands off to is
+    /// carried across rather than merged with anything.
+    CloneTarget(StateId),
+}
+
+/// Where a resolved child lands in the frame that asked for it.
+#[derive(Clone, Copy)]
+enum MergeSlot {
+    /// The step for byte range `run`.
+    Run(usize),
+    /// The step for byte range `run`; the branch then takes an epsilon back to
+    /// the spinner, so the wildcard keeps spinning past it.
+    RunLoopingBack(usize),
+    /// The step for byte range `run`; the branch takes over from the spinner
+    /// and so inherits its backedge and its field transitions.
+    RunLeavingSpinner(usize),
+    /// Appended to the frame's epsilons unless it resolved to nothing.
+    Epsilon,
+    /// Appended to the frame's epsilons as-is, keeping a copied source table's
+    /// epsilon list the length it was.
+    CopiedEpsilon,
+    /// The source subgraph whose epsilons this frame splices behind itself.
+    Spliced,
+}
+
+/// How a frame turns its resolved children into the state it is filling.
+enum MergeFill {
+    /// The source state copied in, with its byte ranges and acceleration kept
+    /// as they were and only the state ids remapped.
+    CopySource {
+        ceilings: SmallVec<[u8; 8]>,
+        accel: Option<AccelInfo>,
+    },
+    /// Both sides byte-merged, their field transitions concatenated.
+    Merged {
+        field_transitions: SmallVec<[Arc<FieldMatcher>; 1]>,
+    },
+    /// One side is a wildcard self-loop, so its byte ranges were steered
+    /// through the spinner rules as they resolved.
+    Spinner {
+        field_transitions: SmallVec<[Arc<FieldMatcher>; 1]>,
+        /// The spinner's own field transitions, which every branch taking over
+        /// from the self-loop inherits.
+        spinner_field_transitions: SmallVec<[Arc<FieldMatcher>; 1]>,
+        /// Target states already copied for this state, so a byte map reaching
+        /// the same branch twice copies it once.
+        clone_map: FxHashMap<StateId, StateId>,
+    },
+    /// One or both sides lead with epsilons, so the two are spliced behind an
+    /// epsilon-only state rather than byte-merged.
+    Splice {
+        target_state: StateId,
+        source_copy: StateId,
+    },
+}
+
+/// One state being merged: the children it still owes, and the byte ranges and
+/// epsilons they fill in.
+struct MergeFrame {
+    new_id: StateId,
+    /// Merged byte ranges — exclusive ceiling and the step below it — in
+    /// ascending order, so a range's width is the gap from its predecessor.
+    runs: SmallVec<[(u8, StateId); 8]>,
+    /// Children still to resolve, held back to front so that taking the next
+    /// one shortens the list.
+    children: SmallVec<[(MergeChild, MergeSlot); 8]>,
+    /// The slot the child currently being resolved will fill.
+    awaiting: Option<MergeSlot>,
+    epsilons: SmallVec<[StateId; 2]>,
+    fill: MergeFill,
+}
+
+impl MergeFrame {
+    /// How many bytes byte range `run` covers.
+    fn run_width(&self, run: usize) -> usize {
+        let floor = if run == 0 { 0 } else { self.runs[run - 1].0 };
+        usize::from(self.runs[run].0 - floor)
+    }
+}
+
+/// Append the merge of `target_start` and `source_start` into `target`.
+///
+/// The walk carries its own stack of frames rather than recursing per state:
+/// two patterns on one field are merged state by state, and a prefix, exact
+/// match or shellstyle is one state per byte, so recursion runs a small thread
+/// out of stack on a long pattern — which aborts the process instead of raising
+/// anything a caller could handle, and costs stack rather than the arena bytes
+/// the memory budget watches.
+///
+/// Frames are filled in the order the states were reached and only once all
+/// their children have resolved, so a merge that reads a child back — the
+/// epsilon splice reads the epsilons of the source copy it just made — sees the
+/// same finished state it would have seen from a recursive call.
+fn append_merge_nfa_states(
+    target: &mut StateArena,
+    target_start: StateId,
+    source: &StateArena,
+    source_start: StateId,
+) -> StateId {
+    let mut memo: FxHashMap<(StateId, StateId), StateId> = FxHashMap::default();
+    let mut stack: Vec<MergeFrame> = Vec::new();
+
+    if let Some(id) = begin_merge(
+        target,
+        target_start,
+        source,
+        source_start,
+        &mut memo,
+        &mut stack,
+    ) {
+        return id;
+    }
+
+    // Carries a finished child back to the frame waiting on it; empty whenever
+    // the walk is descending rather than returning.
+    let mut resolved: Option<StateId> = None;
+    loop {
+        let frame = stack
+            .last_mut()
+            .expect("the root frame leaves the stack only by returning");
+
+        if let Some(child) = resolved.take() {
+            deliver_merged_child(target, frame, child);
+            continue;
+        }
+
+        if let Some((child, slot)) = frame.children.pop() {
+            frame.awaiting = Some(slot);
+            match child {
+                MergeChild::Pair(target_state, source_state) => {
+                    resolved = begin_merge(
+                        target,
+                        target_state,
+                        source,
+                        source_state,
+                        &mut memo,
+                        &mut stack,
+                    );
+                }
+                MergeChild::CloneTarget(state_id) => {
+                    let MergeFill::Spinner { clone_map, .. } = &mut frame.fill else {
+                        unreachable!("only a spinner merge copies a target branch")
+                    };
+                    let mut clone_map = std::mem::take(clone_map);
+                    let copy = append_clone_target_state(target, state_id, &mut clone_map);
+                    let frame = stack
+                        .last_mut()
+                        .expect("the frame that asked for the copy is still on the stack");
+                    if let MergeFill::Spinner { clone_map: map, .. } = &mut frame.fill {
+                        *map = clone_map;
+                    }
+                    resolved = Some(copy);
+                }
+            }
+            continue;
+        }
+
+        let frame = stack
+            .pop()
+            .expect("the loop reached this arm through last_mut");
+        let filled = finish_merged_state(target, frame);
+        if stack.is_empty() {
+            return filled;
+        }
+        resolved = Some(filled);
+    }
+}
+
+/// Resolve the pair, returning its state if it needed no children, or pushing
+/// the frame that will fill it and returning nothing.
+fn begin_merge(
     target: &mut StateArena,
     target_state: StateId,
     source: &StateArena,
     source_state: StateId,
     memo: &mut FxHashMap<(StateId, StateId), StateId>,
-) -> StateId {
+    stack: &mut Vec<MergeFrame>,
+) -> Option<StateId> {
     let key = (target_state, source_state);
     if let Some(&cached) = memo.get(&key) {
-        return cached;
+        return Some(cached);
     }
 
     if target_state.is_none() && source_state.is_none() {
-        return StateId::NONE;
+        return Some(StateId::NONE);
     }
 
     if source_state.is_none() {
         memo.insert(key, target_state);
-        return target_state;
+        return Some(target_state);
     }
 
-    if target_state.is_none() {
-        let new_id = target.alloc();
-        memo.insert(key, new_id);
-
-        let source_state_ref = source[source_state].clone();
-        target[new_id].field_transitions = source_state_ref.field_transitions.clone();
-        target[new_id].table =
-            append_remap_source_nfa_table(target, source, &source_state_ref.table, memo);
-        return new_id;
-    }
-
+    // Allocated and memoized before any child is laid out, so a cycle back to
+    // this pair resolves to the state being filled rather than looping.
     let new_id = target.alloc();
     memo.insert(key, new_id);
 
-    let target_state_ref = target[target_state].clone();
-    let source_state_ref = source[source_state].clone();
+    if target_state.is_none() {
+        let source_state_ref = &source[source_state];
+        let field_transitions = source_state_ref.field_transitions.clone();
+        let frame = begin_copy_source(&source_state_ref.table, new_id);
+        target[new_id].field_transitions = field_transitions;
+        stack.push(frame);
+        return None;
+    }
 
     let target_has_spinout = is_spinout_state(target, target_state);
     let source_has_spinout = is_spinout_state(source, source_state);
+    let target_state_ref = &target[target_state];
+    let source_state_ref = &source[source_state];
     let target_has_epsilons = !target_state_ref.table.epsilons.is_empty();
     let source_has_epsilons = !source_state_ref.table.epsilons.is_empty();
 
+    // Two spinners have no self-loop to steer around each other and byte-merge
+    // like any other pair.
     if target_has_spinout && source_has_spinout {
-        append_merge_dual_spinout_states(
-            target,
-            &target_state_ref,
-            source,
-            &source_state_ref,
-            memo,
+        stack.push(begin_bytewise_merge(
+            target_state_ref,
+            source_state_ref,
             new_id,
-        );
-        return new_id;
+        ));
+        return None;
     }
 
     if (target_has_spinout && !source_has_epsilons) || (source_has_spinout && !target_has_epsilons)
     {
-        return append_asymmetric_spinner_merge(
-            target,
+        stack.push(begin_spinner_merge(
             target_state,
-            &target_state_ref,
-            source,
+            target_state_ref,
             source_state,
-            &source_state_ref,
+            source_state_ref,
             target_has_spinout,
-            memo,
             new_id,
-        );
+        ));
+        return None;
     }
 
     if target_has_epsilons || source_has_epsilons {
-        let cloned_source =
-            append_merge_nfa_states_recursive(target, StateId::NONE, source, source_state, memo);
-        let epsilons = flatten_epsilon_targets(target, &[target_state, cloned_source]);
-        target[new_id].table = SmallTable {
-            ceilings: smallvec![BYTE_CEILING_U8],
-            steps: smallvec![StateId::NONE],
-            epsilons,
-            accel: None,
-        };
-        return new_id;
+        stack.push(MergeFrame {
+            new_id,
+            runs: SmallVec::new(),
+            children: smallvec![(
+                MergeChild::Pair(StateId::NONE, source_state),
+                MergeSlot::Spliced
+            )],
+            awaiting: None,
+            epsilons: SmallVec::new(),
+            fill: MergeFill::Splice {
+                target_state,
+                source_copy: StateId::NONE,
+            },
+        });
+        return None;
     }
 
-    let combined_table = append_merge_nfa_tables_bytewise(
-        target,
-        &target_state_ref.table,
-        source,
-        &source_state_ref.table,
-        memo,
-    );
-
-    let mut field_transitions = target_state_ref.field_transitions;
-    field_transitions.extend(source_state_ref.field_transitions);
-
-    target[new_id].table = combined_table;
-    target[new_id].field_transitions = field_transitions;
-
-    new_id
+    stack.push(begin_bytewise_merge(
+        target_state_ref,
+        source_state_ref,
+        new_id,
+    ));
+    None
 }
 
-fn append_merge_dual_spinout_states(
-    target: &mut StateArena,
+/// Lay out a copy of a source state: every step and epsilon is remapped, and
+/// the byte ranges stay exactly as the source had them.
+fn begin_copy_source(table: &SmallTable, new_id: StateId) -> MergeFrame {
+    let mut runs = SmallVec::with_capacity(table.ceilings.len());
+    let mut children = SmallVec::with_capacity(table.ceilings.len() + table.epsilons.len());
+
+    for (run, (&ceiling, &step)) in table.ceilings.iter().zip(&table.steps).enumerate() {
+        runs.push((ceiling, StateId::NONE));
+        children.push((MergeChild::Pair(StateId::NONE, step), MergeSlot::Run(run)));
+    }
+    for &eps in &table.epsilons {
+        children.push((
+            MergeChild::Pair(StateId::NONE, eps),
+            MergeSlot::CopiedEpsilon,
+        ));
+    }
+
+    children.reverse();
+    MergeFrame {
+        new_id,
+        runs,
+        children,
+        awaiting: None,
+        epsilons: SmallVec::with_capacity(table.epsilons.len()),
+        fill: MergeFill::CopySource {
+            ceilings: table.ceilings.clone(),
+            accel: table.accel.clone(),
+        },
+    }
+}
+
+/// Lay out a plain byte merge: each shared byte range resolves to the merge of
+/// the two steps under it, and each side's epsilons are carried over alone.
+fn begin_bytewise_merge(
     target_state_ref: &FaState,
-    source: &StateArena,
     source_state_ref: &FaState,
-    memo: &mut FxHashMap<(StateId, StateId), StateId>,
     new_id: StateId,
-) {
-    let mut combined_table = append_merge_nfa_tables_bytewise(
-        target,
-        &target_state_ref.table,
-        source,
-        &source_state_ref.table,
-        memo,
+) -> MergeFrame {
+    let target_table = &target_state_ref.table;
+    let source_table = &source_state_ref.table;
+
+    let joint = joint_table_runs(target_table, source_table);
+    let mut runs = SmallVec::with_capacity(joint.len());
+    let mut children = SmallVec::with_capacity(
+        joint.len() + target_table.epsilons.len() + source_table.epsilons.len(),
     );
 
-    let mut merged_epsilons: SmallVec<[StateId; 2]> = SmallVec::new();
-    for &eps in &target_state_ref.table.epsilons {
-        let merged = append_merge_nfa_states_recursive(target, eps, source, StateId::NONE, memo);
-        if !merged.is_none() {
-            merged_epsilons.push(merged);
-        }
+    for (ceiling, target_step, source_step) in joint {
+        children.push((
+            MergeChild::Pair(target_step, source_step),
+            MergeSlot::Run(runs.len()),
+        ));
+        runs.push((ceiling, StateId::NONE));
     }
-    for &eps in &source_state_ref.table.epsilons {
-        let merged = append_merge_nfa_states_recursive(target, StateId::NONE, source, eps, memo);
-        if !merged.is_none() {
-            merged_epsilons.push(merged);
-        }
+    for &eps in &target_table.epsilons {
+        children.push((MergeChild::Pair(eps, StateId::NONE), MergeSlot::Epsilon));
     }
-    combined_table.epsilons = merged_epsilons;
+    for &eps in &source_table.epsilons {
+        children.push((MergeChild::Pair(StateId::NONE, eps), MergeSlot::Epsilon));
+    }
 
     let mut field_transitions = target_state_ref.field_transitions.clone();
     field_transitions.extend(source_state_ref.field_transitions.iter().cloned());
 
-    target[new_id].table = combined_table;
-    target[new_id].field_transitions = field_transitions;
+    children.reverse();
+    MergeFrame {
+        new_id,
+        runs,
+        children,
+        awaiting: None,
+        epsilons: SmallVec::new(),
+        fill: MergeFill::Merged { field_transitions },
+    }
 }
 
-#[allow(clippy::too_many_arguments)]
-fn append_asymmetric_spinner_merge(
-    target: &mut StateArena,
+/// Lay out a merge where one side is a wildcard self-loop.
+///
+/// The spinner drives each byte range. Where it loops back on itself the merged
+/// state loops too, unless the other side offers a branch there — then the
+/// branch takes over and inherits the spinner's field transitions and a backedge
+/// so the wildcard resumes afterwards.
+fn begin_spinner_merge(
     target_state: StateId,
     target_state_ref: &FaState,
-    source: &StateArena,
     source_state: StateId,
     source_state_ref: &FaState,
     target_has_spinout: bool,
-    memo: &mut FxHashMap<(StateId, StateId), StateId>,
     new_id: StateId,
-) -> StateId {
-    let mut target_unpacked = [StateId::NONE; BYTE_CEILING];
-    let mut source_unpacked = [StateId::NONE; BYTE_CEILING];
-    unpack_arena_table(&target_state_ref.table, &mut target_unpacked);
-    unpack_arena_table(&source_state_ref.table, &mut source_unpacked);
+) -> MergeFrame {
+    let target_table = &target_state_ref.table;
+    let source_table = &source_state_ref.table;
+    let (spinner_id, spinner_state_ref) = if target_has_spinout {
+        (target_state, target_state_ref)
+    } else {
+        (source_state, source_state_ref)
+    };
 
-    let mut target_clone_map = FxHashMap::default();
-    let mut merged_unpacked = [StateId::NONE; BYTE_CEILING];
-    for i in 0..BYTE_CEILING {
-        merged_unpacked[i] = if target_has_spinout {
-            append_asymmetric_spinner_byte_target_spinout(
-                target,
-                target_state,
-                target_unpacked[i],
-                target_state_ref,
-                source,
-                source_unpacked[i],
-                memo,
-                new_id,
-            )
+    let joint = joint_table_runs(target_table, source_table);
+    let mut runs = SmallVec::with_capacity(joint.len());
+    let mut children = SmallVec::with_capacity(joint.len());
+
+    for (ceiling, target_step, source_step) in joint {
+        let (spinner_next, other_next) = if target_has_spinout {
+            (target_step, source_step)
         } else {
-            append_asymmetric_spinner_byte_source_spinout(
-                target,
-                target_unpacked[i],
-                source,
-                source_state,
-                source_unpacked[i],
-                source_state_ref,
-                memo,
-                &mut target_clone_map,
-                new_id,
-            )
+            (source_step, target_step)
         };
+        let run = runs.len();
+
+        // The spinner does not accept the byte, so neither does the merge.
+        if spinner_next.is_none() {
+            runs.push((ceiling, StateId::NONE));
+            continue;
+        }
+
+        if other_next.is_none() {
+            // Only the spinner accepts it: keep spinning, or carry its branch
+            // across on its own.
+            if spinner_next == spinner_id {
+                runs.push((ceiling, new_id));
+            } else {
+                runs.push((ceiling, StateId::NONE));
+                children.push((
+                    spinner_only_child(spinner_next, target_has_spinout),
+                    MergeSlot::Run(run),
+                ));
+            }
+            continue;
+        }
+
+        runs.push((ceiling, StateId::NONE));
+        if spinner_next == spinner_id {
+            // The other side leaves the self-loop here, so its branch is
+            // carried across whole rather than merged into the spinner.
+            let child = if target_has_spinout {
+                MergeChild::Pair(StateId::NONE, other_next)
+            } else {
+                MergeChild::CloneTarget(other_next)
+            };
+            children.push((child, MergeSlot::RunLeavingSpinner(run)));
+        } else {
+            let child = if target_has_spinout {
+                MergeChild::Pair(spinner_next, other_next)
+            } else {
+                MergeChild::Pair(other_next, spinner_next)
+            };
+            children.push((child, MergeSlot::RunLoopingBack(run)));
+        }
     }
 
-    let mut combined_table = SmallTable::new();
-    combined_table.pack(&merged_unpacked);
-
-    let spinner_epsilons = if target_has_spinout {
-        &target_state_ref.table.epsilons
-    } else {
-        &source_state_ref.table.epsilons
-    };
-    for &spinner_eps in spinner_epsilons {
-        let merged = if target_has_spinout {
-            append_merge_nfa_states_recursive(target, spinner_eps, source, StateId::NONE, memo)
-        } else {
-            append_merge_nfa_states_recursive(target, StateId::NONE, source, spinner_eps, memo)
-        };
-        if !merged.is_none() {
-            combined_table.epsilons.push(merged);
-        }
+    for &eps in &spinner_state_ref.table.epsilons {
+        children.push((
+            spinner_only_child(eps, target_has_spinout),
+            MergeSlot::Epsilon,
+        ));
     }
 
     let mut field_transitions = target_state_ref.field_transitions.clone();
     field_transitions.extend(source_state_ref.field_transitions.iter().cloned());
 
-    target[new_id].table = combined_table;
-    target[new_id].field_transitions = field_transitions;
+    children.reverse();
+    MergeFrame {
+        new_id,
+        runs,
+        children,
+        awaiting: None,
+        epsilons: SmallVec::new(),
+        fill: MergeFill::Spinner {
+            field_transitions,
+            spinner_field_transitions: spinner_state_ref.field_transitions.clone(),
+            clone_map: FxHashMap::default(),
+        },
+    }
+}
+
+/// A child that exists on the spinner's side only, keyed to whichever arena the
+/// spinner came from.
+const fn spinner_only_child(spinner_next: StateId, target_has_spinout: bool) -> MergeChild {
+    if target_has_spinout {
+        MergeChild::Pair(spinner_next, StateId::NONE)
+    } else {
+        MergeChild::Pair(StateId::NONE, spinner_next)
+    }
+}
+
+/// File a resolved child into the slot the frame reserved for it.
+fn deliver_merged_child(target: &mut StateArena, frame: &mut MergeFrame, child: StateId) {
+    let slot = frame
+        .awaiting
+        .take()
+        .expect("a child is resolved only for a slot the frame reserved");
+    match slot {
+        MergeSlot::Run(run) => frame.runs[run].1 = child,
+        MergeSlot::RunLoopingBack(run) => {
+            frame.runs[run].1 = child;
+            if !child.is_none() {
+                let new_id = frame.new_id;
+                // One backedge per byte, matching the width of the range: a
+                // branch reached by several bytes is re-entered by each of them.
+                for _ in 0..frame.run_width(run) {
+                    target[child].table.epsilons.push(new_id);
+                }
+            }
+        }
+        MergeSlot::RunLeavingSpinner(run) => {
+            frame.runs[run].1 = child;
+            let width = frame.run_width(run);
+            let MergeFill::Spinner {
+                spinner_field_transitions,
+                ..
+            } = &frame.fill
+            else {
+                unreachable!("only a spinner merge hands a byte range over")
+            };
+            for _ in 0..width {
+                append_add_spinner_backedge(target, child, frame.new_id, spinner_field_transitions);
+            }
+        }
+        MergeSlot::Epsilon => {
+            if !child.is_none() {
+                frame.epsilons.push(child);
+            }
+        }
+        MergeSlot::CopiedEpsilon => frame.epsilons.push(child),
+        MergeSlot::Spliced => {
+            if let MergeFill::Splice { source_copy, .. } = &mut frame.fill {
+                *source_copy = child;
+            }
+        }
+    }
+}
+
+/// Write a frame's resolved children into the state it was filling.
+fn finish_merged_state(target: &mut StateArena, frame: MergeFrame) -> StateId {
+    let MergeFrame {
+        new_id,
+        runs,
+        epsilons,
+        fill,
+        ..
+    } = frame;
+
+    match fill {
+        MergeFill::CopySource { ceilings, accel } => {
+            let mut steps = SmallVec::with_capacity(runs.len());
+            steps.extend(runs.iter().map(|&(_, step)| step));
+            target[new_id].table = SmallTable {
+                ceilings,
+                steps,
+                epsilons,
+                accel,
+            };
+        }
+        MergeFill::Merged { field_transitions }
+        | MergeFill::Spinner {
+            field_transitions, ..
+        } => {
+            let mut table = pack_merged_runs(&runs);
+            table.epsilons = epsilons;
+            let state = &mut target[new_id];
+            state.table = table;
+            state.field_transitions = field_transitions;
+        }
+        MergeFill::Splice {
+            target_state,
+            source_copy,
+        } => {
+            let epsilons = flatten_epsilon_targets(target, &[target_state, source_copy]);
+            target[new_id].table = SmallTable {
+                ceilings: smallvec![BYTE_CEILING_U8],
+                steps: smallvec![StateId::NONE],
+                epsilons,
+                accel: None,
+            };
+        }
+    }
+
     new_id
-}
-
-#[allow(clippy::too_many_arguments)]
-fn append_asymmetric_spinner_byte_target_spinout(
-    target: &mut StateArena,
-    spinner_id: StateId,
-    spinner_next: StateId,
-    spinner_state: &FaState,
-    source: &StateArena,
-    other_next: StateId,
-    memo: &mut FxHashMap<(StateId, StateId), StateId>,
-    new_id: StateId,
-) -> StateId {
-    if spinner_next.is_none() {
-        return StateId::NONE;
-    }
-
-    if other_next.is_none() {
-        if spinner_next == spinner_id {
-            return new_id;
-        }
-        return append_merge_nfa_states_recursive(
-            target,
-            spinner_next,
-            source,
-            StateId::NONE,
-            memo,
-        );
-    }
-
-    if spinner_next == spinner_id {
-        let remapped_other =
-            append_merge_nfa_states_recursive(target, StateId::NONE, source, other_next, memo);
-        append_add_spinner_backedge(
-            target,
-            remapped_other,
-            new_id,
-            &spinner_state.field_transitions,
-        );
-        return remapped_other;
-    }
-
-    let merged_branch =
-        append_merge_nfa_states_recursive(target, spinner_next, source, other_next, memo);
-    if !merged_branch.is_none() {
-        target[merged_branch].table.epsilons.push(new_id);
-    }
-    merged_branch
-}
-
-#[allow(clippy::too_many_arguments)]
-fn append_asymmetric_spinner_byte_source_spinout(
-    target: &mut StateArena,
-    other_next: StateId,
-    source: &StateArena,
-    spinner_id: StateId,
-    spinner_next: StateId,
-    spinner_state: &FaState,
-    memo: &mut FxHashMap<(StateId, StateId), StateId>,
-    target_clone_map: &mut FxHashMap<StateId, StateId>,
-    new_id: StateId,
-) -> StateId {
-    if spinner_next.is_none() {
-        return StateId::NONE;
-    }
-
-    if other_next.is_none() {
-        if spinner_next == spinner_id {
-            return new_id;
-        }
-        return append_merge_nfa_states_recursive(
-            target,
-            StateId::NONE,
-            source,
-            spinner_next,
-            memo,
-        );
-    }
-
-    if spinner_next == spinner_id {
-        let remapped_other = append_clone_target_state(target, other_next, target_clone_map);
-        append_add_spinner_backedge(
-            target,
-            remapped_other,
-            new_id,
-            &spinner_state.field_transitions,
-        );
-        return remapped_other;
-    }
-
-    let merged_branch =
-        append_merge_nfa_states_recursive(target, other_next, source, spinner_next, memo);
-    if !merged_branch.is_none() {
-        target[merged_branch].table.epsilons.push(new_id);
-    }
-    merged_branch
 }
 
 fn append_add_spinner_backedge(
@@ -2947,6 +3237,12 @@ fn append_add_spinner_backedge(
         .extend(spinner_field_transitions.iter().cloned());
 }
 
+/// Copy `state_id` and everything reachable from it back into the same arena,
+/// recording old-to-new ids in `id_map` and returning the copy of `state_id`.
+///
+/// The walk carries its own stack for the reason [`clone_states_into_arena`]
+/// does: the branch being copied is a chain as long as the pattern that built
+/// it, which is deeper than a small thread's stack.
 fn append_clone_target_state(
     target: &mut StateArena,
     state_id: StateId,
@@ -2955,113 +3251,61 @@ fn append_clone_target_state(
     if state_id.is_none() {
         return StateId::NONE;
     }
-    if let Some(&new_id) = id_map.get(&state_id) {
-        return new_id;
+
+    // Allocate every state the walk reaches, in the order it reaches them, and
+    // remap the tables afterwards — by which point every state they point at
+    // has an id, including their own, so cycles need no special handling.
+    let mut copied: Vec<(StateId, StateId)> = Vec::new();
+    let mut pending = vec![state_id];
+    while let Some(old_id) = pending.pop() {
+        if old_id.is_none() || id_map.contains_key(&old_id) {
+            continue;
+        }
+
+        let new_id = target.alloc();
+        id_map.insert(old_id, new_id);
+        copied.push((old_id, new_id));
+
+        // Reversed, so that popping visits the table in its own order.
+        let table = &target[old_id].table;
+        pending.extend(table.steps.iter().chain(&table.epsilons).rev().copied());
     }
 
-    let new_id = target.alloc();
-    id_map.insert(state_id, new_id);
-
-    let old_state = target[state_id].clone();
-    target[new_id].field_transitions = old_state.field_transitions;
-    target[new_id].table = append_clone_target_table(target, &old_state.table, id_map);
-    new_id
-}
-
-fn append_clone_target_table(
-    target: &mut StateArena,
-    table: &SmallTable,
-    id_map: &mut FxHashMap<StateId, StateId>,
-) -> SmallTable {
-    let mut new_table = SmallTable {
-        ceilings: table.ceilings.clone(),
-        steps: SmallVec::with_capacity(table.steps.len()),
-        epsilons: SmallVec::with_capacity(table.epsilons.len()),
-        accel: table.accel.clone(),
-    };
-
-    for &step_id in &table.steps {
-        new_table
-            .steps
-            .push(append_clone_target_state(target, step_id, id_map));
-    }
-    for &eps_id in &table.epsilons {
-        new_table
-            .epsilons
-            .push(append_clone_target_state(target, eps_id, id_map));
-    }
-
-    new_table
-}
-
-fn append_remap_source_nfa_table(
-    target: &mut StateArena,
-    source: &StateArena,
-    table: &SmallTable,
-    memo: &mut FxHashMap<(StateId, StateId), StateId>,
-) -> SmallTable {
-    let mut new_table = SmallTable {
-        ceilings: table.ceilings.clone(),
-        steps: SmallVec::with_capacity(table.steps.len()),
-        epsilons: SmallVec::with_capacity(table.epsilons.len()),
-        accel: table.accel.clone(),
-    };
-
-    for &step_id in &table.steps {
-        let merged =
-            append_merge_nfa_states_recursive(target, StateId::NONE, source, step_id, memo);
-        new_table.steps.push(merged);
-    }
-
-    for &eps_id in &table.epsilons {
-        let merged = append_merge_nfa_states_recursive(target, StateId::NONE, source, eps_id, memo);
-        new_table.epsilons.push(merged);
-    }
-
-    new_table
-}
-
-fn append_merge_nfa_tables_bytewise(
-    target: &mut StateArena,
-    target_table: &SmallTable,
-    source: &StateArena,
-    source_table: &SmallTable,
-    memo: &mut FxHashMap<(StateId, StateId), StateId>,
-) -> SmallTable {
-    let mut unpacked_target = [StateId::NONE; BYTE_CEILING];
-    let mut unpacked_source = [StateId::NONE; BYTE_CEILING];
-
-    unpack_arena_table(target_table, &mut unpacked_target);
-    unpack_arena_table(source_table, &mut unpacked_source);
-
-    let mut merged_unpacked = [StateId::NONE; BYTE_CEILING];
-    for i in 0..BYTE_CEILING {
-        merged_unpacked[i] = append_merge_nfa_states_recursive(
-            target,
-            unpacked_target[i],
-            source,
-            unpacked_source[i],
-            memo,
+    for (old_id, new_id) in copied {
+        let old_table = target[old_id].table.clone();
+        // Sized up front: collecting would round the capacity up and leave the
+        // copy holding more than the state it came from.
+        let mut steps = SmallVec::with_capacity(old_table.steps.len());
+        steps.extend(
+            old_table
+                .steps
+                .iter()
+                .map(|id| id_map.get(id).copied().unwrap_or(StateId::NONE)),
         );
+        let mut epsilons = SmallVec::with_capacity(old_table.epsilons.len());
+        epsilons.extend(
+            old_table
+                .epsilons
+                .iter()
+                .map(|id| id_map.get(id).copied().unwrap_or(StateId::NONE)),
+        );
+        // Field transitions are cold data; the Arc clone is cheap.
+        let field_transitions = target[old_id].field_transitions.clone();
+
+        let new_state = &mut target[new_id];
+        new_state.table = SmallTable {
+            ceilings: old_table.ceilings,
+            steps,
+            epsilons,
+            accel: old_table.accel,
+        };
+        new_state.field_transitions = field_transitions;
     }
 
-    let mut result = SmallTable::new();
-    result.pack(&merged_unpacked);
-
-    for &eps in &target_table.epsilons {
-        let merged = append_merge_nfa_states_recursive(target, eps, source, StateId::NONE, memo);
-        if !merged.is_none() {
-            result.epsilons.push(merged);
-        }
-    }
-    for &eps in &source_table.epsilons {
-        let merged = append_merge_nfa_states_recursive(target, StateId::NONE, source, eps, memo);
-        if !merged.is_none() {
-            result.epsilons.push(merged);
-        }
-    }
-
-    result
+    id_map
+        .get(&state_id)
+        .copied()
+        .expect("the walk copies the state it was given")
 }
 
 /// Recursively merge two NFA states from different arenas.
@@ -4420,105 +4664,184 @@ pub fn make_anything_but_arena_fa(
     arena[success].field_transitions.push(next_field);
 
     // Build the trie-like structure
-    let start = build_anything_but_step(excluded, 0, success, &mut arena);
+    let roots: Vec<&[u8]> = excluded.iter().map(Vec::as_slice).collect();
+    let start = build_anything_but_trie(&roots, success, &mut arena);
 
     arena.precompute_epsilon_closures();
     (arena, start)
 }
 
-/// Build one step of the anything-but arena automaton.
-fn build_anything_but_step(
-    vals: &[Vec<u8>],
-    index: usize,
+/// One byte leaving a trie node.
+///
+/// `continuing` holds what is left of the excluded values that have more bytes
+/// after this one, and `ends_here` records whether any excluded value stops on
+/// it. A byte can do both, when one excluded value is a strict prefix of
+/// another.
+struct AnythingButBranch<'a> {
+    byte: u8,
+    ends_here: bool,
+    continuing: Vec<&'a [u8]>,
+}
+
+/// A trie node partway through being built.
+///
+/// Branches move out of `branches` and into `resolved` as their subtrees
+/// finish. The node's own state is allocated once none are left, so a node is
+/// always built after its children.
+struct AnythingButNode<'a> {
+    /// Branches still to build, held back to front so that taking the next one
+    /// shortens the list.
+    branches: Vec<AnythingButBranch<'a>>,
+    /// The branch whose subtree the walk is currently inside.
+    awaiting: Option<AnythingButBranch<'a>>,
+    resolved: Vec<(u8, StateId)>,
+}
+
+impl<'a> AnythingButNode<'a> {
+    /// Group excluded-value suffixes by their leading byte into the branches of
+    /// one node.
+    ///
+    /// Each level strips the byte it consumed, so a node only ever looks at the
+    /// front of what it is given and no offset has to be carried down. Branch
+    /// order follows first appearance, which keeps a build over the same
+    /// excluded list reproducible; the packed table it feeds is keyed by byte,
+    /// so the order does not reach the automaton.
+    fn group(vals: &[&'a [u8]]) -> Self {
+        let mut slot_of_byte: FxHashMap<u8, usize> = FxHashMap::default();
+        let mut branches: Vec<AnythingButBranch<'a>> = Vec::new();
+
+        for val in vals {
+            // Splitting rejects an empty value and yields the byte with the
+            // rest of the value in one step.
+            let Some((&utf8_byte, rest)) = val.split_first() else {
+                continue;
+            };
+            let slot = *slot_of_byte.entry(utf8_byte).or_insert_with(|| {
+                branches.push(AnythingButBranch {
+                    byte: utf8_byte,
+                    ends_here: false,
+                    continuing: Vec::new(),
+                });
+                branches.len() - 1
+            });
+            if rest.is_empty() {
+                branches[slot].ends_here = true;
+            } else {
+                branches[slot].continuing.push(rest);
+            }
+        }
+
+        branches.reverse();
+        Self {
+            branches,
+            awaiting: None,
+            resolved: Vec::new(),
+        }
+    }
+}
+
+/// Build the anything-but trie: one node per byte offset, defaulting to
+/// `success` and steering only the bytes an excluded value uses.
+///
+/// The excluded values are borrowed rather than copied down the levels, and the
+/// walk keeps its own stack of nodes so that depth is bounded by the heap
+/// rather than by the thread's stack — a single excluded value is one trie
+/// level per byte, which for a long value overruns a small stack.
+fn build_anything_but_trie(vals: &[&[u8]], success: StateId, arena: &mut StateArena) -> StateId {
+    let mut stack = vec![AnythingButNode::group(vals)];
+    // The state the node on top of the stack was waiting on, once its subtree
+    // finished. Empty whenever the walk is descending rather than returning.
+    let mut continuation: Option<StateId> = None;
+
+    loop {
+        let node = stack
+            .last_mut()
+            .expect("the root node leaves the stack only by returning");
+
+        if let Some(continuation) = continuation.take() {
+            let branch = node
+                .awaiting
+                .take()
+                .expect("a subtree finishes only for a branch the node descended into");
+            let state = if branch.ends_here {
+                append_anything_but_terminator(continuation, success, arena)
+            } else {
+                continuation
+            };
+            node.resolved.push((branch.byte, state));
+            continue;
+        }
+
+        if let Some(branch) = node.branches.pop() {
+            if branch.continuing.is_empty() {
+                node.resolved
+                    .push((branch.byte, alloc_anything_but_leaf(success, arena)));
+            } else {
+                let child = AnythingButNode::group(&branch.continuing);
+                node.awaiting = Some(branch);
+                stack.push(child);
+            }
+            continue;
+        }
+
+        let node = stack
+            .pop()
+            .expect("the loop reached this arm through last_mut");
+        let state = alloc_anything_but_node(&node.resolved, success, arena);
+        if stack.is_empty() {
+            return state;
+        }
+        continuation = Some(state);
+    }
+}
+
+/// Wrap a continuation for a byte that also ends an excluded value.
+///
+/// The new state inherits the continuation's byte map so longer excluded values
+/// keep being tracked, but steers the terminator into a dead state so the value
+/// stopping here rejects.
+fn append_anything_but_terminator(
+    continuation: StateId,
     success: StateId,
     arena: &mut StateArena,
 ) -> StateId {
-    // Group values by the byte at current index
-    let mut vals_with_bytes_remaining: FxHashMap<u8, Vec<&Vec<u8>>> = FxHashMap::default();
-    let mut vals_ending_here: FxHashSet<u8> = FxHashSet::default();
+    let fail_state = arena.alloc();
 
-    for val in vals {
-        // `get` rejects empty values and indices past the end in one check,
-        // so the matched byte is always a valid position in a non-empty value.
-        let Some(&utf8_byte) = val.get(index) else {
-            continue;
-        };
-        if index == val.len() - 1 {
-            // The value terminates on this byte.
-            vals_ending_here.insert(utf8_byte);
-        } else {
-            // More bytes follow; defer to a continuation keyed on this byte.
-            vals_with_bytes_remaining
-                .entry(utf8_byte)
-                .or_default()
-                .push(val);
-        }
+    let mut combined_unpacked: [StateId; BYTE_CEILING] = [success; BYTE_CEILING];
+    unpack_arena_table(&arena[continuation].table, &mut combined_unpacked);
+    combined_unpacked[ARENA_VALUE_TERMINATOR as usize] = fail_state;
+
+    let combined_state = arena.alloc();
+    arena[combined_state].table.pack(&combined_unpacked);
+    combined_state
+}
+
+/// Build the state for a byte that ends an excluded value and continues none:
+/// the terminator fails, every other byte succeeds.
+fn alloc_anything_but_leaf(success: StateId, arena: &mut StateArena) -> StateId {
+    let fail_state = arena.alloc();
+    arena.alloc_with_table(SmallTable::with_mappings(
+        success,
+        &[ARENA_VALUE_TERMINATOR],
+        &[fail_state],
+    ))
+}
+
+/// Build a trie node's own state: default to success, override the bytes its
+/// branches resolved.
+fn alloc_anything_but_node(
+    resolved: &[(u8, StateId)],
+    success: StateId,
+    arena: &mut StateArena,
+) -> StateId {
+    let mut unpacked: [StateId; BYTE_CEILING] = [success; BYTE_CEILING];
+    for &(byte, state) in resolved {
+        unpacked[byte as usize] = state;
     }
 
-    // Collect all bytes that need special handling
-    let all_bytes: FxHashSet<u8> = vals_with_bytes_remaining
-        .keys()
-        .chain(vals_ending_here.iter())
-        .copied()
-        .collect();
-
-    // Build state for this step
-    let mut special_mappings: Vec<(u8, StateId)> = Vec::new();
-
-    for utf8_byte in all_bytes {
-        let has_continuation = vals_with_bytes_remaining.contains_key(&utf8_byte);
-        let ends_here = vals_ending_here.contains(&utf8_byte);
-
-        if has_continuation && ends_here {
-            // Both continues and ends - need combined state
-            let continuing_vals = vals_with_bytes_remaining.get(&utf8_byte).unwrap();
-            let owned_vals: Vec<Vec<u8>> = continuing_vals.iter().copied().cloned().collect();
-
-            // Recurse for continuation
-            let continuation = build_anything_but_step(&owned_vals, index + 1, success, arena);
-
-            // Build combined state: fail on VALUE_TERMINATOR, inherit continuation for others
-            // We need to create a new state that merges the continuation but overrides VALUE_TERMINATOR
-            let fail_state = arena.alloc(); // Empty state = fail
-
-            // Inherit the continuation's byte map, then steer the terminator
-            // to fail so any value ending on this byte rejects.
-            let mut combined_unpacked: [StateId; BYTE_CEILING] = [success; BYTE_CEILING];
-            unpack_arena_table(&arena[continuation].table, &mut combined_unpacked);
-            combined_unpacked[ARENA_VALUE_TERMINATOR as usize] = fail_state;
-
-            let combined_state = arena.alloc();
-            arena[combined_state].table.pack(&combined_unpacked);
-            special_mappings.push((utf8_byte, combined_state));
-        } else if has_continuation {
-            // Only continues
-            let continuing_vals = vals_with_bytes_remaining.get(&utf8_byte).unwrap();
-            let owned_vals: Vec<Vec<u8>> = continuing_vals.iter().copied().cloned().collect();
-            let next_state = build_anything_but_step(&owned_vals, index + 1, success, arena);
-            special_mappings.push((utf8_byte, next_state));
-        } else if ends_here {
-            // Only ends here - fail on VALUE_TERMINATOR, success on other bytes
-            let fail_state = arena.alloc(); // Empty state = fail
-            let last_state = arena.alloc_with_table(SmallTable::with_mappings(
-                success, // Default: success on any other byte
-                &[ARENA_VALUE_TERMINATOR],
-                &[fail_state], // Fail on terminator
-            ));
-            special_mappings.push((utf8_byte, last_state));
-        }
-    }
-
-    // Build the start state with default to success
-    if special_mappings.is_empty() {
-        // No excluded values to track - just default to success
-        return arena.alloc_with_table(SmallTable::with_mappings(success, &[], &[]));
-    }
-
-    // Build state with default success and special transitions
-    let bytes: Vec<u8> = special_mappings.iter().map(|(b, _)| *b).collect();
-    let states: Vec<StateId> = special_mappings.iter().map(|(_, s)| *s).collect();
-
-    arena.alloc_with_table(SmallTable::with_mappings(success, &bytes, &states))
+    let mut table = SmallTable::new();
+    table.pack(&unpacked);
+    arena.alloc_with_table(table)
 }
 
 /// Build an arena-based FA that matches strings case-insensitively.
@@ -7564,33 +7887,6 @@ mod nfa_merge_tests {
     }
 
     #[test]
-    fn test_append_merge_nfa_tables_bytewise_filters_none_epsilons() {
-        let mut target = StateArena::new();
-        let source = StateArena::new();
-        let target_table = SmallTable {
-            ceilings: smallvec![BYTE_CEILING_U8],
-            steps: smallvec![StateId::NONE],
-            epsilons: smallvec![StateId::NONE],
-            accel: None,
-        };
-        let source_table = target_table.clone();
-        let mut memo = FxHashMap::default();
-
-        let merged = append_merge_nfa_tables_bytewise(
-            &mut target,
-            &target_table,
-            &source,
-            &source_table,
-            &mut memo,
-        );
-
-        assert!(
-            merged.epsilons.iter().all(|eps| !eps.is_none()),
-            "bytewise append merge must filter NONE epsilon targets"
-        );
-    }
-
-    #[test]
     fn test_append_merge_source_spinout_keeps_self_loop_and_backedges() {
         let (target, target_start) =
             make_string_arena_fa(b"ad", Arc::new(FieldMatcher::with_match_id(1)));
@@ -7635,6 +7931,72 @@ mod nfa_merge_tests {
             "merged source spinout suffix branch needs a backedge"
         );
         assert!(get_match_ids(&appended, appended_start, b"acXc").contains(&2));
+    }
+
+    #[test]
+    fn test_append_merge_spinner_backedge_repeats_across_a_byte_range() {
+        // A branch the spinner hands off to is re-entered by every byte that
+        // reaches it, so its backedge count tracks the width of the byte range
+        // rather than the number of branches. Two ranges, one starting at byte
+        // zero and one further in, so the widths differ from their ceilings.
+        let mut target = StateArena::new();
+        let matched = target.alloc();
+        target
+            .get_mut(matched)
+            .expect("just allocated")
+            .field_transitions
+            .push(Arc::new(FieldMatcher::with_match_id(1)));
+        let first = target.alloc_with_table(SmallTable::with_mappings(
+            StateId::NONE,
+            &[ARENA_VALUE_TERMINATOR],
+            &[matched],
+        ));
+        let second = target.alloc_with_table(SmallTable::with_mappings(
+            StateId::NONE,
+            &[ARENA_VALUE_TERMINATOR],
+            &[matched],
+        ));
+        let target_start = target.alloc_with_table(SmallTable::with_mappings(
+            StateId::NONE,
+            &[0, 1, 2, 3, 4, 10, 11, 12, 13],
+            &[
+                first, first, first, first, first, second, second, second, second,
+            ],
+        ));
+        target.precompute_epsilon_closures();
+
+        // A bare wildcard self-loop, reaching its match through an epsilon.
+        let mut source = StateArena::new();
+        let source_matched = source.alloc();
+        source[source_matched]
+            .field_transitions
+            .push(Arc::new(FieldMatcher::with_match_id(2)));
+        let source_term = source.alloc_with_table(SmallTable::with_mappings(
+            StateId::NONE,
+            &[ARENA_VALUE_TERMINATOR],
+            &[source_matched],
+        ));
+        let spinner = source.alloc();
+        source[spinner].table = make_byte_dot_table(spinner);
+        source[spinner].table.epsilons.push(source_term);
+        source.precompute_epsilon_closures();
+
+        let merged_start = append_merge_arena_nfas(&mut target, target_start, &source, spinner);
+
+        for (byte, width) in [(0u8, 5usize), (10, 4)] {
+            let branch = step_byte(&target, merged_start, byte);
+            assert!(!branch.is_none(), "byte {byte} must reach a merged branch");
+            let backedges = target[branch]
+                .table
+                .epsilons
+                .iter()
+                .filter(|&&eps| eps == merged_start)
+                .count();
+            assert_eq!(
+                backedges, width,
+                "branch entered on byte {byte} needs one spinner backedge per byte of its range"
+            );
+        }
     }
 
     #[test]
