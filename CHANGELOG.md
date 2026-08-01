@@ -14,7 +14,7 @@ Style inspired by [ripgrep's CHANGELOG](https://github.com/BurntSushi/ripgrep/bl
 - `matcher_stats()` now measures the materialized (frozen) matcher, so it reflects the build mode — `BuiltForSpeed` reports the converted DFAs — letting you watch the size effect of the mode you chose (#178)
 
 ### Changed
-- Word boundary expansion now rejects a pattern whose boundaries expand past 1024 alternatives instead of building an automaton for every one of them (#188)
+- Word boundary expansion now rejects a pattern whose boundaries expand past 1024 alternatives instead of building an automaton for every one of them (#190)
 - Default to `BuiltForComfort`, keeping wildcard and regexp matchers as NFAs; the NFA→DFA conversion now runs only under `BuiltForSpeed`. This favors cheaper `add_pattern` over faster `matches_for_event`, matching Go upstream's default (#178)
 - Store self-only epsilon closures as an implicit zero-length sentinel, avoiding one `StateId` in the flattened closure buffer for the common case (#173)
 - Precompute epsilon closures incrementally, re-closing only the states an added pattern introduces instead of the whole automaton on every add (matching Go upstream's `closureForNfa` prune) (#173)
@@ -27,9 +27,9 @@ Style inspired by [ripgrep's CHANGELOG](https://github.com/BurntSushi/ripgrep/bl
 - Removed the runtime memory-budget API (`get_memory_budget`/`set_memory_budget`), matching Go upstream dropping it; the build-time `QuaminaBuilder::with_arena_byte_budget` cap remains (#152)
 
 ### Fixed
-- A `{0}` quantifier beside a word boundary (`xa{0}~b `) no longer panics `add_pattern`, and an atom that can match zero characters now hands the boundary to its neighbour instead of assuming the value edge, so `xa?~b ` matches `x ` (#188)
-- Long single-chain patterns no longer overflow the stack and abort the process — a 5,000-character `prefix` on a 2 MB thread used to die at freeze — because the arena walks that build, fold and clone a chain now carry their own stack instead of recursing once per state (#189)
-- Merging a second long pattern into a field that already has one, and `anything-but` on a long excluded value, no longer overflow the stack either; the chain merge also resolves whole byte ranges at a time instead of all 256 bytes per state, making it roughly 3x faster to add many prefix or shellstyle patterns to one field (#190)
+- A `{0}` quantifier beside a word boundary (`xa{0}~b `) no longer panics `add_pattern`, and an atom that can match zero characters now hands the boundary to its neighbour instead of assuming the value edge, so `xa?~b ` matches `x ` (#190)
+- Long single-chain patterns no longer overflow the stack and abort the process — a 5,000-character `prefix` on a 2 MB thread used to die at freeze — because the arena walks that build, fold and clone a chain now carry their own stack instead of recursing once per state (#190)
+- The arena walks that merge patterns no longer overflow the stack either — a second long pattern on a field that already has one, a long pattern folded together with a held-aside exact match, or `anything-but` on a long excluded value — and they now resolve whole byte ranges at a time instead of all 256 bytes per state, making it roughly 3x faster to add many prefix or shellstyle patterns to one field (#190)
 - Lookaround regexps now match against the value itself, not just their assertions: `foo(?!bar)baz` no longer matches `totally-unrelated`, `(?=.*foo).*bar.*` matches `foobar`, and `(?<=foo)bar(?=baz)baz` matches `foobarbaz` (#182, #183, #184)
 - `BuiltForSpeed` now holds its freeze-time DFA to the arena byte budget, keeping the NFA when there is no room, and applies to lookaround regexps, which it used to leave as NFAs (#186, #188)
 - `matcher_stats()` and `arena_stats()` now count the lazy DFA cache a `BuiltForSpeed` pattern falls back to, and the cache no longer allocates a transition table for states it declines to cache (#185, #186)

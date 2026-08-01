@@ -93,6 +93,39 @@ fn merging_two_deep_chains_survives_small_stack() {
     respawn("merging_two_deep_chains_survives_small_stack");
 }
 
+/// A lone exact-match pattern is held aside as a singleton rather than built
+/// into the automaton, and the next pattern on that field folds the two
+/// together through a different merge than the one above — one that builds a
+/// fresh automaton from both sides instead of appending to the live one.
+#[test]
+#[cfg_attr(miri, ignore = "spawns a child process")]
+fn merging_a_deep_chain_into_a_singleton_survives_small_stack() {
+    if in_child() {
+        on_small_stack(|| {
+            let value = "x".repeat(CHAIN_LEN);
+            let mut q = Quamina::new();
+            q.add_pattern("singleton", r#"{"f": ["abc"]}"#)
+                .expect("one exact match is held as a singleton");
+            q.add_pattern("chain", &format!(r#"{{"f": [{{"prefix": "{value}"}}]}}"#))
+                .expect("folding a chain into the singleton stays inside the byte budget");
+
+            let event = format!(r#"{{"f": "{value}tail"}}"#);
+            let matches = q
+                .matches_for_event(event.as_bytes())
+                .expect("matching against the folded automaton");
+            assert_eq!(matches, vec!["chain"]);
+
+            let matches = q
+                .matches_for_event(br#"{"f": "abc"}"#)
+                .expect("matching against the folded automaton");
+            assert_eq!(matches, vec!["singleton"], "the singleton must survive");
+        });
+        return;
+    }
+
+    respawn("merging_a_deep_chain_into_a_singleton_survives_small_stack");
+}
+
 /// `anything-but` compiles its excluded values into a trie one level per byte,
 /// so a single long excluded value is as deep as the value is long.
 #[test]

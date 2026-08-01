@@ -2513,8 +2513,7 @@ pub fn merge_arena_nfas(
     let mut memo: FxHashMap<(StateId, StateId), StateId> = FxHashMap::default();
     let mut new_arena = StateArena::new();
 
-    let start =
-        merge_arena_nfa_states_recursive(arena1, start1, arena2, start2, &mut new_arena, &mut memo);
+    let start = merge_arena_nfa_states(arena1, start1, arena2, start2, &mut new_arena, &mut memo);
 
     // Precompute epsilon closures for all states in the merged arena.
     // This eliminates per-byte DFS computation during NFA traversal.
@@ -3311,7 +3310,80 @@ fn append_clone_target_state(
 /// Recursively merge two NFA states from different arenas.
 ///
 /// This handles the full NFA merge including epsilons and spinout states.
-fn merge_arena_nfa_states_recursive(
+/// Where a resolved pair lands in the frame that asked for it.
+#[derive(Clone, Copy)]
+enum NfaMergeSlot {
+    /// The step for byte range `run`.
+    Run(usize),
+    /// The step for byte range `run`; the branch then takes an epsilon back to
+    /// the spinner, so the wildcard keeps spinning past it.
+    RunLoopingBack(usize),
+    /// The step for byte range `run`; the branch takes over from the spinner
+    /// and so inherits its backedge and its field transitions.
+    RunLeavingSpinner(usize),
+    /// Appended to the frame's epsilons unless it resolved to nothing.
+    Epsilon,
+    /// Appended to the frame's epsilons as-is, keeping a copied table's epsilon
+    /// list the length it was.
+    CopiedEpsilon,
+}
+
+/// How a frame turns its resolved children into the state it is filling.
+enum NfaMergeFill {
+    /// One side copied in on its own, with its byte ranges and acceleration
+    /// kept as they were and only the state ids remapped.
+    CopyOne {
+        ceilings: SmallVec<[u8; 8]>,
+        accel: Option<AccelInfo>,
+    },
+    /// Both sides byte-merged, their field transitions concatenated.
+    Merged {
+        field_transitions: SmallVec<[Arc<FieldMatcher>; 1]>,
+    },
+    /// One side is a wildcard self-loop, so its byte ranges were steered
+    /// through the spinner rules as they resolved.
+    Spinner {
+        field_transitions: SmallVec<[Arc<FieldMatcher>; 1]>,
+        /// The spinner's own field transitions, which every branch taking over
+        /// from the self-loop inherits.
+        spinner_field_transitions: SmallVec<[Arc<FieldMatcher>; 1]>,
+    },
+}
+
+/// One state being merged: the children it still owes, and the byte ranges and
+/// epsilons they fill in.
+struct NfaMergeFrame {
+    new_id: StateId,
+    /// Merged byte ranges — exclusive ceiling and the step below it — in
+    /// ascending order, so a range's width is the gap from its predecessor.
+    runs: SmallVec<[(u8, StateId); 8]>,
+    /// Children still to resolve, held back to front so that taking the next
+    /// one shortens the list.
+    children: SmallVec<[((StateId, StateId), NfaMergeSlot); 8]>,
+    /// The slot the child currently being resolved will fill.
+    awaiting: Option<NfaMergeSlot>,
+    epsilons: SmallVec<[StateId; 2]>,
+    fill: NfaMergeFill,
+}
+
+impl NfaMergeFrame {
+    /// How many bytes byte range `run` covers.
+    fn run_width(&self, run: usize) -> usize {
+        let floor = if run == 0 { 0 } else { self.runs[run - 1].0 };
+        usize::from(self.runs[run].0 - floor)
+    }
+}
+
+/// Merge `state1` and `state2` into a state of `new_arena`, building whatever
+/// they reach alongside it.
+///
+/// Unlike [`append_merge_nfa_states`] this builds a fresh automaton from both
+/// sides rather than appending to one of them, and it is what folds a held-aside
+/// singleton together with the next pattern on its field. It carries its own
+/// stack of frames for the same reason: a chain is one state per byte, so
+/// recursing per state runs a small thread out of stack on a long pattern, which
+/// aborts the process rather than raising anything a caller could handle.
+fn merge_arena_nfa_states(
     arena1: &StateArena,
     state1: StateId,
     arena2: &StateArena,
@@ -3319,86 +3391,121 @@ fn merge_arena_nfa_states_recursive(
     new_arena: &mut StateArena,
     memo: &mut FxHashMap<(StateId, StateId), StateId>,
 ) -> StateId {
+    let mut stack: Vec<NfaMergeFrame> = Vec::new();
+
+    if let Some(id) = begin_nfa_merge(arena1, state1, arena2, state2, new_arena, memo, &mut stack) {
+        return id;
+    }
+
+    // Carries a finished child back to the frame waiting on it; empty whenever
+    // the walk is descending rather than returning.
+    let mut resolved: Option<StateId> = None;
+    loop {
+        let frame = stack
+            .last_mut()
+            .expect("the root frame leaves the stack only by returning");
+
+        if let Some(child) = resolved.take() {
+            deliver_nfa_merged_child(new_arena, frame, child);
+            continue;
+        }
+
+        if let Some(((child1, child2), slot)) = frame.children.pop() {
+            frame.awaiting = Some(slot);
+            resolved = begin_nfa_merge(arena1, child1, arena2, child2, new_arena, memo, &mut stack);
+            continue;
+        }
+
+        let frame = stack
+            .pop()
+            .expect("the loop reached this arm through last_mut");
+        let filled = finish_nfa_merged_state(new_arena, frame);
+        if stack.is_empty() {
+            return filled;
+        }
+        resolved = Some(filled);
+    }
+}
+
+/// Resolve the pair, returning its state if it needed no children, or pushing
+/// the frame that will fill it and returning nothing.
+#[allow(clippy::too_many_arguments)]
+fn begin_nfa_merge(
+    arena1: &StateArena,
+    state1: StateId,
+    arena2: &StateArena,
+    state2: StateId,
+    new_arena: &mut StateArena,
+    memo: &mut FxHashMap<(StateId, StateId), StateId>,
+    stack: &mut Vec<NfaMergeFrame>,
+) -> Option<StateId> {
     // Memo by `(StateId, StateId)`. `StateId::NONE` already encodes the
     // "no state on this side" key without needing a separate sentinel.
     let key = (state1, state2);
-
-    // Check memo
     if let Some(&cached) = memo.get(&key) {
-        return cached;
+        return Some(cached);
     }
 
-    // Handle one-sided cases
     if state1.is_none() && state2.is_none() {
-        return StateId::NONE;
+        return Some(StateId::NONE);
     }
 
-    // Allocate new state first (before recursion, to handle cycles)
+    // Allocated and memoized before any child is laid out, so a cycle back to
+    // this pair resolves to the state being filled rather than looping.
     let new_id = new_arena.alloc();
     memo.insert(key, new_id);
 
-    // Handle case where one state is NONE
     if state1.is_none() {
-        // Copy from arena2
-        let s2 = &arena2[state2];
-        new_arena[new_id].field_transitions = s2.field_transitions.clone();
-        new_arena[new_id].table =
-            remap_nfa_table_recursive(arena2, &s2.table, arena1, new_arena, memo, false);
-        return new_id;
+        let source = &arena2[state2];
+        new_arena[new_id].field_transitions = source.field_transitions.clone();
+        stack.push(begin_nfa_copy_one(&source.table, new_id, false));
+        return None;
     }
 
     if state2.is_none() {
-        // Copy from arena1
-        let s1 = &arena1[state1];
-        new_arena[new_id].field_transitions = s1.field_transitions.clone();
-        new_arena[new_id].table =
-            remap_nfa_table_recursive(arena1, &s1.table, arena2, new_arena, memo, true);
-        return new_id;
+        let source = &arena1[state1];
+        new_arena[new_id].field_transitions = source.field_transitions.clone();
+        stack.push(begin_nfa_copy_one(&source.table, new_id, true));
+        return None;
     }
-
-    // Both states exist - check for spinout and epsilon cases
-    let s1 = &arena1[state1];
-    let s2 = &arena2[state2];
 
     let s1_has_spinout = is_spinout_state(arena1, state1);
     let s2_has_spinout = is_spinout_state(arena2, state2);
+    let s1 = &arena1[state1];
+    let s2 = &arena2[state2];
     let s1_has_epsilons = !s1.table.epsilons.is_empty();
     let s2_has_epsilons = !s2.table.epsilons.is_empty();
 
-    // Case 1: Both have spinouts - merge them recursively
+    // Two spinners have no self-loop to steer around each other and byte-merge
+    // like any other pair.
     if s1_has_spinout && s2_has_spinout {
-        merge_dual_spinout_states(arena1, s1, arena2, s2, new_arena, memo, new_id);
-        return new_id;
+        stack.push(begin_nfa_bytewise_merge(s1, s2, new_id));
+        return None;
     }
 
-    // Case 2: Asymmetric spinner merge - one spinout, other has no epsilons.
-    // Mirrors Go's asymmetricSpinnerMerge: when a spinout is merged with a
-    // non-epsilon state, we can avoid creating splice states by inlining the
-    // epsilon-to-spinner relationship into the merged table.
+    // One spinout against a state with no epsilons: inlining the self-loop into
+    // the merged byte table avoids a splice for the cross-arena back-edge.
     if (s1_has_spinout && !s2_has_epsilons) || (s2_has_spinout && !s1_has_epsilons) {
-        return asymmetric_spinner_merge(
+        stack.push(begin_nfa_spinner_merge(
             arena1,
             state1,
             arena2,
             state2,
             s1_has_spinout,
-            new_arena,
-            memo,
             new_id,
-        );
+        ));
+        return None;
     }
 
-    // Case 3: Either has epsilons (but not both spinouts) - create splice
-    // Flatten epsilon targets to prevent deep nesting from repeated merges.
-    // (Mirrors Go PR #486: flattenEpsilonTargets)
+    // Either side leads with epsilons: splice the two behind an epsilon-only
+    // state, flattening one level so repeated merges do not nest splices
+    // (mirrors Go PR #486's `flattenEpsilonTargets`). Both sides are copied
+    // wholesale rather than merged, so this needs no children of its own.
     if s1_has_epsilons || s2_has_epsilons {
         let mut clone_map1: FxHashMap<u32, StateId> = FxHashMap::default();
         let mut clone_map2: FxHashMap<u32, StateId> = FxHashMap::default();
         let cloned1 = clone_states_into_arena(arena1, state1, new_arena, &mut clone_map1);
         let cloned2 = clone_states_into_arena(arena2, state2, new_arena, &mut clone_map2);
-
-        // Flatten: if cloned states are themselves epsilon-only splices,
-        // collect their real targets directly instead of nesting splices.
         let epsilons = flatten_epsilon_targets(new_arena, &[cloned1, cloned2]);
 
         new_arena[new_id].table = SmallTable {
@@ -3407,383 +3514,255 @@ fn merge_arena_nfa_states_recursive(
             epsilons,
             accel: None,
         };
-        return new_id;
+        return Some(new_id);
     }
 
-    // Case 3: Neither has epsilons - do byte-wise merge (DFA case)
-    let combined_table =
-        merge_nfa_tables_bytewise(arena1, &s1.table, arena2, &s2.table, new_arena, memo);
+    stack.push(begin_nfa_bytewise_merge(s1, s2, new_id));
+    None
+}
+
+/// Lay out a copy of one side: every step and epsilon is remapped through a
+/// one-sided merge, and the byte ranges stay exactly as they were.
+fn begin_nfa_copy_one(table: &SmallTable, new_id: StateId, from_arena1: bool) -> NfaMergeFrame {
+    let mut runs = SmallVec::with_capacity(table.ceilings.len());
+    let mut children = SmallVec::with_capacity(table.ceilings.len() + table.epsilons.len());
+    let one_sided = |id: StateId| {
+        if from_arena1 {
+            (id, StateId::NONE)
+        } else {
+            (StateId::NONE, id)
+        }
+    };
+
+    for (run, (&ceiling, &step)) in table.ceilings.iter().zip(&table.steps).enumerate() {
+        runs.push((ceiling, StateId::NONE));
+        children.push((one_sided(step), NfaMergeSlot::Run(run)));
+    }
+    for &eps in &table.epsilons {
+        children.push((one_sided(eps), NfaMergeSlot::CopiedEpsilon));
+    }
+
+    children.reverse();
+    NfaMergeFrame {
+        new_id,
+        runs,
+        children,
+        awaiting: None,
+        epsilons: SmallVec::with_capacity(table.epsilons.len()),
+        fill: NfaMergeFill::CopyOne {
+            ceilings: table.ceilings.clone(),
+            accel: table.accel.clone(),
+        },
+    }
+}
+
+/// Lay out a plain byte merge: each shared byte range resolves to the merge of
+/// the two steps under it, and each side's epsilons are carried over alone.
+fn begin_nfa_bytewise_merge(s1: &FaState, s2: &FaState, new_id: StateId) -> NfaMergeFrame {
+    let joint = joint_table_runs(&s1.table, &s2.table);
+    let mut runs = SmallVec::with_capacity(joint.len());
+    let mut children =
+        SmallVec::with_capacity(joint.len() + s1.table.epsilons.len() + s2.table.epsilons.len());
+
+    for (ceiling, step1, step2) in joint {
+        children.push(((step1, step2), NfaMergeSlot::Run(runs.len())));
+        runs.push((ceiling, StateId::NONE));
+    }
+    for &eps in &s1.table.epsilons {
+        children.push(((eps, StateId::NONE), NfaMergeSlot::Epsilon));
+    }
+    for &eps in &s2.table.epsilons {
+        children.push(((StateId::NONE, eps), NfaMergeSlot::Epsilon));
+    }
 
     let mut field_transitions = s1.field_transitions.clone();
     field_transitions.extend(s2.field_transitions.iter().cloned());
 
-    new_arena[new_id].table = combined_table;
-    new_arena[new_id].field_transitions = field_transitions;
-
-    new_id
+    children.reverse();
+    NfaMergeFrame {
+        new_id,
+        runs,
+        children,
+        awaiting: None,
+        epsilons: SmallVec::new(),
+        fill: NfaMergeFill::Merged { field_transitions },
+    }
 }
 
-/// Merge two spinout states (Case 1 of `merge_arena_nfa_states_recursive`).
+/// Lay out a merge where one side is a wildcard self-loop.
 ///
-/// Bytewise-merges both tables; the byte-dot self-loops recurse back through
-/// the memo and resolve to `new_id`, marking the merged state as a spinout.
-/// Epsilons (0 or 1 per side) are remapped via one-sided merges.
-fn merge_dual_spinout_states(
-    arena1: &StateArena,
-    s1: &FaState,
-    arena2: &StateArena,
-    s2: &FaState,
-    new_arena: &mut StateArena,
-    memo: &mut FxHashMap<(StateId, StateId), StateId>,
-    new_id: StateId,
-) {
-    let mut combined_table =
-        merge_nfa_tables_bytewise(arena1, &s1.table, arena2, &s2.table, new_arena, memo);
-
-    let mut merged_epsilons: SmallVec<[StateId; 2]> = SmallVec::new();
-    for &eps1 in &s1.table.epsilons {
-        let merged =
-            merge_arena_nfa_states_recursive(arena1, eps1, arena2, StateId::NONE, new_arena, memo);
-        if !merged.is_none() {
-            merged_epsilons.push(merged);
-        }
-    }
-    for &eps2 in &s2.table.epsilons {
-        let merged =
-            merge_arena_nfa_states_recursive(arena1, StateId::NONE, arena2, eps2, new_arena, memo);
-        if !merged.is_none() {
-            merged_epsilons.push(merged);
-        }
-    }
-    combined_table.epsilons = merged_epsilons;
-
-    let mut field_transitions = s1.field_transitions.clone();
-    field_transitions.extend(s2.field_transitions.iter().cloned());
-
-    new_arena[new_id].table = combined_table;
-    new_arena[new_id].field_transitions = field_transitions;
-}
-
-/// Merge a spinout state in one arena with a non-epsilon state in the other, mirroring
-/// Go's `asymmetricSpinnerMerge`. Inlining the spinner's self-loop into the merged byte
-/// table avoids creating splice states for the cross-arena epsilon back-edge.
-// Two arenas + two state ids + flags + outputs naturally hit 8 params; bundling
-// would only add indirection for a single-use helper.
-#[allow(clippy::too_many_arguments)]
-fn asymmetric_spinner_merge(
+/// The spinner drives each byte range. Where it loops back on itself the merged
+/// state loops too, unless the other side offers a branch there — then the
+/// branch takes over and inherits the spinner's field transitions and a backedge
+/// so the wildcard resumes afterwards.
+fn begin_nfa_spinner_merge(
     arena1: &StateArena,
     state1: StateId,
     arena2: &StateArena,
     state2: StateId,
     s1_has_spinout: bool,
-    new_arena: &mut StateArena,
-    memo: &mut FxHashMap<(StateId, StateId), StateId>,
     new_id: StateId,
-) -> StateId {
+) -> NfaMergeFrame {
     let s1 = &arena1[state1];
     let s2 = &arena2[state2];
-    let (spinner_arena, spinner_id, spinner_table, other_arena, other_table) = if s1_has_spinout {
-        (arena1, state1, &s1.table, arena2, &s2.table)
+    let (spinner_id, spinner_state, other_state) = if s1_has_spinout {
+        (state1, s1, s2)
     } else {
-        (arena2, state2, &s2.table, arena1, &s1.table)
+        (state2, s2, s1)
+    };
+    // Pairs are always (arena1 side, arena2 side); which of the two the spinner
+    // is decides how each byte's states are handed to the merge.
+    let ordered = |spinner: StateId, other: StateId| {
+        if s1_has_spinout {
+            (spinner, other)
+        } else {
+            (other, spinner)
+        }
     };
 
-    let mut spinner_unpacked = [StateId::NONE; BYTE_CEILING];
-    let mut other_unpacked = [StateId::NONE; BYTE_CEILING];
-    unpack_arena_table(spinner_table, &mut spinner_unpacked);
-    unpack_arena_table(other_table, &mut other_unpacked);
+    let joint = joint_table_runs(&spinner_state.table, &other_state.table);
+    let mut runs = SmallVec::with_capacity(joint.len());
+    let mut children = SmallVec::with_capacity(joint.len());
 
-    let mut merged_unpacked = [StateId::NONE; BYTE_CEILING];
-    for i in 0..BYTE_CEILING {
-        merged_unpacked[i] = merge_asymmetric_spinner_byte(
-            spinner_arena,
-            spinner_id,
-            other_arena,
-            spinner_unpacked[i],
-            other_unpacked[i],
-            s1_has_spinout,
-            new_arena,
-            memo,
-            new_id,
-            arena1,
-            state1,
-            arena2,
-            state2,
-        );
-    }
+    for (ceiling, spinner_next, other_next) in joint {
+        let run = runs.len();
 
-    let mut combined_table = SmallTable::new();
-    combined_table.pack(&merged_unpacked);
+        // The spinner does not accept the byte, so neither does the merge.
+        if spinner_next.is_none() {
+            runs.push((ceiling, StateId::NONE));
+            continue;
+        }
 
-    // Remap spinner's epsilons (0 or 1).
-    let mut merged_epsilons: SmallVec<[StateId; 2]> = SmallVec::new();
-    for &spinner_eps in &spinner_table.epsilons {
-        let merged = if s1_has_spinout {
-            merge_arena_nfa_states_recursive(
-                spinner_arena,
-                spinner_eps,
-                other_arena,
-                StateId::NONE,
-                new_arena,
-                memo,
-            )
+        if other_next.is_none() {
+            // Only the spinner accepts it: keep spinning, or carry its branch
+            // across on its own.
+            if spinner_next == spinner_id {
+                runs.push((ceiling, new_id));
+            } else {
+                runs.push((ceiling, StateId::NONE));
+                children.push((ordered(spinner_next, StateId::NONE), NfaMergeSlot::Run(run)));
+            }
+            continue;
+        }
+
+        runs.push((ceiling, StateId::NONE));
+        if spinner_next == spinner_id {
+            // The other side leaves the self-loop here, so its branch is
+            // carried across on its own rather than merged into the spinner.
+            children.push((
+                ordered(StateId::NONE, other_next),
+                NfaMergeSlot::RunLeavingSpinner(run),
+            ));
         } else {
-            merge_arena_nfa_states_recursive(
-                other_arena,
-                StateId::NONE,
-                spinner_arena,
-                spinner_eps,
-                new_arena,
-                memo,
-            )
-        };
-        if !merged.is_none() {
-            merged_epsilons.push(merged);
+            children.push((
+                ordered(spinner_next, other_next),
+                NfaMergeSlot::RunLoopingBack(run),
+            ));
         }
     }
-    combined_table.epsilons = merged_epsilons;
 
-    let mut field_transitions = arena1[state1].field_transitions.clone();
-    field_transitions.extend(arena2[state2].field_transitions.iter().cloned());
+    for &spinner_eps in &spinner_state.table.epsilons {
+        children.push((ordered(spinner_eps, StateId::NONE), NfaMergeSlot::Epsilon));
+    }
 
-    new_arena[new_id].table = combined_table;
-    new_arena[new_id].field_transitions = field_transitions;
-    new_id
+    let mut field_transitions = s1.field_transitions.clone();
+    field_transitions.extend(s2.field_transitions.iter().cloned());
+
+    children.reverse();
+    NfaMergeFrame {
+        new_id,
+        runs,
+        children,
+        awaiting: None,
+        epsilons: SmallVec::new(),
+        fill: NfaMergeFill::Spinner {
+            field_transitions,
+            spinner_field_transitions: spinner_state.field_transitions.clone(),
+        },
+    }
 }
 
-/// Resolve one byte slot of the asymmetric spinner merge. Returns the `StateId` to
-/// place in `merged_unpacked[i]`.
-#[allow(clippy::too_many_arguments)]
-fn merge_asymmetric_spinner_byte(
-    spinner_arena: &StateArena,
-    spinner_id: StateId,
-    other_arena: &StateArena,
-    spinner_next: StateId,
-    other_next: StateId,
-    s1_has_spinout: bool,
-    new_arena: &mut StateArena,
-    memo: &mut FxHashMap<(StateId, StateId), StateId>,
-    new_id: StateId,
-    arena1: &StateArena,
-    state1: StateId,
-    arena2: &StateArena,
-    state2: StateId,
-) -> StateId {
-    if spinner_next.is_none() {
-        // Illegal UTF-8 byte.
-        return StateId::NONE;
-    }
-
-    if other_next.is_none() {
-        // Only the spinner has a transition - remap it.
-        if spinner_next == spinner_id {
-            return new_id; // self-loop maps to combined
-        }
-        return if s1_has_spinout {
-            merge_arena_nfa_states_recursive(
-                spinner_arena,
-                spinner_next,
-                other_arena,
-                StateId::NONE,
-                new_arena,
-                memo,
-            )
-        } else {
-            merge_arena_nfa_states_recursive(
-                other_arena,
-                StateId::NONE,
-                spinner_arena,
-                spinner_next,
-                new_arena,
-                memo,
-            )
-        };
-    }
-
-    if spinner_next == spinner_id {
-        // Spinner self-loops here AND other has a branch. Create a state with the
-        // other's transitions plus an epsilon back to the combined spinner. This is
-        // the key optimization: avoid a full merge, just add an epsilon.
-        let remapped_other = if s1_has_spinout {
-            merge_arena_nfa_states_recursive(
-                spinner_arena,
-                StateId::NONE,
-                other_arena,
-                other_next,
-                new_arena,
-                memo,
-            )
-        } else {
-            merge_arena_nfa_states_recursive(
-                other_arena,
-                other_next,
-                spinner_arena,
-                StateId::NONE,
-                new_arena,
-                memo,
-            )
-        };
-        if !remapped_other.is_none() {
-            new_arena[remapped_other].table.epsilons.push(new_id);
-            // Copy the spinner's field transitions onto the escape state.
-            let spinner_fts = if s1_has_spinout {
-                &arena1[state1].field_transitions
-            } else {
-                &arena2[state2].field_transitions
-            };
-            for ft in spinner_fts {
-                new_arena[remapped_other].field_transitions.push(ft.clone());
+/// File a resolved child into the slot the frame reserved for it.
+fn deliver_nfa_merged_child(new_arena: &mut StateArena, frame: &mut NfaMergeFrame, child: StateId) {
+    let slot = frame
+        .awaiting
+        .take()
+        .expect("a child is resolved only for a slot the frame reserved");
+    match slot {
+        NfaMergeSlot::Run(run) => frame.runs[run].1 = child,
+        NfaMergeSlot::RunLoopingBack(run) => {
+            frame.runs[run].1 = child;
+            if !child.is_none() {
+                let new_id = frame.new_id;
+                // One backedge per byte, matching the width of the range: a
+                // branch reached by several bytes is re-entered by each of them.
+                for _ in 0..frame.run_width(run) {
+                    new_arena[child].table.epsilons.push(new_id);
+                }
             }
         }
-        return remapped_other;
+        NfaMergeSlot::RunLeavingSpinner(run) => {
+            frame.runs[run].1 = child;
+            if !child.is_none() {
+                let width = frame.run_width(run);
+                let NfaMergeFill::Spinner {
+                    spinner_field_transitions,
+                    ..
+                } = &frame.fill
+                else {
+                    unreachable!("only a spinner merge hands a byte range over")
+                };
+                for _ in 0..width {
+                    new_arena[child].table.epsilons.push(frame.new_id);
+                    new_arena[child]
+                        .field_transitions
+                        .extend(spinner_field_transitions.iter().cloned());
+                }
+            }
+        }
+        NfaMergeSlot::Epsilon => {
+            if !child.is_none() {
+                frame.epsilons.push(child);
+            }
+        }
+        NfaMergeSlot::CopiedEpsilon => frame.epsilons.push(child),
     }
-
-    // Spinner has a real branch (not a self-loop) AND other has a branch. Merge
-    // them, then add an epsilon back to the combined spinner.
-    let merged_branch = if s1_has_spinout {
-        merge_arena_nfa_states_recursive(
-            spinner_arena,
-            spinner_next,
-            other_arena,
-            other_next,
-            new_arena,
-            memo,
-        )
-    } else {
-        merge_arena_nfa_states_recursive(
-            other_arena,
-            other_next,
-            spinner_arena,
-            spinner_next,
-            new_arena,
-            memo,
-        )
-    };
-    if !merged_branch.is_none() {
-        new_arena[merged_branch].table.epsilons.push(new_id);
-    }
-    merged_branch
 }
 
-/// Remap a table from source arena to the merged arena (NFA version).
-fn remap_nfa_table_recursive(
-    source_arena: &StateArena,
-    table: &SmallTable,
-    _other_arena: &StateArena,
-    new_arena: &mut StateArena,
-    memo: &mut FxHashMap<(StateId, StateId), StateId>,
-    is_arena1: bool,
-) -> SmallTable {
-    let mut new_table = SmallTable {
-        ceilings: table.ceilings.clone(),
-        steps: SmallVec::with_capacity(table.steps.len()),
-        epsilons: SmallVec::with_capacity(table.epsilons.len()),
-        accel: table.accel.clone(),
-    };
+/// Write a frame's resolved children into the state it was filling.
+fn finish_nfa_merged_state(new_arena: &mut StateArena, frame: NfaMergeFrame) -> StateId {
+    let NfaMergeFrame {
+        new_id,
+        runs,
+        epsilons,
+        fill,
+        ..
+    } = frame;
 
-    for &step_id in &table.steps {
-        if step_id.is_none() {
-            new_table.steps.push(StateId::NONE);
-        } else {
-            let merged = if is_arena1 {
-                merge_arena_nfa_states_recursive(
-                    source_arena,
-                    step_id,
-                    _other_arena,
-                    StateId::NONE,
-                    new_arena,
-                    memo,
-                )
-            } else {
-                merge_arena_nfa_states_recursive(
-                    _other_arena,
-                    StateId::NONE,
-                    source_arena,
-                    step_id,
-                    new_arena,
-                    memo,
-                )
+    match fill {
+        NfaMergeFill::CopyOne { ceilings, accel } => {
+            let mut steps = SmallVec::with_capacity(runs.len());
+            steps.extend(runs.iter().map(|&(_, step)| step));
+            new_arena[new_id].table = SmallTable {
+                ceilings,
+                steps,
+                epsilons,
+                accel,
             };
-            new_table.steps.push(merged);
+        }
+        NfaMergeFill::Merged { field_transitions }
+        | NfaMergeFill::Spinner {
+            field_transitions, ..
+        } => {
+            let mut table = pack_merged_runs(&runs);
+            table.epsilons = epsilons;
+            let state = &mut new_arena[new_id];
+            state.table = table;
+            state.field_transitions = field_transitions;
         }
     }
 
-    for &eps_id in &table.epsilons {
-        if eps_id.is_none() {
-            new_table.epsilons.push(StateId::NONE);
-        } else {
-            let merged = if is_arena1 {
-                merge_arena_nfa_states_recursive(
-                    source_arena,
-                    eps_id,
-                    _other_arena,
-                    StateId::NONE,
-                    new_arena,
-                    memo,
-                )
-            } else {
-                merge_arena_nfa_states_recursive(
-                    _other_arena,
-                    StateId::NONE,
-                    source_arena,
-                    eps_id,
-                    new_arena,
-                    memo,
-                )
-            };
-            new_table.epsilons.push(merged);
-        }
-    }
-
-    new_table
-}
-
-/// Merge two NFA tables byte-by-byte.
-fn merge_nfa_tables_bytewise(
-    arena1: &StateArena,
-    table1: &SmallTable,
-    arena2: &StateArena,
-    table2: &SmallTable,
-    new_arena: &mut StateArena,
-    memo: &mut FxHashMap<(StateId, StateId), StateId>,
-) -> SmallTable {
-    // Unpack both tables to 256-element arrays
-    let mut unpacked1 = [StateId::NONE; BYTE_CEILING];
-    let mut unpacked2 = [StateId::NONE; BYTE_CEILING];
-
-    unpack_arena_table(table1, &mut unpacked1);
-    unpack_arena_table(table2, &mut unpacked2);
-
-    // Merge each byte
-    let mut merged_unpacked = [StateId::NONE; BYTE_CEILING];
-    for i in 0..BYTE_CEILING {
-        let s1 = unpacked1[i];
-        let s2 = unpacked2[i];
-        merged_unpacked[i] =
-            merge_arena_nfa_states_recursive(arena1, s1, arena2, s2, new_arena, memo);
-    }
-
-    // Pack result
-    let mut result = SmallTable::new();
-    result.pack(&merged_unpacked);
-
-    // Merge epsilons - collect all unique epsilons
-    for &eps1 in &table1.epsilons {
-        let merged =
-            merge_arena_nfa_states_recursive(arena1, eps1, arena2, StateId::NONE, new_arena, memo);
-        if !merged.is_none() {
-            result.epsilons.push(merged);
-        }
-    }
-    for &eps2 in &table2.epsilons {
-        let merged =
-            merge_arena_nfa_states_recursive(arena1, StateId::NONE, arena2, eps2, new_arena, memo);
-        if !merged.is_none() {
-            result.epsilons.push(merged);
-        }
-    }
-
-    result
+    new_id
 }
 
 // =============================================================================
@@ -6771,33 +6750,89 @@ mod merge_tests {
     }
 
     #[test]
-    fn test_merge_dual_spinout_states_filters_none_epsilons() {
-        // A NONE epsilon on either spinout side must not survive into the merged table.
-        let mut arena1 = StateArena::new();
-        let mut arena2 = StateArena::new();
-        let s1_id = arena1.alloc();
-        let s2_id = arena2.alloc();
-        arena1[s1_id].table.epsilons.push(StateId::NONE);
-        arena2[s2_id].table.epsilons.push(StateId::NONE);
+    fn test_merge_spinner_backedge_repeats_across_a_byte_range() {
+        // A branch the spinner hands off to is re-entered by every byte that
+        // reaches it, so its backedge count tracks the width of the byte range
+        // rather than the number of branches. Two ranges, one starting at byte
+        // zero and one further in, so the widths differ from their ceilings.
+        let mut plain = StateArena::new();
+        let matched = plain.alloc();
+        plain[matched]
+            .field_transitions
+            .push(Arc::new(FieldMatcher::with_match_id(1)));
+        let first = plain.alloc_with_table(SmallTable::with_mappings(
+            StateId::NONE,
+            &[ARENA_VALUE_TERMINATOR],
+            &[matched],
+        ));
+        let second = plain.alloc_with_table(SmallTable::with_mappings(
+            StateId::NONE,
+            &[ARENA_VALUE_TERMINATOR],
+            &[matched],
+        ));
+        let plain_start = plain.alloc_with_table(SmallTable::with_mappings(
+            StateId::NONE,
+            &[0, 1, 2, 3, 4, 10, 11, 12, 13],
+            &[
+                first, first, first, first, first, second, second, second, second,
+            ],
+        ));
+        plain.precompute_epsilon_closures();
 
-        let s1 = arena1[s1_id].clone();
-        let s2 = arena2[s2_id].clone();
+        // A bare wildcard self-loop, reaching its match through an epsilon.
+        let mut spun = StateArena::new();
+        let spun_matched = spun.alloc();
+        spun[spun_matched]
+            .field_transitions
+            .push(Arc::new(FieldMatcher::with_match_id(2)));
+        let spun_term = spun.alloc_with_table(SmallTable::with_mappings(
+            StateId::NONE,
+            &[ARENA_VALUE_TERMINATOR],
+            &[spun_matched],
+        ));
+        let spinner = spun.alloc();
+        spun[spinner].table = make_byte_dot_table(spinner);
+        spun[spinner].table.epsilons.push(spun_term);
+        spun.precompute_epsilon_closures();
 
-        let mut new_arena = StateArena::new();
-        let new_id = new_arena.alloc();
-        let mut memo: FxHashMap<(StateId, StateId), StateId> = FxHashMap::default();
-        merge_dual_spinout_states(
-            &arena1,
-            &s1,
-            &arena2,
-            &s2,
-            &mut new_arena,
-            &mut memo,
-            new_id,
-        );
+        let (merged, merged_start) = merge_arena_nfas(&plain, plain_start, &spun, spinner);
+
+        let mut unpacked = [StateId::NONE; BYTE_CEILING];
+        unpack_arena_table(&merged[merged_start].table, &mut unpacked);
+        for (byte, width) in [(0usize, 5usize), (10, 4)] {
+            let branch = unpacked[byte];
+            assert!(!branch.is_none(), "byte {byte} must reach a merged branch");
+            let backedges = merged[branch]
+                .table
+                .epsilons
+                .iter()
+                .filter(|&&eps| eps == merged_start)
+                .count();
+            assert_eq!(
+                backedges, width,
+                "branch entered on byte {byte} needs one spinner backedge per byte of its range"
+            );
+        }
+    }
+
+    #[test]
+    fn test_merge_dual_spinout_filters_none_epsilons() {
+        // A NONE epsilon on either spinout side must not survive the merge.
+        fn spinout_with_none_epsilon() -> (StateArena, StateId) {
+            let mut arena = StateArena::new();
+            let start = arena.alloc();
+            arena[start].table = make_byte_dot_table(start);
+            arena[start].table.epsilons.push(StateId::NONE);
+            arena.precompute_epsilon_closures();
+            (arena, start)
+        }
+
+        let (arena1, start1) = spinout_with_none_epsilon();
+        let (arena2, start2) = spinout_with_none_epsilon();
+        let (merged, merged_start) = merge_arena_nfas(&arena1, start1, &arena2, start2);
 
         assert!(
-            new_arena[new_id]
+            merged[merged_start]
                 .table
                 .epsilons
                 .iter()
@@ -6807,60 +6842,33 @@ mod merge_tests {
     }
 
     #[test]
-    fn test_asymmetric_spinner_merge_filters_none_epsilons() {
-        // A NONE epsilon on the spinner side must not survive into the merged table.
+    fn test_merge_asymmetric_spinner_filters_none_epsilons() {
+        // A NONE epsilon on the spinner side must not survive the merge. The
+        // other side carries no epsilons, which is what selects the spinner
+        // merge over a splice.
         let mut arena1 = StateArena::new();
-        let mut arena2 = StateArena::new();
-        let s1_id = arena1.alloc();
-        let s2_id = arena2.alloc();
-        arena1[s1_id].table.epsilons.push(StateId::NONE);
+        let start1 = arena1.alloc();
+        arena1[start1].table = make_byte_dot_table(start1);
+        arena1[start1].table.epsilons.push(StateId::NONE);
+        arena1.precompute_epsilon_closures();
 
-        let mut new_arena = StateArena::new();
-        let new_id = new_arena.alloc();
-        let mut memo: FxHashMap<(StateId, StateId), StateId> = FxHashMap::default();
-        asymmetric_spinner_merge(
-            &arena1,
-            s1_id,
-            &arena2,
-            s2_id,
-            true,
-            &mut new_arena,
-            &mut memo,
-            new_id,
-        );
+        let mut arena2 = StateArena::new();
+        let start2 = arena2.alloc_with_table(SmallTable::with_mappings(
+            StateId::NONE,
+            b"a",
+            &[StateId::NONE],
+        ));
+        arena2.precompute_epsilon_closures();
+
+        let (merged, merged_start) = merge_arena_nfas(&arena1, start1, &arena2, start2);
 
         assert!(
-            new_arena[new_id]
+            merged[merged_start]
                 .table
                 .epsilons
                 .iter()
                 .all(|e| !e.is_none()),
             "merged spinner table retained a NONE epsilon"
-        );
-    }
-
-    #[test]
-    fn test_merge_nfa_tables_bytewise_filters_none_epsilons() {
-        // NONE epsilons on either input table must not survive the NFA bytewise merge.
-        let arena1 = StateArena::new();
-        let arena2 = StateArena::new();
-        let mut table1 = SmallTable::new();
-        let mut table2 = SmallTable::new();
-        table1.epsilons.push(StateId::NONE);
-        table2.epsilons.push(StateId::NONE);
-        let mut new_arena = StateArena::new();
-        let mut memo: FxHashMap<(StateId, StateId), StateId> = FxHashMap::default();
-        let result = merge_nfa_tables_bytewise(
-            &arena1,
-            &table1,
-            &arena2,
-            &table2,
-            &mut new_arena,
-            &mut memo,
-        );
-        assert!(
-            result.epsilons.iter().all(|e| !e.is_none()),
-            "merged NFA table retained a NONE epsilon"
         );
     }
 
