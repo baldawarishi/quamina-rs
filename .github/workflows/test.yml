@@ -142,7 +142,7 @@ jobs:
       - name: Generate Cargo.lock
         run: cargo generate-lockfile
       - name: Install cargo-audit
-        uses: taiki-e/install-action@v2
+        uses: taiki-e/install-action@v2.85.2
         with:
           tool: cargo-audit
       - name: Security audit
