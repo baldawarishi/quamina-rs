@@ -548,11 +548,9 @@ enum ConstrainedAtom {
     /// Quantified atom that needs splitting: (base_quantified, constrained_single)
     /// Used when we need to constrain only the last/first char of a quantified run.
     Split(QuantifiedAtom, QuantifiedAtom),
-    /// Quantified atom with quant_min=0 (can match zero chars).
-    /// First element: Split(base, constrained) for when atom matches 1+ chars.
-    /// The caller must also generate a branch where this atom is absent entirely
-    /// (for the zero-match case where the boundary is at the value edge).
-    SplitOrAbsent(QuantifiedAtom, QuantifiedAtom),
+    /// A `{0}` atom. It never matches a character, so it contributes nothing
+    /// and the boundary tests its neighbour instead.
+    Absent,
 }
 
 /// Constrain an atom's character class at a word boundary position.
@@ -568,6 +566,11 @@ fn constrain_atom_at_boundary(
     class: &RuneRange,
     is_last_char: bool,
 ) -> Option<ConstrainedAtom> {
+    if atom.quant_max == 0 {
+        // `{0}`: the atom matches no characters at all, so its class is moot.
+        return Some(ConstrainedAtom::Absent);
+    }
+
     if atom.subtree.is_some() {
         // Group atom — can't easily intersect
         return None;
@@ -620,7 +623,8 @@ fn constrain_atom_at_boundary(
     );
 
     if new_max == 0 {
-        // The quantified atom was {1,1} effectively → just the constrained single
+        // Splitting off the boundary-adjacent char used up the atom's only
+        // occurrence (`a?`), so all that is left is that constrained char.
         return Some(ConstrainedAtom::Single(constrained_single));
     }
 
@@ -634,31 +638,34 @@ fn constrain_atom_at_boundary(
         ..Default::default()
     };
 
-    // If the original atom can match zero times (quant_min == 0, e.g., * or ?),
-    // then the atom might be absent entirely, meaning the boundary is at the
-    // value edge (where `"` is non-word). Return SplitOrAbsent so the caller
-    // can generate an additional branch without this atom.
-    if atom.quant_min == 0 {
-        Some(ConstrainedAtom::SplitOrAbsent(base, constrained_single))
-    } else {
-        Some(ConstrainedAtom::Split(base, constrained_single))
+    Some(ConstrainedAtom::Split(base, constrained_single))
+}
+
+/// The atoms a constrained atom contributes to a branch. `None` when it never
+/// matches and so contributes nothing.
+/// `base_first=true` gives [base, single] (prefix/last-char side),
+/// `base_first=false` gives [single, base] (suffix/first-char side).
+fn expand_constrained(ca: &ConstrainedAtom, base_first: bool) -> Option<Vec<QuantifiedAtom>> {
+    match ca {
+        ConstrainedAtom::Single(a) => Some(vec![a.clone()]),
+        ConstrainedAtom::Split(base, single) => Some(if base_first {
+            vec![base.clone(), single.clone()]
+        } else {
+            vec![single.clone(), base.clone()]
+        }),
+        ConstrainedAtom::Absent => None,
     }
 }
 
-/// Expand a constrained atom into atom sequences.
-/// `base_first=true` gives [base, single] (prefix/last-char side),
-/// `base_first=false` gives [single, base] (suffix/first-char side).
-fn expand_constrained(ca: &ConstrainedAtom, base_first: bool) -> Vec<Vec<QuantifiedAtom>> {
-    match ca {
-        ConstrainedAtom::Single(a) => vec![vec![a.clone()]],
-        ConstrainedAtom::Split(base, single) | ConstrainedAtom::SplitOrAbsent(base, single) => {
-            if base_first {
-                vec![vec![base.clone(), single.clone()]]
-            } else {
-                vec![vec![single.clone(), base.clone()]]
-            }
-        }
-    }
+/// Whether a word boundary can resolve past this atom, that is, whether the
+/// atom may leave no character for the boundary to test.
+///
+/// A `{0}` atom never leaves one. `?`, `*` and `{0,n}` also have a present case,
+/// which expands only for atoms whose character class can be intersected.
+/// Groups cannot be, so they stay put and the boundary is reported impossible.
+/// Skipping past one would drop its present case and silently match a subset.
+const fn boundary_may_skip_atom(atom: &QuantifiedAtom) -> bool {
+    atom.quant_max == 0 || (atom.quant_min == 0 && atom.subtree.is_none())
 }
 
 /// Expand a `~b`/`~B` at value start (no prefix atoms before the boundary).
@@ -674,25 +681,13 @@ fn expand_wb_at_start(suffix: &[QuantifiedAtom], is_boundary: bool, out: &mut Ve
     let Some(constrained) = constrain_atom_at_boundary(&suffix[0], required_class, false) else {
         return;
     };
+    let Some(atoms) = expand_constrained(&constrained, false) else {
+        return;
+    };
 
-    for atoms in expand_constrained(&constrained, false) {
-        let mut branch = atoms;
-        branch.extend_from_slice(&suffix[1..]);
-        out.push(branch);
-    }
-
-    // SplitOrAbsent: the first suffix atom matched 0 chars, so the boundary
-    // falls at value start. Constrain the next real atom instead.
-    if matches!(constrained, ConstrainedAtom::SplitOrAbsent(..))
-        && suffix.len() > 1
-        && let Some(c2) = constrain_atom_at_boundary(&suffix[1], required_class, false)
-    {
-        for atoms in expand_constrained(&c2, false) {
-            let mut branch = atoms;
-            branch.extend_from_slice(&suffix[2..]);
-            out.push(branch);
-        }
-    }
+    let mut branch = atoms;
+    branch.extend_from_slice(&suffix[1..]);
+    out.push(branch);
 }
 
 /// Expand a `~b`/`~B` at value end (no suffix atoms after the boundary).
@@ -710,25 +705,13 @@ fn expand_wb_at_end(prefix: &[QuantifiedAtom], is_boundary: bool, out: &mut Vec<
     else {
         return;
     };
+    let Some(atoms) = expand_constrained(&constrained, true) else {
+        return;
+    };
 
-    for atoms in expand_constrained(&constrained, true) {
-        let mut branch = prefix[..last_idx].to_vec();
-        branch.extend(atoms);
-        out.push(branch);
-    }
-
-    // SplitOrAbsent: last prefix atom matched 0 chars, so boundary falls
-    // at the end after the preceding atom. Constrain that one instead.
-    if matches!(constrained, ConstrainedAtom::SplitOrAbsent(..)) && last_idx > 0 {
-        let prev = last_idx - 1;
-        if let Some(c2) = constrain_atom_at_boundary(&prefix[prev], required_class, true) {
-            for atoms in expand_constrained(&c2, true) {
-                let mut branch = prefix[..prev].to_vec();
-                branch.extend(atoms);
-                out.push(branch);
-            }
-        }
-    }
+    let mut branch = prefix[..last_idx].to_vec();
+    branch.extend(atoms);
+    out.push(branch);
 }
 
 /// Expand a `~b`/`~B` in the middle (between prefix and suffix atoms).
@@ -760,46 +743,82 @@ fn expand_wb_in_middle(
         let (Some(cl), Some(cf)) = (&cl, &cf) else {
             continue;
         };
+        let (Some(pe), Some(se)) = (expand_constrained(cl, true), expand_constrained(cf, false))
+        else {
+            continue;
+        };
 
-        // Generate all combinations from constrained prefix × suffix
-        for pe in &expand_constrained(cl, true) {
-            for se in &expand_constrained(cf, false) {
-                let mut branch = prefix[..last_idx].to_vec();
-                branch.extend(pe.clone());
-                branch.extend(se.clone());
-                branch.extend_from_slice(&suffix[1..]);
-                out.push(branch);
-            }
-        }
-
-        // SplitOrAbsent on prefix side: prefix atom absent → boundary at value start.
-        // The `"` is non-word, so constrain suffix to edge class.
-        if matches!(cl, ConstrainedAtom::SplitOrAbsent(..)) {
-            let edge_class = if is_boundary { &wc } else { &nwc };
-            if let Some(c2) = constrain_atom_at_boundary(&suffix[0], edge_class, false) {
-                for se in expand_constrained(&c2, false) {
-                    let mut branch = prefix[..last_idx].to_vec();
-                    branch.extend(se);
-                    branch.extend_from_slice(&suffix[1..]);
-                    out.push(branch);
-                }
-            }
-        }
-
-        // SplitOrAbsent on suffix side: suffix atom absent → boundary at value end.
-        if matches!(cf, ConstrainedAtom::SplitOrAbsent(..)) {
-            let edge_class = if is_boundary { &wc } else { &nwc };
-            if let Some(c2) = constrain_atom_at_boundary(&prefix[last_idx], edge_class, true) {
-                for pe in expand_constrained(&c2, true) {
-                    let mut branch = prefix[..last_idx].to_vec();
-                    branch.extend(pe);
-                    branch.extend_from_slice(&suffix[1..]);
-                    out.push(branch);
-                }
-            }
-        }
+        let mut branch = prefix[..last_idx].to_vec();
+        branch.extend(pe);
+        branch.extend(se);
+        branch.extend_from_slice(&suffix[1..]);
+        out.push(branch);
     }
 }
+
+/// Expand one `~b`/`~B` against the atoms on either side of it, appending one
+/// branch per way the boundary can be satisfied.
+///
+/// The atom next to the boundary may match zero characters (`a?`, `a*`) or none
+/// at all (`a{0}`). It then leaves no character to test, so the boundary
+/// resolves against the next atom out and the absent one is dropped from the
+/// branch. Both sides walk outwards over such atoms, so every combination of
+/// present and absent neighbours becomes its own branch.
+fn expand_wb_atoms(
+    prefix_atoms: &[QuantifiedAtom],
+    suffix_atoms: &[QuantifiedAtom],
+    is_boundary: bool,
+    out: &mut Vec<Branch>,
+) {
+    let mut prefix = prefix_atoms;
+    loop {
+        let mut suffix = suffix_atoms;
+        loop {
+            // Stop as soon as the walk is over budget. The caller turns an
+            // over-long `out` into a rejected pattern.
+            if out.len() > MAX_WB_ALTERNATIVES {
+                return;
+            }
+
+            match (prefix.is_empty(), suffix.is_empty()) {
+                // Both sides are the `"` delimiter, which is non-word. Two
+                // non-word chars are never a boundary, always a non-boundary.
+                (true, true) => {
+                    if !is_boundary {
+                        out.push(Vec::new());
+                    }
+                }
+                (true, false) => expand_wb_at_start(suffix, is_boundary, out),
+                (false, true) => expand_wb_at_end(prefix, is_boundary, out),
+                (false, false) => expand_wb_in_middle(prefix, suffix, is_boundary, out),
+            }
+
+            let Some((first, rest)) = suffix.split_first() else {
+                break;
+            };
+            if !boundary_may_skip_atom(first) {
+                break;
+            }
+            suffix = rest;
+        }
+
+        let Some((last, rest)) = prefix.split_last() else {
+            break;
+        };
+        if !boundary_may_skip_atom(last) {
+            break;
+        }
+        prefix = rest;
+    }
+}
+
+/// Cap on the branches one pattern's word boundaries may expand into.
+///
+/// Every boundary multiplies the branch count by the ways the atoms around it
+/// can be present or absent, and each branch becomes its own run of NFA states.
+/// The cap stops a short string of optional atoms from building a huge
+/// automaton.
+const MAX_WB_ALTERNATIVES: usize = 1024;
 
 /// Expand word boundaries (`~b`/`~B`) in a regexp tree using character-class intersection.
 ///
@@ -842,19 +861,11 @@ pub fn expand_word_boundaries(tree: &Root) -> Result<Root, String> {
 
                 let prefix = &alt[..pos];
                 let suffix = &alt[pos + 1..];
-
-                match (prefix.is_empty(), suffix.is_empty()) {
-                    (true, true) => {
-                        // ~b alone: between two `"` (non-word). Boundary = never, non-boundary = always.
-                        if !is_boundary {
-                            new_alternatives.push(Vec::new());
-                        }
-                    }
-                    (true, false) => expand_wb_at_start(suffix, is_boundary, &mut new_alternatives),
-                    (false, true) => expand_wb_at_end(prefix, is_boundary, &mut new_alternatives),
-                    (false, false) => {
-                        expand_wb_in_middle(prefix, suffix, is_boundary, &mut new_alternatives);
-                    }
+                expand_wb_atoms(prefix, suffix, is_boundary, &mut new_alternatives);
+                if new_alternatives.len() > MAX_WB_ALTERNATIVES {
+                    return Err(format!(
+                        "word boundary expansion exceeds {MAX_WB_ALTERNATIVES} alternatives"
+                    ));
                 }
             }
 
@@ -2531,7 +2542,7 @@ mod tests {
 
     #[test]
     fn test_wb_quantified_star_at_end() {
-        // x.*~b — star before boundary at end, triggers SplitOrAbsent path
+        // x.*~b — star before boundary at end, so .* may be absent.
         // When .* matches 0 chars, boundary falls after 'x' (word → non-word " = valid)
         let tree = parse("x.*~b").unwrap();
         let expanded = expand_word_boundaries(&tree).unwrap();
@@ -2540,21 +2551,21 @@ mod tests {
         // 2. x alone (when .* is absent, 'x' is word, " is non-word → boundary)
         assert!(
             expanded.len() >= 2,
-            "x.*~b should produce SplitOrAbsent branches, got {}",
+            "x.*~b should produce both the present and absent branches, got {}",
             expanded.len()
         );
     }
 
     #[test]
     fn test_wb_star_at_start() {
-        // ~ba*x — star-quantified 'a' at boundary start, triggers SplitOrAbsent
-        // in expand_wb_at_start. When a* matches 0 chars, boundary falls before 'x'.
+        // ~ba*x — star-quantified 'a' at boundary start, so a* may be absent.
+        // When a* matches 0 chars, the boundary falls before 'x' instead.
         let tree = parse("~ba*x").unwrap();
         let expanded = expand_word_boundaries(&tree).unwrap();
         // Should produce branches for both: a present (constrained) and a absent (x constrained)
         assert!(
             expanded.len() >= 2,
-            "~ba*x should produce SplitOrAbsent branches at start, got {}",
+            "~ba*x should produce both the present and absent branches, got {}",
             expanded.len()
         );
     }
@@ -2625,22 +2636,21 @@ mod tests {
     }
 
     // ========================================================================
-    // Word boundary with SplitOrAbsent fallback (expand_wb_at_end)
+    // Word boundary against an atom that may be absent (expand_wb_at_end)
     // ========================================================================
 
     #[test]
     fn test_wb_at_end_with_star_after_literal() {
-        // xa*~b — 'x' is a word char, 'a*' can match zero chars (SplitOrAbsent).
+        // xa*~b — 'x' is a word char and 'a*' can match zero chars.
         // When a* is absent, boundary falls after 'x' (word → non-word " = valid).
         // When a* is present, its last char must be word (trivially true for 'a').
-        // The SplitOrAbsent path constrains the preceding atom ('x') as fallback.
         let tree = parse("xa*~b").unwrap();
         let expanded = expand_word_boundaries(&tree).unwrap();
         // Must produce branches for both the present case (a* constrained) and
-        // the absent case (x constrained as fallback)
+        // the absent case (the boundary resolving against 'x')
         assert!(
             expanded.len() >= 2,
-            "xa*~b needs SplitOrAbsent fallback branches, got {}",
+            "xa*~b needs a branch for a* present and one for a* absent, got {}",
             expanded.len()
         );
     }
@@ -2674,9 +2684,8 @@ mod tests {
     #[test]
     fn test_wb_single_star_at_end() {
         // .*~b — single zero-or-more atom before boundary at end.
-        // Prefix is [.*] (last_idx = 0). SplitOrAbsent path must NOT
-        // try to access prefix[-1]; the fallback is skipped when there is
-        // no preceding atom.
+        // The prefix is [.*], so when .* is absent the boundary has no
+        // preceding atom left to resolve against and lands at value start.
         let tree = parse(".*~b").unwrap();
         let expanded = expand_word_boundaries(&tree).unwrap();
         // .* can match word chars, so at least one branch constrains the dot
@@ -2772,7 +2781,7 @@ mod tests {
     #[test]
     fn test_wb_at_start_single_optional_suffix() {
         // `~b` at value start followed by a single optional atom (`a*`) is the
-        // minimal SplitOrAbsent case: the suffix has exactly one element.
+        // minimal absent case: the suffix has exactly one element.
         let tree = parse("~ba*").unwrap();
         let expanded = expand_word_boundaries(&tree).unwrap();
         assert!(!expanded.is_empty(), "~ba* should expand");
@@ -2795,16 +2804,16 @@ mod tests {
 
     #[test]
     fn test_wb_at_end_split_fallback_uses_previous_atom() {
-        // In ` a*~b` the prefix is [' ', a*] and a* is SplitOrAbsent. When a*
-        // is absent the boundary lands after the space, a non-word char, so
-        // constraining the atom before a* adds no fallback branch — the
-        // fallback considers the previous atom, not a* itself.
+        // In ` a*~b` the prefix is [' ', a*] and a* can be absent. When it is,
+        // the boundary lands after the space — a non-word char, same class as
+        // the closing `"` — so the absent case contributes no branch and only
+        // the present case survives.
         let tree = parse(" a*~b").unwrap();
         let expanded = expand_word_boundaries(&tree).unwrap();
         assert_eq!(
             expanded.len(),
             1,
-            "space is non-word so the SplitOrAbsent fallback adds nothing; got {expanded:?}"
+            "space is non-word so the absent case adds nothing; got {expanded:?}"
         );
     }
 
@@ -2829,5 +2838,62 @@ mod tests {
         };
         assert_eq!(base.cache_key.as_deref(), Some("wb_test"));
         assert_eq!(base.ascii_negated_bytes, Some(vec![b'q']));
+    }
+
+    #[test]
+    fn test_constrain_zero_quantifier_atom_is_absent() {
+        // A `{0}` atom matches nothing, so it is reported as absent whatever
+        // class it is asked for — including one its runes cannot satisfy, and
+        // including a group, which otherwise cannot be constrained at all.
+        for atom in [
+            QuantifiedAtom {
+                runes: vec![RunePair { lo: ' ', hi: ' ' }],
+                quant_min: 0,
+                quant_max: 0,
+                ..Default::default()
+            },
+            QuantifiedAtom {
+                subtree: Some(parse("ab").unwrap()),
+                quant_min: 0,
+                quant_max: 0,
+                ..Default::default()
+            },
+        ] {
+            let constrained = constrain_atom_at_boundary(&atom, &word_char_runes(), true)
+                .expect("a {0} atom is always absent, never impossible");
+            assert!(
+                matches!(constrained, ConstrainedAtom::Absent),
+                "{{0}} atom must constrain to Absent"
+            );
+            assert!(
+                expand_constrained(&constrained, true).is_none(),
+                "an absent atom contributes no atoms to the branch"
+            );
+        }
+    }
+
+    // MIRI SKIP RATIONALE: the patterns deliberately expand to a thousand
+    // branches of ~64 atoms each, which is far too much cloning for Miri.
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_wb_expansion_alternatives_capped() {
+        // Optional word chars before the boundary, optional spaces after it.
+        // Every pairing of surviving neighbours is a valid alternative, so the
+        // branch count grows with the product of the two runs.
+        let expand = |before: usize, after: usize| {
+            let re = format!("{}~b{}", "a?".repeat(before), " ?".repeat(after));
+            expand_word_boundaries(&parse(&re).unwrap())
+        };
+
+        // Runs of 32 and 31 expand to exactly the cap, which is still built.
+        let expanded = expand(32, 31).expect("an expansion of exactly the cap is allowed");
+        assert_eq!(expanded.len(), MAX_WB_ALTERNATIVES, "cap is inclusive");
+
+        // One more optional atom after the boundary tips it over.
+        let err = expand(32, 32).expect_err("an expansion past the cap must be refused, not built");
+        assert!(
+            err.contains("exceeds") && err.contains("alternatives"),
+            "error should name the alternatives cap, got {err:?}"
+        );
     }
 }

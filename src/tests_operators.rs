@@ -1608,7 +1608,8 @@ fn test_wb_with_dot() {
 
 #[test]
 fn test_wb_plus_quantifier() {
-    // a+~b exercises the Split path (quant_min=1), not SplitOrAbsent
+    // a+~b splits one occurrence off a run that must match at least once, so
+    // there is no branch where the atom is absent
     let q = q!("test" => r#"{"v": [{"regexp": "a+~b "}]}"#);
     assert_has_match!(q, r#"{"v": "aaa "}"#, "test");
     assert_has_match!(q, r#"{"v": "a "}"#, "test");
@@ -1617,10 +1618,11 @@ fn test_wb_plus_quantifier() {
 
 #[test]
 fn test_wb_optional_quantifier() {
-    // a?~b exercises SplitOrAbsent (quant_min=0): when a? pattern_ids 'a',
-    // the boundary is between 'a' (word) and ' ' (non-word)
+    // a? can match zero chars, so xa?~b has two ways to satisfy the boundary:
+    // 'a' (word) before ' ' (non-word), or a absent and 'x' before ' '.
     let q = q!("test" => r#"{"v": [{"regexp": "xa?~b "}]}"#);
     assert_has_match!(q, r#"{"v": "xa "}"#, "test");
+    assert_has_match!(q, r#"{"v": "x "}"#, "test");
     assert_no_has_match!(q, r#"{"v": "xab"}"#, "test");
 }
 
@@ -1631,6 +1633,92 @@ fn test_wb_range_quantifier() {
     assert_has_match!(q, r#"{"v": "aa "}"#, "test");
     assert_has_match!(q, r#"{"v": "aaaa "}"#, "test");
     assert_no_has_match!(q, r#"{"v": "a "}"#, "test");
+}
+
+#[test]
+fn test_wb_zero_quantifier_falls_back_to_previous_atom() {
+    // a{0} can never appear, so the boundary applies against whatever precedes
+    // it — here 'x' (word) against ' ' (non-word), i.e. the pattern is x~b .
+    let q = q!("test" => r#"{"v": [{"regexp": "xa{0}~b "}]}"#);
+    assert_has_match!(q, r#"{"v": "x "}"#, "test");
+    assert_no_has_match!(q, r#"{"v": "xa "}"#, "test");
+    assert_no_has_match!(q, r#"{"v": "x"}"#, "test");
+}
+
+#[test]
+fn test_wb_zero_quantifier_without_previous_atom_err() {
+    // With a{0} absent there is nothing before the boundary, leaving ~b between
+    // the start of the value and ' ' — both non-word, so the boundary is
+    // impossible and the pattern is rejected rather than built.
+    let mut q = Quamina::new();
+    assert_add_err!(q, "test", r#"{"v": [{"regexp": "a{0}~b "}]}"#);
+    assert_add_err!(q, "test", r#"{"v": [{"regexp": "[ab]{0,0}~b "}]}"#);
+}
+
+#[test]
+fn test_wb_zero_quantifier_group() {
+    // A group can never be constrained at a boundary, but (ab){0} never matches
+    // at all, so the boundary resolves against 'x' with the group contributing
+    // nothing — no characters of it may appear in the value.
+    let q = q!("test" => r#"{"v": [{"regexp": "x(ab){0}~b "}]}"#);
+    assert_has_match!(q, r#"{"v": "x "}"#, "test");
+    assert_no_has_match!(q, r#"{"v": "xab "}"#, "test");
+}
+
+#[test]
+fn test_wb_optional_group_rejected() {
+    // (ab)? can match, and a group's characters cannot be intersected with a
+    // word class, so the case where it is present has no expansion. Rejecting
+    // the pattern is honest; expanding only the absent case would silently
+    // match a subset.
+    let mut q = Quamina::new();
+    assert_add_err!(q, "test", r#"{"v": [{"regexp": "x(ab)?~b "}]}"#);
+}
+
+#[test]
+fn test_wb_optional_run_before_boundary() {
+    // Each trailing optional can be present or absent independently, so the
+    // boundary is satisfied by whichever atom ends up last: 'b', 'a' or 'x'.
+    let q = q!("test" => r#"{"v": [{"regexp": "xa?b?~b "}]}"#);
+    assert_has_match!(q, r#"{"v": "xab "}"#, "test");
+    assert_has_match!(q, r#"{"v": "xa "}"#, "test");
+    assert_has_match!(q, r#"{"v": "xb "}"#, "test");
+    assert_has_match!(q, r#"{"v": "x "}"#, "test");
+    assert_no_has_match!(q, r#"{"v": "xab"}"#, "test");
+}
+
+#[test]
+fn test_wb_optional_absent_at_value_start() {
+    // With `_?` absent the boundary sits at value start, where the opening `"`
+    // is non-word, so the following word char satisfies it. Present, `_` is
+    // itself a word char and the boundary is impossible.
+    let q = q!("test" => r#"{"v": [{"regexp": "_?~b~w"}]}"#);
+    assert_has_match!(q, r#"{"v": "a"}"#, "test");
+    assert_no_has_match!(q, r#"{"v": "_a"}"#, "test");
+}
+
+#[test]
+fn test_wb_non_boundary_with_optional_absent() {
+    // ~B needs both sides in the same class. With a* absent, 'x' and 'y' are
+    // both word chars and the non-boundary holds; a space between them would
+    // make it a real boundary instead.
+    let q = q!("test" => r#"{"v": [{"regexp": "xa*~By"}]}"#);
+    assert_has_match!(q, r#"{"v": "xy"}"#, "test");
+    assert_has_match!(q, r#"{"v": "xay"}"#, "test");
+    assert_no_has_match!(q, r#"{"v": "x y"}"#, "test");
+}
+
+#[test]
+fn test_wb_optional_absent_leaves_empty_value() {
+    // Once `a?` is absent the boundary sits between the two `"` delimiters,
+    // both non-word: never a boundary, always a non-boundary.
+    let q = q!("test" => r#"{"v": [{"regexp": "a?~B"}]}"#);
+    assert_has_match!(q, r#"{"v": ""}"#, "test");
+    assert_no_has_match!(q, r#"{"v": "a"}"#, "test");
+
+    let q = q!("test" => r#"{"v": [{"regexp": "a?~b"}]}"#);
+    assert_has_match!(q, r#"{"v": "a"}"#, "test");
+    assert_no_has_match!(q, r#"{"v": ""}"#, "test");
 }
 
 #[test]
