@@ -6,36 +6,36 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 Style inspired by [ripgrep's CHANGELOG](https://github.com/BurntSushi/ripgrep/blob/master/CHANGELOG.md).
 
-## [Unreleased]
+## [0.7.0] — 2026-08-03
 
 ### Added
-- Memory and automaton statistics via `Quamina::matcher_stats()`, reporting states, bytes, fanouts, and max fanout (ported from Go upstream's `GetMatcherStats`) (#152)
-- `Quamina::set_matcher_build_mode`/`matcher_build_mode` with the `MatcherBuildMode` enum (`BuiltForComfort`, `BuiltForSpeed`), letting you trade `add_pattern` cost against `matches_for_event` speed for wildcard and regexp patterns (ported from Go upstream's Get/Set MatcherBuildMode) (#178)
-- `matcher_stats()` now measures the materialized (frozen) matcher, so it reflects the build mode — `BuiltForSpeed` reports the converted DFAs — letting you watch the size effect of the mode you chose (#178)
+- `Quamina::matcher_stats()`: states, bytes, fanouts, and max fanout for the built matcher (ported from Go's `GetMatcherStats`) (#152)
+- `set_matcher_build_mode` / `matcher_build_mode` on `Quamina`, with the `MatcherBuildMode` enum (`BuiltForComfort`, `BuiltForSpeed`), trading `add_pattern` cost against `matches_for_event` speed for wildcard and regexp patterns (ported from Go) (#178)
 
 ### Changed
-- Merge two patterns on one field a byte range at a time instead of all 256 bytes per state, roughly 3x faster to add many prefix or shellstyle patterns to one field (#190)
-- Word boundary expansion now rejects a pattern whose boundaries expand past 1024 alternatives instead of building an automaton for every one of them (#190)
-- Default to `BuiltForComfort`, keeping wildcard and regexp matchers as NFAs; the NFA→DFA conversion now runs only under `BuiltForSpeed`. This favors cheaper `add_pattern` over faster `matches_for_event`, matching Go upstream's default (#178)
-- Store self-only epsilon closures as an implicit zero-length sentinel, avoiding one `StateId` in the flattened closure buffer for the common case (#173)
-- Precompute epsilon closures incrementally, re-closing only the states an added pattern introduces instead of the whole automaton on every add (matching Go upstream's `closureForNfa` prune) (#173)
-- Reuse the epsilon-closure scratch buffers across pattern adds instead of reallocating them per add, speeding up incremental builds of NFA-heavy pattern sets (~20% faster adding many shellstyle patterns) (matching the spirit of Go upstream's matcher-owned `closureBuffers`) (#177)
-- Merge each added non-exact pattern by appending to the live automaton and compacting unreachable history at freeze, instead of rebuilding the whole accumulated arena on every add (#162)
-- Build regexp alternations by byte-merging branches into a deterministic entry instead of a Thompson epsilon hub (matching Go upstream's `makeNFAFromBranches`), shrinking alternation automata and speeding up their construction (#154)
-- Synced Go upstream through 5c6e2df (#152)
+- Default to `BuiltForComfort`, keeping wildcard and regexp matchers as NFAs; the NFA→DFA conversion now runs only under `BuiltForSpeed`, matching Go upstream's default (#178)
+- `matcher_stats()` measures the frozen matcher, so it reflects the build mode you chose (#178)
+- Merge each added pattern by appending to the live automaton and compacting at freeze, instead of rebuilding the whole arena on every add (#162)
+- Precompute epsilon closures incrementally and reuse the scratch buffers across adds (~20% faster adding many shellstyle patterns) (#173, #177)
+- Store self-only epsilon closures as an implicit sentinel, saving a `StateId` per state in the common case (#173)
+- Build regexp alternations by byte-merging branches instead of a Thompson epsilon hub, shrinking alternation automata (#154)
+- Merge two patterns on one field a byte range at a time instead of all 256 bytes per state, ~3x faster to add many prefix or shellstyle patterns to one field (#190)
+- Word boundary expansion rejects a pattern whose boundaries expand past 1024 alternatives instead of building an automaton for each one (#190)
+- Synced Go upstream through 81f5b73 (#152–#183)
+
+### Fixed
+- Lookaround regexps now match against the value itself, not just their assertions; `foo(?!bar)baz` no longer matches unrelated values, and `(?=.*foo).*bar.*` matches `foobar` (#182–#184)
+- `BuiltForSpeed` now holds its freeze-time DFA to the arena byte budget, and applies to lookaround regexps instead of leaving them as NFAs (#186, #188)
+- `matcher_stats()` and `arena_stats()` count the lazy DFA cache, which no longer allocates a transition table for states it declines to cache (#185, #186)
+- A rejected `add_pattern` no longer leaves partial build state behind; transition registrations, consumed singletons, and arena inserts all roll back (#163, #164)
+- `delete_patterns` drops the pattern's stored definitions, so adding the same id again no longer brings the deleted ones back (#180)
+- `rebuild` now rebuilds the field-segments index, reclaims the states of rejected patterns, and replays patterns in the order they were added (#178, #180, #181)
+- Regexps no longer over-match when one unbounded quantifier nests inside another, e.g. `(.+c)*` or `(a*)*b` (#156)
+- Long single-chain patterns no longer overflow the stack; the arena walks that build, fold, clone and merge a chain carry their own stack instead of recursing per state (#190)
+- A `{0}` quantifier beside a word boundary (`xa{0}~b `) no longer panics `add_pattern`, and an atom matching zero characters hands the boundary to its neighbour, so `xa?~b ` matches `x ` (#190)
 
 ### Breaking
 - Removed the runtime memory-budget API (`get_memory_budget`/`set_memory_budget`), matching Go upstream dropping it; the build-time `QuaminaBuilder::with_arena_byte_budget` cap remains (#152)
-
-### Fixed
-- A `{0}` quantifier beside a word boundary (`xa{0}~b `) no longer panics `add_pattern`, and an atom that matches zero characters now hands the boundary to its neighbour instead of assuming the value edge, so `xa?~b ` matches `x ` (#190)
-- Long single-chain patterns no longer overflow the stack and abort the process; the arena walks that build, fold, clone and merge a chain now carry their own stack instead of recursing once per state (#190)
-- Lookaround regexps now match against the value itself, not just their assertions: `foo(?!bar)baz` no longer matches `totally-unrelated`, `(?=.*foo).*bar.*` matches `foobar`, and `(?<=foo)bar(?=baz)baz` matches `foobarbaz` (#182, #183, #184)
-- `BuiltForSpeed` now holds its freeze-time DFA to the arena byte budget, keeping the NFA when there is no room, and applies to lookaround regexps, which it used to leave as NFAs (#186, #188)
-- `matcher_stats()` and `arena_stats()` now count the lazy DFA cache a `BuiltForSpeed` pattern falls back to, and the cache no longer allocates a transition table for states it declines to cache (#185, #186)
-- `Quamina::delete_patterns` now drops the pattern's stored definitions, so adding the same id again no longer brings the deleted ones back (matching Go upstream's `memState.Delete`) (#180)
-- `Quamina::rebuild` now rebuilds the field-segments index, reclaims the states of patterns the automaton rejected part-way through, and replays live patterns in the order they were added rather than in hash order (#178, #180, #181)
-- Regexps no longer over-match when one unbounded quantifier nests inside another (e.g. `(.+c)*`, `(a*)*b`): a quantifier's "match zero copies" skip could leak across an inner loop's back-edge and let the construct exit before its body matched (#156)
 
 ## [0.6.0] — 2026-06-11
 
