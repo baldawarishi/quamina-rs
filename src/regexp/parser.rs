@@ -548,8 +548,8 @@ enum ConstrainedAtom {
     /// Quantified atom that needs splitting: (base_quantified, constrained_single)
     /// Used when we need to constrain only the last/first char of a quantified run.
     Split(QuantifiedAtom, QuantifiedAtom),
-    /// A `{0}` atom: it can never match a character, so it contributes nothing
-    /// and the boundary has to look at its neighbour instead.
+    /// A `{0}` atom. It never matches a character, so it contributes nothing
+    /// and the boundary tests its neighbour instead.
     Absent,
 }
 
@@ -641,8 +641,8 @@ fn constrain_atom_at_boundary(
     Some(ConstrainedAtom::Split(base, constrained_single))
 }
 
-/// The atoms a constrained atom contributes to a branch, or `None` when it
-/// contributes none because it can never match.
+/// The atoms a constrained atom contributes to a branch. `None` when it never
+/// matches and so contributes nothing.
 /// `base_first=true` gives [base, single] (prefix/last-char side),
 /// `base_first=false` gives [single, base] (suffix/first-char side).
 fn expand_constrained(ca: &ConstrainedAtom, base_first: bool) -> Option<Vec<QuantifiedAtom>> {
@@ -657,13 +657,13 @@ fn expand_constrained(ca: &ConstrainedAtom, base_first: bool) -> Option<Vec<Quan
     }
 }
 
-/// Whether a word boundary can resolve past this atom, i.e. whether the atom
-/// may contribute no character for the boundary to test.
+/// Whether a word boundary can resolve past this atom, that is, whether the
+/// atom may leave no character for the boundary to test.
 ///
-/// A `{0}` atom never contributes one. `?`, `*` and `{0,n}` also have a present
-/// case, which only gets expanded for atoms whose character class can be
-/// intersected — skipping past an optional group would silently drop its
-/// present case, so groups stay put and the boundary is reported as impossible.
+/// A `{0}` atom never leaves one. `?`, `*` and `{0,n}` also have a present case,
+/// which expands only for atoms whose character class can be intersected.
+/// Groups cannot be, so they stay put and the boundary is reported impossible.
+/// Skipping past one would drop its present case and silently match a subset.
 const fn boundary_may_skip_atom(atom: &QuantifiedAtom) -> bool {
     atom.quant_max == 0 || (atom.quant_min == 0 && atom.subtree.is_none())
 }
@@ -757,14 +757,13 @@ fn expand_wb_in_middle(
 }
 
 /// Expand one `~b`/`~B` against the atoms on either side of it, appending one
-/// alternative branch per way the boundary can be satisfied.
+/// branch per way the boundary can be satisfied.
 ///
-/// The atom next to the boundary may match zero characters (`a?`, `a*`) or
-/// never match at all (`a{0}`). When it matches none, it leaves no character
-/// for the boundary to test and the boundary resolves against the next atom
-/// along instead, with the absent atom dropped from the branch. Both sides walk
-/// outwards over such atoms, so every combination of present and absent
-/// neighbours becomes its own alternative.
+/// The atom next to the boundary may match zero characters (`a?`, `a*`) or none
+/// at all (`a{0}`). It then leaves no character to test, so the boundary
+/// resolves against the next atom out and the absent one is dropped from the
+/// branch. Both sides walk outwards over such atoms, so every combination of
+/// present and absent neighbours becomes its own branch.
 fn expand_wb_atoms(
     prefix_atoms: &[QuantifiedAtom],
     suffix_atoms: &[QuantifiedAtom],
@@ -775,15 +774,15 @@ fn expand_wb_atoms(
     loop {
         let mut suffix = suffix_atoms;
         loop {
-            // Give up the moment the walk is over budget; the caller turns an
+            // Stop as soon as the walk is over budget. The caller turns an
             // over-long `out` into a rejected pattern.
             if out.len() > MAX_WB_ALTERNATIVES {
                 return;
             }
 
             match (prefix.is_empty(), suffix.is_empty()) {
-                // Both sides are the `"` delimiter, which is non-word: two
-                // non-word chars are never a boundary and always a non-boundary.
+                // Both sides are the `"` delimiter, which is non-word. Two
+                // non-word chars are never a boundary, always a non-boundary.
                 (true, true) => {
                     if !is_boundary {
                         out.push(Vec::new());
@@ -816,9 +815,9 @@ fn expand_wb_atoms(
 /// Cap on the branches one pattern's word boundaries may expand into.
 ///
 /// Every boundary multiplies the branch count by the ways the atoms around it
-/// can be present or absent, and each branch is later materialized into its own
-/// run of NFA states. Refusing the pattern keeps a short string of optional
-/// atoms around a boundary from building an enormous automaton.
+/// can be present or absent, and each branch becomes its own run of NFA states.
+/// The cap stops a short string of optional atoms from building a huge
+/// automaton.
 const MAX_WB_ALTERNATIVES: usize = 1024;
 
 /// Expand word boundaries (`~b`/`~B`) in a regexp tree using character-class intersection.
@@ -2878,9 +2877,9 @@ mod tests {
     #[test]
     #[cfg_attr(miri, ignore)]
     fn test_wb_expansion_alternatives_capped() {
-        // Optional word chars before the boundary and optional spaces after it,
-        // so every pairing of surviving neighbours is a valid alternative and
-        // the branch count grows with the product of the two runs.
+        // Optional word chars before the boundary, optional spaces after it.
+        // Every pairing of surviving neighbours is a valid alternative, so the
+        // branch count grows with the product of the two runs.
         let expand = |before: usize, after: usize| {
             let re = format!("{}~b{}", "a?".repeat(before), " ?".repeat(after));
             expand_word_boundaries(&parse(&re).unwrap())

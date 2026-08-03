@@ -1,13 +1,11 @@
-//! Long single-chain patterns must survive being built and frozen on a small
-//! stack. A `prefix` pattern allocates one state per byte, and the arena walks
-//! that build, fold and clone that chain visit it one state at a time, so their
-//! depth tracks the pattern length rather than anything the memory budget can
-//! see.
+//! Long single-chain patterns must build and freeze on a small stack. A
+//! `prefix` pattern allocates one arena state per byte, so every walk over that
+//! chain is as deep as the pattern is long.
 //!
-//! Overflowing a stack aborts the process instead of raising a catchable panic,
-//! which would take the whole test binary down with it. The reproducers
-//! therefore run in a child process — the parent re-executes this same test
-//! binary with `GUARD` set and asserts only on the child's exit status.
+//! A stack overflow aborts the process rather than raising a catchable panic,
+//! and would take the test binary down with it. Each reproducer therefore runs
+//! in a child process: the parent re-executes this test binary with `GUARD` set
+//! and asserts on the child's exit status alone.
 
 use std::process::Command;
 
@@ -19,12 +17,12 @@ const GUARD: &str = "QUAMINA_DEEP_CHAIN_CHILD";
 /// One arena state per byte, so this is also the chain depth.
 const CHAIN_LEN: usize = 5_000;
 
-/// The walks that lay a chain down held out further than the one that cloned
-/// it, so their cases need a longer chain before the stack runs out.
+/// The chain builders hold out further than the clone walk, so their cases need
+/// a longer chain before the stack runs out.
 const LONG_CHAIN_LEN: usize = 20_000;
 
-/// Tokio's default worker stack, i.e. the smallest stack a caller is likely to
-/// reach this code on.
+/// Tokio's default worker stack, the smallest stack a caller is likely to reach
+/// this code on.
 const STACK_BYTES: usize = 2 * 1024 * 1024;
 
 #[test]
@@ -43,9 +41,9 @@ fn deep_prefix_chain_survives_small_stack() {
                 .expect("matching against the frozen chain");
             assert_eq!(matches, vec!["chain"]);
 
-            // Every pattern type that compiles to a chain reaches a different
-            // walk over it: the exact-match and case-folded builders lay the
-            // chain down, and an alternation folds two of them together.
+            // Each pattern type reaches a different walk over the chain. The
+            // exact-match and case-folded builders lay one down; an alternation
+            // folds two of them together.
             let long = "x".repeat(LONG_CHAIN_LEN);
             match_deep_pattern(&format!(r#"{{"f": ["{long}"]}}"#), &long);
             match_deep_pattern(
@@ -63,16 +61,16 @@ fn deep_prefix_chain_survives_small_stack() {
     respawn("deep_prefix_chain_survives_small_stack");
 }
 
-/// A second pattern on a field the matcher already holds a chain for merges the
-/// two chains state by state, which is a walk of its own and deeper than either
-/// chain builder — the merge descends through both automata at once.
+/// A second pattern on a field that already holds a chain merges the two state
+/// by state. That walk descends through both automata at once, so it goes
+/// deeper than either chain builder.
 #[test]
 #[cfg_attr(miri, ignore = "spawns a child process")]
 fn merging_two_deep_chains_survives_small_stack() {
     if in_child() {
         on_small_stack(|| {
             // Both patterns of each pair accept the value, so the merged
-            // automaton has to keep hold of both chains rather than one.
+            // automaton must keep both chains rather than one.
             let value = "x".repeat(CHAIN_LEN);
             match_two_deep_patterns(
                 &format!(r#"{{"f": [{{"prefix": "{value}"}}]}}"#),
@@ -93,10 +91,10 @@ fn merging_two_deep_chains_survives_small_stack() {
     respawn("merging_two_deep_chains_survives_small_stack");
 }
 
-/// A lone exact-match pattern is held aside as a singleton rather than built
-/// into the automaton, and the next pattern on that field folds the two
-/// together through a different merge than the one above — one that builds a
-/// fresh automaton from both sides instead of appending to the live one.
+/// A lone exact-match pattern is held aside as a singleton instead of built
+/// into the automaton. The next pattern on that field folds the two together
+/// through a different merge from the one above: it builds a fresh automaton
+/// out of both sides rather than appending to the live one.
 #[test]
 #[cfg_attr(miri, ignore = "spawns a child process")]
 fn merging_a_deep_chain_into_a_singleton_survives_small_stack() {
