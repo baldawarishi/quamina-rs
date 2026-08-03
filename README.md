@@ -238,32 +238,35 @@ Matching time is sublinear in pattern count because all patterns share one autom
 | Benchmark | Time | Description |
 |-----------|-----:|-------------|
 | citylots | ~1,400 ns | 4 patterns, 206 KB of GeoJSON |
-| nested field match | ~4,400 ns | 9 KB JSON, deeply nested field |
-| early field exit | ~180 ns | 9 KB JSON, matching field near the top |
+| nested field match | ~4,100 ns | 9 KB JSON, deeply nested field |
+| early field exit | ~170 ns | 9 KB JSON, matching field near the top |
 
 ### Pattern type benchmarks
+
+Measured in `BuiltForSpeed` mode:
 
 | Benchmark | Time | Description |
 |---|---:|---|
 | exact_match | ~56 ns | Single exact match |
-| nested_match | ~83 ns | Exact match on a nested key |
-| regex_match | ~48 ns | Simple regex (eager DFA after compile) |
-| anything_but_match | ~65 ns | `anything-but` with 3 excluded values |
-| numeric_range_two_sided | ~72 ns | Two-sided range (`>= 0, < 100`) |
-| 100_prefix_patterns | ~117 ns | 100 `prefix` patterns merged into one automaton |
-| shellstyle_26_patterns | ~97 ns | 26 shellstyle patterns (A\*–Z\*) |
-| regexp_plus_long | ~260 ns | `[a-z]+` on a 100-char value |
+| nested_match | ~82 ns | Exact match on a nested key |
+| regex_match | ~49 ns | Simple regex on an email value |
+| anything_but_match | ~69 ns | `anything-but` with 3 excluded values |
+| numeric_range_two_sided | ~74 ns | Two-sided range (`>= 0, < 100`) |
+| 100_prefix_patterns | ~124 ns | 100 `prefix` patterns merged into one automaton |
+| shellstyle_26_patterns | ~89 ns | 26 shellstyle patterns (A\*–Z\*) |
+| regexp_plus_long | ~265 ns | `[a-z]+` on a 100-char value |
 
 ### What affects performance
 
 - **Unique fields**: More unique field paths across patterns = more work per event
 - **Event size**: Larger JSON takes longer to parse and flatten
 - **Pattern complexity**: Regexps with Unicode categories (e.g., `~p{L}`) are slower to compile
-- **Build mode**: `BuiltForSpeed` trades slower adds for faster matching of wildcard/regexp patterns (see below)
 
 ### Comfort vs speed
 
 Wildcard and regexp patterns compile to NFAs. By default (`BuiltForComfort`) they stay NFAs: cheap to add, but `matches_for_event` slows down roughly linearly as you add more such patterns. `BuiltForSpeed` converts them to DFAs when the matcher freezes, giving matching time only weakly related to the pattern count — at the cost of slower adds and, for some pattern combinations, explosive matcher growth (as bad as O(2ⁿ)). Watch `matcher_stats()` if you enable it.
+
+The three regexp and shellstyle rows above are the ones this choice moves. On the default `BuiltForComfort` they measure ~57 ns, ~134 ns and ~600 ns — roughly 1.2x, 1.5x and 2.3x slower than the table. Every other row lands within measurement noise of either mode.
 
 ```rust
 use quamina::MatcherBuildMode;
