@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/),
 and this project adheres to [Semantic Versioning](https://semver.org/).
 Style inspired by [ripgrep's CHANGELOG](https://github.com/BurntSushi/ripgrep/blob/master/CHANGELOG.md).
 
+## [Unreleased]
+
+### Changed
+- Commit `Cargo.lock` so local builds, CI, and audits resolve the same dependency versions (#195)
+
 ## [0.7.0] — 2026-08-03
 
 ### Added
