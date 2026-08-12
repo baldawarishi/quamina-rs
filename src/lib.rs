@@ -7,6 +7,14 @@
 // Not part of the public API — use `Quamina` instead.
 #[doc(hidden)]
 pub mod automaton;
+#[cfg(any(
+    feature = "messagepack",
+    feature = "cbor",
+    feature = "protobuf",
+    feature = "avro",
+    feature = "headers"
+))]
+mod base64;
 pub mod canonical;
 mod case_folding;
 pub mod envelope;

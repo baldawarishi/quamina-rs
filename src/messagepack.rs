@@ -445,7 +445,7 @@ impl<'a> Decoder<'a> {
                 BinaryValuePolicy::TaggedBase64 => {
                     let len = self.read_bin_len()?;
                     let bytes = self.take_bytes(len)?.to_vec();
-                    let text = format!("base64:{}", base64_encode(&bytes));
+                    let text = format!("base64:{}", crate::base64::encode(&bytes));
                     self.emit_scalar(field_path, CanonicalValue::String(text), marker_offset)?;
                 }
             },
@@ -840,48 +840,6 @@ fn format_rfc3339(seconds: i64, nanos: u32) -> String {
     }
 }
 
-// =============================================================================
-// Base64 (standard alphabet, padded) — used only by `BinaryValuePolicy::TaggedBase64`
-// =============================================================================
-
-const BASE64_ALPHABET: &[u8; 64] =
-    b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-
-/// Encode `data` as standard, padded base64 text.
-fn base64_encode(data: &[u8]) -> String {
-    let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
-    let mut chunks = data.chunks_exact(3);
-    for chunk in &mut chunks {
-        let n = (u32::from(chunk[0]) << 16) | (u32::from(chunk[1]) << 8) | u32::from(chunk[2]);
-        push_sextets(&mut out, n, 4);
-    }
-    let rem = chunks.remainder();
-    match rem.len() {
-        1 => {
-            let n = u32::from(rem[0]) << 16;
-            push_sextets(&mut out, n, 2);
-            out.push_str("==");
-        }
-        2 => {
-            let n = (u32::from(rem[0]) << 16) | (u32::from(rem[1]) << 8);
-            push_sextets(&mut out, n, 3);
-            out.push('=');
-        }
-        _ => {}
-    }
-    out
-}
-
-/// Push the top `count` base64 sextets of `n` (a 24-bit group left-aligned
-/// in the low 24 bits) onto `out`.
-fn push_sextets(out: &mut String, n: u32, count: u8) {
-    for i in 0..count {
-        let shift = 18 - 6 * u32::from(i);
-        let sextet = (n >> shift) & 0x3F;
-        out.push(BASE64_ALPHABET[sextet as usize] as char);
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -893,16 +851,6 @@ mod tests {
             t.add(p);
         }
         t
-    }
-
-    #[test]
-    fn base64_matches_known_vectors() {
-        assert_eq!(base64_encode(&[0x00, 0xff]), "AP8=");
-        assert_eq!(base64_encode(b""), "");
-        assert_eq!(base64_encode(b"f"), "Zg==");
-        assert_eq!(base64_encode(b"fo"), "Zm8=");
-        assert_eq!(base64_encode(b"foo"), "Zm9v");
-        assert_eq!(base64_encode(b"foobar"), "Zm9vYmFy");
     }
 
     #[test]
