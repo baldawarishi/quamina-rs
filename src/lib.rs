@@ -15,6 +15,8 @@ pub mod flatten_json;
 mod flattener;
 #[doc(hidden)]
 pub mod json;
+#[cfg(feature = "messagepack")]
+pub mod messagepack;
 #[doc(hidden)]
 pub mod numbits;
 #[doc(hidden)]
@@ -40,6 +42,13 @@ pub use crate::canonical::{
 };
 // Re-export transport envelope support (headers/CloudEvents contracts).
 pub use crate::envelope::{Envelope, EnvelopeBuilder, EnvelopeFlattener, Headers, Transport};
+// Re-export the MessagePack flattener (messagepack contract).
+#[cfg(feature = "messagepack")]
+pub use crate::messagepack::{
+    BinaryValuePolicy, DuplicateKeyPolicy, ExtensionValuePolicy, MapKeyPolicy,
+    MessagePackFlattener, MessagePackFlattenerBuilder, MessagePackTimestampPolicy, NumericPolicy,
+    RootValuePolicy,
+};
 
 use automaton::{NfaBuffers, ThreadSafeCoreMatcher};
 use json::Matcher;
