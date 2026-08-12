@@ -19,3 +19,6 @@ docs/long_fuzz_output.log
 mutants.out/
 mutants.out.*/
 mutants.out.old/
+
+# Isolated worktrees created for background agent sessions
+.claude/worktrees/
