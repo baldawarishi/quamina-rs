@@ -7,6 +7,7 @@
 // Not part of the public API — use `Quamina` instead.
 #[doc(hidden)]
 pub mod automaton;
+pub mod canonical;
 mod case_folding;
 #[doc(hidden)]
 pub mod flatten_json;
@@ -30,6 +31,12 @@ mod kani_proofs;
 // Re-export flattener types for custom implementations
 pub use crate::flatten_json::ArrayPos;
 pub use crate::flattener::{Flattener, JsonFlattener, OwnedField, SegmentsTreeTracker};
+
+// Re-export the shared decoder boundary (core-boundary contract).
+pub use crate::canonical::{
+    ArrayHandle, ArraySnapshot, ArrayTrailBuilder, CanonicalField, CanonicalValue, DecoderBoundary,
+    FieldPath, FieldSetBuilder, FieldSetOutput, PatternFieldTracker, RawArrayPos, RawField,
+};
 
 use automaton::{NfaBuffers, ThreadSafeCoreMatcher};
 use json::Matcher;
@@ -154,6 +161,107 @@ struct StoredPattern {
     fields: PatternDef,
 }
 
+/// The wire format an event, envelope, or error is associated with.
+///
+/// Used by non-JSON flatteners and the shared decoder boundary to report
+/// which decoder produced a given error, independent of the error variant.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EventFormat {
+    /// JSON events, handled by [`JsonFlattener`].
+    Json,
+    /// MessagePack events.
+    MessagePack,
+    /// CBOR events.
+    Cbor,
+    /// Protocol Buffers events.
+    Protobuf,
+    /// Apache Avro events.
+    Avro,
+    /// Transport headers (HTTP/Kafka) carried by an [`Envelope`].
+    Headers,
+    /// CloudEvents in binary content mode.
+    CloudEventsBinary,
+    /// A caller-defined format, named for diagnostics and test harnesses.
+    Custom(&'static str),
+}
+
+/// The location an error occurred at, when the decoder can identify one.
+///
+/// Both fields are independent: a byte-oriented decoder reports a byte
+/// offset, while the shared field-boundary validator reports the index of
+/// the offending field in the raw field list. Either, both, or neither may
+/// be known for a given error.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ErrorLocation {
+    field_index: Option<usize>,
+    byte_offset: Option<usize>,
+}
+
+impl ErrorLocation {
+    /// The index of the offending field within the raw field list, if known.
+    #[must_use]
+    pub const fn field_index(&self) -> Option<usize> {
+        self.field_index
+    }
+
+    /// The byte offset into the source event where the error occurred, if known.
+    #[must_use]
+    pub const fn byte_offset(&self) -> Option<usize> {
+        self.byte_offset
+    }
+}
+
+/// Boxed source error retained by format-neutral [`QuaminaError`] variants.
+type BoxedSource = Box<dyn std::error::Error + Send + Sync + 'static>;
+
+/// Limits every non-JSON decoder enforces on the shape and size of the raw
+/// event it decodes, so a hostile or malformed input cannot exhaust memory
+/// or the call stack before an error is returned.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EventLimits {
+    /// Maximum nesting depth (objects/arrays) the decoder will descend into.
+    pub max_depth: usize,
+    /// Maximum number of fields the decoder will retain in one event.
+    pub max_fields: usize,
+    /// Maximum length in bytes of any one field path.
+    pub max_path_bytes: usize,
+    /// Maximum length in bytes of any one scalar value.
+    pub max_scalar_bytes: usize,
+    /// Maximum number of items (array elements/map entries) in one container.
+    pub max_container_items: usize,
+    /// Maximum total bytes the decoder will allocate for one event.
+    pub max_total_allocated_bytes: usize,
+}
+
+impl Default for EventLimits {
+    fn default() -> Self {
+        Self {
+            max_depth: 64,
+            max_fields: 10_000,
+            max_path_bytes: 4_096,
+            max_scalar_bytes: 1_000_000,
+            max_container_items: 100_000,
+            max_total_allocated_bytes: 64_000_000,
+        }
+    }
+}
+
+impl EventLimits {
+    /// A deliberately tight preset used by contract tests to trip every
+    /// resource limit with small, hand-written payloads.
+    #[must_use]
+    pub const fn strict() -> Self {
+        Self {
+            max_depth: 4,
+            max_fields: 8,
+            max_path_bytes: 64,
+            max_scalar_bytes: 64,
+            max_container_items: 8,
+            max_total_allocated_bytes: 512,
+        }
+    }
+}
+
 /// Errors that can occur during pattern matching
 #[derive(Debug)]
 pub enum QuaminaError {
@@ -167,6 +275,291 @@ pub enum QuaminaError {
     UnsupportedMediaType(String),
     /// The pattern exceeded configured complexity limits (see [`PatternLimits`]).
     PatternTooComplex(String),
+    /// The raw event bytes were malformed for the reported format.
+    InvalidEvent {
+        /// The format that rejected the event.
+        format: EventFormat,
+        /// Where in the event the problem was found, if known.
+        location: ErrorLocation,
+        /// A human-readable description of the problem.
+        message: String,
+        /// The underlying decoder error, if any.
+        source: Option<BoxedSource>,
+    },
+    /// A field path could not be validated (e.g. invalid UTF-8).
+    InvalidEventPath {
+        /// The format that rejected the path.
+        format: EventFormat,
+        /// Where the invalid path was found, if known.
+        location: ErrorLocation,
+        /// A human-readable description of the problem.
+        message: String,
+    },
+    /// A raw field path embedded the segment separator instead of being
+    /// constructed as distinct segments, making its meaning ambiguous.
+    AmbiguousEventPath {
+        /// The format that rejected the path.
+        format: EventFormat,
+        /// Where the ambiguous path was found, if known.
+        location: ErrorLocation,
+    },
+    /// A raw scalar's bytes did not match its declared numeric/string tag.
+    InvalidCanonicalField {
+        /// The format that rejected the field.
+        format: EventFormat,
+        /// Where the invalid field was found, if known.
+        location: ErrorLocation,
+        /// A human-readable description of the problem.
+        message: String,
+    },
+    /// The same array id was used for two structurally different arrays.
+    ConflictingArrayId {
+        /// The format that rejected the event.
+        format: EventFormat,
+        /// Where the conflict was found, if known.
+        location: ErrorLocation,
+        /// The array id that was reused.
+        id: i32,
+    },
+    /// The same field path and array trail were emitted more than once.
+    DuplicateEventField {
+        /// The format that rejected the event.
+        format: EventFormat,
+        /// Where the duplicate was found, if known.
+        location: ErrorLocation,
+    },
+    /// A configured [`EventLimits`] bound was exceeded.
+    EventLimitExceeded {
+        /// The format that rejected the event.
+        format: EventFormat,
+        /// Where the limit was exceeded, if known.
+        location: ErrorLocation,
+        /// A human-readable description of which limit was exceeded.
+        message: String,
+    },
+    /// The event contained a value this decoder's policy does not support
+    /// (e.g. a non-finite float, unsupported binary data, or an unknown enum).
+    UnsupportedEventValue {
+        /// The format that rejected the value.
+        format: EventFormat,
+        /// Where the value was found, if known.
+        location: ErrorLocation,
+        /// A human-readable description of the problem.
+        message: String,
+    },
+    /// A map/object key did not satisfy the configured key policy.
+    UnsupportedMapKey {
+        /// The format that rejected the key.
+        format: EventFormat,
+        /// Where the key was found, if known.
+        location: ErrorLocation,
+        /// A human-readable description of the problem.
+        message: String,
+    },
+    /// The event used a recognized but unimplemented/disabled format feature.
+    UnsupportedFormatFeature {
+        /// The format that rejected the feature.
+        format: EventFormat,
+        /// Where the feature was found, if known.
+        location: ErrorLocation,
+        /// A human-readable description of the unsupported feature.
+        message: String,
+    },
+    /// A schema or descriptor used to construct a flattener was invalid.
+    InvalidSchema {
+        /// The format the schema was for.
+        format: EventFormat,
+        /// A human-readable description of the problem.
+        message: String,
+    },
+    /// A schema needed to decode an event (e.g. by fingerprint) was not available.
+    MissingEventSchema {
+        /// The format that needed the schema.
+        format: EventFormat,
+        /// Where the missing schema was needed, if known.
+        location: ErrorLocation,
+        /// A human-readable description of the problem.
+        message: String,
+    },
+    /// A transport envelope (headers, CloudEvents attributes) was invalid.
+    InvalidEnvelope {
+        /// The format that rejected the envelope.
+        format: EventFormat,
+        /// Where the invalid attribute was found, if known.
+        location: ErrorLocation,
+        /// The name of the offending attribute, if applicable.
+        attribute: &'static str,
+        /// A human-readable description of the problem.
+        message: String,
+    },
+    /// Transport headers conflicted (e.g. duplicate `Content-Type`, or a
+    /// case-insensitive header name repeated with different values).
+    ConflictingEnvelopeHeaders {
+        /// The format that rejected the envelope.
+        format: EventFormat,
+        /// Where the conflict was found, if known.
+        location: ErrorLocation,
+        /// A human-readable description of the conflict.
+        message: String,
+    },
+    /// A header or attribute path collided with a reserved namespace or a
+    /// payload-derived path.
+    EnvelopePathCollision {
+        /// The format that rejected the envelope.
+        format: EventFormat,
+        /// Where the collision was found, if known.
+        location: ErrorLocation,
+        /// A human-readable description of the collision.
+        message: String,
+    },
+}
+
+impl QuaminaError {
+    /// Start building a generic "malformed event bytes" error for `format`.
+    ///
+    /// Chain [`at_byte_offset`](Self::at_byte_offset), [`at_field_index`](Self::at_field_index),
+    /// [`with_message`](Self::with_message), and [`with_source`](Self::with_source) to attach detail.
+    #[must_use]
+    pub const fn invalid_event(format: EventFormat) -> Self {
+        Self::InvalidEvent {
+            format,
+            location: ErrorLocation {
+                field_index: None,
+                byte_offset: None,
+            },
+            message: String::new(),
+            source: None,
+        }
+    }
+
+    /// The format that produced this error.
+    ///
+    /// Variants that predate format tracking (`InvalidJson` and friends)
+    /// report [`EventFormat::Json`], since they only ever arise from the
+    /// default JSON path.
+    #[must_use]
+    pub const fn format(&self) -> EventFormat {
+        match self {
+            Self::InvalidEvent { format, .. }
+            | Self::InvalidEventPath { format, .. }
+            | Self::AmbiguousEventPath { format, .. }
+            | Self::InvalidCanonicalField { format, .. }
+            | Self::ConflictingArrayId { format, .. }
+            | Self::DuplicateEventField { format, .. }
+            | Self::EventLimitExceeded { format, .. }
+            | Self::UnsupportedEventValue { format, .. }
+            | Self::UnsupportedMapKey { format, .. }
+            | Self::UnsupportedFormatFeature { format, .. }
+            | Self::InvalidSchema { format, .. }
+            | Self::MissingEventSchema { format, .. }
+            | Self::InvalidEnvelope { format, .. }
+            | Self::ConflictingEnvelopeHeaders { format, .. }
+            | Self::EnvelopePathCollision { format, .. } => *format,
+            Self::InvalidJson(_)
+            | Self::InvalidPattern(_)
+            | Self::InvalidUtf8
+            | Self::UnsupportedMediaType(_)
+            | Self::PatternTooComplex(_) => EventFormat::Json,
+        }
+    }
+
+    /// Where in the event this error occurred, if the decoder recorded one.
+    #[must_use]
+    pub const fn location(&self) -> ErrorLocation {
+        match self {
+            Self::InvalidEvent { location, .. }
+            | Self::InvalidEventPath { location, .. }
+            | Self::AmbiguousEventPath { location, .. }
+            | Self::InvalidCanonicalField { location, .. }
+            | Self::ConflictingArrayId { location, .. }
+            | Self::DuplicateEventField { location, .. }
+            | Self::EventLimitExceeded { location, .. }
+            | Self::UnsupportedEventValue { location, .. }
+            | Self::UnsupportedMapKey { location, .. }
+            | Self::UnsupportedFormatFeature { location, .. }
+            | Self::MissingEventSchema { location, .. }
+            | Self::InvalidEnvelope { location, .. }
+            | Self::ConflictingEnvelopeHeaders { location, .. }
+            | Self::EnvelopePathCollision { location, .. } => *location,
+            Self::InvalidSchema { .. }
+            | Self::InvalidJson(_)
+            | Self::InvalidPattern(_)
+            | Self::InvalidUtf8
+            | Self::UnsupportedMediaType(_)
+            | Self::PatternTooComplex(_) => ErrorLocation {
+                field_index: None,
+                byte_offset: None,
+            },
+        }
+    }
+
+    const fn location_mut(&mut self) -> Option<&mut ErrorLocation> {
+        match self {
+            Self::InvalidEvent { location, .. }
+            | Self::InvalidEventPath { location, .. }
+            | Self::AmbiguousEventPath { location, .. }
+            | Self::InvalidCanonicalField { location, .. }
+            | Self::ConflictingArrayId { location, .. }
+            | Self::DuplicateEventField { location, .. }
+            | Self::EventLimitExceeded { location, .. }
+            | Self::UnsupportedEventValue { location, .. }
+            | Self::UnsupportedMapKey { location, .. }
+            | Self::UnsupportedFormatFeature { location, .. }
+            | Self::MissingEventSchema { location, .. }
+            | Self::InvalidEnvelope { location, .. }
+            | Self::ConflictingEnvelopeHeaders { location, .. }
+            | Self::EnvelopePathCollision { location, .. } => Some(location),
+            _ => None,
+        }
+    }
+
+    /// Attach a byte offset into the source event to this error.
+    #[must_use]
+    pub const fn at_byte_offset(mut self, offset: usize) -> Self {
+        if let Some(location) = self.location_mut() {
+            location.byte_offset = Some(offset);
+        }
+        self
+    }
+
+    /// Attach the index of the offending field (within a raw field list) to this error.
+    #[must_use]
+    pub const fn at_field_index(mut self, index: usize) -> Self {
+        if let Some(location) = self.location_mut() {
+            location.field_index = Some(index);
+        }
+        self
+    }
+
+    /// Attach a human-readable message to this error, replacing any existing one.
+    #[must_use]
+    pub fn with_message(mut self, message: impl Into<String>) -> Self {
+        match &mut self {
+            Self::InvalidEvent { message: m, .. }
+            | Self::InvalidEventPath { message: m, .. }
+            | Self::InvalidCanonicalField { message: m, .. }
+            | Self::EventLimitExceeded { message: m, .. }
+            | Self::UnsupportedEventValue { message: m, .. }
+            | Self::UnsupportedMapKey { message: m, .. }
+            | Self::UnsupportedFormatFeature { message: m, .. }
+            | Self::InvalidSchema { message: m, .. }
+            | Self::MissingEventSchema { message: m, .. }
+            | Self::InvalidEnvelope { message: m, .. }
+            | Self::ConflictingEnvelopeHeaders { message: m, .. }
+            | Self::EnvelopePathCollision { message: m, .. } => *m = message.into(),
+            _ => {}
+        }
+        self
+    }
+
+    /// Attach the underlying decoder error that caused this error.
+    #[must_use]
+    pub fn with_source(mut self, source: impl std::error::Error + Send + Sync + 'static) -> Self {
+        if let Self::InvalidEvent { source: s, .. } = &mut self {
+            *s = Some(Box::new(source));
+        }
+        self
+    }
 }
 
 impl fmt::Display for QuaminaError {
@@ -181,6 +574,51 @@ impl fmt::Display for QuaminaError {
             Self::PatternTooComplex(msg) => {
                 write!(f, "pattern too complex: {msg}")
             }
+            Self::InvalidEvent {
+                format, message, ..
+            } => write!(f, "invalid {format:?} event: {message}"),
+            Self::InvalidEventPath {
+                format, message, ..
+            } => write!(f, "invalid {format:?} event path: {message}"),
+            Self::AmbiguousEventPath { format, .. } => {
+                write!(f, "ambiguous {format:?} event path")
+            }
+            Self::InvalidCanonicalField {
+                format, message, ..
+            } => write!(f, "invalid {format:?} canonical field: {message}"),
+            Self::ConflictingArrayId { format, id, .. } => {
+                write!(f, "conflicting array id {id} in {format:?} event")
+            }
+            Self::DuplicateEventField { format, .. } => {
+                write!(f, "duplicate field in {format:?} event")
+            }
+            Self::EventLimitExceeded {
+                format, message, ..
+            } => write!(f, "{format:?} event limit exceeded: {message}"),
+            Self::UnsupportedEventValue {
+                format, message, ..
+            } => write!(f, "unsupported {format:?} event value: {message}"),
+            Self::UnsupportedMapKey {
+                format, message, ..
+            } => write!(f, "unsupported {format:?} map key: {message}"),
+            Self::UnsupportedFormatFeature {
+                format, message, ..
+            } => write!(f, "unsupported {format:?} feature: {message}"),
+            Self::InvalidSchema { format, message } => {
+                write!(f, "invalid {format:?} schema: {message}")
+            }
+            Self::MissingEventSchema {
+                format, message, ..
+            } => write!(f, "missing {format:?} schema: {message}"),
+            Self::InvalidEnvelope {
+                format, message, ..
+            } => write!(f, "invalid {format:?} envelope: {message}"),
+            Self::ConflictingEnvelopeHeaders {
+                format, message, ..
+            } => write!(f, "conflicting {format:?} envelope headers: {message}"),
+            Self::EnvelopePathCollision {
+                format, message, ..
+            } => write!(f, "{format:?} envelope path collision: {message}"),
         }
     }
 }
@@ -229,7 +667,17 @@ impl Default for PatternLimits {
     }
 }
 
-impl std::error::Error for QuaminaError {}
+impl std::error::Error for QuaminaError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::InvalidEvent {
+                source: Some(source),
+                ..
+            } => Some(source.as_ref()),
+            _ => None,
+        }
+    }
+}
 
 /// Controls how Quamina builds matchers for wildcard and regexp patterns,
 /// trading `add_pattern` cost against `matches_for_event` speed. The default is

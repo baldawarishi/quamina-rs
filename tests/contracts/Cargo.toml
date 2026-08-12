@@ -11,12 +11,12 @@ quamina = { path = "../.." }
 [features]
 default = []
 core-boundary = []
-messagepack = []
-cbor = []
-protobuf = []
-avro = []
-headers = []
-cloudevents = []
+messagepack = ["quamina/messagepack"]
+cbor = ["quamina/cbor"]
+protobuf = ["quamina/protobuf"]
+avro = ["quamina/avro"]
+headers = ["quamina/headers"]
+cloudevents = ["quamina/cloudevents"]
 all-formats = [
     "core-boundary",
     "messagepack",

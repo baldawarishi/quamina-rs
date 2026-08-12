@@ -20,6 +20,12 @@ fast-float2 = "0.2"
 
 [features]
 dhat-heap = []  # Enable heap profiling with dhat
+messagepack = []
+cbor = []
+protobuf = []
+avro = []
+headers = []
+cloudevents = ["messagepack", "cbor", "protobuf", "avro", "headers"]
 
 [dev-dependencies]
 criterion = "0.8"
