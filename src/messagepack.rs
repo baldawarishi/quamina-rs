@@ -25,52 +25,11 @@
 //! unreferenced field.
 
 use crate::{
-    ArrayPos, CanonicalValue, ErrorLocation, EventFormat, EventLimits, Flattener, OwnedField,
-    QuaminaError, SegmentsTreeTracker,
+    ArrayPos, BinaryValuePolicy, CanonicalValue, DuplicateKeyPolicy, ErrorLocation, EventFormat,
+    EventLimits, Flattener, MapKeyPolicy, NumericPolicy, OwnedField, QuaminaError, RootValuePolicy,
+    SegmentsTreeTracker,
 };
 use rustc_hash::FxHashSet;
-
-/// How MessagePack integers and floats are canonicalized to Quamina's
-/// numeric matcher representation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum NumericPolicy {
-    /// Canonicalize to Quamina's lossless numeric form. Integers whose
-    /// magnitude exceeds the range an `f64` can represent exactly, and
-    /// non-finite floats, are rejected rather than silently truncated.
-    #[default]
-    LosslessQuamina,
-}
-
-/// How MessagePack `bin` values (raw binary) are handled.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum BinaryValuePolicy {
-    /// Reject any event containing a binary value. This is the default: a
-    /// binary value has no JSON equivalent, so silently coercing it risks
-    /// colliding with a string of the same content.
-    #[default]
-    Reject,
-    /// Represent binary values as the string `base64:<standard base64>`,
-    /// e.g. bytes `[0x00, 0xff]` become `"base64:AP8="`. The `base64:`
-    /// prefix keeps this collision-free with ordinary string values.
-    TaggedBase64,
-}
-
-/// How MessagePack map keys are validated.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum MapKeyPolicy {
-    /// Map keys must be MessagePack strings; any other key type is rejected.
-    #[default]
-    TextOnly,
-}
-
-/// How a map that repeats the same key is handled.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum DuplicateKeyPolicy {
-    /// Reject the event outright. Quamina never silently collapses
-    /// duplicate keys with a first-write or last-write rule.
-    #[default]
-    Reject,
-}
 
 /// How unrecognized MessagePack extension types (`ext`/`fixext`, other than
 /// the timestamp extension governed by [`MessagePackTimestampPolicy`]) are
@@ -92,15 +51,6 @@ pub enum MessagePackTimestampPolicy {
     /// 12-byte ext8 form) canonicalize the same way.
     #[default]
     CanonicalRfc3339,
-}
-
-/// What root-level MessagePack values are accepted.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum RootValuePolicy {
-    /// The root value must be a MessagePack map. A root scalar or array is
-    /// rejected, matching the JSON flattener's object-only root.
-    #[default]
-    MapOnly,
 }
 
 /// Builder for [`MessagePackFlattener`].
