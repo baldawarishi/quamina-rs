@@ -14,6 +14,8 @@ pub mod envelope;
 pub mod flatten_json;
 mod flattener;
 pub mod format_policies;
+#[cfg(feature = "headers")]
+pub mod headers;
 #[doc(hidden)]
 pub mod json;
 #[cfg(feature = "messagepack")]
@@ -52,6 +54,13 @@ pub use crate::format_policies::{
 pub use crate::messagepack::{
     ExtensionValuePolicy, MessagePackFlattener, MessagePackFlattenerBuilder,
     MessagePackTimestampPolicy,
+};
+// Re-export the headers envelope flattener (headers contract).
+#[cfg(feature = "headers")]
+pub use crate::headers::{
+    ContentTypeDuplicatePolicy, HeaderCollisionPolicy, HeaderLimits, HeaderNamePolicy,
+    HeaderValuePolicy, HeadersFlattener, HeadersFlattenerBuilder, HttpListValuePolicy,
+    HttpValueDecoding, RepeatedHeaderPolicy, WhitespacePolicy,
 };
 
 use automaton::{NfaBuffers, ThreadSafeCoreMatcher};

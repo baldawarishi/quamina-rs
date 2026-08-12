@@ -44,7 +44,7 @@ use std::any::Any;
 /// - `val`: The value bytes, with strings including their quotes (e.g., `b"\"active\""`)
 /// - `array_trail`: Position tracking for array elements (prevents cross-element matching)
 /// - `is_number`: True if the value is a JSON number
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct OwnedField {
     /// Full path using '\n' separator (e.g., "context\nuser\nid")
     pub path: Vec<u8>,
