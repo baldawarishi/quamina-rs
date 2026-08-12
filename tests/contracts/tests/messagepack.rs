@@ -36,7 +36,7 @@ fn nil_bool_signed_unsigned_and_strings_use_json_scalar_semantics() {
     let mut q = matcher(MessagePackFlattener::new());
     q.add_pattern(
         "scalars",
-        r#"{"nil":[null],"yes":[true],"negative":[-32],"positive":[127],"text":["42"]}"#,
+        r#"{"deleted_at":[null],"enabled":[true],"negative":[-7],"count":[42],"text":["42"]}"#,
     )
     .unwrap();
     q.add_pattern("wrong-type", r#"{"text":[42]}"#).unwrap();
