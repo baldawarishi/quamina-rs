@@ -1,0 +1,1 @@
+{"case":"cloudevent_data","patterns":[{"id":"payload-order","pattern":{"order_id":["A-42"]}},{"id":"payload-total","pattern":{"total":[{"numeric":[">",10]}]}}],"expected_match_ids":["payload-order","payload-total"]}

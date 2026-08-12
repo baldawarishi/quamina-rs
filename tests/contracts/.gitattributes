@@ -1,0 +1,5 @@
+fixtures/**/*.avro binary
+fixtures/**/*.cbor binary
+fixtures/**/*.desc binary
+fixtures/**/*.msgpack binary
+fixtures/**/*.pb binary

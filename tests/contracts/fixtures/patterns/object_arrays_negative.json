@@ -1,0 +1,1 @@
+{"case":"object_arrays_negative","patterns":[{"id":"cross-element","pattern":{"orders":{"sku":["A"],"quantity":[2]}}}],"expected_match_ids":[]}

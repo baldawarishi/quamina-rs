@@ -1,0 +1,1 @@
+{"case":"unrelated_arrays","patterns":[{"id":"independent-arrays","pattern":{"wanted_regions":["west"],"blocked_skus":["B-2"]}}],"expected_match_ids":["independent-arrays"]}

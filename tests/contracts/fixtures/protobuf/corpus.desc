@@ -1,0 +1,47 @@
+
+à
+corpus.protoquamina.contract"i
+Scalars
+text (	Rtext
+count (Rcount
+enabled (Renabled
+negative (Rnegative"0
+Tenant
+id (	Rid
+region (	Rregion"p
+Nested0
+tenant (2.quamina.contract.TenantRtenant
+priority (Rpriority
+ignored (	Rignored"=
+PrimitiveArrays
+tags (	Rtags
+scores (Rscores"5
+Order
+sku (	Rsku
+quantity (Rquantity"G
+ObjectArraysPositive/
+orders (2.quamina.contract.OrderRorders"G
+ObjectArraysNegative/
+orders (2.quamina.contract.OrderRorders"
+Box
+sku (	Rsku"O
+Shipment
+region (	Rregion+
+boxes (2.quamina.contract.BoxRboxes"H
+NestedArrays8
+	shipments (2.quamina.contract.ShipmentR	shipments"]
+UnrelatedArrays&
+wanted_regions (	Rwanted_regions"
+blocked_skus (	Rblocked_skus")
+PresenceEmpty
+present (Rpresent"
+OperatorsMultiple
+name (	Rname
+file (	Rfile
+status (	Rstatus
+count (Rcount
+exact (	Rexact"`
+CloudeventData
+order_id (	Rorder_id
+total (Rtotal
+	expedited (R	expeditedbproto3

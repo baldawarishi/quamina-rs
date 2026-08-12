@@ -1,0 +1,1 @@
+{"case":"nested_arrays","patterns":[{"id":"coherent","pattern":{"shipments":{"region":["east"],"boxes":{"sku":["B"]}}}},{"id":"cross-parent","pattern":{"shipments":{"region":["west"],"boxes":{"sku":["B"]}}}},{"id":"nested-repeated","pattern":{"shipments":{"boxes":{"sku":["C"]}}}}],"expected_match_ids":["coherent","nested-repeated"]}

@@ -1,0 +1,75 @@
+syntax = "proto3";
+
+package quamina.contract;
+
+message Scalars {
+  string text = 1;
+  int64 count = 2;
+  bool enabled = 3;
+  sint64 negative = 4;
+}
+
+message Tenant {
+  string id = 1;
+  string region = 2;
+}
+
+message Nested {
+  Tenant tenant = 1;
+  int64 priority = 2;
+  string ignored = 3;
+}
+
+message PrimitiveArrays {
+  repeated string tags = 1;
+  repeated int64 scores = 2;
+}
+
+message Order {
+  string sku = 1;
+  int64 quantity = 2;
+}
+
+message ObjectArraysPositive {
+  repeated Order orders = 1;
+}
+
+message ObjectArraysNegative {
+  repeated Order orders = 1;
+}
+
+message Box {
+  string sku = 1;
+}
+
+message Shipment {
+  string region = 1;
+  repeated Box boxes = 2;
+}
+
+message NestedArrays {
+  repeated Shipment shipments = 1;
+}
+
+message UnrelatedArrays {
+  repeated string wanted_regions = 1;
+  repeated string blocked_skus = 2;
+}
+
+message PresenceEmpty {
+  bool present = 1;
+}
+
+message OperatorsMultiple {
+  string name = 1;
+  string file = 2;
+  string status = 3;
+  int64 count = 4;
+  string exact = 5;
+}
+
+message CloudeventData {
+  string order_id = 1;
+  double total = 2;
+  bool expedited = 3;
+}

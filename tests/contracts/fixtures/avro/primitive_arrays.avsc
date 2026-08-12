@@ -1,0 +1,1 @@
+{"type":"record","name":"PrimitiveArrays","namespace":"quamina.contract","fields":[{"name":"tags","type":{"type":"array","items":"string"}},{"name":"scores","type":{"type":"array","items":"long"}}]}

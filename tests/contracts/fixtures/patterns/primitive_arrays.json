@@ -1,0 +1,1 @@
+{"case":"primitive_arrays","patterns":[{"id":"middle","pattern":{"tags":["green"]}},{"id":"number-in-array","pattern":{"scores":[2]}},{"id":"exists","pattern":{"tags":[{"exists":true}]}},{"id":"missing","pattern":{"tags":["orange"]}}],"expected_match_ids":["exists","middle","number-in-array"]}

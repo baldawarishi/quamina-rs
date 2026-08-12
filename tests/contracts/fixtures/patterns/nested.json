@@ -1,0 +1,1 @@
+{"case":"nested","patterns":[{"id":"nested","pattern":{"tenant":{"id":["acme"]}}},{"id":"numeric","pattern":{"priority":[{"numeric":[">=",5]}]}},{"id":"tracker-target","pattern":{"tenant":{"region":["west"]}}}],"expected_match_ids":["nested","numeric","tracker-target"]}

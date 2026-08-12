@@ -1,0 +1,1 @@
+{"type":"record","name":"CloudeventData","namespace":"quamina.contract","fields":[{"name":"order_id","type":"string"},{"name":"total","type":"double"},{"name":"expedited","type":"boolean"}]}

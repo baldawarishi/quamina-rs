@@ -1,0 +1,72 @@
+[package]
+name = "quamina-flattener-contracts"
+version = "0.0.0"
+edition = "2024"
+publish = false
+autotests = false
+
+[dependencies]
+quamina = { path = "../.." }
+
+[features]
+default = []
+core-boundary = []
+messagepack = []
+cbor = []
+protobuf = []
+avro = []
+headers = []
+cloudevents = []
+all-formats = [
+    "core-boundary",
+    "messagepack",
+    "cbor",
+    "protobuf",
+    "avro",
+    "headers",
+    "cloudevents",
+]
+
+[workspace]
+
+[[test]]
+name = "golden_json"
+path = "tests/golden_json.rs"
+
+[[test]]
+name = "core_boundary"
+path = "tests/core_boundary.rs"
+required-features = ["core-boundary"]
+
+[[test]]
+name = "messagepack"
+path = "tests/messagepack.rs"
+required-features = ["messagepack"]
+
+[[test]]
+name = "cbor"
+path = "tests/cbor.rs"
+required-features = ["cbor"]
+
+[[test]]
+name = "protobuf"
+path = "tests/protobuf.rs"
+required-features = ["protobuf"]
+
+[[test]]
+name = "avro"
+path = "tests/avro.rs"
+required-features = ["avro"]
+
+[[test]]
+name = "headers"
+path = "tests/headers.rs"
+required-features = ["headers"]
+
+[[test]]
+name = "cloudevents"
+path = "tests/cloudevents.rs"
+required-features = ["cloudevents"]
+
+[lints.rust]
+warnings = "deny"

@@ -1,0 +1,1 @@
+{"type":"record","name":"Scalars","namespace":"quamina.contract","fields":[{"name":"text","type":"string"},{"name":"count","type":"long"},{"name":"enabled","type":"boolean"},{"name":"deleted_at","type":["null","string"]},{"name":"negative","type":"long"}]}

@@ -1,0 +1,1075 @@
+{
+  "schema_version": 1,
+  "canonical_field_policy": {
+    "paths": "ordered UTF-8 segment arrays; legacy_newline_path is diagnostic only and is ambiguous",
+    "strings": "matcher-compatible bytes: one quote type tag, decoded UTF-8 content without JSON re-escaping, then one quote type tag",
+    "numbers": "finite base-10 JSON number spelling with is_number=true",
+    "booleans_and_null": "unquoted JSON literals with is_number=false",
+    "arrays": "preorder positive array IDs and one-based positions; nested leaves carry complete parent-to-child trails",
+    "empty_collections": "emit no synthetic leaf and therefore have absent-leaf exists semantics"
+  },
+  "selected_policies": {
+    "map_keys": "reject non-text keys",
+    "duplicate_keys": "reject; never collapse",
+    "non_finite_numbers": "reject",
+    "unknown_tagged_values": "reject unless explicitly configured",
+    "schemas": "Protobuf descriptors and Avro writer schemas are required",
+    "protobuf_names": "use proto field names; enum symbols are strings; do not synthesize absent defaults",
+    "avro_union_null": "present explicit null",
+    "cloud_events_dispatch": "exact normalized media type; never guess"
+  },
+  "cases": [
+    {
+      "name": "scalars",
+      "logical_event": {
+        "text": "42",
+        "count": 42,
+        "enabled": true,
+        "deleted_at": null,
+        "negative": -7
+      },
+      "expected_match_ids": [
+        "boolean",
+        "exponent-equivalent",
+        "negative",
+        "null",
+        "number",
+        "string"
+      ],
+      "expected_canonical_fields": [
+        {
+          "path_segments": [
+            "text"
+          ],
+          "legacy_newline_path": "text",
+          "scalar": "\"42\"",
+          "scalar_utf8_hex": "22343222",
+          "is_number": false,
+          "array_trail": []
+        },
+        {
+          "path_segments": [
+            "count"
+          ],
+          "legacy_newline_path": "count",
+          "scalar": "42",
+          "scalar_utf8_hex": "3432",
+          "is_number": true,
+          "array_trail": []
+        },
+        {
+          "path_segments": [
+            "enabled"
+          ],
+          "legacy_newline_path": "enabled",
+          "scalar": "true",
+          "scalar_utf8_hex": "74727565",
+          "is_number": false,
+          "array_trail": []
+        },
+        {
+          "path_segments": [
+            "deleted_at"
+          ],
+          "legacy_newline_path": "deleted_at",
+          "scalar": "null",
+          "scalar_utf8_hex": "6e756c6c",
+          "is_number": false,
+          "array_trail": []
+        },
+        {
+          "path_segments": [
+            "negative"
+          ],
+          "legacy_newline_path": "negative",
+          "scalar": "-7",
+          "scalar_utf8_hex": "2d37",
+          "is_number": true,
+          "array_trail": []
+        }
+      ],
+      "fixtures": {
+        "json": "json/scalars.json",
+        "patterns": "patterns/scalars.json",
+        "messagepack": "messagepack/scalars.msgpack",
+        "cbor": "cbor/scalars.cbor",
+        "protobuf": {
+          "wire": "protobuf/scalars.pb",
+          "descriptor": "protobuf/corpus.desc",
+          "message": "quamina.contract.Scalars"
+        },
+        "avro": {
+          "wire": "avro/scalars.avro",
+          "writer_schema": "avro/scalars.avsc",
+          "framing": "raw datum"
+        }
+      },
+      "format_exclusions": {},
+      "protobuf_field_exclusions": [
+        "deleted_at: Protobuf has no native null scalar"
+      ],
+      "expected_match_ids_by_format": {
+        "protobuf": [
+          "boolean",
+          "exponent-equivalent",
+          "negative",
+          "number",
+          "string"
+        ]
+      }
+    },
+    {
+      "name": "escaped_unicode",
+      "logical_event": {
+        "métadata": {
+          "greeting": "Grüße 🌍",
+          "quotation": "say \"hello\"",
+          "slash": "a\\b",
+          "control": "line\nnext"
+        },
+        "a\nb": "literal newline key"
+      },
+      "expected_match_ids": [
+        "backslash",
+        "control",
+        "quote",
+        "unicode"
+      ],
+      "expected_canonical_fields": [
+        {
+          "path_segments": [
+            "métadata",
+            "greeting"
+          ],
+          "legacy_newline_path": "métadata\ngreeting",
+          "scalar": "\"Grüße 🌍\"",
+          "scalar_utf8_hex": "224772c3bcc39f6520f09f8c8d22",
+          "is_number": false,
+          "array_trail": []
+        },
+        {
+          "path_segments": [
+            "métadata",
+            "quotation"
+          ],
+          "legacy_newline_path": "métadata\nquotation",
+          "scalar": "\"say \"hello\"\"",
+          "scalar_utf8_hex": "22736179202268656c6c6f2222",
+          "is_number": false,
+          "array_trail": []
+        },
+        {
+          "path_segments": [
+            "métadata",
+            "slash"
+          ],
+          "legacy_newline_path": "métadata\nslash",
+          "scalar": "\"a\\b\"",
+          "scalar_utf8_hex": "22615c6222",
+          "is_number": false,
+          "array_trail": []
+        },
+        {
+          "path_segments": [
+            "métadata",
+            "control"
+          ],
+          "legacy_newline_path": "métadata\ncontrol",
+          "scalar": "\"line\nnext\"",
+          "scalar_utf8_hex": "226c696e650a6e65787422",
+          "is_number": false,
+          "array_trail": []
+        }
+      ],
+      "fixtures": {
+        "json": "json/escaped_unicode.json",
+        "patterns": "patterns/escaped_unicode.json",
+        "messagepack": "messagepack/escaped_unicode.msgpack",
+        "cbor": "cbor/escaped_unicode.cbor"
+      },
+      "format_exclusions": {
+        "protobuf": "Protobuf field names cannot express the non-ASCII and newline keys",
+        "avro": "Avro field names cannot express the non-ASCII and newline keys"
+      },
+      "canonical_field_exclusions": [
+        {
+          "path_segments": [
+            "a\nb"
+          ],
+          "reason": "the current newline-delimited OwnedField path cannot distinguish this segment from nested ['a', 'b']; core-boundary promotes it after segment paths exist"
+        }
+      ]
+    },
+    {
+      "name": "nested",
+      "logical_event": {
+        "tenant": {
+          "id": "acme",
+          "region": "west"
+        },
+        "priority": 7,
+        "ignored": "large value"
+      },
+      "expected_match_ids": [
+        "nested",
+        "numeric",
+        "tracker-target"
+      ],
+      "expected_canonical_fields": [
+        {
+          "path_segments": [
+            "tenant",
+            "id"
+          ],
+          "legacy_newline_path": "tenant\nid",
+          "scalar": "\"acme\"",
+          "scalar_utf8_hex": "2261636d6522",
+          "is_number": false,
+          "array_trail": []
+        },
+        {
+          "path_segments": [
+            "tenant",
+            "region"
+          ],
+          "legacy_newline_path": "tenant\nregion",
+          "scalar": "\"west\"",
+          "scalar_utf8_hex": "227765737422",
+          "is_number": false,
+          "array_trail": []
+        },
+        {
+          "path_segments": [
+            "priority"
+          ],
+          "legacy_newline_path": "priority",
+          "scalar": "7",
+          "scalar_utf8_hex": "37",
+          "is_number": true,
+          "array_trail": []
+        }
+      ],
+      "fixtures": {
+        "json": "json/nested.json",
+        "patterns": "patterns/nested.json",
+        "messagepack": "messagepack/nested.msgpack",
+        "cbor": "cbor/nested.cbor",
+        "protobuf": {
+          "wire": "protobuf/nested.pb",
+          "descriptor": "protobuf/corpus.desc",
+          "message": "quamina.contract.Nested"
+        },
+        "avro": {
+          "wire": "avro/nested.avro",
+          "writer_schema": "avro/nested.avsc",
+          "framing": "raw datum"
+        }
+      },
+      "format_exclusions": {},
+      "canonical_field_exclusions": [
+        {
+          "path_segments": [
+            "ignored"
+          ],
+          "reason": "intentionally unreferenced by every pattern to assert tracker filtering"
+        }
+      ]
+    },
+    {
+      "name": "primitive_arrays",
+      "logical_event": {
+        "tags": [
+          "red",
+          "green",
+          "blue"
+        ],
+        "scores": [
+          1,
+          2,
+          3
+        ]
+      },
+      "expected_match_ids": [
+        "exists",
+        "middle",
+        "number-in-array"
+      ],
+      "expected_canonical_fields": [
+        {
+          "path_segments": [
+            "tags"
+          ],
+          "legacy_newline_path": "tags",
+          "scalar": "\"red\"",
+          "scalar_utf8_hex": "2272656422",
+          "is_number": false,
+          "array_trail": [
+            {
+              "array": 1,
+              "pos": 1
+            }
+          ]
+        },
+        {
+          "path_segments": [
+            "tags"
+          ],
+          "legacy_newline_path": "tags",
+          "scalar": "\"green\"",
+          "scalar_utf8_hex": "22677265656e22",
+          "is_number": false,
+          "array_trail": [
+            {
+              "array": 1,
+              "pos": 2
+            }
+          ]
+        },
+        {
+          "path_segments": [
+            "tags"
+          ],
+          "legacy_newline_path": "tags",
+          "scalar": "\"blue\"",
+          "scalar_utf8_hex": "22626c756522",
+          "is_number": false,
+          "array_trail": [
+            {
+              "array": 1,
+              "pos": 3
+            }
+          ]
+        },
+        {
+          "path_segments": [
+            "scores"
+          ],
+          "legacy_newline_path": "scores",
+          "scalar": "1",
+          "scalar_utf8_hex": "31",
+          "is_number": true,
+          "array_trail": [
+            {
+              "array": 2,
+              "pos": 1
+            }
+          ]
+        },
+        {
+          "path_segments": [
+            "scores"
+          ],
+          "legacy_newline_path": "scores",
+          "scalar": "2",
+          "scalar_utf8_hex": "32",
+          "is_number": true,
+          "array_trail": [
+            {
+              "array": 2,
+              "pos": 2
+            }
+          ]
+        },
+        {
+          "path_segments": [
+            "scores"
+          ],
+          "legacy_newline_path": "scores",
+          "scalar": "3",
+          "scalar_utf8_hex": "33",
+          "is_number": true,
+          "array_trail": [
+            {
+              "array": 2,
+              "pos": 3
+            }
+          ]
+        }
+      ],
+      "fixtures": {
+        "json": "json/primitive_arrays.json",
+        "patterns": "patterns/primitive_arrays.json",
+        "messagepack": "messagepack/primitive_arrays.msgpack",
+        "cbor": "cbor/primitive_arrays.cbor",
+        "protobuf": {
+          "wire": "protobuf/primitive_arrays.pb",
+          "descriptor": "protobuf/corpus.desc",
+          "message": "quamina.contract.PrimitiveArrays"
+        },
+        "avro": {
+          "wire": "avro/primitive_arrays.avro",
+          "writer_schema": "avro/primitive_arrays.avsc",
+          "framing": "raw datum"
+        }
+      },
+      "format_exclusions": {}
+    },
+    {
+      "name": "object_arrays_positive",
+      "logical_event": {
+        "orders": [
+          {
+            "sku": "A",
+            "quantity": 1
+          },
+          {
+            "sku": "B",
+            "quantity": 2
+          }
+        ]
+      },
+      "expected_match_ids": [
+        "same-element"
+      ],
+      "expected_canonical_fields": [
+        {
+          "path_segments": [
+            "orders",
+            "sku"
+          ],
+          "legacy_newline_path": "orders\nsku",
+          "scalar": "\"A\"",
+          "scalar_utf8_hex": "224122",
+          "is_number": false,
+          "array_trail": [
+            {
+              "array": 1,
+              "pos": 1
+            }
+          ]
+        },
+        {
+          "path_segments": [
+            "orders",
+            "quantity"
+          ],
+          "legacy_newline_path": "orders\nquantity",
+          "scalar": "1",
+          "scalar_utf8_hex": "31",
+          "is_number": true,
+          "array_trail": [
+            {
+              "array": 1,
+              "pos": 1
+            }
+          ]
+        },
+        {
+          "path_segments": [
+            "orders",
+            "sku"
+          ],
+          "legacy_newline_path": "orders\nsku",
+          "scalar": "\"B\"",
+          "scalar_utf8_hex": "224222",
+          "is_number": false,
+          "array_trail": [
+            {
+              "array": 1,
+              "pos": 2
+            }
+          ]
+        },
+        {
+          "path_segments": [
+            "orders",
+            "quantity"
+          ],
+          "legacy_newline_path": "orders\nquantity",
+          "scalar": "2",
+          "scalar_utf8_hex": "32",
+          "is_number": true,
+          "array_trail": [
+            {
+              "array": 1,
+              "pos": 2
+            }
+          ]
+        }
+      ],
+      "fixtures": {
+        "json": "json/object_arrays_positive.json",
+        "patterns": "patterns/object_arrays_positive.json",
+        "messagepack": "messagepack/object_arrays_positive.msgpack",
+        "cbor": "cbor/object_arrays_positive.cbor",
+        "protobuf": {
+          "wire": "protobuf/object_arrays_positive.pb",
+          "descriptor": "protobuf/corpus.desc",
+          "message": "quamina.contract.ObjectArraysPositive"
+        },
+        "avro": {
+          "wire": "avro/object_arrays_positive.avro",
+          "writer_schema": "avro/object_arrays_positive.avsc",
+          "framing": "raw datum"
+        }
+      },
+      "format_exclusions": {}
+    },
+    {
+      "name": "object_arrays_negative",
+      "logical_event": {
+        "orders": [
+          {
+            "sku": "A",
+            "quantity": 1
+          },
+          {
+            "sku": "B",
+            "quantity": 2
+          }
+        ]
+      },
+      "expected_match_ids": [],
+      "expected_canonical_fields": [
+        {
+          "path_segments": [
+            "orders",
+            "sku"
+          ],
+          "legacy_newline_path": "orders\nsku",
+          "scalar": "\"A\"",
+          "scalar_utf8_hex": "224122",
+          "is_number": false,
+          "array_trail": [
+            {
+              "array": 1,
+              "pos": 1
+            }
+          ]
+        },
+        {
+          "path_segments": [
+            "orders",
+            "quantity"
+          ],
+          "legacy_newline_path": "orders\nquantity",
+          "scalar": "1",
+          "scalar_utf8_hex": "31",
+          "is_number": true,
+          "array_trail": [
+            {
+              "array": 1,
+              "pos": 1
+            }
+          ]
+        },
+        {
+          "path_segments": [
+            "orders",
+            "sku"
+          ],
+          "legacy_newline_path": "orders\nsku",
+          "scalar": "\"B\"",
+          "scalar_utf8_hex": "224222",
+          "is_number": false,
+          "array_trail": [
+            {
+              "array": 1,
+              "pos": 2
+            }
+          ]
+        },
+        {
+          "path_segments": [
+            "orders",
+            "quantity"
+          ],
+          "legacy_newline_path": "orders\nquantity",
+          "scalar": "2",
+          "scalar_utf8_hex": "32",
+          "is_number": true,
+          "array_trail": [
+            {
+              "array": 1,
+              "pos": 2
+            }
+          ]
+        }
+      ],
+      "fixtures": {
+        "json": "json/object_arrays_negative.json",
+        "patterns": "patterns/object_arrays_negative.json",
+        "messagepack": "messagepack/object_arrays_negative.msgpack",
+        "cbor": "cbor/object_arrays_negative.cbor",
+        "protobuf": {
+          "wire": "protobuf/object_arrays_negative.pb",
+          "descriptor": "protobuf/corpus.desc",
+          "message": "quamina.contract.ObjectArraysNegative"
+        },
+        "avro": {
+          "wire": "avro/object_arrays_negative.avro",
+          "writer_schema": "avro/object_arrays_negative.avsc",
+          "framing": "raw datum"
+        }
+      },
+      "format_exclusions": {}
+    },
+    {
+      "name": "nested_arrays",
+      "logical_event": {
+        "shipments": [
+          {
+            "region": "west",
+            "boxes": [
+              {
+                "sku": "A"
+              },
+              {
+                "sku": "C"
+              }
+            ]
+          },
+          {
+            "region": "east",
+            "boxes": [
+              {
+                "sku": "B"
+              }
+            ]
+          }
+        ]
+      },
+      "expected_match_ids": [
+        "coherent",
+        "nested-repeated"
+      ],
+      "expected_canonical_fields": [
+        {
+          "path_segments": [
+            "shipments",
+            "region"
+          ],
+          "legacy_newline_path": "shipments\nregion",
+          "scalar": "\"west\"",
+          "scalar_utf8_hex": "227765737422",
+          "is_number": false,
+          "array_trail": [
+            {
+              "array": 1,
+              "pos": 1
+            }
+          ]
+        },
+        {
+          "path_segments": [
+            "shipments",
+            "boxes",
+            "sku"
+          ],
+          "legacy_newline_path": "shipments\nboxes\nsku",
+          "scalar": "\"A\"",
+          "scalar_utf8_hex": "224122",
+          "is_number": false,
+          "array_trail": [
+            {
+              "array": 1,
+              "pos": 1
+            },
+            {
+              "array": 2,
+              "pos": 1
+            }
+          ]
+        },
+        {
+          "path_segments": [
+            "shipments",
+            "boxes",
+            "sku"
+          ],
+          "legacy_newline_path": "shipments\nboxes\nsku",
+          "scalar": "\"C\"",
+          "scalar_utf8_hex": "224322",
+          "is_number": false,
+          "array_trail": [
+            {
+              "array": 1,
+              "pos": 1
+            },
+            {
+              "array": 2,
+              "pos": 2
+            }
+          ]
+        },
+        {
+          "path_segments": [
+            "shipments",
+            "region"
+          ],
+          "legacy_newline_path": "shipments\nregion",
+          "scalar": "\"east\"",
+          "scalar_utf8_hex": "226561737422",
+          "is_number": false,
+          "array_trail": [
+            {
+              "array": 1,
+              "pos": 2
+            }
+          ]
+        },
+        {
+          "path_segments": [
+            "shipments",
+            "boxes",
+            "sku"
+          ],
+          "legacy_newline_path": "shipments\nboxes\nsku",
+          "scalar": "\"B\"",
+          "scalar_utf8_hex": "224222",
+          "is_number": false,
+          "array_trail": [
+            {
+              "array": 1,
+              "pos": 2
+            },
+            {
+              "array": 3,
+              "pos": 1
+            }
+          ]
+        }
+      ],
+      "fixtures": {
+        "json": "json/nested_arrays.json",
+        "patterns": "patterns/nested_arrays.json",
+        "messagepack": "messagepack/nested_arrays.msgpack",
+        "cbor": "cbor/nested_arrays.cbor",
+        "protobuf": {
+          "wire": "protobuf/nested_arrays.pb",
+          "descriptor": "protobuf/corpus.desc",
+          "message": "quamina.contract.NestedArrays"
+        },
+        "avro": {
+          "wire": "avro/nested_arrays.avro",
+          "writer_schema": "avro/nested_arrays.avsc",
+          "framing": "raw datum"
+        }
+      },
+      "format_exclusions": {}
+    },
+    {
+      "name": "unrelated_arrays",
+      "logical_event": {
+        "wanted_regions": [
+          "west",
+          "north"
+        ],
+        "blocked_skus": [
+          "B-1",
+          "B-2"
+        ]
+      },
+      "expected_match_ids": [
+        "independent-arrays"
+      ],
+      "expected_canonical_fields": [
+        {
+          "path_segments": [
+            "wanted_regions"
+          ],
+          "legacy_newline_path": "wanted_regions",
+          "scalar": "\"west\"",
+          "scalar_utf8_hex": "227765737422",
+          "is_number": false,
+          "array_trail": [
+            {
+              "array": 1,
+              "pos": 1
+            }
+          ]
+        },
+        {
+          "path_segments": [
+            "wanted_regions"
+          ],
+          "legacy_newline_path": "wanted_regions",
+          "scalar": "\"north\"",
+          "scalar_utf8_hex": "226e6f72746822",
+          "is_number": false,
+          "array_trail": [
+            {
+              "array": 1,
+              "pos": 2
+            }
+          ]
+        },
+        {
+          "path_segments": [
+            "blocked_skus"
+          ],
+          "legacy_newline_path": "blocked_skus",
+          "scalar": "\"B-1\"",
+          "scalar_utf8_hex": "22422d3122",
+          "is_number": false,
+          "array_trail": [
+            {
+              "array": 2,
+              "pos": 1
+            }
+          ]
+        },
+        {
+          "path_segments": [
+            "blocked_skus"
+          ],
+          "legacy_newline_path": "blocked_skus",
+          "scalar": "\"B-2\"",
+          "scalar_utf8_hex": "22422d3222",
+          "is_number": false,
+          "array_trail": [
+            {
+              "array": 2,
+              "pos": 2
+            }
+          ]
+        }
+      ],
+      "fixtures": {
+        "json": "json/unrelated_arrays.json",
+        "patterns": "patterns/unrelated_arrays.json",
+        "messagepack": "messagepack/unrelated_arrays.msgpack",
+        "cbor": "cbor/unrelated_arrays.cbor",
+        "protobuf": {
+          "wire": "protobuf/unrelated_arrays.pb",
+          "descriptor": "protobuf/corpus.desc",
+          "message": "quamina.contract.UnrelatedArrays"
+        },
+        "avro": {
+          "wire": "avro/unrelated_arrays.avro",
+          "writer_schema": "avro/unrelated_arrays.avsc",
+          "framing": "raw datum"
+        }
+      },
+      "format_exclusions": {}
+    },
+    {
+      "name": "presence_empty",
+      "logical_event": {
+        "explicit_null": null,
+        "empty_array": [],
+        "empty_map": {},
+        "present": true
+      },
+      "expected_match_ids": [
+        "absent",
+        "empty-array-is-absent",
+        "empty-map-is-absent",
+        "explicit-null",
+        "present"
+      ],
+      "expected_canonical_fields": [
+        {
+          "path_segments": [
+            "explicit_null"
+          ],
+          "legacy_newline_path": "explicit_null",
+          "scalar": "null",
+          "scalar_utf8_hex": "6e756c6c",
+          "is_number": false,
+          "array_trail": []
+        },
+        {
+          "path_segments": [
+            "present"
+          ],
+          "legacy_newline_path": "present",
+          "scalar": "true",
+          "scalar_utf8_hex": "74727565",
+          "is_number": false,
+          "array_trail": []
+        }
+      ],
+      "fixtures": {
+        "json": "json/presence_empty.json",
+        "patterns": "patterns/presence_empty.json",
+        "messagepack": "messagepack/presence_empty.msgpack",
+        "cbor": "cbor/presence_empty.cbor",
+        "protobuf": {
+          "wire": "protobuf/presence_empty.pb",
+          "descriptor": "protobuf/corpus.desc",
+          "message": "quamina.contract.PresenceEmpty"
+        },
+        "avro": {
+          "wire": "avro/presence_empty.avro",
+          "writer_schema": "avro/presence_empty.avsc",
+          "framing": "raw datum"
+        }
+      },
+      "format_exclusions": {},
+      "protobuf_field_exclusions": [
+        "explicit_null: Protobuf has no native null scalar"
+      ],
+      "expected_match_ids_by_format": {
+        "protobuf": [
+          "absent",
+          "empty-array-is-absent",
+          "empty-map-is-absent",
+          "present"
+        ]
+      }
+    },
+    {
+      "name": "operators_multiple",
+      "logical_event": {
+        "name": "Prod-Service",
+        "file": "photo.JPG",
+        "status": "active",
+        "count": 42,
+        "exact": "yes"
+      },
+      "expected_match_ids": [
+        "anything-but",
+        "combined",
+        "exact",
+        "exists",
+        "ignore-case",
+        "numeric",
+        "prefix",
+        "suffix",
+        "wildcard"
+      ],
+      "expected_canonical_fields": [
+        {
+          "path_segments": [
+            "name"
+          ],
+          "legacy_newline_path": "name",
+          "scalar": "\"Prod-Service\"",
+          "scalar_utf8_hex": "2250726f642d5365727669636522",
+          "is_number": false,
+          "array_trail": []
+        },
+        {
+          "path_segments": [
+            "file"
+          ],
+          "legacy_newline_path": "file",
+          "scalar": "\"photo.JPG\"",
+          "scalar_utf8_hex": "2270686f746f2e4a504722",
+          "is_number": false,
+          "array_trail": []
+        },
+        {
+          "path_segments": [
+            "status"
+          ],
+          "legacy_newline_path": "status",
+          "scalar": "\"active\"",
+          "scalar_utf8_hex": "2261637469766522",
+          "is_number": false,
+          "array_trail": []
+        },
+        {
+          "path_segments": [
+            "count"
+          ],
+          "legacy_newline_path": "count",
+          "scalar": "42",
+          "scalar_utf8_hex": "3432",
+          "is_number": true,
+          "array_trail": []
+        },
+        {
+          "path_segments": [
+            "exact"
+          ],
+          "legacy_newline_path": "exact",
+          "scalar": "\"yes\"",
+          "scalar_utf8_hex": "2279657322",
+          "is_number": false,
+          "array_trail": []
+        }
+      ],
+      "fixtures": {
+        "json": "json/operators_multiple.json",
+        "patterns": "patterns/operators_multiple.json",
+        "messagepack": "messagepack/operators_multiple.msgpack",
+        "cbor": "cbor/operators_multiple.cbor",
+        "protobuf": {
+          "wire": "protobuf/operators_multiple.pb",
+          "descriptor": "protobuf/corpus.desc",
+          "message": "quamina.contract.OperatorsMultiple"
+        },
+        "avro": {
+          "wire": "avro/operators_multiple.avro",
+          "writer_schema": "avro/operators_multiple.avsc",
+          "framing": "raw datum"
+        }
+      },
+      "format_exclusions": {}
+    },
+    {
+      "name": "cloudevent_data",
+      "logical_event": {
+        "order_id": "A-42",
+        "total": 19.95,
+        "expedited": true
+      },
+      "expected_match_ids": [
+        "payload-order",
+        "payload-total"
+      ],
+      "expected_canonical_fields": [
+        {
+          "path_segments": [
+            "order_id"
+          ],
+          "legacy_newline_path": "order_id",
+          "scalar": "\"A-42\"",
+          "scalar_utf8_hex": "22412d343222",
+          "is_number": false,
+          "array_trail": []
+        },
+        {
+          "path_segments": [
+            "total"
+          ],
+          "legacy_newline_path": "total",
+          "scalar": "19.95",
+          "scalar_utf8_hex": "31392e3935",
+          "is_number": true,
+          "array_trail": []
+        }
+      ],
+      "fixtures": {
+        "json": "json/cloudevent_data.json",
+        "patterns": "patterns/cloudevent_data.json",
+        "messagepack": "messagepack/cloudevent_data.msgpack",
+        "cbor": "cbor/cloudevent_data.cbor",
+        "protobuf": {
+          "wire": "protobuf/cloudevent_data.pb",
+          "descriptor": "protobuf/corpus.desc",
+          "message": "quamina.contract.CloudeventData"
+        },
+        "avro": {
+          "wire": "avro/cloudevent_data.avro",
+          "writer_schema": "avro/cloudevent_data.avsc",
+          "framing": "raw datum"
+        }
+      },
+      "format_exclusions": {},
+      "canonical_field_exclusions": [
+        {
+          "path_segments": [
+            "expedited"
+          ],
+          "reason": "intentionally unreferenced payload leaf to assert tracker filtering during CloudEvents dispatch"
+        }
+      ],
+      "cloudevent_binary_envelope": {
+        "specversion": "1.0",
+        "id": "evt-123",
+        "source": "/orders",
+        "type": "com.example.order.created",
+        "datacontenttype_by_format": {
+          "json": "application/json",
+          "messagepack": "application/msgpack",
+          "cbor": "application/cbor",
+          "protobuf": "application/protobuf",
+          "avro": "application/avro"
+        }
+      }
+    }
+  ]
+}

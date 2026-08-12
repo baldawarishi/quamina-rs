@@ -1,0 +1,1 @@
+{"case":"object_arrays_positive","patterns":[{"id":"same-element","pattern":{"orders":{"sku":["B"],"quantity":[2]}}}],"expected_match_ids":["same-element"]}

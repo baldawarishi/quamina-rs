@@ -1,0 +1,1 @@
+{"type":"record","name":"Nested","namespace":"quamina.contract","fields":[{"name":"tenant","type":{"type":"record","name":"Tenant","fields":[{"name":"id","type":"string"},{"name":"region","type":"string"}]}},{"name":"priority","type":"long"},{"name":"ignored","type":"string"}]}

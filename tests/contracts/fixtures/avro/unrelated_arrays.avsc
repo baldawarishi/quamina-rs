@@ -1,0 +1,1 @@
+{"type":"record","name":"UnrelatedArrays","namespace":"quamina.contract","fields":[{"name":"wanted_regions","type":{"type":"array","items":"string"}},{"name":"blocked_skus","type":{"type":"array","items":"string"}}]}

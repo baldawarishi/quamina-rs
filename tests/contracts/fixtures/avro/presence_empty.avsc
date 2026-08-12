@@ -1,0 +1,1 @@
+{"type":"record","name":"PresenceEmpty","namespace":"quamina.contract","fields":[{"name":"explicit_null","type":["null","string"]},{"name":"empty_array","type":{"type":"array","items":"string"}},{"name":"empty_map","type":{"type":"map","values":"string"}},{"name":"present","type":"boolean"}]}

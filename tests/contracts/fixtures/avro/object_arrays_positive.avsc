@@ -1,0 +1,1 @@
+{"type":"record","name":"ObjectArraysPositive","namespace":"quamina.contract","fields":[{"name":"orders","type":{"type":"array","items":{"type":"record","name":"PositiveOrder","fields":[{"name":"sku","type":"string"},{"name":"quantity","type":"long"}]}}}]}

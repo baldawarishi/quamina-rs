@@ -1,0 +1,1 @@
+{"type":"record","name":"ObjectArraysNegative","namespace":"quamina.contract","fields":[{"name":"orders","type":{"type":"array","items":{"type":"record","name":"NegativeOrder","fields":[{"name":"sku","type":"string"},{"name":"quantity","type":"long"}]}}}]}

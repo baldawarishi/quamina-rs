@@ -1,0 +1,1 @@
+{"type":"record","name":"NestedArrays","namespace":"quamina.contract","fields":[{"name":"shipments","type":{"type":"array","items":{"type":"record","name":"Shipment","fields":[{"name":"region","type":"string"},{"name":"boxes","type":{"type":"array","items":{"type":"record","name":"Box","fields":[{"name":"sku","type":"string"}]}}}]}}}]}

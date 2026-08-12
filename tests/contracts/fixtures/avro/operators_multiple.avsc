@@ -1,0 +1,1 @@
+{"type":"record","name":"OperatorsMultiple","namespace":"quamina.contract","fields":[{"name":"name","type":"string"},{"name":"file","type":"string"},{"name":"status","type":"string"},{"name":"count","type":"long"},{"name":"exact","type":"string"}]}
