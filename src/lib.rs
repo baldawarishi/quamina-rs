@@ -9,6 +9,7 @@
 pub mod automaton;
 pub mod canonical;
 mod case_folding;
+pub mod envelope;
 #[doc(hidden)]
 pub mod flatten_json;
 mod flattener;
@@ -37,6 +38,8 @@ pub use crate::canonical::{
     ArrayHandle, ArraySnapshot, ArrayTrailBuilder, CanonicalField, CanonicalValue, DecoderBoundary,
     FieldPath, FieldSetBuilder, FieldSetOutput, PatternFieldTracker, RawArrayPos, RawField,
 };
+// Re-export transport envelope support (headers/CloudEvents contracts).
+pub use crate::envelope::{Envelope, EnvelopeBuilder, EnvelopeFlattener, Headers, Transport};
 
 use automaton::{NfaBuffers, ThreadSafeCoreMatcher};
 use json::Matcher;
@@ -731,6 +734,9 @@ pub struct QuaminaBuilder<X: Clone + Eq + Hash + Send + Sync = String> {
     media_type_validated: bool,
     /// Custom flattener (if provided, replaces default JSON flattener)
     custom_flattener: Option<Box<dyn flattener::Flattener>>,
+    /// Envelope flattener (if provided, event matching goes through
+    /// `matches_for_envelope` instead of `matches_for_event`)
+    envelope_flattener: Option<Box<dyn envelope::EnvelopeFlattener>>,
     /// Pattern complexity limits
     pattern_limits: PatternLimits,
     /// PhantomData to carry the X type parameter
@@ -745,9 +751,23 @@ impl<X: Clone + Eq + Hash + Send + Sync> QuaminaBuilder<X> {
             auto_rebuild_enabled: true,
             media_type_validated: false,
             custom_flattener: None,
+            envelope_flattener: None,
             pattern_limits: PatternLimits::default(),
             _phantom: std::marker::PhantomData,
         }
+    }
+
+    /// Specify an envelope flattener, for formats (transport headers,
+    /// CloudEvents) that need metadata alongside or instead of an event
+    /// body. When set, match with [`Quamina::matches_for_envelope`] instead
+    /// of [`Quamina::matches_for_event`].
+    #[must_use]
+    pub fn with_envelope_flattener(
+        mut self,
+        flattener: Box<dyn envelope::EnvelopeFlattener>,
+    ) -> Self {
+        self.envelope_flattener = Some(flattener);
+        self
     }
 
     /// Specify the media type for event parsing
@@ -1014,6 +1034,7 @@ impl<X: Clone + Eq + Hash + Send + Sync> QuaminaBuilder<X> {
             automaton_is_stale: false,
             segments_tree: SegmentsTree::new(),
             custom_flattener: self.custom_flattener.map(Mutex::new),
+            envelope_flattener: self.envelope_flattener.map(Mutex::new),
             pruner_stats: PrunerStats::new(),
             auto_rebuild_enabled: self.auto_rebuild_enabled,
             pattern_limits: self.pattern_limits,
@@ -1071,6 +1092,8 @@ pub struct Quamina<X: Clone + Eq + Hash + Send + Sync = String> {
     segments_tree: SegmentsTree,
     /// Custom flattener for non-JSON formats (if provided)
     custom_flattener: Option<Mutex<Box<dyn flattener::Flattener>>>,
+    /// Envelope flattener for headers/CloudEvents formats (if provided)
+    envelope_flattener: Option<Mutex<Box<dyn envelope::EnvelopeFlattener>>>,
     /// Statistics for auto-rebuild decisions
     pruner_stats: PrunerStats,
     /// Whether auto-rebuild is enabled (default: true)
@@ -1090,6 +1113,10 @@ impl<X: Clone + Eq + Hash + Send + Sync> Clone for Quamina<X> {
             let flattener = f.lock();
             Mutex::new(flattener.copy())
         });
+        let envelope_flattener = self.envelope_flattener.as_ref().map(|f| {
+            let flattener = f.lock();
+            Mutex::new(flattener.copy())
+        });
 
         Self {
             automaton,
@@ -1099,6 +1126,7 @@ impl<X: Clone + Eq + Hash + Send + Sync> Clone for Quamina<X> {
             automaton_is_stale: false,
             segments_tree,
             custom_flattener,
+            envelope_flattener,
             pruner_stats: PrunerStats::new(),
             auto_rebuild_enabled: self.auto_rebuild_enabled,
             pattern_limits: self.pattern_limits.clone(),
@@ -1128,6 +1156,7 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
             automaton_is_stale: false,
             segments_tree: SegmentsTree::new(),
             custom_flattener: None,
+            envelope_flattener: None,
             pruner_stats: PrunerStats::new(),
             auto_rebuild_enabled: true,
             pattern_limits: limits,
@@ -1252,12 +1281,41 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
         event: &[u8],
         custom_flattener_mutex: &Mutex<Box<dyn flattener::Flattener>>,
     ) -> Result<Vec<X>, QuaminaError> {
-        use std::sync::Arc;
-
         // Get owned fields from custom flattener (still needs Mutex — user-provided)
         let mut custom_flattener = custom_flattener_mutex.lock();
         let owned_fields = custom_flattener.flatten(event, &self.segments_tree)?;
         drop(custom_flattener); // Release lock early
+
+        Ok(self.matches_for_owned_fields(owned_fields))
+    }
+
+    /// Find all patterns that match the given transport envelope (headers,
+    /// and optionally a body decoded by the configured
+    /// [`EnvelopeFlattener`](envelope::EnvelopeFlattener)).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`QuaminaError::InvalidPattern`] if no envelope flattener was
+    /// configured via [`QuaminaBuilder::with_envelope_flattener`].
+    /// Otherwise propagates any [`QuaminaError`] the flattener's
+    /// `flatten_envelope` implementation returns.
+    pub fn matches_for_envelope(&self, envelope: &Envelope) -> Result<Vec<X>, QuaminaError> {
+        let Some(ref envelope_flattener_mutex) = self.envelope_flattener else {
+            return Err(QuaminaError::InvalidPattern(
+                "no envelope flattener configured".to_owned(),
+            ));
+        };
+        let mut envelope_flattener = envelope_flattener_mutex.lock();
+        let owned_fields = envelope_flattener.flatten_envelope(envelope, &self.segments_tree)?;
+        drop(envelope_flattener);
+
+        Ok(self.matches_for_owned_fields(owned_fields))
+    }
+
+    /// Shared tail of the owned-field match paths: sort by path and run the
+    /// automaton using thread-local NFA buffers.
+    fn matches_for_owned_fields(&self, owned_fields: Vec<OwnedField>) -> Vec<X> {
+        use std::sync::Arc;
 
         // Convert OwnedField to flatten_json::Field with owned data
         let mut streaming_fields: Vec<flatten_json::Field<'static>> = owned_fields
@@ -1274,15 +1332,13 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
         streaming_fields.sort_unstable_by(|a, b| a.path.cmp(&b.path));
 
         // Get matches from automaton using thread-local NFA buffers
-        let matches = TL_NFA_BUFS.with(|bufs_cell| {
+        TL_NFA_BUFS.with(|bufs_cell| {
             let mut bufs = bufs_cell.borrow_mut();
             let raw_matches = self
                 .automaton
                 .matches_for_fields_direct(&streaming_fields, &mut bufs);
             self.filter_deleted_matches(raw_matches)
-        });
-
-        Ok(matches)
+        })
     }
 
     /// Build a fresh automaton and segments tree from the live pattern
