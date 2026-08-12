@@ -30,6 +30,8 @@ pub mod json;
 pub mod messagepack;
 #[doc(hidden)]
 pub mod numbits;
+#[cfg(feature = "protobuf")]
+pub mod protobuf;
 #[doc(hidden)]
 pub mod regexp;
 #[doc(hidden)]
@@ -69,6 +71,13 @@ pub use crate::headers::{
     ContentTypeDuplicatePolicy, HeaderCollisionPolicy, HeaderLimits, HeaderNamePolicy,
     HeaderValuePolicy, HeadersFlattener, HeadersFlattenerBuilder, HttpListValuePolicy,
     HttpValueDecoding, RepeatedHeaderPolicy, WhitespacePolicy,
+};
+// Re-export the Protobuf flattener (protobuf contract).
+#[cfg(feature = "protobuf")]
+pub use crate::protobuf::{
+    ContractFields, DecoderState, EnumSymbol, EnumValuePolicy, MapPolicy, OneofPolicy,
+    ProtobufFieldName, ProtobufFlattener, ProtobufInput, ProtobufPresence, SchemaGraph,
+    UnknownFieldPolicy, WellKnownTypeContract, WellKnownTypePolicy,
 };
 
 use automaton::{NfaBuffers, ThreadSafeCoreMatcher};

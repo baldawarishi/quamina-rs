@@ -17,12 +17,15 @@ smallvec = "1.13"
 rustc-hash = "2.1"
 memchr = "2.7"
 fast-float2 = "0.2"
+prost-reflect = { version = "0.16.5", optional = true }
+prost = { version = "0.14.4", optional = true }
+prost-types = { version = "0.14.4", optional = true }
 
 [features]
 dhat-heap = []  # Enable heap profiling with dhat
 messagepack = []
 cbor = []
-protobuf = []
+protobuf = ["dep:prost-reflect", "dep:prost", "dep:prost-types"]
 avro = []
 headers = []
 cloudevents = ["messagepack", "cbor", "protobuf", "avro", "headers"]
