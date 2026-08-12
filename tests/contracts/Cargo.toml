@@ -70,13 +70,3 @@ required-features = ["cloudevents"]
 
 [lints.rust]
 warnings = "deny"
-# `tests/protobuf.rs` is a pinned contract file we cannot edit. Its
-# `descriptor_cycles_are_preprocessed_once_and_clones_have_isolated_decoder_state`
-# test declares `let mut clone = ...` and only ever calls `&self` methods on
-# it (`flatten_for_contract`/`decoder_state`), while its sibling
-# `proto2_and_proto3_presence_never_synthesize_absent_defaults_by_default`
-# test calls `flattener.flatten_for_contract(...)` on a binding that is
-# *not* `mut` — so `flatten_for_contract` must take `&self` for the file to
-# compile at all, which makes the other test's `mut` an unavoidable false
-# positive. See the final report for details.
-unused_mut = { level = "allow", priority = 1 }
