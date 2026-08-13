@@ -748,46 +748,27 @@ fn collect_named_schemas(schema: &Schema, out: &mut FxHashMap<String, Schema>) {
 // =============================================================================
 
 fn invalid_event(message: impl Into<String>) -> QuaminaError {
-    QuaminaError::invalid_event(EventFormat::Avro).with_message(message)
+    crate::decoder_errors::invalid_event(EventFormat::Avro, message)
 }
 
 fn invalid_schema(message: impl Into<String>) -> QuaminaError {
-    QuaminaError::InvalidSchema {
-        format: EventFormat::Avro,
-        message: message.into(),
-    }
+    crate::decoder_errors::invalid_schema(EventFormat::Avro, message)
 }
 
 fn limit_exceeded(message: impl Into<String>) -> QuaminaError {
-    QuaminaError::EventLimitExceeded {
-        format: EventFormat::Avro,
-        location: ErrorLocation::default(),
-        message: message.into(),
-    }
+    crate::decoder_errors::limit_exceeded(EventFormat::Avro, message)
 }
 
 fn unsupported_value(message: impl Into<String>) -> QuaminaError {
-    QuaminaError::UnsupportedEventValue {
-        format: EventFormat::Avro,
-        location: ErrorLocation::default(),
-        message: message.into(),
-    }
+    crate::decoder_errors::unsupported_value(EventFormat::Avro, message)
 }
 
 fn unsupported_feature(message: impl Into<String>) -> QuaminaError {
-    QuaminaError::UnsupportedFormatFeature {
-        format: EventFormat::Avro,
-        location: ErrorLocation::default(),
-        message: message.into(),
-    }
+    crate::decoder_errors::unsupported_feature(EventFormat::Avro, message)
 }
 
 fn missing_schema(message: impl Into<String>) -> QuaminaError {
-    QuaminaError::MissingEventSchema {
-        format: EventFormat::Avro,
-        location: ErrorLocation::default(),
-        message: message.into(),
-    }
+    crate::decoder_errors::missing_schema(EventFormat::Avro, message)
 }
 
 fn duplicate_field() -> QuaminaError {

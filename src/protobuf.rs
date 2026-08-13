@@ -685,46 +685,27 @@ fn has_cycles_from(
 // =============================================================================
 
 fn invalid_event(message: impl Into<String>) -> QuaminaError {
-    QuaminaError::invalid_event(EventFormat::Protobuf).with_message(message)
+    crate::decoder_errors::invalid_event(EventFormat::Protobuf, message)
 }
 
 fn invalid_schema(message: impl Into<String>) -> QuaminaError {
-    QuaminaError::InvalidSchema {
-        format: EventFormat::Protobuf,
-        message: message.into(),
-    }
+    crate::decoder_errors::invalid_schema(EventFormat::Protobuf, message)
 }
 
 fn limit_exceeded(message: impl Into<String>) -> QuaminaError {
-    QuaminaError::EventLimitExceeded {
-        format: EventFormat::Protobuf,
-        location: ErrorLocation::default(),
-        message: message.into(),
-    }
+    crate::decoder_errors::limit_exceeded(EventFormat::Protobuf, message)
 }
 
 fn unsupported_value(message: impl Into<String>) -> QuaminaError {
-    QuaminaError::UnsupportedEventValue {
-        format: EventFormat::Protobuf,
-        location: ErrorLocation::default(),
-        message: message.into(),
-    }
+    crate::decoder_errors::unsupported_value(EventFormat::Protobuf, message)
 }
 
 fn unsupported_map_key(message: impl Into<String>) -> QuaminaError {
-    QuaminaError::UnsupportedMapKey {
-        format: EventFormat::Protobuf,
-        location: ErrorLocation::default(),
-        message: message.into(),
-    }
+    crate::decoder_errors::unsupported_map_key(EventFormat::Protobuf, message)
 }
 
 fn unsupported_feature(message: impl Into<String>) -> QuaminaError {
-    QuaminaError::UnsupportedFormatFeature {
-        format: EventFormat::Protobuf,
-        location: ErrorLocation::default(),
-        message: message.into(),
-    }
+    crate::decoder_errors::unsupported_feature(EventFormat::Protobuf, message)
 }
 
 fn duplicate_field() -> QuaminaError {

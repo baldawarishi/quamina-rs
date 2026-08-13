@@ -19,6 +19,14 @@ pub mod avro;
 mod base64;
 pub mod canonical;
 mod case_folding;
+#[cfg(any(
+    feature = "messagepack",
+    feature = "cbor",
+    feature = "protobuf",
+    feature = "avro",
+    feature = "headers"
+))]
+mod decoder_errors;
 pub mod envelope;
 #[doc(hidden)]
 pub mod flatten_json;

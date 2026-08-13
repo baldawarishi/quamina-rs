@@ -582,19 +582,11 @@ fn path_collision(message: impl Into<String>) -> QuaminaError {
 }
 
 fn limit_exceeded(message: impl Into<String>) -> QuaminaError {
-    QuaminaError::EventLimitExceeded {
-        format: EventFormat::Headers,
-        location: ErrorLocation::default(),
-        message: message.into(),
-    }
+    crate::decoder_errors::limit_exceeded(EventFormat::Headers, message)
 }
 
 fn unsupported_value(message: impl Into<String>) -> QuaminaError {
-    QuaminaError::UnsupportedEventValue {
-        format: EventFormat::Headers,
-        location: ErrorLocation::default(),
-        message: message.into(),
-    }
+    crate::decoder_errors::unsupported_value(EventFormat::Headers, message)
 }
 
 // =============================================================================

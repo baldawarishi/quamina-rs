@@ -202,39 +202,23 @@ impl Flattener for MessagePackFlattener {
 // =============================================================================
 
 fn invalid_event(message: impl Into<String>) -> QuaminaError {
-    QuaminaError::invalid_event(EventFormat::MessagePack).with_message(message)
+    crate::decoder_errors::invalid_event(EventFormat::MessagePack, message)
 }
 
 fn limit_exceeded(message: impl Into<String>) -> QuaminaError {
-    QuaminaError::EventLimitExceeded {
-        format: EventFormat::MessagePack,
-        location: ErrorLocation::default(),
-        message: message.into(),
-    }
+    crate::decoder_errors::limit_exceeded(EventFormat::MessagePack, message)
 }
 
 fn unsupported_value(message: impl Into<String>) -> QuaminaError {
-    QuaminaError::UnsupportedEventValue {
-        format: EventFormat::MessagePack,
-        location: ErrorLocation::default(),
-        message: message.into(),
-    }
+    crate::decoder_errors::unsupported_value(EventFormat::MessagePack, message)
 }
 
 fn unsupported_map_key(message: impl Into<String>) -> QuaminaError {
-    QuaminaError::UnsupportedMapKey {
-        format: EventFormat::MessagePack,
-        location: ErrorLocation::default(),
-        message: message.into(),
-    }
+    crate::decoder_errors::unsupported_map_key(EventFormat::MessagePack, message)
 }
 
 fn unsupported_feature(message: impl Into<String>) -> QuaminaError {
-    QuaminaError::UnsupportedFormatFeature {
-        format: EventFormat::MessagePack,
-        location: ErrorLocation::default(),
-        message: message.into(),
-    }
+    crate::decoder_errors::unsupported_feature(EventFormat::MessagePack, message)
 }
 
 fn duplicate_field() -> QuaminaError {
