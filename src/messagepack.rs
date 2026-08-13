@@ -776,52 +776,9 @@ fn decode_timestamp(data: &[u8], offset: usize) -> Result<CanonicalValue, Quamin
             invalid_event("MessagePack timestamp nanoseconds out of range").at_byte_offset(offset),
         );
     }
-    Ok(CanonicalValue::String(format_rfc3339(seconds, nanos)))
-}
-
-/// Convert a day count since the Unix epoch to a proleptic Gregorian
-/// `(year, month, day)`, using Howard Hinnant's `civil_from_days` algorithm.
-fn civil_from_days(z: i64) -> (i64, u32, u32) {
-    let z = z + 719_468;
-    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
-    // `doe` is `z - era * 146_097`, which is in `[0, 146_096]` by construction.
-    #[allow(clippy::cast_sign_loss)]
-    let doe = (z - era * 146_097) as u64;
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-    let y = i128::from(yoe) + i128::from(era) * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    // `doy`/`mp` are both small (bounded by a year's length), so this fits in u32.
-    #[allow(clippy::cast_possible_truncation)]
-    let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 };
-    #[allow(clippy::cast_possible_truncation)]
-    let m = m as u32;
-    let y = if m <= 2 { y + 1 } else { y };
-    // Timestamps this decoder accepts (i64 seconds) never produce a year
-    // outside i64 range.
-    #[allow(clippy::cast_possible_truncation)]
-    let y = y as i64;
-    (y, m, d)
-}
-
-/// Format `seconds`/`nanos` since the Unix epoch as an RFC 3339 UTC string.
-fn format_rfc3339(seconds: i64, nanos: u32) -> String {
-    let days = seconds.div_euclid(86_400);
-    let secs_of_day = seconds.rem_euclid(86_400);
-    let (y, m, d) = civil_from_days(days);
-    let hh = secs_of_day / 3600;
-    let mm = (secs_of_day % 3600) / 60;
-    let ss = secs_of_day % 60;
-    if nanos == 0 {
-        format!("{y:04}-{m:02}-{d:02}T{hh:02}:{mm:02}:{ss:02}Z")
-    } else {
-        let mut frac = format!("{nanos:09}");
-        while frac.ends_with('0') {
-            frac.pop();
-        }
-        format!("{y:04}-{m:02}-{d:02}T{hh:02}:{mm:02}:{ss:02}.{frac}Z")
-    }
+    Ok(CanonicalValue::String(crate::civil_date::format_rfc3339(
+        seconds, nanos,
+    )))
 }
 
 #[cfg(test)]
@@ -839,9 +796,18 @@ mod tests {
 
     #[test]
     fn rfc3339_epoch_and_one_second_after() {
-        assert_eq!(format_rfc3339(0, 0), "1970-01-01T00:00:00Z");
-        assert_eq!(format_rfc3339(1, 0), "1970-01-01T00:00:01Z");
-        assert_eq!(format_rfc3339(86_400, 0), "1970-01-02T00:00:00Z");
+        assert_eq!(
+            crate::civil_date::format_rfc3339(0, 0),
+            "1970-01-01T00:00:00Z"
+        );
+        assert_eq!(
+            crate::civil_date::format_rfc3339(1, 0),
+            "1970-01-01T00:00:01Z"
+        );
+        assert_eq!(
+            crate::civil_date::format_rfc3339(86_400, 0),
+            "1970-01-02T00:00:00Z"
+        );
     }
 
     #[test]

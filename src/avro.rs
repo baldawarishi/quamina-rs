@@ -861,28 +861,8 @@ fn decimal_canonical(unscaled_be_bytes: &[u8], scale: u32) -> Result<CanonicalVa
 
 // -- date/time logical type formatting --------------------------------------
 
-/// Civil `(year, month, day)` from a day count since the Unix epoch, using
-/// Howard Hinnant's `civil_from_days` algorithm (proleptic Gregorian).
-const fn civil_from_days(days: i64) -> (i64, u32, u32) {
-    let z = days + 719_468;
-    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
-    let doe = z - era * 146_097;
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-    let y = yoe + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    // `d` is in [1, 31] and `mp` is in [0, 11] by construction of the
-    // algorithm above, so both narrowing casts below are lossless.
-    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-    let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
-    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-    let m = (if mp < 10 { mp + 3 } else { mp - 9 }) as u32;
-    let y = if m <= 2 { y + 1 } else { y };
-    (y, m, d)
-}
-
 fn format_date(days: i32) -> String {
-    let (y, m, d) = civil_from_days(i64::from(days));
+    let (y, m, d) = crate::civil_date::civil_from_days(i64::from(days));
     format!("{y:04}-{m:02}-{d:02}")
 }
 
@@ -905,7 +885,7 @@ fn format_time_micros(micros: i64) -> String {
 fn format_timestamp_millis(millis: i64, local: bool) -> String {
     let days = millis.div_euclid(86_400_000);
     let of_day = millis.rem_euclid(86_400_000);
-    let (y, m, d) = civil_from_days(days);
+    let (y, m, d) = crate::civil_date::civil_from_days(days);
     let suffix = if local { "" } else { "Z" };
     format!(
         "{y:04}-{m:02}-{d:02}T{}{suffix}",
@@ -916,7 +896,7 @@ fn format_timestamp_millis(millis: i64, local: bool) -> String {
 fn format_timestamp_micros(micros: i64, local: bool) -> String {
     let days = micros.div_euclid(86_400_000_000);
     let of_day = micros.rem_euclid(86_400_000_000);
-    let (y, m, d) = civil_from_days(days);
+    let (y, m, d) = crate::civil_date::civil_from_days(days);
     let suffix = if local { "" } else { "Z" };
     format!(
         "{y:04}-{m:02}-{d:02}T{}{suffix}",

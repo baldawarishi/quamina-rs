@@ -21,6 +21,8 @@ pub mod canonical;
 mod case_folding;
 #[cfg(feature = "cbor")]
 pub mod cbor;
+#[cfg(any(feature = "messagepack", feature = "cbor", feature = "avro"))]
+mod civil_date;
 #[cfg(any(
     feature = "messagepack",
     feature = "cbor",
