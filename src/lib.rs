@@ -33,6 +33,13 @@ pub mod cloudevents;
     feature = "headers"
 ))]
 mod decoder_errors;
+#[cfg(any(
+    feature = "messagepack",
+    feature = "cbor",
+    feature = "protobuf",
+    feature = "avro"
+))]
+mod decoder_limits;
 pub mod envelope;
 #[doc(hidden)]
 pub mod flatten_json;

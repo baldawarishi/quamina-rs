@@ -26,8 +26,8 @@
 //! hostile payload cannot hide behind an unreferenced field.
 
 use crate::{
-    ArrayPos, BinaryValuePolicy, CanonicalValue, DuplicateKeyPolicy, ErrorLocation, EventFormat,
-    EventLimits, Flattener, MapKeyPolicy, NumericPolicy, OwnedField, QuaminaError, RootValuePolicy,
+    ArrayPos, BinaryValuePolicy, CanonicalValue, DuplicateKeyPolicy, EventFormat, EventLimits,
+    Flattener, MapKeyPolicy, NumericPolicy, OwnedField, QuaminaError, RootValuePolicy,
     SegmentsTreeTracker,
 };
 use rustc_hash::FxHashSet;
@@ -263,10 +263,7 @@ fn unsupported_feature(message: impl Into<String>) -> QuaminaError {
 }
 
 fn duplicate_field() -> QuaminaError {
-    QuaminaError::DuplicateEventField {
-        format: EventFormat::Cbor,
-        location: ErrorLocation::default(),
-    }
+    crate::decoder_errors::duplicate_field(EventFormat::Cbor)
 }
 
 /// Largest integer magnitude that round-trips exactly through `f64`, i.e. 2^53.
@@ -821,32 +818,19 @@ impl<'a> Decoder<'a> {
     }
 
     fn check_container_len(&self, len: usize, offset: usize) -> Result<(), QuaminaError> {
-        if len > self.limits.max_container_items {
-            return Err(limit_exceeded("max_container_items exceeded").at_byte_offset(offset));
-        }
-        Ok(())
+        crate::decoder_limits::check_container_len(&self.limits, EventFormat::Cbor, len, offset)
     }
 
     fn check_scalar_len(&self, len: usize, offset: usize) -> Result<(), QuaminaError> {
-        if len > self.limits.max_scalar_bytes {
-            return Err(limit_exceeded("max_scalar_bytes exceeded").at_byte_offset(offset));
-        }
-        Ok(())
+        crate::decoder_limits::check_scalar_len(&self.limits, EventFormat::Cbor, len, offset)
     }
 
     fn check_depth(&self, new_depth: usize, offset: usize) -> Result<(), QuaminaError> {
-        if new_depth > self.limits.max_depth {
-            return Err(limit_exceeded("max_depth exceeded").at_byte_offset(offset));
-        }
-        Ok(())
+        crate::decoder_limits::check_depth(&self.limits, EventFormat::Cbor, new_depth, offset)
     }
 
     fn alloc_array_id(&mut self, offset: usize) -> Result<i32, QuaminaError> {
-        let id = self.next_array_id;
-        self.next_array_id = self.next_array_id.checked_add(1).ok_or_else(|| {
-            limit_exceeded("array id allocation overflowed").at_byte_offset(offset)
-        })?;
-        Ok(id)
+        crate::decoder_limits::alloc_array_id(&mut self.next_array_id, EventFormat::Cbor, offset)
     }
 
     fn usize_len(value: u64, offset: usize) -> Result<usize, QuaminaError> {

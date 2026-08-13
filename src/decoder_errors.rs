@@ -70,6 +70,14 @@ pub fn missing_schema(format: EventFormat, message: impl Into<String>) -> Quamin
     }
 }
 
+/// Build a "duplicate field" error for `format`.
+pub fn duplicate_field(format: EventFormat) -> QuaminaError {
+    QuaminaError::DuplicateEventField {
+        format,
+        location: ErrorLocation::default(),
+    }
+}
+
 /// Build an "invalid transport envelope" error for `format`, naming the
 /// offending `attribute`.
 pub fn invalid_envelope(

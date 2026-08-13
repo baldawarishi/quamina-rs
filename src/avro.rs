@@ -45,8 +45,8 @@ use apache_avro::schema::{
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::{
-    ArrayPos, BinaryValuePolicy, CanonicalValue, ErrorLocation, EventFormat, EventLimits,
-    Flattener, OwnedField, QuaminaError, SegmentsTreeTracker,
+    ArrayPos, BinaryValuePolicy, CanonicalValue, EventFormat, EventLimits, Flattener, OwnedField,
+    QuaminaError, SegmentsTreeTracker,
 };
 
 // =============================================================================
@@ -772,10 +772,7 @@ fn missing_schema(message: impl Into<String>) -> QuaminaError {
 }
 
 fn duplicate_field() -> QuaminaError {
-    QuaminaError::DuplicateEventField {
-        format: EventFormat::Avro,
-        location: ErrorLocation::default(),
-    }
+    crate::decoder_errors::duplicate_field(EventFormat::Avro)
 }
 
 // =============================================================================
@@ -1244,18 +1241,11 @@ impl<'f> Decoder<'f> {
     }
 
     fn check_depth(&self, new_depth: usize, offset: usize) -> Result<(), QuaminaError> {
-        if new_depth > self.limits.max_depth {
-            return Err(limit_exceeded("max_depth exceeded").at_byte_offset(offset));
-        }
-        Ok(())
+        crate::decoder_limits::check_depth(&self.limits, EventFormat::Avro, new_depth, offset)
     }
 
     fn alloc_array_id(&mut self, offset: usize) -> Result<i32, QuaminaError> {
-        let id = self.next_array_id;
-        self.next_array_id = self.next_array_id.checked_add(1).ok_or_else(|| {
-            limit_exceeded("array id allocation overflowed").at_byte_offset(offset)
-        })?;
-        Ok(id)
+        crate::decoder_limits::alloc_array_id(&mut self.next_array_id, EventFormat::Avro, offset)
     }
 
     fn decode_record(
@@ -1595,10 +1585,7 @@ impl<'f> Decoder<'f> {
     }
 
     fn check_scalar_len(&self, len: usize, offset: usize) -> Result<(), QuaminaError> {
-        if len > self.limits.max_scalar_bytes {
-            return Err(limit_exceeded("max_scalar_bytes exceeded").at_byte_offset(offset));
-        }
-        Ok(())
+        crate::decoder_limits::check_scalar_len(&self.limits, EventFormat::Avro, len, offset)
     }
 
     fn emit_scalar(

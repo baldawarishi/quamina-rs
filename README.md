@@ -296,7 +296,7 @@ Patterns are subject to complexity limits to prevent resource exhaustion from de
 Patterns exceeding these limits return `QuaminaError::PatternTooComplex`. The defaults are generous enough for any realistic use case; they're primarily a safety net against adversarial input.
 
 Other limitations:
-- Only JSON events are supported (media type `application/json`)
+- JSON (media type `application/json`) is the only format enabled by default. MessagePack, CBOR, Protobuf, Avro, and transport-header/CloudEvents flattening are available behind opt-in Cargo features (`messagepack`, `cbor`, `protobuf`, `avro`, `headers`, `cloudevents`, or `all-formats` for all of them) — see `tests/contracts/README.md` for the contract each one satisfies.
 - Pattern field names are case-sensitive
 - `shellstyle` patterns don't support `\*` or `\\` escapes — prefer `wildcard` or `regexp` instead
 
