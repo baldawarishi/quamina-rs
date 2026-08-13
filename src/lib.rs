@@ -1373,7 +1373,7 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
 
     /// Find all patterns that match the given transport envelope (headers,
     /// and optionally a body decoded by the configured
-    /// [`EnvelopeFlattener`](envelope::EnvelopeFlattener)).
+    /// [`EnvelopeFlattener`]).
     ///
     /// # Errors
     ///

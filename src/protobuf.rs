@@ -26,7 +26,7 @@
 //! Every field in the wire bytes is decoded and structurally validated
 //! (tag/wire-type well-formedness, length bounds, resource limits)
 //! regardless of whether the current [`SegmentsTreeTracker`] considers it
-//! relevant to any pattern, mirroring [`MessagePackFlattener`](crate::MessagePackFlattener):
+//! relevant to any pattern, mirroring every other decoder in this crate:
 //! tracking only controls whether a scalar is materialized into an
 //! [`OwnedField`]. A field number absent from the descriptor, or present with
 //! a wire type that does not match the schema, is treated as an unknown
