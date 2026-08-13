@@ -7,6 +7,8 @@
 // Not part of the public API — use `Quamina` instead.
 #[doc(hidden)]
 pub mod automaton;
+#[cfg(feature = "avro")]
+pub mod avro;
 #[cfg(any(
     feature = "messagepack",
     feature = "cbor",
@@ -48,6 +50,12 @@ mod kani_proofs;
 pub use crate::flatten_json::ArrayPos;
 pub use crate::flattener::{Flattener, JsonFlattener, OwnedField, SegmentsTreeTracker};
 
+// Re-export the Avro flattener (avro contract).
+#[cfg(feature = "avro")]
+pub use crate::avro::{
+    AvroBuilder, AvroCodecPolicy, AvroFlattener, AvroInput, AvroSchemaGraph, AvroUnionPolicy,
+    FingerprintResolver, LogicalTypeContract, LogicalTypePolicy,
+};
 // Re-export the shared decoder boundary (core-boundary contract).
 pub use crate::canonical::{
     ArrayHandle, ArraySnapshot, ArrayTrailBuilder, CanonicalField, CanonicalValue, DecoderBoundary,

@@ -20,13 +20,14 @@ fast-float2 = "0.2"
 prost-reflect = { version = "0.16.5", optional = true }
 prost = { version = "0.14.4", optional = true }
 prost-types = { version = "0.14.4", optional = true }
+apache-avro = { version = "0.22.0", optional = true, default-features = false }
 
 [features]
 dhat-heap = []  # Enable heap profiling with dhat
 messagepack = []
 cbor = []
 protobuf = ["dep:prost-reflect", "dep:prost", "dep:prost-types"]
-avro = []
+avro = ["dep:apache-avro"]
 headers = []
 cloudevents = ["messagepack", "cbor", "protobuf", "avro", "headers"]
 
