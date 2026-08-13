@@ -23,6 +23,8 @@ mod case_folding;
 pub mod cbor;
 #[cfg(any(feature = "messagepack", feature = "cbor", feature = "avro"))]
 mod civil_date;
+#[cfg(feature = "cloudevents")]
+pub mod cloudevents;
 #[cfg(any(
     feature = "messagepack",
     feature = "cbor",
@@ -80,6 +82,12 @@ pub use crate::canonical::{
 pub use crate::cbor::{
     CborFlattener, CborFlattenerBuilder, CborSimpleValuePolicy, CborTagPolicy, NonCanonicalPolicy,
     SharedReferencePolicy,
+};
+// Re-export the binary-mode CloudEvents flattener (cloudevents contract).
+#[cfg(feature = "cloudevents")]
+pub use crate::cloudevents::{
+    BinaryCloudEventFlattener, BinaryCloudEventFlattenerBuilder, CloudEventModePolicy,
+    CloudEventsVersionPolicy, EmptyDataPolicy, FlattenerRegistry, UnknownMediaTypePolicy,
 };
 // Re-export transport envelope support (headers/CloudEvents contracts).
 pub use crate::envelope::{Envelope, EnvelopeBuilder, EnvelopeFlattener, Headers, Transport};

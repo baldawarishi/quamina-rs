@@ -242,6 +242,42 @@ impl SegmentsTree {
         self.lookup(segment).and_then(|e| e.field()).cloned()
     }
 
+    /// Build an independent copy of this subtree whose stored leaf paths
+    /// are relative to this node (re-derived from its own structure) rather
+    /// than whatever full path was originally registered.
+    ///
+    /// Some decoders (e.g. the JSON, MessagePack, and CBOR flatteners) echo
+    /// back a matched leaf's *stored* path text verbatim as the field path
+    /// they emit, instead of building the path themselves as they walk the
+    /// event. Handing such a decoder a subtree extracted via
+    /// [`get`](Self::get) — whose leaves still carry the full pattern path
+    /// they were registered under — would make it emit that full path
+    /// again, double-counting any prefix a caller (e.g. the CloudEvents
+    /// flattener nesting a decoded payload under `data`) means to add back
+    /// itself. Rebasing first makes every decoder in this crate produce
+    /// paths relative to this node, as if it were the event's own root.
+    #[cfg(feature = "cloudevents")]
+    pub(crate) fn rebased(&self) -> Self {
+        let mut out = Self::new();
+        let mut prefix = Vec::new();
+        self.rebase_into(&mut out, &mut prefix);
+        out
+    }
+
+    #[cfg(feature = "cloudevents")]
+    fn rebase_into(&self, out: &mut Self, prefix: &mut Vec<String>) {
+        for (segment, entry) in &self.entries {
+            prefix.push(segment.clone());
+            if entry.field().is_some() {
+                out.add(&prefix.join("\n"));
+            }
+            if let Some(node) = entry.node() {
+                node.rebase_into(out, prefix);
+            }
+            prefix.pop();
+        }
+    }
+
     /// Number of child nodes (non-leaf)
     #[inline]
     #[must_use]

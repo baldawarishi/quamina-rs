@@ -69,3 +69,39 @@ pub fn missing_schema(format: EventFormat, message: impl Into<String>) -> Quamin
         message: message.into(),
     }
 }
+
+/// Build an "invalid transport envelope" error for `format`, naming the
+/// offending `attribute`.
+pub fn invalid_envelope(
+    format: EventFormat,
+    attribute: &'static str,
+    message: impl Into<String>,
+) -> QuaminaError {
+    QuaminaError::InvalidEnvelope {
+        format,
+        location: ErrorLocation::default(),
+        attribute,
+        message: message.into(),
+    }
+}
+
+/// Build a "conflicting transport envelope headers" error for `format`.
+pub fn conflicting_envelope_headers(
+    format: EventFormat,
+    message: impl Into<String>,
+) -> QuaminaError {
+    QuaminaError::ConflictingEnvelopeHeaders {
+        format,
+        location: ErrorLocation::default(),
+        message: message.into(),
+    }
+}
+
+/// Build an "envelope path collision" error for `format`.
+pub fn envelope_path_collision(format: EventFormat, message: impl Into<String>) -> QuaminaError {
+    QuaminaError::EnvelopePathCollision {
+        format,
+        location: ErrorLocation::default(),
+        message: message.into(),
+    }
+}

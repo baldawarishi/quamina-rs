@@ -17,8 +17,8 @@
 //! whether a decoded value is materialized into an [`OwnedField`].
 
 use crate::{
-    ArrayPos, ArrayTrailBuilder, CanonicalValue, Envelope, EnvelopeFlattener, ErrorLocation,
-    EventFormat, OwnedField, QuaminaError, SegmentsTreeTracker, Transport,
+    ArrayPos, ArrayTrailBuilder, CanonicalValue, Envelope, EnvelopeFlattener, EventFormat,
+    OwnedField, QuaminaError, SegmentsTreeTracker, Transport,
 };
 use rustc_hash::FxHashMap;
 
@@ -557,28 +557,15 @@ impl EnvelopeFlattener for HeadersFlattener {
 // =============================================================================
 
 fn invalid_envelope(attribute: &'static str, message: impl Into<String>) -> QuaminaError {
-    QuaminaError::InvalidEnvelope {
-        format: EventFormat::Headers,
-        location: ErrorLocation::default(),
-        attribute,
-        message: message.into(),
-    }
+    crate::decoder_errors::invalid_envelope(EventFormat::Headers, attribute, message)
 }
 
 fn conflicting_headers(message: impl Into<String>) -> QuaminaError {
-    QuaminaError::ConflictingEnvelopeHeaders {
-        format: EventFormat::Headers,
-        location: ErrorLocation::default(),
-        message: message.into(),
-    }
+    crate::decoder_errors::conflicting_envelope_headers(EventFormat::Headers, message)
 }
 
 fn path_collision(message: impl Into<String>) -> QuaminaError {
-    QuaminaError::EnvelopePathCollision {
-        format: EventFormat::Headers,
-        location: ErrorLocation::default(),
-        message: message.into(),
-    }
+    crate::decoder_errors::envelope_path_collision(EventFormat::Headers, message)
 }
 
 fn limit_exceeded(message: impl Into<String>) -> QuaminaError {

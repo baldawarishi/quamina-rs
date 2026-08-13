@@ -146,6 +146,15 @@ impl CanonicalValue {
     pub const fn is_number(&self) -> bool {
         matches!(self, Self::Number(_))
     }
+
+    /// The string content, if this value is a [`CanonicalValue::String`].
+    #[must_use]
+    pub const fn as_str(&self) -> Option<&str> {
+        match self {
+            Self::String(text) => Some(text.as_str()),
+            Self::Bool(_) | Self::Null | Self::Number(_) => None,
+        }
+    }
 }
 
 fn invalid_number(text: &str) -> QuaminaError {
