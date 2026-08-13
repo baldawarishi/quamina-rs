@@ -1015,7 +1015,7 @@ impl<'a> Cursor<'a> {
 
     fn read_long(&mut self) -> Result<i64, QuaminaError> {
         let raw = self.read_uvarint()?;
-        Ok(zigzag_decode64(raw))
+        Ok(crate::zigzag::decode64(raw))
     }
 
     fn read_bool(&mut self) -> Result<bool, QuaminaError> {
@@ -1093,10 +1093,6 @@ impl<'a> Cursor<'a> {
         }
         Ok(count)
     }
-}
-
-const fn zigzag_decode64(n: u64) -> i64 {
-    (n >> 1).cast_signed() ^ -(n & 1).cast_signed()
 }
 
 // =============================================================================

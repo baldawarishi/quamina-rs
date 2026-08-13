@@ -1164,7 +1164,7 @@ impl<'a> Decoder<'a> {
             }
             Kind::Sint32 => {
                 #[allow(clippy::cast_possible_truncation)]
-                let value = zigzag_decode32(raw as u32);
+                let value = crate::zigzag::decode32(raw as u32);
                 Ok(CanonicalValue::from_i64(i64::from(value)))
             }
             #[allow(clippy::cast_possible_wrap)]
@@ -1177,7 +1177,7 @@ impl<'a> Decoder<'a> {
                 offset,
             )?)),
             Kind::Sint64 => Ok(CanonicalValue::from_i64(lossless_i64(
-                i128::from(zigzag_decode64(raw)),
+                i128::from(crate::zigzag::decode64(raw)),
                 offset,
             )?)),
             _ => unreachable!("caller filtered to varint kinds"),
@@ -1509,12 +1509,4 @@ fn wire_type_compatible(field: &FieldDescriptor, wire_type: WireType) -> bool {
     } else {
         wire_type == field.kind().wire_type()
     }
-}
-
-const fn zigzag_decode32(n: u32) -> i32 {
-    (n >> 1).cast_signed() ^ -(n & 1).cast_signed()
-}
-
-const fn zigzag_decode64(n: u64) -> i64 {
-    (n >> 1).cast_signed() ^ -(n & 1).cast_signed()
 }

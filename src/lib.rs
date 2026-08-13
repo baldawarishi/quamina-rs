@@ -47,6 +47,8 @@ pub mod regexp;
 #[doc(hidden)]
 pub mod segments_tree;
 mod unicode_categories;
+#[cfg(any(feature = "protobuf", feature = "avro"))]
+mod zigzag;
 
 #[cfg(test)]
 mod regexp_samples;
