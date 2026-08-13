@@ -55,10 +55,10 @@ failure is a broken contract harness rather than an expected failure.
 
 The current inventory is 12 runnable no-feature tests plus 89 feature-gated
 tests: 14 core-boundary, 14 MessagePack, 16 CBOR, 13 Protobuf, 12 Avro, 10
-headers, and 10 CloudEvents tests. Of those, core-boundary, MessagePack,
-Protobuf, Avro, and headers (63 tests) are now golden — implemented and
-passing, not just compiling. CBOR and CloudEvents (26 tests) remain compile
-contracts until their flattener lands. The four document/schema format
+headers, and 10 CloudEvents tests. Of those, core-boundary, MessagePack, CBOR,
+Protobuf, Avro, and headers (79 tests) are now golden — implemented and
+passing, not just compiling. CloudEvents (10 tests) remains a compile
+contract until its flattener lands. The four document/schema format
 suites include a whole-corpus comparison that checks sorted matches and exact
 canonical fields against JSON for every representable case.
 
@@ -267,25 +267,25 @@ when its Quamina API exists; **N/A** is a documented representation exclusion.
 
 | Behavior | JSON | MessagePack | CBOR | Protobuf | Avro | Headers | CloudEvents |
 |---|---|---|---|---|---|---|---|
-| String, bool, explicit null | golden | golden | compile | golden | golden | string policy | payload compile |
-| Integer, decimal, exponent equivalence | golden | golden | compile | golden | golden | string only | payload compile |
-| `"42"` distinct from `42` | golden | golden | compile | golden | golden | string only | payload compile |
-| Unicode, quotes, slash, controls, non-ASCII field name | golden | golden | compile | N/A: schema name rules | N/A: schema name rules | normalization golden | payload compile |
-| Nested map/record/message | golden | golden | compile | golden | golden | namespace golden | `data` compile |
-| Primitive array/repeated scalar | golden | golden | compile | golden | golden | repeated values | payload compile |
-| Array of objects/messages/records | golden | golden | compile | golden | golden | N/A | payload compile |
-| Same-element positive / cross-element negative | golden | golden | compile | golden | golden | repeated scalar only | payload compile |
-| Nested complete parent/child trails | golden | golden | compile | golden | golden | N/A | payload compile |
-| Unrelated array IDs do not conflict | golden | golden | compile | golden | golden | golden | payload compile |
-| Absent versus explicit null | golden | golden | compile | presence golden | union golden | absent/empty golden | data-state compile |
-| Empty map/array exists semantics | golden | golden | compile | repeated/message golden | golden | N/A | payload compile |
-| Emission order independent of pattern order | golden | golden | compile | golden | golden | golden | compile |
-| Tracker filters unreferenced leaves safely | golden | golden | compile | golden | golden | golden | compile |
-| Exact/prefix/suffix/wildcard/equals-ignore-case | golden | golden | compile | golden | golden | golden | compile |
-| Anything-but/numeric/exists | golden | golden | compile | golden | golden | exists/string | compile |
-| Multiple patterns for one event | golden | golden | compile | golden | golden | golden | compile |
-| Same sorted match set as JSON | baseline | golden | compile | golden | golden | N/A | decoded data compile |
-| Canonical paths/bytes/tags/trails | golden | golden | compile | golden | golden | golden | compile |
+| String, bool, explicit null | golden | golden | golden | golden | golden | string policy | payload compile |
+| Integer, decimal, exponent equivalence | golden | golden | golden | golden | golden | string only | payload compile |
+| `"42"` distinct from `42` | golden | golden | golden | golden | golden | string only | payload compile |
+| Unicode, quotes, slash, controls, non-ASCII field name | golden | golden | golden | N/A: schema name rules | N/A: schema name rules | normalization golden | payload compile |
+| Nested map/record/message | golden | golden | golden | golden | golden | namespace golden | `data` compile |
+| Primitive array/repeated scalar | golden | golden | golden | golden | golden | repeated values | payload compile |
+| Array of objects/messages/records | golden | golden | golden | golden | golden | N/A | payload compile |
+| Same-element positive / cross-element negative | golden | golden | golden | golden | golden | repeated scalar only | payload compile |
+| Nested complete parent/child trails | golden | golden | golden | golden | golden | N/A | payload compile |
+| Unrelated array IDs do not conflict | golden | golden | golden | golden | golden | golden | payload compile |
+| Absent versus explicit null | golden | golden | golden | presence golden | union golden | absent/empty golden | data-state compile |
+| Empty map/array exists semantics | golden | golden | golden | repeated/message golden | golden | N/A | payload compile |
+| Emission order independent of pattern order | golden | golden | golden | golden | golden | golden | compile |
+| Tracker filters unreferenced leaves safely | golden | golden | golden | golden | golden | golden | compile |
+| Exact/prefix/suffix/wildcard/equals-ignore-case | golden | golden | golden | golden | golden | golden | compile |
+| Anything-but/numeric/exists | golden | golden | golden | golden | golden | exists/string | compile |
+| Multiple patterns for one event | golden | golden | golden | golden | golden | golden | compile |
+| Same sorted match set as JSON | baseline | golden | golden | golden | golden | N/A | decoded data compile |
+| Canonical paths/bytes/tags/trails | golden | golden | golden | golden | golden | golden | compile |
 
 ## Coverage matrix: core boundary and hostile custom fields
 
@@ -347,11 +347,11 @@ containers.
 ## Current expected state
 
 The no-feature JSON/canonical suite is the stable runnable baseline.
-`core-boundary`, `messagepack`, `protobuf`, `avro`, and `headers` are now
-**golden**: their public Quamina API and flattener types exist, and every
-test in their contract file passes. `cbor` and `cloudevents` (and therefore
-`all-formats`, which unions every feature) remain compile contracts until
-their flattener lands; their current compilation failures are the expected
+`core-boundary`, `messagepack`, `cbor`, `protobuf`, `avro`, and `headers` are
+now **golden**: their public Quamina API and flattener types exist, and every
+test in their contract file passes. `cloudevents` (and therefore
+`all-formats`, which unions every feature) remains a compile contract until
+its flattener lands; its current compilation failures are the expected
 implementation queue, not evidence that fixture generation is required at
 test time.
 
@@ -359,12 +359,12 @@ test time.
 |---|---|---|
 | `core-boundary` | `tests/core_boundary.rs` | golden — `FieldPath`, `CanonicalValue`, `CanonicalField`, `ArrayTrailBuilder`, `FieldSetBuilder`, `PatternFieldTracker`, `DecoderBoundary`, `RawField`, `RawArrayPos`, `EventFormat`, `EventLimits`, and validation/error variants are implemented |
 | `messagepack` | `tests/messagepack.rs` | golden — `MessagePackFlattener`, document policies, limits, and format-neutral decoder errors are implemented |
-| `cbor` | `tests/cbor.rs` | compile — expects `CborFlattener`, map/binary/tag/numeric policies, limits, and format-neutral decoder errors |
+| `cbor` | `tests/cbor.rs` | golden — `CborFlattener`, map/binary/tag/simple-value/shared-reference/noncanonical/numeric policies, limits, and format-neutral decoder errors are implemented |
 | `protobuf` | `tests/protobuf.rs` | golden — `ProtobufFlattener`, descriptor/input/name/presence/enum/well-known-type policies, limits, and errors are implemented |
 | `avro` | `tests/avro.rs` | golden — `AvroFlattener`, schema/input/evolution/logical/codec/fingerprint policies, limits, and errors are implemented |
 | `headers` | `tests/headers.rs` | golden — `Envelope`, `HeadersFlattener`, header normalization/value policies, envelope matching, limits, and errors are implemented |
 | `cloudevents` | `tests/cloudevents.rs` | compile — expects `BinaryCloudEventFlattener`, `FlattenerRegistry`, transport/envelope and unknown-media-type policies, payload dispatch, and errors |
-| `all-formats` | all sources above | compile — blocked on `cbor` and `cloudevents` |
+| `all-formats` | all sources above | compile — blocked on `cloudevents` |
 
 When a feature first passes, update this section and the matrix cells from
 **compile** to **golden** in the same change so this document continues to

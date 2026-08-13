@@ -19,6 +19,8 @@ pub mod avro;
 mod base64;
 pub mod canonical;
 mod case_folding;
+#[cfg(feature = "cbor")]
+pub mod cbor;
 #[cfg(any(
     feature = "messagepack",
     feature = "cbor",
@@ -70,6 +72,12 @@ pub use crate::avro::{
 pub use crate::canonical::{
     ArrayHandle, ArraySnapshot, ArrayTrailBuilder, CanonicalField, CanonicalValue, DecoderBoundary,
     FieldPath, FieldSetBuilder, FieldSetOutput, PatternFieldTracker, RawArrayPos, RawField,
+};
+// Re-export the CBOR flattener (cbor contract).
+#[cfg(feature = "cbor")]
+pub use crate::cbor::{
+    CborFlattener, CborFlattenerBuilder, CborSimpleValuePolicy, CborTagPolicy, NonCanonicalPolicy,
+    SharedReferencePolicy,
 };
 // Re-export transport envelope support (headers/CloudEvents contracts).
 pub use crate::envelope::{Envelope, EnvelopeBuilder, EnvelopeFlattener, Headers, Transport};
