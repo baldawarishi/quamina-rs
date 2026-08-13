@@ -131,7 +131,7 @@ fn logical_types_are_deterministic_and_unknown_logical_types_fail() {
         "uuid",
     ] {
         assert!(
-            flattener.logical_type_contract(logical).is_some(),
+            flattener.logical_type_contract(logical).is_ok(),
             "missing {logical}"
         );
     }
