@@ -3,11 +3,11 @@ name = "quamina"
 version = "0.7.0"
 edition = "2024"
 rust-version = "1.88"
-description = "Fast pattern-matching library for filtering JSON events"
+description = "Microsecond multi-pattern JSON event filtering and routing engine for high-throughput cloud services and event streams"
 license = "Apache-2.0"
 repository = "https://github.com/baldawarishi/quamina-rs"
-keywords = ["json", "pattern-matching", "event-filtering", "rules-engine"]
-categories = ["algorithms", "text-processing"]
+keywords = ["json", "pattern-matching", "event-filtering", "rules-engine", "stream-processing"]
+categories = ["algorithms", "text-processing", "parser-implementations", "data-structures"]
 exclude = ["testdata/", "docs/", "examples/", "benches/", "fuzz/", "playground/", ".github/", "scripts/"]
 
 [dependencies]
