@@ -266,8 +266,28 @@ fn duplicate_field() -> QuaminaError {
     crate::decoder_errors::duplicate_field(EventFormat::Cbor)
 }
 
-/// Largest integer magnitude that round-trips exactly through `f64`, i.e. 2^53.
-const MAX_SAFE_INT: i128 = 9_007_199_254_740_992;
+/// The value read from a CBOR header (marker byte plus any additional
+/// length bytes): either a definite numeric value, or CBOR's
+/// indefinite-length marker (used by strings, arrays, and maps, terminated
+/// by a break byte rather than a declared count).
+enum CborArgument {
+    /// A definite value: an integer, tag number, or declared length.
+    Definite(u64),
+    /// The indefinite-length marker (additional-info 31): no value, no
+    /// declared length; the container reads until a break byte.
+    Indefinite,
+}
+
+impl CborArgument {
+    /// This argument's value, rejecting the indefinite-length marker with
+    /// `message` at `offset`.
+    fn require_definite(self, message: &str, offset: usize) -> Result<u64, QuaminaError> {
+        match self {
+            Self::Definite(value) => Ok(value),
+            Self::Indefinite => Err(invalid_event(message).at_byte_offset(offset)),
+        }
+    }
+}
 
 // =============================================================================
 // Decoder
@@ -362,14 +382,7 @@ impl<'a> Decoder<'a> {
         if marker >> 5 != 5 {
             return Err(invalid_event("expected a CBOR map").at_byte_offset(offset));
         }
-        let (raw_len, indefinite) = self.read_arg()?;
-        let declared_len = if indefinite {
-            None
-        } else {
-            let len = Self::usize_len(raw_len, offset)?;
-            self.check_container_len(len, offset)?;
-            Some(len)
-        };
+        let declared_len = self.read_declared_container_len(offset)?;
 
         let mut seen_keys: FxHashSet<Vec<u8>> = FxHashSet::default();
         let mut index: usize = 0;
@@ -408,14 +421,7 @@ impl<'a> Decoder<'a> {
         if marker >> 5 != 4 {
             return Err(invalid_event("expected a CBOR array").at_byte_offset(offset));
         }
-        let (raw_len, indefinite) = self.read_arg()?;
-        let declared_len = if indefinite {
-            None
-        } else {
-            let len = Self::usize_len(raw_len, offset)?;
-            self.check_container_len(len, offset)?;
-            Some(len)
-        };
+        let declared_len = self.read_declared_container_len(offset)?;
 
         let used = field_path.is_some() || child_tracker.is_some();
         if used {
@@ -465,16 +471,7 @@ impl<'a> Decoder<'a> {
         let major = marker >> 5;
         match major {
             0 | 1 => {
-                let (raw, indefinite) = self.read_arg()?;
-                if indefinite {
-                    return Err(invalid_event("CBOR integers cannot use indefinite length")
-                        .at_byte_offset(marker_offset));
-                }
-                let signed = if major == 0 {
-                    i128::from(raw)
-                } else {
-                    -1 - i128::from(raw)
-                };
+                let signed = self.read_plain_integer()?;
                 let value = self.canonical_int(signed, marker_offset)?;
                 self.emit_scalar(field_path, value, marker_offset)?;
             }
@@ -550,17 +547,8 @@ impl<'a> Decoder<'a> {
     }
 
     fn canonical_int(&self, value: i128, offset: usize) -> Result<CanonicalValue, QuaminaError> {
-        match self.numbers {
-            NumericPolicy::LosslessQuamina => {
-                if !(-MAX_SAFE_INT..=MAX_SAFE_INT).contains(&value) {
-                    return Err(unsupported_value("integer exceeds lossless numeric range")
-                        .at_byte_offset(offset));
-                }
-                // Range-checked above: value fits in i64.
-                #[allow(clippy::cast_possible_truncation)]
-                Ok(CanonicalValue::from_i64(value as i64))
-            }
-        }
+        self.numbers
+            .canonicalize_int(value, EventFormat::Cbor, offset)
     }
 
     // -- simple values / floats --------------------------------------------
@@ -628,11 +616,9 @@ impl<'a> Decoder<'a> {
     /// Decode a major-type-6 tagged value at the current position into a
     /// canonical scalar, applying the shared-reference and tag policies.
     fn decode_tag(&mut self, marker_offset: usize) -> Result<CanonicalValue, QuaminaError> {
-        let (tag, indefinite) = self.read_arg()?;
-        if indefinite {
-            return Err(invalid_event("CBOR tags cannot use indefinite length")
-                .at_byte_offset(marker_offset));
-        }
+        let tag = self
+            .read_arg()?
+            .require_definite("CBOR tags cannot use indefinite length", marker_offset)?;
         if tag == 28 || tag == 29 {
             return match self.shared_references {
                 SharedReferencePolicy::Reject => Err(unsupported_feature(
@@ -745,8 +731,7 @@ impl<'a> Decoder<'a> {
                     .at_byte_offset(content_offset),
             );
         }
-        let (raw_len, indefinite) = self.read_arg()?;
-        if indefinite || raw_len != 2 {
+        if !matches!(self.read_arg()?, CborArgument::Definite(2)) {
             return Err(invalid_event(
                 "decimal fraction/bigfloat content must be a two-element array",
             )
@@ -776,12 +761,9 @@ impl<'a> Decoder<'a> {
         if major != 0 && major != 1 {
             return Err(invalid_event("expected a plain CBOR integer").at_byte_offset(offset));
         }
-        let (raw, indefinite) = self.read_arg()?;
-        if indefinite {
-            return Err(
-                invalid_event("CBOR integers cannot use indefinite length").at_byte_offset(offset)
-            );
-        }
+        let raw = self
+            .read_arg()?
+            .require_definite("CBOR integers cannot use indefinite length", offset)?;
         Ok(if major == 0 {
             i128::from(raw)
         } else {
@@ -873,8 +855,7 @@ impl<'a> Decoder<'a> {
         marker_offset: usize,
         expected_major: u8,
     ) -> Result<Vec<u8>, QuaminaError> {
-        let (raw_len, indefinite) = self.read_arg()?;
-        if !indefinite {
+        if let CborArgument::Definite(raw_len) = self.read_arg()? {
             let len = Self::usize_len(raw_len, marker_offset)?;
             self.check_scalar_len(len, marker_offset)?;
             return Ok(self.take_bytes(len)?.to_vec());
@@ -893,13 +874,10 @@ impl<'a> Decoder<'a> {
                         .at_byte_offset(chunk_offset),
                 );
             }
-            let (chunk_raw_len, chunk_indefinite) = self.read_arg()?;
-            if chunk_indefinite {
-                return Err(
-                    invalid_event("nested indefinite string chunk is not allowed")
-                        .at_byte_offset(chunk_offset),
-                );
-            }
+            let chunk_raw_len = self.read_arg()?.require_definite(
+                "nested indefinite string chunk is not allowed",
+                chunk_offset,
+            )?;
             let chunk_len = Self::usize_len(chunk_raw_len, chunk_offset)?;
             let new_len = out
                 .len()
@@ -925,40 +903,57 @@ impl<'a> Decoder<'a> {
     // -- header / noncanonical checks ------------------------------------
 
     /// Consume a CBOR header (marker byte plus any additional length
-    /// bytes) at the current position, returning `(value, is_indefinite)`.
-    /// `value` is meaningless when `is_indefinite` is true. Applies the
-    /// noncanonical policy to non-shortest-form encodings.
-    fn read_arg(&mut self) -> Result<(u64, bool), QuaminaError> {
+    /// bytes) at the current position. Applies the noncanonical policy to
+    /// non-shortest-form encodings.
+    fn read_arg(&mut self) -> Result<CborArgument, QuaminaError> {
         let offset = self.pos;
         let marker = self.take_u8()?;
         let ai = marker & 0x1F;
         match ai {
-            0..=23 => Ok((u64::from(ai), false)),
+            0..=23 => Ok(CborArgument::Definite(u64::from(ai))),
             24 => {
                 let v = self.take_u8()?;
                 self.check_noncanonical(u64::from(v), 24, offset)?;
-                Ok((u64::from(v), false))
+                Ok(CborArgument::Definite(u64::from(v)))
             }
             25 => {
                 let v = self.take_u16()?;
                 self.check_noncanonical(u64::from(v), 25, offset)?;
-                Ok((u64::from(v), false))
+                Ok(CborArgument::Definite(u64::from(v)))
             }
             26 => {
                 let v = self.take_u32()?;
                 self.check_noncanonical(u64::from(v), 26, offset)?;
-                Ok((u64::from(v), false))
+                Ok(CborArgument::Definite(u64::from(v)))
             }
             27 => {
                 let v = self.take_u64()?;
                 self.check_noncanonical(v, 27, offset)?;
-                Ok((v, false))
+                Ok(CborArgument::Definite(v))
             }
             28..=30 => {
                 Err(invalid_event("reserved CBOR additional-info value").at_byte_offset(offset))
             }
-            31 => Ok((0, true)),
+            31 => Ok(CborArgument::Indefinite),
             _ => unreachable!("additional info is masked to 5 bits"),
+        }
+    }
+
+    /// Read a container's declared length header: `Some(len)` for a
+    /// definite length (already bounds-checked against
+    /// `max_container_items`), `None` for CBOR's indefinite-length
+    /// encoding (terminated by a break byte).
+    fn read_declared_container_len(
+        &mut self,
+        offset: usize,
+    ) -> Result<Option<usize>, QuaminaError> {
+        match self.read_arg()? {
+            CborArgument::Definite(raw_len) => {
+                let len = Self::usize_len(raw_len, offset)?;
+                self.check_container_len(len, offset)?;
+                Ok(Some(len))
+            }
+            CborArgument::Indefinite => Ok(None),
         }
     }
 
@@ -983,46 +978,27 @@ impl<'a> Decoder<'a> {
     // -- byte-level primitives ------------------------------------------
 
     fn peek_u8(&self) -> Result<u8, QuaminaError> {
-        self.data
-            .get(self.pos)
-            .copied()
-            .ok_or_else(|| invalid_event("unexpected end of event").at_byte_offset(self.pos))
+        crate::byte_cursor::peek_u8(self.data, self.pos, EventFormat::Cbor)
     }
 
     fn take_u8(&mut self) -> Result<u8, QuaminaError> {
-        let byte = self.peek_u8()?;
-        self.pos += 1;
-        Ok(byte)
+        crate::byte_cursor::take_u8(self.data, &mut self.pos, EventFormat::Cbor)
     }
 
     fn take_bytes(&mut self, len: usize) -> Result<&'a [u8], QuaminaError> {
-        let start = self.pos;
-        let end = start
-            .checked_add(len)
-            .ok_or_else(|| invalid_event("length overflow").at_byte_offset(start))?;
-        let slice = self
-            .data
-            .get(start..end)
-            .ok_or_else(|| invalid_event("unexpected end of event").at_byte_offset(start))?;
-        self.pos = end;
-        Ok(slice)
+        crate::byte_cursor::take_bytes(self.data, &mut self.pos, len, EventFormat::Cbor)
     }
 
     fn take_u16(&mut self) -> Result<u16, QuaminaError> {
-        let b = self.take_bytes(2)?;
-        Ok(u16::from_be_bytes([b[0], b[1]]))
+        crate::byte_cursor::take_u16(self.data, &mut self.pos, EventFormat::Cbor)
     }
 
     fn take_u32(&mut self) -> Result<u32, QuaminaError> {
-        let b = self.take_bytes(4)?;
-        Ok(u32::from_be_bytes([b[0], b[1], b[2], b[3]]))
+        crate::byte_cursor::take_u32(self.data, &mut self.pos, EventFormat::Cbor)
     }
 
     fn take_u64(&mut self) -> Result<u64, QuaminaError> {
-        let b = self.take_bytes(8)?;
-        Ok(u64::from_be_bytes([
-            b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7],
-        ]))
+        crate::byte_cursor::take_u64(self.data, &mut self.pos, EventFormat::Cbor)
     }
 }
 

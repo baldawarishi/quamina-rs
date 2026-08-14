@@ -17,6 +17,8 @@ pub mod avro;
     feature = "headers"
 ))]
 mod base64;
+#[cfg(any(feature = "messagepack", feature = "cbor"))]
+mod byte_cursor;
 pub mod canonical;
 mod case_folding;
 #[cfg(feature = "cbor")]
@@ -25,13 +27,8 @@ pub mod cbor;
 mod civil_date;
 #[cfg(feature = "cloudevents")]
 pub mod cloudevents;
-#[cfg(any(
-    feature = "messagepack",
-    feature = "cbor",
-    feature = "protobuf",
-    feature = "avro",
-    feature = "headers"
-))]
+// Unconditional: `canonical` and `format_policies` (both also unconditional)
+// depend on it directly now, not just the feature-gated format modules.
 mod decoder_errors;
 #[cfg(any(
     feature = "messagepack",

@@ -30,7 +30,7 @@
 use crate::{
     CanonicalValue, Envelope, EnvelopeFlattener, EventFormat, EventLimits, FieldPath,
     FieldSetBuilder, FieldSetOutput, Flattener, OwnedField, PatternFieldTracker, QuaminaError,
-    SegmentsTreeTracker, Transport,
+    SegmentsTreeTracker,
 };
 use rustc_hash::FxHashMap;
 
@@ -312,10 +312,7 @@ impl BinaryCloudEventFlattener {
     /// consulting every configured policy. Never touches the payload
     /// registry or body.
     fn compute_attributes(&self, envelope: &Envelope) -> Result<Attributes, QuaminaError> {
-        let prefix = match envelope.transport() {
-            Transport::Http => "ce-",
-            Transport::Kafka => "ce_",
-        };
+        let prefix = envelope.transport().cloudevents_header_prefix();
 
         let mut grouped: FxHashMap<String, Vec<String>> = FxHashMap::default();
         for (name, value) in envelope.headers().iter() {
@@ -560,15 +557,7 @@ fn unsupported_value(message: impl Into<String>) -> QuaminaError {
 /// embedded newline (which would corrupt the single-segment matcher path)
 /// or invalid UTF-8.
 fn normalize_attribute_name(name: &[u8]) -> Result<String, QuaminaError> {
-    if name.contains(&b'\n') {
-        return Err(invalid_envelope(
-            "name",
-            "header name contains an embedded newline, which would corrupt the matcher path",
-        ));
-    }
-    let text = std::str::from_utf8(name)
-        .map_err(|_| invalid_envelope("name", "header name is not valid UTF-8"))?;
-    Ok(text.to_ascii_lowercase())
+    crate::envelope::normalize_header_name(name, EventFormat::CloudEventsBinary)
 }
 
 /// The media type portion of a `Content-Type` value: everything before the

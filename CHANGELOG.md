@@ -10,6 +10,16 @@ Style inspired by [ripgrep's CHANGELOG](https://github.com/BurntSushi/ripgrep/bl
 
 ### Changed
 - Commit `Cargo.lock` so local builds, CI, and audits resolve the same dependency versions (#195)
+- Deduped the binary flatteners (CBOR, MessagePack, Protobuf, Avro, headers, CloudEvents) added in the previous round: shared lossless-integer canonicalization (`NumericPolicy::canonicalize_int`), a shared byte cursor for CBOR/MessagePack (`byte_cursor.rs`), shared header-name normalization and CloudEvents header-prefix logic, and full adoption of `decoder_errors`' construction helpers in `canonical.rs`. `DecoderBoundary::validate` and CBOR's `validate_number_syntax` were split into smaller, single-purpose steps; CBOR's `read_arg` now returns a `CborArgument` enum instead of a `(u64, bool)` tuple with a documented "meaningless when indefinite" caveat.
+- `decoder_errors` is now unconditionally compiled (previously feature-gated) since `canonical.rs` and `format_policies.rs`, both always compiled, depend on it directly.
+
+### Fixed
+- `avro.rs`'s `decode_map` no longer computes an unused `block_offset` (dead copy-paste from `decode_array`).
+- `protobuf.rs`'s `push_next_array_pos` documents, rather than silently masks, why its `i32`-to-`usize` conversion cannot fail.
+- `Headers::is_empty`'s doc comment no longer describes a `name` parameter the method doesn't take (stale copy from a sibling method).
+
+### Added
+- Direct unit test coverage for `canonical.rs` (`CanonicalValue::number`'s grammar, `DecoderBoundary::validate`'s limit/duplicate/array-conflict checks), which previously had none within the main crate — its only prior coverage lived in the separate `tests/contracts` crate, invisible to `cargo-mutants`.
 
 ## [0.7.0] — 2026-08-03
 

@@ -1529,7 +1529,6 @@ impl<'f> Decoder<'f> {
         self.check_depth(new_depth, offset)?;
         let mut seen_keys: FxHashSet<String> = FxHashSet::default();
         loop {
-            let block_offset = cursor.pos;
             let count = cursor.read_block_count(self.limits.max_container_items)?;
             if count == 0 {
                 break;
@@ -1559,7 +1558,6 @@ impl<'f> Decoder<'f> {
                 self.path_prefix.truncate(saved_len);
                 result?;
             }
-            let _ = block_offset;
         }
         Ok(())
     }

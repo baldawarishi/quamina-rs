@@ -43,7 +43,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::{
     ArrayPos, BinaryValuePolicy, CanonicalValue, EventFormat, EventLimits, Flattener, MapKeyPolicy,
-    OwnedField, QuaminaError, SegmentsTreeTracker,
+    NumericPolicy, OwnedField, QuaminaError, SegmentsTreeTracker,
 };
 
 // =============================================================================
@@ -712,19 +712,10 @@ fn duplicate_field() -> QuaminaError {
     crate::decoder_errors::duplicate_field(EventFormat::Protobuf)
 }
 
-/// Largest integer magnitude that round-trips exactly through `f64`, i.e. 2^53.
-const MAX_SAFE_INT: i128 = 9_007_199_254_740_992;
-
-/// Reject an integer whose magnitude exceeds [`MAX_SAFE_INT`], per
-/// [`NumericPolicy::LosslessQuamina`](crate::NumericPolicy::LosslessQuamina).
-fn lossless_i64(value: i128, offset: usize) -> Result<i64, QuaminaError> {
-    if !(-MAX_SAFE_INT..=MAX_SAFE_INT).contains(&value) {
-        return Err(
-            unsupported_value("integer exceeds lossless numeric range").at_byte_offset(offset)
-        );
-    }
-    #[allow(clippy::cast_possible_truncation)]
-    Ok(value as i64)
+/// Canonicalize an integer decoded from the wire, rejecting a magnitude that
+/// exceeds [`NumericPolicy::LosslessQuamina`](crate::NumericPolicy::LosslessQuamina).
+fn lossless_int(value: i128, offset: usize) -> Result<CanonicalValue, QuaminaError> {
+    NumericPolicy::LosslessQuamina.canonicalize_int(value, EventFormat::Protobuf, offset)
 }
 
 // =============================================================================
@@ -1165,18 +1156,9 @@ impl<'a> Decoder<'a> {
                 Ok(CanonicalValue::from_i64(i64::from(value)))
             }
             #[allow(clippy::cast_possible_wrap)]
-            Kind::Int64 => Ok(CanonicalValue::from_i64(lossless_i64(
-                i128::from(raw as i64),
-                offset,
-            )?)),
-            Kind::Uint64 => Ok(CanonicalValue::from_i64(lossless_i64(
-                i128::from(raw),
-                offset,
-            )?)),
-            Kind::Sint64 => Ok(CanonicalValue::from_i64(lossless_i64(
-                i128::from(crate::zigzag::decode64(raw)),
-                offset,
-            )?)),
+            Kind::Int64 => lossless_int(i128::from(raw as i64), offset),
+            Kind::Uint64 => lossless_int(i128::from(raw), offset),
+            Kind::Sint64 => lossless_int(i128::from(crate::zigzag::decode64(raw)), offset),
             _ => unreachable!("caller filtered to varint kinds"),
         }
     }
@@ -1202,18 +1184,12 @@ impl<'a> Decoder<'a> {
             Kind::Fixed64 => {
                 let bytes = self.take_fixed(8, end, offset)?;
                 let raw = u64::from_le_bytes(bytes.try_into().expect("fixed64 is 8 bytes"));
-                Ok(CanonicalValue::from_i64(lossless_i64(
-                    i128::from(raw),
-                    offset,
-                )?))
+                lossless_int(i128::from(raw), offset)
             }
             Kind::Sfixed64 => {
                 let bytes = self.take_fixed(8, end, offset)?;
                 let raw = i64::from_le_bytes(bytes.try_into().expect("sfixed64 is 8 bytes"));
-                Ok(CanonicalValue::from_i64(lossless_i64(
-                    i128::from(raw),
-                    offset,
-                )?))
+                lossless_int(i128::from(raw), offset)
             }
             Kind::Float => {
                 let bytes = self.take_fixed(4, end, offset)?;
@@ -1350,7 +1326,9 @@ impl<'a> Decoder<'a> {
         entry.1 = entry.1.checked_add(1).ok_or_else(|| {
             limit_exceeded("array position exceeds i32 range").at_byte_offset(offset)
         })?;
-        let position = usize::try_from(entry.1).unwrap_or(usize::MAX);
+        // entry.1 was just incremented from a non-negative start and is
+        // never negative, so it always fits in usize on any supported target.
+        let position = usize::try_from(entry.1).expect("positive i32 always fits in usize");
         if position > self.limits.max_container_items {
             return Err(limit_exceeded("max_container_items exceeded").at_byte_offset(offset));
         }

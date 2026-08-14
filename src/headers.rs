@@ -452,16 +452,9 @@ impl HeadersFlattener {
     }
 
     fn normalize_name(&self, name: &[u8]) -> Result<String, QuaminaError> {
-        if name.contains(&b'\n') {
-            return Err(invalid_envelope(
-                "name",
-                "header name contains an embedded newline, which would corrupt the matcher path",
-            ));
-        }
-        let text = std::str::from_utf8(name)
-            .map_err(|_| invalid_envelope("name", "header name is not valid UTF-8"))?;
+        let lowercased = crate::envelope::normalize_header_name(name, EventFormat::Headers)?;
         match self.names {
-            HeaderNamePolicy::AsciiLowercase => Ok(text.to_ascii_lowercase()),
+            HeaderNamePolicy::AsciiLowercase => Ok(lowercased),
         }
     }
 
@@ -509,7 +502,7 @@ impl HeadersFlattener {
 
     fn decode_item(&self, raw: &[u8]) -> Vec<u8> {
         let trimmed = match self.whitespace {
-            WhitespacePolicy::TrimOptionalWhitespace => trim_ascii_whitespace(raw),
+            WhitespacePolicy::TrimOptionalWhitespace => raw.trim_ascii(),
         };
         match self.http_value_decoding {
             HttpValueDecoding::Raw => trimmed.to_vec(),
@@ -556,10 +549,6 @@ impl EnvelopeFlattener for HeadersFlattener {
 // Error helpers
 // =============================================================================
 
-fn invalid_envelope(attribute: &'static str, message: impl Into<String>) -> QuaminaError {
-    crate::decoder_errors::invalid_envelope(EventFormat::Headers, attribute, message)
-}
-
 fn conflicting_headers(message: impl Into<String>) -> QuaminaError {
     crate::decoder_errors::conflicting_envelope_headers(EventFormat::Headers, message)
 }
@@ -579,19 +568,6 @@ fn unsupported_value(message: impl Into<String>) -> QuaminaError {
 // =============================================================================
 // Byte-level helpers
 // =============================================================================
-
-/// Trim leading/trailing ASCII whitespace, never panicking on empty input.
-fn trim_ascii_whitespace(bytes: &[u8]) -> &[u8] {
-    let start = bytes
-        .iter()
-        .position(|b| !b.is_ascii_whitespace())
-        .unwrap_or(bytes.len());
-    let end = bytes
-        .iter()
-        .rposition(|b| !b.is_ascii_whitespace())
-        .map_or(start, |p| p + 1);
-    &bytes[start..end]
-}
 
 /// Resolve `\X` backslash escapes (any escaped byte becomes itself,
 /// dropping the backslash) throughout `bytes`.

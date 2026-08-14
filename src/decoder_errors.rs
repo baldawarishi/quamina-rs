@@ -113,3 +113,41 @@ pub fn envelope_path_collision(format: EventFormat, message: impl Into<String>) 
         message: message.into(),
     }
 }
+
+/// Build an "invalid field path" error for `format`.
+pub fn invalid_event_path(format: EventFormat, message: impl Into<String>) -> QuaminaError {
+    QuaminaError::InvalidEventPath {
+        format,
+        location: ErrorLocation::default(),
+        message: message.into(),
+    }
+}
+
+/// Build an "ambiguous field path" error for `format`: a raw path embedded
+/// the segment separator instead of being constructed as distinct segments.
+pub fn ambiguous_event_path(format: EventFormat) -> QuaminaError {
+    QuaminaError::AmbiguousEventPath {
+        format,
+        location: ErrorLocation::default(),
+    }
+}
+
+/// Build an "invalid canonical field" error for `format`: a raw scalar's
+/// bytes did not match its declared numeric/string tag.
+pub fn invalid_canonical_field(format: EventFormat, message: impl Into<String>) -> QuaminaError {
+    QuaminaError::InvalidCanonicalField {
+        format,
+        location: ErrorLocation::default(),
+        message: message.into(),
+    }
+}
+
+/// Build a "conflicting array id" error for `format`: the same array id was
+/// used for two structurally different arrays.
+pub fn conflicting_array_id(format: EventFormat, id: i32) -> QuaminaError {
+    QuaminaError::ConflictingArrayId {
+        format,
+        location: ErrorLocation::default(),
+        id,
+    }
+}

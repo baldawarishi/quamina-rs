@@ -8,6 +8,10 @@
 //! [`OwnedField`](crate::OwnedField) values directly when that is simpler,
 //! reusing the canonicalization helpers here where useful.
 
+use crate::decoder_errors::{
+    ambiguous_event_path, conflicting_array_id, duplicate_field, invalid_canonical_field,
+    invalid_event_path, limit_exceeded,
+};
 use crate::{ErrorLocation, EventFormat, EventLimits, QuaminaError};
 use rustc_hash::{FxHashMap, FxHashSet};
 
@@ -165,6 +169,18 @@ fn invalid_number(text: &str) -> QuaminaError {
     }
 }
 
+/// Consume a run of one or more ASCII digits from `bytes` starting at `*i`,
+/// advancing `*i` past them. Returns `false` (leaving `*i` unmoved) if there
+/// is no digit at the starting position.
+fn consume_digits(bytes: &[u8], i: &mut usize) -> bool {
+    let count = bytes[*i..]
+        .iter()
+        .take_while(|b| b.is_ascii_digit())
+        .count();
+    *i += count;
+    count > 0
+}
+
 /// Validate that `text` matches a strict `-?digit+(.digit+)?([eE][+-]?digit+)?`
 /// grammar, rejecting `NaN`/`inf`/trailing garbage/empty input outright
 /// before any numeric parsing is attempted.
@@ -177,20 +193,12 @@ fn validate_number_syntax(text: &str) -> Result<(), QuaminaError> {
     if bytes[i] == b'-' {
         i += 1;
     }
-    let int_start = i;
-    while i < bytes.len() && bytes[i].is_ascii_digit() {
-        i += 1;
-    }
-    if i == int_start {
+    if !consume_digits(bytes, &mut i) {
         return Err(invalid_number(text));
     }
     if i < bytes.len() && bytes[i] == b'.' {
         i += 1;
-        let frac_start = i;
-        while i < bytes.len() && bytes[i].is_ascii_digit() {
-            i += 1;
-        }
-        if i == frac_start {
+        if !consume_digits(bytes, &mut i) {
             return Err(invalid_number(text));
         }
     }
@@ -199,11 +207,7 @@ fn validate_number_syntax(text: &str) -> Result<(), QuaminaError> {
         if i < bytes.len() && (bytes[i] == b'+' || bytes[i] == b'-') {
             i += 1;
         }
-        let exp_start = i;
-        while i < bytes.len() && bytes[i].is_ascii_digit() {
-            i += 1;
-        }
-        if i == exp_start {
+        if !consume_digits(bytes, &mut i) {
             return Err(invalid_number(text));
         }
     }
@@ -645,11 +649,7 @@ impl DecoderBoundary {
     }
 
     fn error(&self, message: impl Into<String>) -> QuaminaError {
-        QuaminaError::EventLimitExceeded {
-            format: self.format,
-            location: ErrorLocation::default(),
-            message: message.into(),
-        }
+        limit_exceeded(self.format, message)
     }
 
     fn check_array_conflicts(&self, raw: &[RawField]) -> Result<(), QuaminaError> {
@@ -670,17 +670,64 @@ impl DecoderBoundary {
                     }
                     Some((seen_depth, seen_prefix)) => {
                         if *seen_depth != depth || seen_prefix != &prefix {
-                            return Err(QuaminaError::ConflictingArrayId {
-                                format: self.format,
-                                location: ErrorLocation::default(),
-                                id: entry.id,
-                            });
+                            return Err(conflicting_array_id(self.format, entry.id));
                         }
                     }
                 }
             }
         }
         Ok(())
+    }
+
+    /// Validate one raw field against `self`'s limits and encoding rules,
+    /// recording it in `seen_fields` for the batch-wide duplicate check.
+    fn validate_one_field(
+        &self,
+        index: usize,
+        field: RawField,
+        seen_fields: &mut FxHashSet<(Vec<u8>, Vec<RawArrayPos>)>,
+    ) -> Result<crate::OwnedField, QuaminaError> {
+        if field.path.len() > self.limits.max_path_bytes {
+            return Err(self.error("max_path_bytes exceeded").at_field_index(index));
+        }
+        if field.value.len() > self.limits.max_scalar_bytes {
+            return Err(self
+                .error("max_scalar_bytes exceeded")
+                .at_field_index(index));
+        }
+        if field.array_trail.len() > self.limits.max_depth {
+            return Err(self.error("max_depth exceeded").at_field_index(index));
+        }
+        let path_str = std::str::from_utf8(&field.path).map_err(|_| {
+            invalid_event_path(self.format, "field path is not valid UTF-8").at_field_index(index)
+        })?;
+        if path_str.contains('\n') {
+            return Err(ambiguous_event_path(self.format).at_field_index(index));
+        }
+        if !validate_scalar(&field.value, field.is_number) {
+            return Err(invalid_canonical_field(
+                self.format,
+                "scalar bytes do not match the declared numeric/string tag",
+            )
+            .at_field_index(index));
+        }
+        let key = (field.path.clone(), field.array_trail.clone());
+        if !seen_fields.insert(key) {
+            return Err(duplicate_field(self.format).at_field_index(index));
+        }
+        Ok(crate::OwnedField {
+            path: field.path,
+            val: field.value,
+            array_trail: field
+                .array_trail
+                .iter()
+                .map(|p| crate::ArrayPos {
+                    array: p.id,
+                    pos: p.pos,
+                })
+                .collect(),
+            is_number: field.is_number,
+        })
     }
 
     /// Validate a batch of raw fields, returning either the equivalent
@@ -703,61 +750,7 @@ impl DecoderBoundary {
         let mut seen_fields: FxHashSet<(Vec<u8>, Vec<RawArrayPos>)> = FxHashSet::default();
         let mut out = Vec::with_capacity(raw.len());
         for (index, field) in raw.into_iter().enumerate() {
-            if field.path.len() > self.limits.max_path_bytes {
-                return Err(self.error("max_path_bytes exceeded").at_field_index(index));
-            }
-            if field.value.len() > self.limits.max_scalar_bytes {
-                return Err(self
-                    .error("max_scalar_bytes exceeded")
-                    .at_field_index(index));
-            }
-            if field.array_trail.len() > self.limits.max_depth {
-                return Err(self.error("max_depth exceeded").at_field_index(index));
-            }
-            let path_str = std::str::from_utf8(&field.path).map_err(|_| {
-                QuaminaError::InvalidEventPath {
-                    format: self.format,
-                    location: ErrorLocation::default(),
-                    message: "field path is not valid UTF-8".to_owned(),
-                }
-                .at_field_index(index)
-            })?;
-            if path_str.contains('\n') {
-                return Err(QuaminaError::AmbiguousEventPath {
-                    format: self.format,
-                    location: ErrorLocation::default(),
-                }
-                .at_field_index(index));
-            }
-            if !validate_scalar(&field.value, field.is_number) {
-                return Err(QuaminaError::InvalidCanonicalField {
-                    format: self.format,
-                    location: ErrorLocation::default(),
-                    message: "scalar bytes do not match the declared numeric/string tag".to_owned(),
-                }
-                .at_field_index(index));
-            }
-            let key = (field.path.clone(), field.array_trail.clone());
-            if !seen_fields.insert(key) {
-                return Err(QuaminaError::DuplicateEventField {
-                    format: self.format,
-                    location: ErrorLocation::default(),
-                }
-                .at_field_index(index));
-            }
-            out.push(crate::OwnedField {
-                path: field.path,
-                val: field.value,
-                array_trail: field
-                    .array_trail
-                    .iter()
-                    .map(|p| crate::ArrayPos {
-                        array: p.id,
-                        pos: p.pos,
-                    })
-                    .collect(),
-                is_number: field.is_number,
-            });
+            out.push(self.validate_one_field(index, field, &mut seen_fields)?);
         }
         Ok(out)
     }
@@ -765,4 +758,200 @@ impl DecoderBoundary {
 
 fn split_on_newline(path: &[u8]) -> Vec<&[u8]> {
     path.split(|&b| b == b'\n').collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // -- CanonicalValue::number / validate_number_syntax / consume_digits --
+
+    #[test]
+    fn number_accepts_integer_decimal_exponent_and_negative_forms() {
+        assert_eq!(
+            CanonicalValue::number("0").unwrap(),
+            CanonicalValue::Number("0".to_owned())
+        );
+        assert!(CanonicalValue::number("123").is_ok());
+        assert!(CanonicalValue::number("-123").is_ok());
+        assert!(CanonicalValue::number("1.5").is_ok());
+        assert!(CanonicalValue::number("-1.5").is_ok());
+        assert!(CanonicalValue::number("1e10").is_ok());
+        assert!(CanonicalValue::number("1E10").is_ok());
+        assert!(CanonicalValue::number("1e+10").is_ok());
+        assert!(CanonicalValue::number("1e-10").is_ok());
+        assert!(CanonicalValue::number("1.5e10").is_ok());
+    }
+
+    #[test]
+    fn number_rejects_empty_and_sign_only_input() {
+        assert!(CanonicalValue::number("").is_err());
+        assert!(CanonicalValue::number("-").is_err());
+    }
+
+    #[test]
+    fn number_rejects_a_decimal_point_with_no_fractional_digits() {
+        assert!(CanonicalValue::number("1.").is_err());
+        assert!(CanonicalValue::number("1.e5").is_err());
+    }
+
+    #[test]
+    fn number_rejects_an_exponent_marker_with_no_exponent_digits() {
+        assert!(CanonicalValue::number("1e").is_err());
+        assert!(CanonicalValue::number("1e+").is_err());
+        assert!(CanonicalValue::number("1e-").is_err());
+    }
+
+    #[test]
+    fn number_rejects_trailing_garbage_and_non_numeric_text() {
+        assert!(CanonicalValue::number("1.2.3").is_err());
+        assert!(CanonicalValue::number("123abc").is_err());
+        assert!(CanonicalValue::number("abc").is_err());
+        assert!(CanonicalValue::number("NaN").is_err());
+        assert!(CanonicalValue::number("inf").is_err());
+        assert!(CanonicalValue::number("Infinity").is_err());
+        assert!(CanonicalValue::number(" 1").is_err());
+        assert!(CanonicalValue::number("1 ").is_err());
+    }
+
+    #[test]
+    fn number_rejects_a_leading_digit_missing_before_the_decimal_point() {
+        // consume_digits must require at least one digit for the integer
+        // part; a bare ".5" has no leading digit run at all.
+        assert!(CanonicalValue::number(".5").is_err());
+    }
+
+    #[test]
+    fn from_f64_round_trips_through_canonical_number_text() {
+        assert_eq!(
+            CanonicalValue::from_f64(2.0).unwrap(),
+            CanonicalValue::Number("2".to_owned())
+        );
+        assert!(CanonicalValue::from_f64(f64::NAN).is_err());
+        assert!(CanonicalValue::from_f64(f64::INFINITY).is_err());
+    }
+
+    // -- DecoderBoundary::validate / check_array_conflicts --
+
+    fn field(path: &str, value: &str, is_number: bool, trail: Vec<(i32, i32)>) -> RawField {
+        RawField::new(
+            path.as_bytes().to_vec(),
+            value.as_bytes().to_vec(),
+            is_number,
+            trail
+                .into_iter()
+                .map(|(id, pos)| RawArrayPos::new(id, pos))
+                .collect(),
+        )
+    }
+
+    fn boundary(limits: EventLimits) -> DecoderBoundary {
+        DecoderBoundary::new(EventFormat::Custom("test"), limits)
+    }
+
+    #[test]
+    fn validate_accepts_a_well_formed_batch() {
+        let raw = vec![
+            field("a", "\"hi\"", false, vec![]),
+            field("b", "1", true, vec![]),
+        ];
+        let out = boundary(EventLimits::default()).validate(raw).unwrap();
+        assert_eq!(out.len(), 2);
+    }
+
+    #[test]
+    fn validate_rejects_a_scalar_that_does_not_match_its_declared_tag() {
+        // Tagged as a number but not valid canonical number text.
+        let raw = vec![field("a", "not-a-number", true, vec![])];
+        let err = boundary(EventLimits::default()).validate(raw).unwrap_err();
+        assert!(matches!(err, QuaminaError::InvalidCanonicalField { .. }));
+    }
+
+    #[test]
+    fn validate_rejects_a_path_embedding_the_segment_separator() {
+        let raw = vec![field("a\nb", "\"x\"", false, vec![])];
+        let err = boundary(EventLimits::default()).validate(raw).unwrap_err();
+        assert!(matches!(err, QuaminaError::AmbiguousEventPath { .. }));
+    }
+
+    #[test]
+    fn validate_rejects_a_duplicate_path_and_array_trail() {
+        let raw = vec![
+            field("a", "\"x\"", false, vec![]),
+            field("a", "\"y\"", false, vec![]),
+        ];
+        let err = boundary(EventLimits::default()).validate(raw).unwrap_err();
+        assert!(matches!(err, QuaminaError::DuplicateEventField { .. }));
+    }
+
+    #[test]
+    fn validate_accepts_a_path_at_exactly_max_path_bytes_and_rejects_one_byte_over() {
+        let limits = EventLimits {
+            max_path_bytes: 4,
+            ..EventLimits::default()
+        };
+        let at_limit = vec![field("abcd", "\"x\"", false, vec![])];
+        assert!(boundary(limits).validate(at_limit).is_ok());
+
+        let over_limit = vec![field("abcde", "\"x\"", false, vec![])];
+        let err = boundary(limits).validate(over_limit).unwrap_err();
+        assert!(matches!(err, QuaminaError::EventLimitExceeded { .. }));
+    }
+
+    #[test]
+    fn validate_accepts_a_batch_of_exactly_max_fields_and_rejects_one_more() {
+        let limits = EventLimits {
+            max_fields: 2,
+            ..EventLimits::default()
+        };
+        let at_limit = vec![
+            field("a", "\"x\"", false, vec![]),
+            field("b", "\"x\"", false, vec![]),
+        ];
+        assert!(boundary(limits).validate(at_limit).is_ok());
+
+        let over_limit = vec![
+            field("a", "\"x\"", false, vec![]),
+            field("b", "\"x\"", false, vec![]),
+            field("c", "\"x\"", false, vec![]),
+        ];
+        let err = boundary(limits).validate(over_limit).unwrap_err();
+        assert!(matches!(err, QuaminaError::EventLimitExceeded { .. }));
+    }
+
+    #[test]
+    fn validate_accepts_the_same_array_id_reused_at_the_same_depth_and_prefix() {
+        let raw = vec![
+            field("a", "1", true, vec![(1, 0)]),
+            field("a", "2", true, vec![(1, 1)]),
+        ];
+        assert!(boundary(EventLimits::default()).validate(raw).is_ok());
+    }
+
+    #[test]
+    fn validate_rejects_the_same_array_id_reused_at_a_different_depth() {
+        // Array id 1 first seen at depth 0 under "a", then reused at depth 1
+        // under "b\nc" -- a structurally different array reusing an id.
+        let raw = vec![
+            field("a", "1", true, vec![(1, 0)]),
+            field("b\nc", "2", true, vec![(1, 0), (1, 0)]),
+        ];
+        let err = boundary(EventLimits::default()).validate(raw).unwrap_err();
+        assert!(matches!(
+            err,
+            QuaminaError::ConflictingArrayId { id: 1, .. }
+        ));
+    }
+
+    #[test]
+    fn validate_rejects_a_field_path_that_is_not_utf8() {
+        let raw = vec![RawField::new(
+            vec![0xFF, 0xFE],
+            b"\"x\"".to_vec(),
+            false,
+            vec![],
+        )];
+        let err = boundary(EventLimits::default()).validate(raw).unwrap_err();
+        assert!(matches!(err, QuaminaError::InvalidEventPath { .. }));
+    }
 }

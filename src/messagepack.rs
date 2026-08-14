@@ -225,9 +225,6 @@ fn duplicate_field() -> QuaminaError {
     crate::decoder_errors::duplicate_field(EventFormat::MessagePack)
 }
 
-/// Largest integer magnitude that round-trips exactly through `f64`, i.e. 2^53.
-const MAX_SAFE_INT: i128 = 9_007_199_254_740_992;
-
 // =============================================================================
 // Decoder
 // =============================================================================
@@ -489,17 +486,8 @@ impl<'a> Decoder<'a> {
     }
 
     fn canonical_int(&self, value: i128, offset: usize) -> Result<CanonicalValue, QuaminaError> {
-        match self.numbers {
-            NumericPolicy::LosslessQuamina => {
-                if !(-MAX_SAFE_INT..=MAX_SAFE_INT).contains(&value) {
-                    return Err(unsupported_value("integer exceeds lossless numeric range")
-                        .at_byte_offset(offset));
-                }
-                // Range-checked above: value fits in i64.
-                #[allow(clippy::cast_possible_truncation)]
-                Ok(CanonicalValue::from_i64(value as i64))
-            }
-        }
+        self.numbers
+            .canonicalize_int(value, EventFormat::MessagePack, offset)
     }
 
     // -- resource limits -----------------------------------------------
@@ -673,46 +661,27 @@ impl<'a> Decoder<'a> {
     // -- byte-level primitives ------------------------------------------
 
     fn peek_u8(&self) -> Result<u8, QuaminaError> {
-        self.data
-            .get(self.pos)
-            .copied()
-            .ok_or_else(|| invalid_event("unexpected end of event").at_byte_offset(self.pos))
+        crate::byte_cursor::peek_u8(self.data, self.pos, EventFormat::MessagePack)
     }
 
     fn take_u8(&mut self) -> Result<u8, QuaminaError> {
-        let byte = self.peek_u8()?;
-        self.pos += 1;
-        Ok(byte)
+        crate::byte_cursor::take_u8(self.data, &mut self.pos, EventFormat::MessagePack)
     }
 
     fn take_bytes(&mut self, len: usize) -> Result<&'a [u8], QuaminaError> {
-        let start = self.pos;
-        let end = start
-            .checked_add(len)
-            .ok_or_else(|| invalid_event("length overflow").at_byte_offset(start))?;
-        let slice = self
-            .data
-            .get(start..end)
-            .ok_or_else(|| invalid_event("unexpected end of event").at_byte_offset(start))?;
-        self.pos = end;
-        Ok(slice)
+        crate::byte_cursor::take_bytes(self.data, &mut self.pos, len, EventFormat::MessagePack)
     }
 
     fn take_u16(&mut self) -> Result<u16, QuaminaError> {
-        let b = self.take_bytes(2)?;
-        Ok(u16::from_be_bytes([b[0], b[1]]))
+        crate::byte_cursor::take_u16(self.data, &mut self.pos, EventFormat::MessagePack)
     }
 
     fn take_u32(&mut self) -> Result<u32, QuaminaError> {
-        let b = self.take_bytes(4)?;
-        Ok(u32::from_be_bytes([b[0], b[1], b[2], b[3]]))
+        crate::byte_cursor::take_u32(self.data, &mut self.pos, EventFormat::MessagePack)
     }
 
     fn take_u64(&mut self) -> Result<u64, QuaminaError> {
-        let b = self.take_bytes(8)?;
-        Ok(u64::from_be_bytes([
-            b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7],
-        ]))
+        crate::byte_cursor::take_u64(self.data, &mut self.pos, EventFormat::MessagePack)
     }
 
     fn take_i8(&mut self) -> Result<i8, QuaminaError> {

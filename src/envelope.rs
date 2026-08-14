@@ -4,6 +4,10 @@
 //! and CloudEvents-aware flatteners that need metadata alongside (or
 //! instead of) a JSON-shaped event body.
 
+#[cfg(any(feature = "headers", feature = "cloudevents"))]
+use crate::EventFormat;
+#[cfg(any(feature = "headers", feature = "cloudevents"))]
+use crate::decoder_errors::invalid_envelope;
 use crate::{OwnedField, QuaminaError, SegmentsTreeTracker};
 
 /// The transport an [`Envelope`] was received over. HTTP and Kafka bind
@@ -15,6 +19,39 @@ pub enum Transport {
     Http,
     /// Kafka record headers.
     Kafka,
+}
+
+impl Transport {
+    /// The prefix CloudEvents binds its context attributes under on this
+    /// transport: `ce-` over HTTP, `ce_` over Kafka.
+    #[must_use]
+    pub const fn cloudevents_header_prefix(self) -> &'static str {
+        match self {
+            Self::Http => "ce-",
+            Self::Kafka => "ce_",
+        }
+    }
+}
+
+/// Validate and lowercase a transport header or CloudEvents attribute name:
+/// reject an embedded newline (which would corrupt the single-segment
+/// matcher path) or invalid UTF-8, then ASCII-lowercase the result. Shared
+/// by every envelope-aware decoder (headers, CloudEvents).
+#[cfg(any(feature = "headers", feature = "cloudevents"))]
+pub(crate) fn normalize_header_name(
+    name: &[u8],
+    format: EventFormat,
+) -> Result<String, QuaminaError> {
+    if name.contains(&b'\n') {
+        return Err(invalid_envelope(
+            format,
+            "name",
+            "header name contains an embedded newline, which would corrupt the matcher path",
+        ));
+    }
+    let text = std::str::from_utf8(name)
+        .map_err(|_| invalid_envelope(format, "name", "header name is not valid UTF-8"))?;
+    Ok(text.to_ascii_lowercase())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -53,7 +90,7 @@ impl Headers {
             .collect()
     }
 
-    /// True if no header named `name` (case-insensitive) is present.
+    /// True if this envelope carries no headers at all.
     #[must_use]
     pub const fn is_empty(&self) -> bool {
         self.entries.is_empty()
@@ -172,10 +209,7 @@ impl EnvelopeBuilder {
     /// headers (`ce-*` over HTTP, `ce_*` over Kafka).
     #[must_use]
     pub fn cloud_event_required(self, id: &str, ty: &str, source: &str, specversion: &str) -> Self {
-        let prefix = match self.transport {
-            Transport::Http => "ce-",
-            Transport::Kafka => "ce_",
-        };
+        let prefix = self.transport.cloudevents_header_prefix();
         self.header(&format!("{prefix}specversion"), specversion.as_bytes())
             .header(&format!("{prefix}id"), id.as_bytes())
             .header(&format!("{prefix}type"), ty.as_bytes())
@@ -215,4 +249,35 @@ pub trait EnvelopeFlattener: Send + Sync {
 
     /// Create an independent copy of this flattener for parallel contexts.
     fn copy(&self) -> Box<dyn EnvelopeFlattener>;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cloudevents_header_prefix_is_transport_specific() {
+        assert_eq!(Transport::Http.cloudevents_header_prefix(), "ce-");
+        assert_eq!(Transport::Kafka.cloudevents_header_prefix(), "ce_");
+    }
+
+    #[test]
+    fn headers_is_empty_reflects_whether_any_header_was_added() {
+        let empty = Envelope::http(b"{}").build().unwrap();
+        assert!(empty.headers().is_empty());
+
+        let with_header = Envelope::http(b"{}").header("x", b"y").build().unwrap();
+        assert!(!with_header.headers().is_empty());
+    }
+
+    #[cfg(any(feature = "headers", feature = "cloudevents"))]
+    #[test]
+    fn normalize_header_name_lowercases_and_validates() {
+        assert_eq!(
+            normalize_header_name(b"Content-Type", EventFormat::Headers).unwrap(),
+            "content-type"
+        );
+        assert!(normalize_header_name(b"a\nb", EventFormat::Headers).is_err());
+        assert!(normalize_header_name(&[0xFF, 0xFE], EventFormat::Headers).is_err());
+    }
 }

@@ -8,6 +8,14 @@
 //! type here. A format-specific concept (e.g. MessagePack's extension
 //! types) stays defined in that format's own module.
 
+use crate::canonical::CanonicalValue;
+use crate::decoder_errors::unsupported_value;
+use crate::{EventFormat, QuaminaError};
+
+/// The largest integer magnitude that still round-trips exactly through an
+/// `f64`, i.e. `2^53` — matching JSON's `Number.isSafeInteger` boundary.
+const MAX_SAFE_INT: i128 = 9_007_199_254_740_992;
+
 /// How a decoder canonicalizes integers and floats to Quamina's numeric
 /// matcher representation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -17,6 +25,35 @@ pub enum NumericPolicy {
     /// non-finite floats, are rejected rather than silently truncated.
     #[default]
     LosslessQuamina,
+}
+
+impl NumericPolicy {
+    /// Canonicalize a decoded integer per this policy.
+    ///
+    /// # Errors
+    /// Returns `QuaminaError::UnsupportedEventValue` if `value`'s magnitude
+    /// exceeds what this policy allows.
+    pub fn canonicalize_int(
+        self,
+        value: i128,
+        format: EventFormat,
+        offset: usize,
+    ) -> Result<CanonicalValue, QuaminaError> {
+        match self {
+            Self::LosslessQuamina => {
+                if !(-MAX_SAFE_INT..=MAX_SAFE_INT).contains(&value) {
+                    return Err(unsupported_value(
+                        format,
+                        "integer exceeds lossless numeric range",
+                    )
+                    .at_byte_offset(offset));
+                }
+                // Range-checked above: value fits in i64.
+                #[allow(clippy::cast_possible_truncation)]
+                Ok(CanonicalValue::from_i64(value as i64))
+            }
+        }
+    }
 }
 
 /// How a decoder handles raw binary values (MessagePack `bin`, CBOR byte
@@ -58,4 +95,72 @@ pub enum RootValuePolicy {
     /// rejected, matching the JSON flattener's object-only root.
     #[default]
     MapOnly,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn canonicalize_int_accepts_zero_and_typical_values() {
+        let policy = NumericPolicy::LosslessQuamina;
+        assert_eq!(
+            policy
+                .canonicalize_int(0, EventFormat::Custom("test"), 0)
+                .unwrap(),
+            CanonicalValue::from_i64(0)
+        );
+        assert_eq!(
+            policy
+                .canonicalize_int(-42, EventFormat::Custom("test"), 0)
+                .unwrap(),
+            CanonicalValue::from_i64(-42)
+        );
+    }
+
+    #[test]
+    fn canonicalize_int_accepts_exactly_the_safe_integer_boundary() {
+        let policy = NumericPolicy::LosslessQuamina;
+        assert!(
+            policy
+                .canonicalize_int(MAX_SAFE_INT, EventFormat::Custom("test"), 0)
+                .is_ok()
+        );
+        assert!(
+            policy
+                .canonicalize_int(-MAX_SAFE_INT, EventFormat::Custom("test"), 0)
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn canonicalize_int_rejects_one_past_the_safe_integer_boundary() {
+        let policy = NumericPolicy::LosslessQuamina;
+        let over = policy.canonicalize_int(MAX_SAFE_INT + 1, EventFormat::Custom("test"), 7);
+        assert!(matches!(
+            over,
+            Err(QuaminaError::UnsupportedEventValue { .. })
+        ));
+        let under = policy.canonicalize_int(-MAX_SAFE_INT - 1, EventFormat::Custom("test"), 7);
+        assert!(matches!(
+            under,
+            Err(QuaminaError::UnsupportedEventValue { .. })
+        ));
+    }
+
+    #[test]
+    fn canonicalize_int_error_carries_the_given_format_and_offset() {
+        let err = NumericPolicy::LosslessQuamina
+            .canonicalize_int(MAX_SAFE_INT + 1, EventFormat::Cbor, 13)
+            .unwrap_err();
+        match err {
+            QuaminaError::UnsupportedEventValue {
+                format, location, ..
+            } => {
+                assert_eq!(format, EventFormat::Cbor);
+                assert_eq!(location.byte_offset(), Some(13));
+            }
+            other => panic!("expected UnsupportedEventValue, got {other:?}"),
+        }
+    }
 }
