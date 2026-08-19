@@ -1,46 +1,76 @@
-# quamina-rs
+# Quamina: JSON event filtering for Rust
 
 [![CI](https://github.com/baldawarishi/quamina-rs/actions/workflows/test.yml/badge.svg)](https://github.com/baldawarishi/quamina-rs/actions/workflows/test.yml)
 [![Crates.io](https://img.shields.io/crates/v/quamina.svg)](https://crates.io/crates/quamina)
 [![Documentation](https://docs.rs/quamina/badge.svg)](https://docs.rs/quamina)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 
-Rust port of [quamina](https://github.com/timbray/quamina), a pattern-matching library for filtering JSON objects.
+Quamina filters and routes JSON events in Rust. It matches each event against many patterns in microseconds. Use it in high-throughput cloud services and event streams.
 
-In Quamina, you add Patterns to a quamina instance, then match Events against it. Quamina tells you which Patterns matched. It does this fast—millions of events per second, regardless of how many patterns you have.
+Add JSON patterns to a matcher, then pass it an event. Quamina returns the ID of every pattern that matches.
 
-Try it online in the **[playground](https://baldawarishi.github.io/quamina-rs/)** to test patterns against JSON events in your browser.
+Quamina compiles the patterns into shared finite automata. Matching time changes little as you add patterns. The benchmarks below include matches that complete in tens or hundreds of nanoseconds.
+
+Quamina runs inside your application, with no service, network request, async runtime, or code generation.
+
+Use the [playground](https://baldawarishi.github.io/quamina-rs/) to test patterns and events in your browser.
 
 ## Contents
 
-- [Quick Start](#quick-start)
-- [Patterns](#patterns)
+- [What Quamina does](#what-quamina-does)
+- [Quick start](#quick-start)
+- [Pattern language](#pattern-language)
+- [Choosing a Rust rule engine](#choosing-a-rust-rule-engine)
 - [APIs](#apis)
 - [Concurrency](#concurrency)
 - [Performance](#performance)
+- [How it works](#how-it-works)
+- [Kani formal verification](#kani-formal-verification)
 - [Limitations](#limitations)
 - [Credits](#credits)
 
-## Quick Start
+## What Quamina does
+
+- Matches one JSON event against many patterns.
+- Returns all matching pattern IDs.
+- Supports exact values, prefixes, suffixes, wildcards, regular expressions, numeric ranges, and IP address ranges.
+- Shares matching work across patterns.
+- Runs matches in parallel when threads share a `Quamina` instance.
+- Limits pattern depth, field count, state count, and memory use.
+
+## Quick start
+
+```bash
+cargo add quamina
+```
 
 ```rust
 use quamina::Quamina;
 
-let mut q = Quamina::new();
+fn main() -> Result<(), quamina::QuaminaError> {
+    let mut q = Quamina::new();
 
-q.add_pattern("p1", r#"{"status": ["error"]}"#)?;
-q.add_pattern("p2", r#"{"level": [1, 2, 3]}"#)?;
+    q.add_pattern("p1", r#"{"status": ["error"]}"#)?;
+    q.add_pattern("p2", r#"{"level": [1, 2, 3]}"#)?;
 
-let event = r#"{"status": "error", "level": 2}"#;
-let matches = q.matches_for_event(event.as_bytes())?;
-// matches: ["p1", "p2"]
+    let event = br#"{"status": "error", "level": 2}"#;
+    let matches = q.matches_for_event(event)?;
+    assert!(matches.contains(&"p1") && matches.contains(&"p2"));
+
+    Ok(())
+}
 ```
 
-## Patterns
+## Pattern language
 
-A Pattern is a JSON object. Field values are arrays—if any element matches, it's a match. All fields mentioned must match (AND), but only one value per field needs to match (OR).
+A pattern is a JSON object. Its structure follows the event that it matches.
 
-Given this event:
+- Every field in the pattern must match.
+- A field value is an array. At least one item in the array must match.
+- Quamina ignores event fields that are not in the pattern.
+
+For example, consider this event:
+
 ```json
 {
   "source": "test.app",
@@ -52,44 +82,58 @@ Given this event:
 }
 ```
 
-These patterns match though quamina:
+Each of these patterns matches the event:
+
 ```json
 {"source": ["test.app"]}
 ```
+
 ```json
 {"detail": {"status": ["error", "warning"]}}
 ```
+
 ```json
 {"tags": ["urgent"]}
 ```
+
 ```json
 {"detail": {"code": [{"numeric": [">=", 400]}]}}
 ```
+
 ```json
 {"source": [{"prefix": "test."}]}
 ```
+
 ```json
 {"source": [{"suffix": ".app"}]}
 ```
+
 ```json
 {"source": [{"wildcard": "*.app"}]}
 ```
+
 ```json
 {"detail": {"status": [{"exists": true}]}}
 ```
+
 ```json
 {"detail": {"status": [{"anything-but": ["ok", "pending"]}]}}
 ```
+
 ```json
 {"detail": {"status": [{"equals-ignore-case": "ERROR"}]}}
 ```
+
 ```json
 {"source": [{"regexp": "test~.[a-z]+"}]}
 ```
 
 ### Pattern types
 
-**Exact match** — value must equal exactly:
+#### Exact values
+
+Match a value exactly:
+
 ```json
 {"status": ["active"]}
 {"count": [100]}
@@ -97,62 +141,100 @@ These patterns match though quamina:
 {"deleted": [null]}
 ```
 
-**Prefix/Suffix** — string starts or ends with:
+#### Prefixes and suffixes
+
+Match the start or end of a string:
+
 ```json
 {"url": [{"prefix": "https://"}]}
 {"file": [{"suffix": ".json"}]}
 ```
 
-**Wildcard** — wild-card matching:
+#### Wildcards
+
+Use `*` to match any sequence of characters:
+
 ```json
 {"message": [{"wildcard": "*error*"}]}
 {"id": [{"wildcard": "user-*-prod"}]}
 ```
 
-`*` matches any sequence. Use `\*` to match a literal asterisk, `\\` for a literal backslash.   
+Use `\*` to match an asterisk. Use `\\` to match a backslash.
 
-We also have Quamina's legacy `shellstyle` based matcher but you should avoid it. Shellstyle doesn't support `\*` or `\\` escapes. It may go away entirely in the long run. In fact, prefer to use regex whenever you are comfortable with its performance and syntax. 
+The legacy `shellstyle` matcher does not support these escape sequences. Use `wildcard` for glob-style matching or `regexp` for regular expressions. The `shellstyle` matcher might be removed in a future release.
 
-**Exists** — field presence:
+#### Field presence
+
+Match based on whether a field exists:
+
 ```json
 {"email": [{"exists": true}]}
 {"deleted_at": [{"exists": false}]}
 ```
 
-**Anything-but** — match unless value is in list:
+#### Excluded values
+
+Match unless the field contains one of the listed values:
+
 ```json
 {"status": [{"anything-but": ["pending", "cancelled"]}]}
 {"code": [{"anything-but": [400, 404, 500]}]}
 ```
 
-**Equals-ignore-case** — case-insensitive:
+#### Case-insensitive values
+
+Match a string without comparing letter case:
+
 ```json
 {"level": [{"equals-ignore-case": "ERROR"}]}
 ```
 
-**Numeric** — comparisons:
+#### Numeric ranges
+
+Compare numbers or define a range:
+
 ```json
 {"price": [{"numeric": [">", 100]}]}
 {"age": [{"numeric": [">=", 18, "<", 65]}]}
 ```
 
-**CIDR** — IP address ranges:
+#### IP address ranges
+
+Match IPv4 or IPv6 addresses with Classless Inter-Domain Routing (CIDR) notation:
+
 ```json
 {"ip": [{"cidr": "10.0.0.0/8"}]}
 {"ip": [{"cidr": "2001:db8::/32"}]}
 ```
 
-**Regexp** — I-Regexp (RFC 9485):
+#### Regular expressions
+
+Match strings with I-Regexp syntax from RFC 9485:
+
 ```json
 {"email": [{"regexp": "[a-z]+@[a-z]+\\.[a-z]+"}]}
 {"code": [{"regexp": "[A-Z]{3}-[0-9]{4}"}]}
 ```
 
-Regexp uses `~` as the escape character to stay compliant with Quamina. There's also `~d` for digits, `~p{L}` for Unicode letters, and `~b`/`~B` for word boundaries where you will pay a performance penalty depending on the patterns and events in use. 
+Regular expressions use `~` as the escape character. Use `~d` for digits, `~p{L}` for Unicode letters, and `~b` or `~B` for word boundaries. Word boundaries can make some patterns slower.
+
+## Choosing a Rust rule engine
+
+These Rust projects solve related problems. The table compares their scope. It does not compare their performance.
+
+| Project | Rules and input | Main capabilities | Use it for |
+|---|---|---|---|
+| **Quamina** | JSON patterns and JSON event bytes | Matches many patterns in a shared automaton; returns every matching ID | Filtering and routing event streams with many patterns |
+| [`gene`](https://docs.rs/gene/latest/gene/) | YAML rules and Rust event types | Supports comparisons, regular expressions, bitwise operations, dependencies, and templates | Detecting security events and adding rule metadata |
+| [`json_rules_engine`](https://docs.rs/json-rules-engine/latest/json_rules_engine/) | Rust condition trees and serializable facts | Supports logical conditions, equality, membership, string checks, and numeric ranges | Building application rules with condition trees and actions |
+| [`cel-interpreter`](https://docs.rs/cel-interpreter/latest/cel_interpreter/) | Common Expression Language programs and Rust values | Supports expressions, collections, functions, time operations, and optional regular expressions | Evaluating portable business expressions and validation rules |
+| [`regorus`](https://docs.rs/regorus/latest/regorus/) | Rego policies and JSON-like values | Supports policy logic, data joins, comprehensions, built-in functions, and extensions | Building authorization and policy-as-code systems |
+
+Choose Quamina when you need to find every pattern that matches a JSON event. Choose a general expression or policy engine when rules need calculations, functions, data joins, or detailed decision results.
 
 ## APIs
 
-### Creating and configuring
+### Create and configure a matcher
 
 ```rust
 use quamina::{Quamina, QuaminaBuilder};
@@ -178,7 +260,7 @@ let q = QuaminaBuilder::<String>::new()
     .build()?;
 ```
 
-### Adding and removing patterns
+### Add and remove patterns
 
 ```rust
 q.add_pattern("my-rule", r#"{"x": [1]}"#)?;
@@ -186,7 +268,7 @@ q.delete_patterns(&"my-rule")?;
 q.clear();
 ```
 
-### Matching
+### Match an event
 
 ```rust
 let matches = q.matches_for_event(event)?;  // Vec of matching IDs
@@ -194,9 +276,9 @@ let matched = q.has_matches(event)?;         // bool
 let count   = q.count_matches(event)?;       // number of matches
 ```
 
-### Errors
+### Handle errors
 
-`add_pattern` returns an error if the pattern JSON is malformed, uses invalid syntax, or exceeds complexity limits. `matches_for_event` returns an error if the event isn't valid JSON.
+`add_pattern` returns an error when a pattern contains malformed JSON, uses invalid syntax, or exceeds a configured complexity limit. `matches_for_event` returns an error when the event is not valid JSON.
 
 ```rust
 match q.add_pattern("bad", r#"{"x": "not-an-array"}"#) {
@@ -208,19 +290,19 @@ match q.add_pattern("bad", r#"{"x": "not-an-array"}"#) {
 
 ## Concurrency
 
-A single `Quamina` instance can be safely shared across threads via `Arc`. Matching uses thread-local buffers, so multiple threads calling `matches_for_event()` on the same `Arc<Quamina>` run in parallel without contention.
+Share one `Quamina` instance across threads with `Arc`. Each thread uses its own matching buffers. Threads can call `matches_for_event()` at the same time without contending for a global match lock.
 
-Pattern addition (`add_pattern`) requires `&mut self`. For concurrent writes, wrap in a lock:
+`add_pattern` needs mutable access. If several threads change patterns, protect the instance with a lock:
 
 ```rust
 let q = Arc::new(RwLock::new(Quamina::new()));
 ```
 
-`clone()` rebuilds the automaton from stored patterns. It's not a cheap operation for instances with many patterns.
+`clone()` rebuilds the automaton from its stored patterns. Cloning can take time when the matcher contains many patterns.
 
 ## Performance
 
-Matching time is nearly independent of pattern count. All patterns compile into a single automaton, so 10 patterns and 10,000 patterns have similar matching speed.
+Quamina compiles all patterns into one automaton. Matching time grows slowly as the pattern count increases.
 
 ### Pattern count scaling
 
@@ -231,7 +313,7 @@ On an M4 Max:
 | 100 | ~110 ns |
 | 10,000 | ~90 ns |
 
-Matching time is sublinear in pattern count because all patterns share one automaton.
+Matching cost stays nearly flat in this benchmark. Small differences can reflect measurement noise.
 
 ### Event benchmarks
 
@@ -258,14 +340,18 @@ Measured in `BuiltForSpeed` mode:
 
 ### What affects performance
 
-- **Unique fields**: More unique field paths across patterns = more work per event
-- **Event size**: Larger JSON takes longer to parse and flatten
-- **Pattern complexity**: Regexps with Unicode categories (e.g., `~p{L}`) are slower to compile
-- **Build mode**: `BuiltForSpeed` trades slower adds for faster matching of wildcard/regexp patterns (see below)
+- Each unique field path adds work for every event.
+- Large JSON events take longer to parse and flatten.
+- Regular expressions with Unicode categories, such as `~p{L}`, take longer to compile.
+- `BuiltForSpeed` takes longer to add patterns but matches wildcard and regular expression patterns faster.
 
-### Comfort vs speed
+### Choose a build mode
 
-Wildcard and regexp patterns compile to NFAs. By default (`BuiltForComfort`) they stay NFAs: cheap to add, but `matches_for_event` slows down roughly linearly as you add more such patterns. `BuiltForSpeed` converts them to DFAs when the matcher freezes, giving matching time only weakly related to the pattern count — at the cost of slower adds and, for some pattern combinations, explosive matcher growth (as bad as O(2ⁿ)). Watch `matcher_stats()` if you enable it.
+Quamina compiles wildcard and regular expression patterns into nondeterministic finite automata (NFAs). The default `BuiltForComfort` mode keeps the NFAs. It adds patterns quickly and uses less memory. Matching gets slower as you add wildcard and regular expression patterns.
+
+`BuiltForSpeed` tries to convert the NFAs into deterministic finite automata (DFAs). It takes longer to add patterns but reduces the effect of pattern count on matching time.
+
+The number of DFA states can grow exponentially, up to O(2ⁿ). If conversion exceeds the limit, eligible automata use a limited DFA cache that learns from real events. Other automata continue to use their NFAs. Use `matcher_stats()` to track matcher size.
 
 ```rust
 use quamina::MatcherBuildMode;
@@ -282,9 +368,34 @@ cargo bench --bench matching              # all benchmarks
 cargo bench --bench matching -- citylots  # specific benchmark
 ```
 
+## How it works
+
+Quamina focuses on one task: match an event against many patterns and return all matching IDs.
+
+1. Quamina compiles each field matcher into a finite automaton. It shares common paths and transitions across patterns.
+2. The JSON parser skips parts of the event that no pattern uses.
+3. Field values move through the automata. Quamina collects an ID when all fields in that pattern match.
+
+Quamina uses these techniques on the matching path:
+
+- **Q-number ranges:** Quamina converts JSON numbers into bytes that keep the same numeric order. It can then match numeric ranges with the same automata that match strings. The temporary value stays in a fixed stack buffer and does not allocate heap memory.
+- **Lazy DFA cache:** `BuiltForSpeed` converts small NFAs into DFAs before matching. For some larger pattern sets, Quamina creates DFA states only when events use them. Quamina limits the cache size and keeps an NFA fallback.
+- **Immutable snapshots:** Matching threads share a read-only automaton. Each thread uses its own work buffers. Pattern changes create the next snapshot outside the matching path.
+
+## Kani formal verification
+
+The test suite includes unit, stress, differential, fuzz, and Miri tests. Quamina also runs [Kani proof harnesses](src/kani_proofs.rs) in [continuous integration](.github/workflows/test.yml). Kani checks these bounded properties:
+
+- The Q-number conversion preserves the order of finite `f64` values.
+- The stack encoding fits in its fixed buffer.
+- The Unicode case-folding lookup table stays in order.
+- Byte lookups in the compact transition table select the correct state.
+
+These proofs cover specific invariants. They do not verify the entire crate or every possible rule.
+
 ## Limitations
 
-Patterns are subject to complexity limits to prevent resource exhaustion from deeply nested or extremely wide patterns:
+Quamina limits pattern complexity to control memory use and processing time:
 
 | Limit | Default | Builder method |
 |-------|---------|----------------|
@@ -293,19 +404,19 @@ Patterns are subject to complexity limits to prevent resource exhaustion from de
 | Arena byte budget | 10 MB | `with_arena_byte_budget` |
 | Max states per pattern | 1024 | `with_max_states_per_pattern` |
 
-Patterns exceeding these limits return `QuaminaError::PatternTooComplex`. The defaults are generous enough for any realistic use case; they're primarily a safety net against adversarial input.
+Quamina returns `QuaminaError::PatternTooComplex` when a pattern exceeds a limit. The default limits support typical patterns. Use the builder methods to change them for your workload.
 
-Other limitations:
-- Only JSON events are supported (media type `application/json`)
-- Pattern field names are case-sensitive
-- `shellstyle` patterns don't support `\*` or `\\` escapes — prefer `wildcard` or `regexp` instead
+Other limits:
+
+- Event input must use the `application/json` media type.
+- Pattern field names are case-sensitive.
+- `shellstyle` patterns do not support `\*` or `\\` escapes. Use `wildcard` or `regexp` instead.
 
 ## Credits
 
-All credits should go to [Tim](https://www.tbray.org/) and other contributors in the [original Go](https://github.com/timbray/quamina) version. Tim's [Quamina Diary](https://www.tbray.org/ongoing/What/Technology/Quamina%20Diary/) also explains how automata-based matching works.
+[Tim Bray](https://www.tbray.org/) created the [original Go library](https://github.com/timbray/quamina). Its contributors developed the pattern language and matching design. The [Quamina Diary](https://www.tbray.org/ongoing/What/Technology/Quamina%20Diary/) explains the automata-based approach.
 
-The last-synced upstream Go commit is tracked in [`.go-upstream-sync`](.go-upstream-sync). Run `just upstream` to check for new changes.
-
+The [`.go-upstream-sync`](.go-upstream-sync) file records the last upstream Go commit. Run `just upstream` to check for changes.
 
 ## License
 
