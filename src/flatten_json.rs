@@ -221,20 +221,20 @@ const fn should_capture_value(skipping: i32, member_is_used: bool) -> bool {
 
 /// Returns true when `event[index]` exists AND is an ASCII digit.
 #[inline]
-fn at_digit(event: &[u8], index: usize) -> bool {
+const fn at_digit(event: &[u8], index: usize) -> bool {
     index < event.len() && event[index].is_ascii_digit()
 }
 
 /// Returns true when `event[index]` exists AND matches `target`.
 #[inline]
-fn at_byte(event: &[u8], index: usize, target: u8) -> bool {
+const fn at_byte(event: &[u8], index: usize, target: u8) -> bool {
     index < event.len() && event[index] == target
 }
 
 /// Returns true when `event[index..]` starts with a `\uXXXX` escape (six
 /// bytes: backslash, `u`, four hex digits).
 #[inline]
-fn has_unicode_escape_at(event: &[u8], index: usize) -> bool {
+const fn has_unicode_escape_at(event: &[u8], index: usize) -> bool {
     index + 5 < event.len() && event[index] == b'\\' && event[index + 1] == b'u'
 }
 
@@ -1025,7 +1025,7 @@ impl<'a> FlattenContext<'a, '_> {
 
     /// Get current byte.
     #[inline]
-    fn ch(&self) -> u8 {
+    const fn ch(&self) -> u8 {
         self.event[self.index]
     }
 

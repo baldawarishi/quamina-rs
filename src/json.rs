@@ -819,12 +819,16 @@ fn parse_numeric_comparison(arr: &[Value]) -> Option<NumericComparison> {
     let mut lower = None;
     let mut upper = None;
 
-    let mut pairs = arr.chunks_exact(2);
-    for pair in &mut pairs {
-        let Value::String(op) = &pair[0] else {
+    let (pairs, remainder) = arr.as_chunks::<2>();
+    if !remainder.is_empty() {
+        return None;
+    }
+
+    for [op, value] in pairs {
+        let Value::String(op) = op else {
             return None;
         };
-        let num = match &pair[1] {
+        let num = match value {
             Value::Number(n) => n.parse::<f64>().ok()?,
             _ => return None,
         };
@@ -840,9 +844,6 @@ fn parse_numeric_comparison(arr: &[Value]) -> Option<NumericComparison> {
             }
             _ => return None,
         }
-    }
-    if !pairs.remainder().is_empty() {
-        return None;
     }
 
     Some(NumericComparison { lower, upper })
