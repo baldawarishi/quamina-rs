@@ -5974,7 +5974,7 @@ mod tests {
 
         // With 3 exit bytes
         table.accel = Some(super::super::AccelInfo {
-            exit_bytes: [b'x', b'y', b'z'],
+            exit_bytes: *b"xyz",
             len: 3,
         });
         assert_eq!(try_accelerate_arena(&table, b"abcdefghijz"), Some(nz(10))); // finds 'z' at position 10
@@ -7006,7 +7006,7 @@ mod merge_tests {
         let mut bufs1 = NfaBuffers::with_capacity();
         let mut bufs2 = NfaBuffers::with_capacity();
 
-        for byte in [b'a', b'b', b'c'] {
+        for byte in *b"abc" {
             bufs1.clear();
             bufs2.clear();
             traverse_arena_nfa(&abc_left, abc_left_start, &[byte], &mut bufs1);
