@@ -1,0 +1,28 @@
+[package]
+name = "fuzzyclone"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Walking-skeleton experiment: does a fuzzy (Levenshtein-automaton) k-gram FST index recover more edited Type-3 clone pairs than an exact k-gram inverted index?"
+
+# Standalone crate, deliberately NOT a member of quamina's workspace and NOT
+# depending on the quamina crate. It only reads quamina's .rs files as a text
+# corpus at run time (see src/corpus.rs). Nothing here touches quamina's
+# source or Cargo.toml.
+
+[dependencies]
+tree-sitter = "0.25"
+tree-sitter-rust = "0.24"
+fst = { version = "0.4", features = ["levenshtein"] }
+rand = "0.10"
+rand_chacha = "0.10"
+rustc-hash = "2.1"
+csv = "1.3"
+serde = { version = "1", features = ["derive"] }
+
+[[bin]]
+name = "sweep"
+path = "src/bin/sweep.rs"
+
+[lints.rust]
+unsafe_code = "warn"
