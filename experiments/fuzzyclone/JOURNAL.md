@@ -365,3 +365,33 @@ to (`N_K2=10` instead of the standard `N_STANDARD=40`).
 
 Remaining before calling this done: clean up, final `cargo test` /
 `clippy` / `fmt` pass, commit, push.
+
+## 2026-08-22 — reproducibility check, done
+
+Ran the "Done means" checklist for real rather than assuming it:
+
+- `cargo fmt -- --check`, `cargo clippy --all-targets`: clean.
+- `cargo test`: 30 passed (27 lib unit tests + 3 integration tests in
+  `tests/k0_equivalence.rs`), 0 failed.
+- Reproducibility: deleted `results/` entirely, ran `cargo run --release
+  --bin sweep` from scratch a second time, diffed both CSVs against the
+  first run byte-for-byte. `results/ground_truth.csv` came back
+  **bit-for-bit identical** — the seeded `ChaCha8Rng` mutation harness is
+  exactly deterministic, no surprises. `results/sweep.csv` differed *only*
+  in the four wall-clock timing columns (`query_p50_us`, `query_p99_us`,
+  `query_mean_us`, `index_build_ms` — e.g. w=8 exact build 0.422ms first
+  run vs 0.444ms second run, both essentially instant, the difference is
+  scheduler noise); every other column — `recall`, `candidates_mean`,
+  `candidates_p50/p99`, `grams_per_query_mean`, `index_distinct_grams`,
+  `index_payload_bytes` — matched exactly across all 100 rows. That's the
+  right property: the parts of this experiment that are supposed to be
+  deterministic (which fragments, which mutations, which candidates come
+  back, recall) are; only the parts that are inherently a wall-clock
+  measurement (and would be even in a "correct" implementation) vary.
+
+Deleted the throwaway `src/bin/probe.rs` calibration tool once its numbers
+had done their job informing `N_STANDARD`/`N_K2` and the cache decision —
+it's not part of the deliverable and would just be one more thing to keep
+in sync.
+
+This is the state pushed to the branch. Done.
