@@ -312,3 +312,56 @@ looked plausible (1.000 across the board) even while the edit-rate axis
 underneath them was broken, which is precisely the failure mode a
 spot-check of raw data catches and a summary-only report would have
 missed entirely.
+
+Spot-checked the corrected `results/ground_truth.csv` the same way before
+trusting it: mean actual edit rate per bucket came out 0.0203 / 0.0544 /
+0.1229 / 0.3102 / 0.4197 against targets 0.02 / 0.05 / 0.10 / 0.20 / 0.30
+— close at the low end (where the fix mattered most), with the expected
+looser tracking at higher targets where statement-level ops are eligible
+from the start and their coarser granularity is proportionally less
+distorting. Good enough to proceed.
+
+## 2026-08-22 — full sweep completed; results and analysis
+
+Second run finished clean: 100 rows in `results/sweep.csv`, no crashes,
+RSS stayed under 30MB the entire run (confirms the cache removal fixed
+the memory problem, not just the specific cell that OOM-killed before).
+Total wall time for the full `w × k × rate` grid was on the order of
+15-20 minutes, dominated almost entirely by the `k=2` cells (see the
+latency table in FINDINGS.md) — `k=0`/`k=1`/exact together are a rounding
+error against `k=2`'s cost.
+
+Verified the k=0-vs-exact sanity check programmatically over the real
+data (not just eyeballed): wrote a one-off check comparing all 25 `(w,
+edit_rate)` cells' recall between the `exact` arm and `fst_levenshtein,
+k=0` — zero mismatches. Combined with `tests/k0_equivalence.rs`'s
+synthetic-data version of the same property, this invariant is now
+checked both on real sweep output and on every `cargo test` run.
+
+Full analysis, numbers, and the answer to "is the hypothesis supported"
+are in FINDINGS.md — short version: yes, at `w ∈ {16, 24, 32}` (mean
+recall improves from 0.815 to 0.922 at k=1 and 0.980 at k=2 in that
+regime), no measurable effect at `w ∈ {8, 12}` (both arms already at
+~0.99 recall, nothing for fuzzy matching to recover), candidate-set
+inflation is modest and — reassuringly — *smallest* exactly where the
+recall benefit is real (1.27-1.72x at w≥16 vs. 1.71-2.58x at w≤12 where
+it doesn't help). The part that actually disqualifies arm B from being a
+practical recommendation as shipped is query latency: k=1 averages ~5,500x
+slower than the exact index, k=2 averages ~167,000x slower (mean p50 of
+769ms, p99 up to 7.4 seconds for one query at w=32). That's a property of
+the `fst` crate's Levenshtein automaton implementation specifically (its
+own doc comment calls it a proof of concept), not a refutation of fuzzy
+k-gram matching as an idea — see FINDINGS.md's closing section for what
+would need to change for this to be a real proposal instead of a
+promising-but-impractical experiment result.
+
+Did not attempt the optional autonomy detours (winnowed k-grams,
+per-token-kind substitution costs) — the two bugs above and the latency
+investigation consumed the time that would have gone to them. Winnowing
+would be the natural next step, since it attacks the `k=2` latency
+problem at its root (fewer query grams → fewer automaton constructions)
+rather than working around it with a smaller sample the way this run had
+to (`N_K2=10` instead of the standard `N_STANDARD=40`).
+
+Remaining before calling this done: clean up, final `cargo test` /
+`clippy` / `fmt` pass, commit, push.

@@ -3,6 +3,14 @@
 //!
 //! See ../JOURNAL.md for the design decisions and ../FINDINGS.md for the
 //! result. This crate is intentionally not wired into quamina's workspace.
+//!
+//! Reproduce `results/*.csv` from scratch:
+//! ```text
+//! cd experiments/fuzzyclone && cargo run --release --bin sweep
+//! ```
+//! (`--release` isn't required for correctness, only for the Levenshtein
+//! automaton construction cost documented in JOURNAL.md/FINDINGS.md to
+//! finish in a reasonable time.)
 
 pub mod corpus;
 pub mod index_exact;
