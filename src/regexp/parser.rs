@@ -2079,6 +2079,20 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_is_cc_char_supplementary_boundaries() {
+        for rune in [
+            '\u{D7FF}',
+            '\u{E000}',
+            '\u{10FFF}',
+            '\u{11000}',
+            '\u{1D7CE}',
+            RUNE_MAX,
+        ] {
+            assert!(is_cc_char(rune), "U+{:04X} should be a CCchar", rune as u32);
+        }
+    }
+
+    #[test]
     fn test_spans_into_surrogate() {
         // True when [start, end] crosses into the surrogate window: start lies
         // below the window AND end reaches it. Cases walk both edges.
