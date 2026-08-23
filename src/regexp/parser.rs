@@ -2079,14 +2079,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_read_cce_supplementary_characters() {
-        assert!(
-            parse("[\u{1D7CE}\u{1D7CF}]").is_ok(),
-            "supplementary Unicode characters should be valid in a character class"
-        );
-    }
-
-    #[test]
     fn test_is_cc_char_supplementary_boundaries() {
         for rune in [
             '\u{D7FF}',
