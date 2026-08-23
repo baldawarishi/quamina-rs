@@ -676,6 +676,12 @@ fn test_regex_character_class() {
 }
 
 #[test]
+fn test_regexp_character_class_matches_supplementary_character() {
+    let q = q!("supplementary" => r#"{"value": [{"regexp": "[\uD835\uDFCE\uD835\uDFCF]"}]}"#);
+    assert_matches!(q, r#"{"value": "\uD835\uDFCE"}"#, vec!["supplementary"]);
+}
+
+#[test]
 fn test_regexp_simple_optional() {
     let q = q!("test" => r#"{"a": [{"regexp": "a?b"}]}"#);
     assert_has_match!(q, r#"{"a": "ab"}"#, "test", "'a?b' should match 'ab'");
