@@ -1,4 +1,5 @@
 /target/
+/.claude/
 
 # Fuzzing artifacts (regenerated on each run)
 fuzz/target/
