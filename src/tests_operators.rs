@@ -677,8 +677,8 @@ fn test_regex_character_class() {
 
 #[test]
 fn test_regexp_character_class_matches_supplementary_character() {
-    let q = q!("supplementary" => r#"{"value": [{"regexp": "[𝟎𝟏]"}]}"#);
-    assert_matches!(q, r#"{"value": "𝟎"}"#, vec!["supplementary"]);
+    let q = q!("supplementary" => r#"{"value": [{"regexp": "[\uD835\uDFCE\uD835\uDFCF]"}]}"#);
+    assert_matches!(q, r#"{"value": "\uD835\uDFCE"}"#, vec!["supplementary"]);
 }
 
 #[test]
