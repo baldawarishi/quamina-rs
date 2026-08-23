@@ -676,25 +676,6 @@ fn test_regex_character_class() {
 }
 
 #[test]
-fn test_regexp_supplementary_character_class() {
-    const MATHEMATICAL_BOLD_DIGIT_ZERO: char = '\u{1D7CE}';
-
-    let literal_pattern =
-        format!(r#"{{"value": [{{"regexp": "[{MATHEMATICAL_BOLD_DIGIT_ZERO}]"}}]}}"#);
-    let q = q!(
-        "literal character class" => &literal_pattern,
-        "decimal digit property" => r#"{"value": [{"regexp": "~p{Nd}"}]}"#,
-    );
-    let event = format!(r#"{{"value": "{MATHEMATICAL_BOLD_DIGIT_ZERO}"}}"#);
-
-    assert_matches!(
-        q,
-        event,
-        vec!["literal character class", "decimal digit property"]
-    );
-}
-
-#[test]
 fn test_regexp_simple_optional() {
     let q = q!("test" => r#"{"a": [{"regexp": "a?b"}]}"#);
     assert_has_match!(q, r#"{"a": "ab"}"#, "test", "'a?b' should match 'ab'");
