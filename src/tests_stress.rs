@@ -1065,9 +1065,6 @@ fn test_concurrent_update_during_matching() {
 
 // Go's TestLivePatternConcurrency, which exposed a data race (Go #554)
 // between a rebuild reading the live patterns and matching consulting them.
-// Here the borrow checker rules that race out, so what's left to check is
-// that readers never see a deleted pattern or lose a live one while another
-// thread deletes, re-adds, and rebuilds.
 // MIRI SKIP RATIONALE: Thousands of locked updates racing a reader thread.
 #[test]
 #[cfg_attr(miri, ignore)]
@@ -1095,11 +1092,8 @@ fn test_live_pattern_concurrency() {
             for i in 0..reps {
                 let target = i % patterns.len();
                 q.write().delete_patterns(&target).unwrap();
-                // Let the reader in while the pattern is deleted.
                 thread::yield_now();
                 q.write().add_pattern(target, patterns[target]).unwrap();
-                // Rebuild once a cycle, so the reader races rebuilds too and
-                // the re-added patterns' states don't pile up.
                 if target == patterns.len() - 1 {
                     q.write().rebuild();
                 }
@@ -1107,8 +1101,6 @@ fn test_live_pattern_concurrency() {
         });
 
         while !updater.is_finished() {
-            // Every live pattern matches the event, so the matches have to
-            // be exactly the live ids.
             let q = q.read();
             let matches = q.matches_for_event(br#"{"x": "tortilla"}"#).unwrap();
             assert_eq!(matches.len(), q.pattern_count(), "{matches:?}");
