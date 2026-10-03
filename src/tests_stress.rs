@@ -1,6 +1,7 @@
 //! Stress tests for quamina-rs
 //!
-//! Go lineage: concurrency_test.go, escaping_test.go, benchmarks_test.go
+//! Go lineage: concurrency_test.go, escaping_test.go, benchmarks_test.go,
+//! live_pattern_state_test.go
 //!
 //! This module covers:
 //! - Stress fuzz tests (strings, numbers)
@@ -1060,6 +1061,57 @@ fn test_concurrent_update_during_matching() {
     assert_eq!(sent, verified, "Not all concurrent patterns were verified");
     assert!(sent > 0, "Should have added some patterns concurrently");
     assert!(total_matches > 0, "Should have gotten some matches");
+}
+
+// Go's TestLivePatternConcurrency, which exposed a data race (Go #554)
+// between a rebuild reading the live patterns and matching consulting them.
+// MIRI SKIP RATIONALE: Thousands of locked updates racing a reader thread.
+#[test]
+#[cfg_attr(miri, ignore)]
+fn test_live_pattern_concurrency() {
+    // Eventually fair, so neither thread starves the other.
+    use parking_lot::RwLock;
+    use std::thread;
+
+    let patterns = [
+        r#"{"x": [{"wildcard": "t*ortilla"}]}"#,
+        r#"{"x": [{"wildcard": "tortilla*"}]}"#,
+        r#"{"x": [{"wildcard": "*tortilla"}]}"#,
+        r#"{"x": [{"wildcard": "tortil*la"}]}"#,
+    ];
+    let reps = 5000;
+
+    let mut q = Quamina::new();
+    for (i, pattern) in patterns.iter().enumerate() {
+        q.add_pattern(i, pattern).unwrap();
+    }
+    let q = RwLock::new(q);
+
+    thread::scope(|s| {
+        let updater = s.spawn(|| {
+            for i in 0..reps {
+                let target = i % patterns.len();
+                q.write().delete_patterns(&target).unwrap();
+                thread::yield_now();
+                q.write().add_pattern(target, patterns[target]).unwrap();
+                if target == patterns.len() - 1 {
+                    q.write().rebuild();
+                }
+            }
+        });
+
+        while !updater.is_finished() {
+            let q = q.read();
+            let matches = q.matches_for_event(br#"{"x": "tortilla"}"#).unwrap();
+            assert_eq!(matches.len(), q.pattern_count(), "{matches:?}");
+        }
+        updater.join().unwrap();
+    });
+
+    let q = q.into_inner();
+    let mut matches = q.matches_for_event(br#"{"x": "tortilla"}"#).unwrap();
+    matches.sort_unstable();
+    assert_eq!(matches, [0, 1, 2, 3]);
 }
 
 #[test]
