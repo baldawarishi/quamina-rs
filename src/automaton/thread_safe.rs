@@ -1202,24 +1202,38 @@ impl<X: Clone + Eq + Hash + Send + Sync> ThreadSafeCoreMatcher<X> {
         bufs: &mut NfaBuffers,
     ) -> Vec<X> {
         self.ensure_frozen();
-        let root = self.root.load();
+        Self::matches_for_root(&self.root.load(), fields, bufs)
+    }
 
+    /// The frozen snapshot, freezing first if patterns were added since the
+    /// last freeze. Matching against it via [`Self::matches_for_root`] never
+    /// touches the build lock, however many adds happen afterwards.
+    pub(crate) fn frozen_root(&self) -> Arc<FrozenFieldMatcher<X>> {
+        self.ensure_frozen();
+        self.root.load_full()
+    }
+
+    /// Match sorted fields against a frozen snapshot.
+    pub(crate) fn matches_for_root(
+        root: &Arc<FrozenFieldMatcher<X>>,
+        fields: &[crate::flatten_json::Field<'_>],
+        bufs: &mut NfaBuffers,
+    ) -> Vec<X> {
         if fields.is_empty() {
-            return Self::collect_exists_false_matches(&root);
+            return Self::collect_exists_false_matches(root);
         }
 
         let mut matches = FrozenMatchSet::new();
         bufs.clear();
 
         for i in 0..fields.len() {
-            self.try_to_match_direct(fields, i, &root, &mut matches, bufs);
+            Self::try_to_match_direct(fields, i, root, &mut matches, bufs);
         }
 
         matches.into_vec()
     }
 
     fn try_to_match_direct(
-        &self,
         fields: &[crate::flatten_json::Field<'_>],
         index: usize,
         state: &Arc<FrozenFieldMatcher<X>>,
@@ -1238,14 +1252,14 @@ impl<X: Clone + Eq + Hash + Send + Sync> ThreadSafeCoreMatcher<X> {
             }
             for next_idx in (index + 1)..fields.len() {
                 if no_array_trail_conflict_ref(array_trail, fields[next_idx].array_trail_slice()) {
-                    self.try_to_match_direct(fields, next_idx, exists_trans, matches, bufs);
+                    Self::try_to_match_direct(fields, next_idx, exists_trans, matches, bufs);
                 }
             }
-            self.check_exists_false_direct(state, fields, index, matches, bufs);
+            Self::check_exists_false_direct(state, fields, index, matches, bufs);
         }
 
         // Check exists:false
-        self.check_exists_false_direct(state, fields, index, matches, bufs);
+        Self::check_exists_false_direct(state, fields, index, matches, bufs);
 
         // Try value transitions
         let next_states = state.transition_on(path, value, field.is_number, bufs);
@@ -1257,16 +1271,15 @@ impl<X: Clone + Eq + Hash + Send + Sync> ThreadSafeCoreMatcher<X> {
 
             for next_idx in (index + 1)..fields.len() {
                 if no_array_trail_conflict_ref(array_trail, fields[next_idx].array_trail_slice()) {
-                    self.try_to_match_direct(fields, next_idx, next_state, matches, bufs);
+                    Self::try_to_match_direct(fields, next_idx, next_state, matches, bufs);
                 }
             }
 
-            self.check_exists_false_direct(next_state, fields, index, matches, bufs);
+            Self::check_exists_false_direct(next_state, fields, index, matches, bufs);
         }
     }
 
     fn check_exists_false_direct(
-        &self,
         state: &Arc<FrozenFieldMatcher<X>>,
         fields: &[crate::flatten_json::Field<'_>],
         index: usize,
@@ -1282,7 +1295,7 @@ impl<X: Clone + Eq + Hash + Send + Sync> ThreadSafeCoreMatcher<X> {
                 for m in &exists_trans.matches {
                     matches.add(m.clone());
                 }
-                self.try_to_match_direct(fields, index, exists_trans, matches, bufs);
+                Self::try_to_match_direct(fields, index, exists_trans, matches, bufs);
             }
         }
     }

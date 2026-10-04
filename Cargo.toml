@@ -58,6 +58,10 @@ harness = false
 name = "workload"
 harness = false
 
+[[bench]]
+name = "concurrent_update"
+harness = false
+
 [profile.bench]
 debug = 1  # Line tables for flamegraph/samply
 

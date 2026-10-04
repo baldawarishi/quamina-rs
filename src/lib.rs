@@ -19,6 +19,7 @@ pub mod numbits;
 pub mod regexp;
 #[doc(hidden)]
 pub mod segments_tree;
+mod shared;
 mod unicode_categories;
 
 #[cfg(test)]
@@ -30,6 +31,7 @@ mod kani_proofs;
 // Re-export flattener types for custom implementations
 pub use crate::flatten_json::ArrayPos;
 pub use crate::flattener::{Flattener, JsonFlattener, OwnedField, SegmentsTreeTracker};
+pub use crate::shared::SharedQuamina;
 
 use automaton::{NfaBuffers, ThreadSafeCoreMatcher};
 use json::Matcher;
@@ -778,24 +780,10 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
             return self.matches_for_event_custom_flattener(event, custom_flattener_mutex);
         }
 
-        // Default path: use thread-local flattener + NFA buffers (no Mutex overhead)
-        TL_FLATTENER.with(|flattener_cell| {
-            TL_NFA_BUFS.with(|bufs_cell| {
-                let mut flattener = flattener_cell.borrow_mut();
-                let mut bufs = bufs_cell.borrow_mut();
-
-                let streaming_fields = flattener.flatten(event, &self.segments_tree)?;
-
-                // Sort by path for automaton matching
-                streaming_fields.sort_unstable_by(|a, b| a.path.cmp(&b.path));
-
-                let raw_matches = self
-                    .automaton
-                    .matches_for_fields_direct(streaming_fields, &mut bufs);
-
-                Ok(self.filter_deleted_matches(raw_matches))
-            })
-        })
+        let raw_matches = match_json_event(event, &self.segments_tree, |fields, bufs| {
+            self.automaton.matches_for_fields_direct(fields, bufs)
+        })?;
+        Ok(self.filter_deleted_matches(raw_matches))
     }
 
     /// Match using a custom flattener (slower path with owned data)
@@ -877,20 +865,7 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
 
     /// Remove soft-deleted patterns from raw match results and update pruner stats.
     fn filter_deleted_matches(&self, raw_matches: Vec<X>) -> Vec<X> {
-        if self.deleted_patterns.is_empty() {
-            self.pruner_stats.add_emitted(raw_matches.len() as u64);
-            raw_matches
-        } else {
-            let raw_count = raw_matches.len();
-            let filtered: Vec<X> = raw_matches
-                .into_iter()
-                .filter(|x| !self.deleted_patterns.contains(x))
-                .collect();
-            let filtered_count = raw_count - filtered.len();
-            self.pruner_stats.add_emitted(filtered.len() as u64);
-            self.pruner_stats.add_filtered(filtered_count as u64);
-            filtered
-        }
+        filter_deleted(raw_matches, &self.deleted_patterns, &self.pruner_stats)
     }
 
     /// Access the underlying automaton (for direct matching without Mutex).
@@ -1230,6 +1205,51 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
     /// ```
     pub fn contains_pattern(&self, id: &X) -> bool {
         self.pattern_defs.contains_key(id)
+    }
+}
+
+/// Flatten `event` with the thread-local JSON flattener and hand its sorted
+/// fields to `match_fields`, using the thread-local NFA buffers.
+fn match_json_event<X>(
+    event: &[u8],
+    segments_tree: &SegmentsTree,
+    match_fields: impl FnOnce(&[flatten_json::Field<'_>], &mut NfaBuffers) -> Vec<X>,
+) -> Result<Vec<X>, QuaminaError> {
+    TL_FLATTENER.with(|flattener_cell| {
+        TL_NFA_BUFS.with(|bufs_cell| {
+            let mut flattener = flattener_cell.borrow_mut();
+            let mut bufs = bufs_cell.borrow_mut();
+
+            let streaming_fields = flattener.flatten(event, segments_tree)?;
+
+            // Sort by path for automaton matching
+            streaming_fields.sort_unstable_by(|a, b| a.path.cmp(&b.path));
+
+            Ok(match_fields(streaming_fields, &mut bufs))
+        })
+    })
+}
+
+/// Drop matches for deleted ids the automaton still holds states for, and
+/// record both counts for the rebuild heuristic.
+fn filter_deleted<X: Eq + Hash>(
+    raw_matches: Vec<X>,
+    deleted: &FxHashSet<X>,
+    stats: &PrunerStats,
+) -> Vec<X> {
+    if deleted.is_empty() {
+        stats.add_emitted(raw_matches.len() as u64);
+        raw_matches
+    } else {
+        let raw_count = raw_matches.len();
+        let filtered: Vec<X> = raw_matches
+            .into_iter()
+            .filter(|x| !deleted.contains(x))
+            .collect();
+        let filtered_count = raw_count - filtered.len();
+        stats.add_emitted(filtered.len() as u64);
+        stats.add_filtered(filtered_count as u64);
+        filtered
     }
 }
 
