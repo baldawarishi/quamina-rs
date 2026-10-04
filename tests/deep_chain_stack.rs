@@ -1,6 +1,7 @@
-//! Long single-chain patterns must build and freeze on a small stack. A
-//! `prefix` pattern allocates one arena state per byte, so every walk over that
-//! chain is as deep as the pattern is long.
+//! Deep patterns must build and match on a small stack. A `prefix` pattern
+//! allocates one arena state per byte, so every walk over that chain is as deep
+//! as the pattern is long. Nested pattern JSON and nested regexp groups recurse
+//! once per level, so they are checked at the deepest nesting Quamina accepts.
 //!
 //! A stack overflow aborts the process rather than raising a catchable panic,
 //! and would take the test binary down with it. Each reproducer therefore runs
@@ -9,7 +10,7 @@
 
 use std::process::Command;
 
-use quamina::Quamina;
+use quamina::{PatternLimits, Quamina};
 
 /// Set in the child process to select the reproducer instead of the spawner.
 const GUARD: &str = "QUAMINA_DEEP_CHAIN_CHILD";
@@ -155,6 +156,63 @@ fn deep_anything_but_survives_small_stack() {
     }
 
     respawn("deep_anything_but_survives_small_stack");
+}
+
+/// Pattern JSON nested to the default `max_pattern_depth`, with the operator
+/// syntax a leaf can add below that.
+#[test]
+#[cfg_attr(miri, ignore = "spawns a child process")]
+fn deepest_pattern_json_survives_small_stack() {
+    if in_child() {
+        on_small_stack(|| {
+            let depth = PatternLimits::default().max_pattern_depth;
+            let pattern = format!(
+                r#"{}[{{"numeric": [">", 1]}}]{}"#,
+                r#"{"f": "#.repeat(depth),
+                "}".repeat(depth)
+            );
+            let event = format!("{}2{}", r#"{"f": "#.repeat(depth), "}".repeat(depth));
+
+            let mut q = Quamina::new();
+            q.add_pattern("deep", &pattern)
+                .expect("nesting at max_pattern_depth is accepted");
+            let matches = q
+                .matches_for_event(event.as_bytes())
+                .expect("matching the deeply nested event");
+            assert_eq!(matches, vec!["deep"]);
+        });
+        return;
+    }
+
+    respawn("deepest_pattern_json_survives_small_stack");
+}
+
+/// Regexp groups nested to the cap the parser enforces, each one quantified so
+/// that NFA construction recurses through every level too.
+#[test]
+#[cfg_attr(miri, ignore = "spawns a child process")]
+fn deepest_regexp_groups_survive_small_stack() {
+    if in_child() {
+        on_small_stack(|| {
+            let depth = 128;
+            let pattern = format!(
+                r#"{{"f": [{{"regexp": "{}a{}"}}]}}"#,
+                "(".repeat(depth),
+                ")*".repeat(depth)
+            );
+
+            let mut q = Quamina::new();
+            q.add_pattern("deep", &pattern)
+                .expect("nesting at the group cap is accepted");
+            let matches = q
+                .matches_for_event(br#"{"f": "a"}"#)
+                .expect("matching against the nested regexp");
+            assert_eq!(matches, vec!["deep"]);
+        });
+        return;
+    }
+
+    respawn("deepest_regexp_groups_survive_small_stack");
 }
 
 /// True when this process is the spawned child that runs the reproducer.

@@ -2036,6 +2036,63 @@ fn test_pattern_depth_shallow_ok() {
     );
 }
 
+#[test]
+fn test_pattern_depth_limit_leaves_room_for_operators() {
+    // Two field objects, then the matcher array, operator object and argument
+    // array: the deepest syntax a pattern at max_pattern_depth can need.
+    let mut q = QuaminaBuilder::<&str>::new()
+        .with_max_pattern_depth(2)
+        .build()
+        .unwrap();
+    q.add_pattern("p", r#"{"a": {"b": [{"numeric": [">", 1]}]}}"#)
+        .unwrap();
+    assert_eq!(
+        q.matches_for_event(br#"{"a": {"b": 2}}"#).unwrap(),
+        vec!["p"]
+    );
+}
+
+#[test]
+fn test_pattern_depth_limit_counts_nesting_not_siblings() {
+    let mut q = QuaminaBuilder::<&str>::new()
+        .with_max_pattern_depth(2)
+        .build()
+        .unwrap();
+    q.add_pattern(
+        "p",
+        r#"{"a": {"x": ["1"]}, "b": {"y": ["2"]}, "c": {"z": ["3"]}, "d": {"w": ["4"]}}"#,
+    )
+    .unwrap();
+}
+
+#[test]
+fn test_deeply_nested_pattern_json_is_rejected() {
+    // Parsing recurses per container, so these would overflow the stack if
+    // the parser only checked depth after building the whole value.
+    let n = 20_000;
+    let arrays = format!(r#"{{"a": {}1{}}}"#, "[".repeat(n), "]".repeat(n));
+    let objects = format!("{}[1]{}", r#"{"a": "#.repeat(n), "}".repeat(n));
+    let mut q = Quamina::new();
+    for pattern in [arrays, objects] {
+        let err = q.add_pattern("deep", &pattern).unwrap_err();
+        assert!(matches!(err, QuaminaError::PatternTooComplex(_)), "{err}");
+    }
+}
+
+#[test]
+fn test_deeply_nested_regexp_is_rejected() {
+    let n = 20_000;
+    let pattern = format!(
+        r#"{{"x": [{{"regexp": "{}a{}"}}]}}"#,
+        "(".repeat(n),
+        ")".repeat(n)
+    );
+    let err = Quamina::<&str>::new()
+        .add_pattern("deep", &pattern)
+        .unwrap_err();
+    assert!(matches!(err, QuaminaError::InvalidPattern(_)), "{err}");
+}
+
 // --- Field Count Limit Tests ---
 
 #[test]

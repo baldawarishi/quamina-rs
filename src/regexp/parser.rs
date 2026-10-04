@@ -256,8 +256,15 @@ impl RegexpParse {
         }
     }
 
-    fn nest(&mut self) {
+    fn nest(&mut self) -> Result<(), Error> {
+        if self.nesting.len() >= MAX_GROUP_NESTING_DEPTH {
+            return Err(Error {
+                message: format!("groups nested deeper than {MAX_GROUP_NESTING_DEPTH} levels"),
+                offset: self.index,
+            });
+        }
         self.nesting.push(std::mem::take(&mut self.tree));
+        Ok(())
     }
 
     fn unnest(&mut self) -> Root {
@@ -1219,9 +1226,15 @@ fn read_atom(parse: &mut RegexpParse) -> Result<QuantifiedAtom, Error> {
     }
 }
 
+/// Maximum nesting depth for `(...)` groups. Parsing, word-boundary expansion
+/// and NFA construction all recurse once per level, so without a cap a deeply
+/// nested regexp overflows the stack and aborts the process. Debug builds on a
+/// 2 MB thread stack overflow somewhere past 400 levels.
+const MAX_GROUP_NESTING_DEPTH: usize = 128;
+
 /// Read a `(...)` group, including the `(?:`, `(?=`, `(?!`, `(?<=`, `(?<!` extensions.
 fn read_group(parse: &mut RegexpParse) -> Result<QuantifiedAtom, Error> {
-    parse.nest();
+    parse.nest()?;
     let lookaround_type = read_group_extension(parse)?;
     read_branches(parse)?;
     parse.require(')')?;
@@ -2732,6 +2745,14 @@ mod tests {
             "depth-8 subtraction: {:?}",
             parse(re).err()
         );
+    }
+
+    #[test]
+    fn test_group_nesting_depth_limit() {
+        let nested = |n: usize| format!("{}a{}", "(".repeat(n), ")".repeat(n));
+        assert!(parse(&nested(MAX_GROUP_NESTING_DEPTH)).is_ok());
+        let err = parse(&nested(MAX_GROUP_NESTING_DEPTH + 1)).unwrap_err();
+        assert!(err.message.contains("nested deeper"), "{err:?}");
     }
 
     #[test]

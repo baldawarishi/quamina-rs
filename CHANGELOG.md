@@ -8,6 +8,9 @@ Style inspired by [ripgrep's CHANGELOG](https://github.com/BurntSushi/ripgrep/bl
 
 ## [Unreleased]
 
+### Fixed
+- Reject patterns whose JSON or regexp groups nest too deeply, instead of overflowing the stack and aborting the process (ported from Go a4e063e)
+
 ### Changed
 - Commit `Cargo.lock` so local builds, CI, and audits resolve the same dependency versions (#195)
 

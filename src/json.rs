@@ -546,7 +546,10 @@ pub fn parse_pattern(
     json: &str,
     limits: &crate::PatternLimits,
 ) -> Result<FxHashMap<String, Vec<Matcher>>, QuaminaError> {
-    let mut parser = Parser::new(json);
+    let mut parser = Parser::new(
+        json,
+        limits.max_pattern_depth.saturating_add(OPERATOR_NESTING),
+    );
     let value = parser.parse_value()?;
 
     let Value::Object(obj) = value else {
@@ -901,21 +904,57 @@ enum Value {
     Null,
 }
 
+/// Containers a valid pattern nests below its deepest field object: the
+/// matcher array, an operator object, and the operator's argument array, as in
+/// `{"numeric": [">", 1]}`.
+const OPERATOR_NESTING: usize = 3;
+
 struct Parser<'a> {
     input: &'a str,
     pos: usize,
+    /// Objects and arrays currently open.
+    depth: usize,
+    /// Parsing recurses once per open container, so this cap keeps a deeply
+    /// nested pattern from overflowing the stack.
+    max_depth: usize,
 }
 
 impl<'a> Parser<'a> {
-    const fn new(input: &'a str) -> Self {
-        Self { input, pos: 0 }
+    const fn new(input: &'a str, max_depth: usize) -> Self {
+        Self {
+            input,
+            pos: 0,
+            depth: 0,
+            max_depth,
+        }
+    }
+
+    fn enter_container(&mut self) -> Result<(), QuaminaError> {
+        if self.depth >= self.max_depth {
+            return Err(QuaminaError::PatternTooComplex(format!(
+                "pattern JSON nests deeper than {} levels",
+                self.max_depth
+            )));
+        }
+        self.depth += 1;
+        Ok(())
     }
 
     fn parse_value(&mut self) -> Result<Value, QuaminaError> {
         self.skip_whitespace();
         match self.peek() {
-            Some('{') => self.parse_object(),
-            Some('[') => self.parse_array(),
+            Some('{') => {
+                self.enter_container()?;
+                let object = self.parse_object();
+                self.depth -= 1;
+                object
+            }
+            Some('[') => {
+                self.enter_container()?;
+                let array = self.parse_array();
+                self.depth -= 1;
+                array
+            }
             Some('"') => self.parse_string().map(Value::String),
             Some('t' | 'f') => self.parse_bool(),
             Some('n') => self.parse_null(),
@@ -1166,7 +1205,7 @@ mod tests {
 
     #[test]
     fn parse_string_rejects_unknown_escape() {
-        let mut parser = Parser::new(r#""\z""#);
+        let mut parser = Parser::new(r#""\z""#, 1);
         let err = parser.parse_string().unwrap_err();
         assert!(
             matches!(err, QuaminaError::InvalidPattern(ref msg) if msg.contains("\\z")),
