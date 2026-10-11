@@ -3198,6 +3198,23 @@ fn test_transform_lookbehind_single_char_class() {
 }
 
 #[test]
+fn test_regexp_group_nesting_cap() {
+    // NFA construction recurses once per group, so add_pattern stops at 128
+    // levels even though the parser takes any depth.
+    let pattern = |depth: usize| {
+        format!(
+            r#"{{"f": [{{"regexp": "{}a{}"}}]}}"#,
+            "(".repeat(depth),
+            ")".repeat(depth)
+        )
+    };
+    let mut q = Quamina::new();
+    q.add_pattern("deepest", &pattern(128)).unwrap();
+    let err = q.add_pattern("too deep", &pattern(129)).unwrap_err();
+    assert!(err.to_string().contains("nested deeper than 128"), "{err}");
+}
+
+#[test]
 fn test_transform_lookbehind_repeated_group() {
     // A group counts its branches' length once per repeat, added to the atoms
     // around it.

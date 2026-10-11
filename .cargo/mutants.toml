@@ -62,6 +62,9 @@ exclude_re = [
   # [0, arena_len), so growing on `<=` instead of `<` only reallocates one extra
   # time when they are equal — same closures, just a wasted alloc.
   'replace < with <= in ClosureScratch::ensure_seen_capacity',
+  # `|` is an implemented feature, so recording it never changes what
+  # found_unimplemented reports; the arm still consumes the separator either way.
+  "delete match arm Ok\\('\\|'\\) in read_branches",
 ]
 
 # Don't mutate logging/debug/panic macros — not worth testing

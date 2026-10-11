@@ -51,7 +51,7 @@ pub struct QuantifiedAtom {
     /// Maximum number of times to match
     pub quant_max: i32,
     /// Subtree for parenthesized groups
-    pub subtree: Option<Root>,
+    pub subtree: Option<Subtree>,
     /// Cache key for large Unicode categories (e.g., "L", "Lu", "-L" for negated)
     /// Used to cache pre-built FA shells for performance.
     pub cache_key: Option<String>,
@@ -93,6 +93,33 @@ impl QuantifiedAtom {
         }
     }
 
+    /// A copy of every field but the group's branches, which the caller
+    /// fills in.
+    fn clone_without_subtree(&self) -> Self {
+        let Self {
+            is_dot,
+            runes,
+            quant_min,
+            quant_max,
+            subtree: _,
+            cache_key,
+            lookaround,
+            ascii_negated_bytes,
+            is_word_boundary,
+        } = self;
+        Self {
+            is_dot: *is_dot,
+            runes: runes.clone(),
+            quant_min: *quant_min,
+            quant_max: *quant_max,
+            subtree: None,
+            cache_key: cache_key.clone(),
+            lookaround: *lookaround,
+            ascii_negated_bytes: ascii_negated_bytes.clone(),
+            is_word_boundary: *is_word_boundary,
+        }
+    }
+
     /// Returns true if this atom matches exactly once (no quantifier).
     #[inline]
     #[must_use]
@@ -128,6 +155,114 @@ pub type Branch = Vec<QuantifiedAtom>;
 /// The root of a parsed regexp (alternatives separated by |).
 pub type Root = Vec<Branch>;
 
+/// The branches of a parenthesized group.
+///
+/// Groups nest without limit, so dropping and cloning one walk its levels with
+/// a heap worklist rather than recursing once per level, which would overflow
+/// the stack on a deep enough regexp.
+#[derive(Default)]
+pub struct Subtree(Root);
+
+impl From<Root> for Subtree {
+    fn from(branches: Root) -> Self {
+        Self(branches)
+    }
+}
+
+impl std::ops::Deref for Subtree {
+    type Target = Root;
+
+    fn deref(&self) -> &Root {
+        &self.0
+    }
+}
+
+impl std::fmt::Debug for Subtree {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+impl Drop for Subtree {
+    fn drop(&mut self) {
+        // Detach every nested group before the atom holding it drops, so each
+        // drop only ever frees one level.
+        let mut detached = Vec::new();
+        let mut branches = std::mem::take(&mut self.0);
+        loop {
+            for atom in branches.iter_mut().flatten() {
+                if let Some(mut nested) = atom.subtree.take() {
+                    detached.push(std::mem::take(&mut nested.0));
+                }
+            }
+            match detached.pop() {
+                Some(next) => branches = next,
+                None => return,
+            }
+        }
+    }
+}
+
+impl Clone for Subtree {
+    fn clone(&self) -> Self {
+        /// A group partway through being copied.
+        struct Level<'a> {
+            /// Source branches not yet started.
+            branches: std::slice::Iter<'a, Branch>,
+            /// The rest of the source branch being copied, once one has started.
+            atoms: Option<std::slice::Iter<'a, QuantifiedAtom>>,
+            /// Finished copies of this level's branches.
+            copied: Root,
+            /// The copy of the current branch so far.
+            branch: Branch,
+        }
+
+        impl<'a> Level<'a> {
+            fn new(source: &'a Root) -> Self {
+                Self {
+                    branches: source.iter(),
+                    atoms: None,
+                    copied: Root::with_capacity(source.len()),
+                    branch: Branch::new(),
+                }
+            }
+        }
+
+        // The copy in progress, and below it each enclosing group's copy paired
+        // with the group atom waiting for this one's branches.
+        let mut copy = Level::new(&self.0);
+        let mut enclosing: Vec<(Level<'_>, QuantifiedAtom)> = Vec::new();
+        loop {
+            if let Some(atom) = copy.atoms.as_mut().and_then(Iterator::next) {
+                match &atom.subtree {
+                    None => copy.branch.push(atom.clone()),
+                    Some(nested) => {
+                        let outer = std::mem::replace(&mut copy, Level::new(&nested.0));
+                        enclosing.push((outer, atom.clone_without_subtree()));
+                    }
+                }
+                continue;
+            }
+
+            if copy.atoms.is_some() {
+                copy.copied.push(std::mem::take(&mut copy.branch));
+            }
+            if let Some(source_branch) = copy.branches.next() {
+                copy.atoms = Some(source_branch.iter());
+                copy.branch = Branch::with_capacity(source_branch.len());
+                continue;
+            }
+
+            let finished = Self(copy.copied);
+            let Some((outer, mut group)) = enclosing.pop() else {
+                return finished;
+            };
+            group.subtree = Some(finished);
+            copy = outer;
+            copy.branch.push(group);
+        }
+    }
+}
 /// Concatenate two trees: `a|b` followed by `c|d` gives `ac|ad|bc|bd`.
 ///
 /// Every branch on the left is paired with every branch on the right. A tree
@@ -219,12 +354,22 @@ const IMPLEMENTED_FEATURES: &[RegexpFeature] = &[
     RegexpFeature::WordBoundary,
 ];
 
+/// A `(` whose `)` has not been read yet. It holds the enclosing level's
+/// progress, which parsing picks up again once the group closes.
+struct OpenGroup {
+    /// The enclosing level's finished branches.
+    tree: Root,
+    /// The atoms of the enclosing branch read before the group.
+    branch: Branch,
+    lookaround: Option<LookaroundType>,
+}
+
 /// Parser state for regexp parsing.
 struct RegexpParse {
     text: String,
     index: usize,
     last_index: usize,
-    nesting: Vec<Root>,
+    nesting: Vec<OpenGroup>,
     found_features: Vec<RegexpFeature>,
     tree: Root,
 }
@@ -256,21 +401,26 @@ impl RegexpParse {
         }
     }
 
-    fn nest(&mut self) -> Result<(), Error> {
-        if self.nesting.len() >= MAX_GROUP_NESTING_DEPTH {
-            return Err(Error {
-                message: format!("groups nested deeper than {MAX_GROUP_NESTING_DEPTH} levels"),
-                offset: self.index,
-            });
-        }
-        self.nesting.push(std::mem::take(&mut self.tree));
-        Ok(())
+    /// Set the current level aside to read a group's branches.
+    fn nest(&mut self, branch: Branch, lookaround: Option<LookaroundType>) {
+        self.nesting.push(OpenGroup {
+            tree: std::mem::take(&mut self.tree),
+            branch,
+            lookaround,
+        });
     }
 
-    fn unnest(&mut self) -> Root {
-        let subtree = std::mem::take(&mut self.tree);
-        self.tree = self.nesting.pop().unwrap_or_default();
-        subtree
+    /// Close the innermost group. Returns its atom and the enclosing branch to
+    /// carry on with, or `None` outside any group.
+    fn unnest(&mut self) -> Option<(QuantifiedAtom, Branch)> {
+        let open = self.nesting.pop()?;
+        let subtree = std::mem::replace(&mut self.tree, open.tree);
+        let group = QuantifiedAtom {
+            subtree: Some(subtree.into()),
+            lookaround: open.lookaround,
+            ..Default::default()
+        };
+        Some((group, open.branch))
     }
 
     const fn is_nested(&self) -> bool {
@@ -457,6 +607,17 @@ impl<'a> Iterator for Atoms<'a> {
     }
 }
 
+/// How many groups deep the most deeply nested group in `tree` sits.
+pub fn group_depth(tree: &Root) -> usize {
+    let mut walk = atoms(tree);
+    let mut deepest = 0;
+    while walk.next().is_some() {
+        // The top level is one entry; each group being walked adds another.
+        deepest = deepest.max(walk.levels.len() - 1);
+    }
+    deepest
+}
+
 /// The fixed length of `tree`: what every branch measures when they all agree.
 ///
 /// A branch is the sum over its atoms of `repeat` (how often the atom occurs)
@@ -544,7 +705,7 @@ pub fn collect_lookarounds(tree: &Root) -> Vec<(usize, usize, LookaroundType, Ro
             if let Some(la_type) = atom.lookaround
                 && let Some(subtree) = &atom.subtree
             {
-                result.push((branch_idx, atom_idx, la_type, subtree.clone()));
+                result.push((branch_idx, atom_idx, la_type, subtree.to_vec()));
             }
         }
     }
@@ -990,50 +1151,87 @@ pub fn parse(re: &str) -> Result<Root, Error> {
     Ok(tree)
 }
 
-/// Read branches separated by |
+/// Read branches separated by `|`, and the branches of every group in them.
+///
+/// A group holds branches of its own in the middle of a branch. Instead of
+/// recursing into it, the enclosing level is set aside on `parse.nesting` and
+/// resumed at the `)`, so nesting depth costs heap rather than stack.
 fn read_branches(parse: &mut RegexpParse) -> Result<(), Error> {
-    while !parse.is_empty() {
-        let branch = read_branch(parse)?;
-        parse.tree.push(branch);
-
-        if parse.is_empty() {
-            return Ok(());
-        }
-
-        let b = parse.next_rune()?;
-        if b == '|' {
-            parse.record_feature(RegexpFeature::OrBar);
+    let mut branch = Branch::new();
+    let mut closed_group = None;
+    while closed_group.is_some() || !parse.is_empty() {
+        if let BranchEnd::GroupOpen(lookaround) =
+            read_branch(parse, &mut branch, closed_group.take())?
+        {
+            parse.nest(std::mem::take(&mut branch), lookaround);
             continue;
-        } else if b == ')' {
-            parse.backup1(b);
-            return Ok(());
         }
-        // Shouldn't reach here
+        parse.tree.push(std::mem::take(&mut branch));
+
+        match parse.next_rune() {
+            Ok('|') => parse.record_feature(RegexpFeature::OrBar),
+            // A `)` only ends a branch inside a group; at the top level it is
+            // an error from `read_atom`.
+            Ok(')') => {
+                if let Some((group, enclosing)) = parse.unnest() {
+                    closed_group = Some(group);
+                    branch = enclosing;
+                }
+            }
+            _ => {}
+        }
     }
     Ok(())
 }
 
-/// Read a single branch (sequence of pieces).
-fn read_branch(parse: &mut RegexpParse) -> Result<Branch, Error> {
-    let mut branch = Vec::new();
+/// Why `read_branch` stopped.
+enum BranchEnd {
+    /// The branch is complete.
+    Done,
+    /// A group opened. Its branches come next, then the rest of this branch.
+    GroupOpen(Option<LookaroundType>),
+}
 
+/// Read pieces onto `branch` until it ends or a group opens. A `closed_group`
+/// has just had its `)` read, so its quantifier is next.
+fn read_branch(
+    parse: &mut RegexpParse,
+    branch: &mut Branch,
+    mut closed_group: Option<QuantifiedAtom>,
+) -> Result<BranchEnd, Error> {
     loop {
-        match read_piece(parse) {
-            Ok(piece) => branch.push(piece),
-            Err(e) if e.message == "stuck" => break,
-            Err(e) if e.message == "end of string" => break,
+        let piece = match closed_group.take() {
+            Some(mut group) => read_quantifier(parse, &mut group).map(|()| Piece::Atom(group)),
+            None => read_piece(parse),
+        };
+        match piece {
+            Ok(Piece::Atom(qa)) => branch.push(qa),
+            Ok(Piece::GroupOpen(lookaround)) => return Ok(BranchEnd::GroupOpen(lookaround)),
+            Err(e) if e.message == "stuck" => return Ok(BranchEnd::Done),
+            Err(e) if e.message == "end of string" => return Ok(BranchEnd::Done),
             Err(e) => return Err(e),
         }
     }
-
-    Ok(branch)
 }
 
-/// Read a piece (atom with optional quantifier).
-fn read_piece(parse: &mut RegexpParse) -> Result<QuantifiedAtom, Error> {
-    let mut qa = read_atom(parse)?;
-    read_quantifier(parse, &mut qa)?;
-    Ok(qa)
+/// The next element of a branch.
+enum Piece {
+    /// An atom, with its quantifier once `read_piece` has read it.
+    Atom(QuantifiedAtom),
+    /// The opening of a group, with its lookaround kind if it has one.
+    GroupOpen(Option<LookaroundType>),
+}
+
+/// Read a piece (atom with optional quantifier). A group's quantifier follows
+/// its `)`, so an opening group comes back without one.
+fn read_piece(parse: &mut RegexpParse) -> Result<Piece, Error> {
+    match read_atom(parse)? {
+        Piece::Atom(mut qa) => {
+            read_quantifier(parse, &mut qa)?;
+            Ok(Piece::Atom(qa))
+        }
+        group_open @ Piece::GroupOpen(_) => Ok(group_open),
+    }
 }
 
 /// Check if a character is a "normal" character (not special).
@@ -1228,11 +1426,11 @@ fn check_multi_char_escape(c: char) -> Option<(RuneRange, Option<String>)> {
     }
 }
 
-/// Read an atom.
-fn read_atom(parse: &mut RegexpParse) -> Result<QuantifiedAtom, Error> {
+/// Read an atom. For a group that is only its opening, up to the branches.
+fn read_atom(parse: &mut RegexpParse) -> Result<Piece, Error> {
     let b = parse.next_rune()?;
 
-    match b {
+    let atom = match b {
         c if is_normal_char(c) => Ok(QuantifiedAtom {
             runes: vec![RunePair { lo: c, hi: c }],
             ..Default::default()
@@ -1244,7 +1442,7 @@ fn read_atom(parse: &mut RegexpParse) -> Result<QuantifiedAtom, Error> {
                 ..Default::default()
             })
         }
-        '(' => read_group(parse),
+        '(' => return read_group_extension(parse).map(Piece::GroupOpen),
         ')' => {
             if parse.is_nested() {
                 parse.backup1(b);
@@ -1286,30 +1484,12 @@ fn read_atom(parse: &mut RegexpParse) -> Result<QuantifiedAtom, Error> {
                 offset: parse.last_index,
             })
         }
-    }
+    };
+    atom.map(Piece::Atom)
 }
 
-/// Maximum nesting depth for `(...)` groups. Parsing, word-boundary expansion
-/// and NFA construction all recurse once per level, so without a cap a deeply
-/// nested regexp overflows the stack and aborts the process. Debug builds on a
-/// 2 MB thread stack overflow somewhere past 400 levels.
-const MAX_GROUP_NESTING_DEPTH: usize = 128;
-
-/// Read a `(...)` group, including the `(?:`, `(?=`, `(?!`, `(?<=`, `(?<!` extensions.
-fn read_group(parse: &mut RegexpParse) -> Result<QuantifiedAtom, Error> {
-    parse.nest()?;
-    let lookaround_type = read_group_extension(parse)?;
-    read_branches(parse)?;
-    parse.require(')')?;
-    let subtree = parse.unnest();
-    Ok(QuantifiedAtom {
-        subtree: Some(subtree),
-        lookaround: lookaround_type,
-        ..Default::default()
-    })
-}
-
-/// Classify what follows the opening `(`. Returns the lookaround kind if any.
+/// Classify what follows the opening `(`, covering the `(?:`, `(?=`, `(?!`,
+/// `(?<=` and `(?<!` extensions. Returns the lookaround kind if any.
 fn read_group_extension(parse: &mut RegexpParse) -> Result<Option<LookaroundType>, Error> {
     match parse.next_rune() {
         Ok('?') => read_question_extension(parse),
@@ -2811,11 +2991,29 @@ mod tests {
     }
 
     #[test]
-    fn test_group_nesting_depth_limit() {
-        let nested = |n: usize| format!("{}a{}", "(".repeat(n), ")".repeat(n));
-        assert!(parse(&nested(MAX_GROUP_NESTING_DEPTH)).is_ok());
-        let err = parse(&nested(MAX_GROUP_NESTING_DEPTH + 1)).unwrap_err();
-        assert!(err.message.contains("nested deeper"), "{err:?}");
+    fn test_deeply_nested_groups() {
+        let depth = if cfg!(miri) { 64 } else { 10_000 };
+        let tree = parse(&format!("{}a{}", "(".repeat(depth), ")+".repeat(depth))).unwrap();
+        assert_eq!(group_depth(&tree), depth);
+        assert_eq!(atoms(&tree).count(), depth + 1);
+
+        // The innermost atom is reached through one group per level.
+        let mut level = &tree;
+        for _ in 0..depth {
+            assert_eq!(level.len(), 1);
+            assert!(level[0][0].is_plus());
+            level = level[0][0].subtree.as_ref().unwrap();
+        }
+        assert_eq!(level[0][0].runes, vec![RunePair { lo: 'a', hi: 'a' }]);
+
+        let copy = tree.clone();
+        assert_eq!(atoms(&copy).count(), atoms(&tree).count());
+        for (copied, original) in atoms(&copy).zip(atoms(&tree)) {
+            assert_eq!(copied.runes, original.runes);
+            assert_eq!(copied.quant_min, original.quant_min);
+            assert_eq!(copied.quant_max, original.quant_max);
+            assert_eq!(copied.subtree.is_some(), original.subtree.is_some());
+        }
     }
 
     #[test]
@@ -2951,7 +3149,7 @@ mod tests {
                 ..Default::default()
             },
             QuantifiedAtom {
-                subtree: Some(parse("ab").unwrap()),
+                subtree: Some(parse("ab").unwrap().into()),
                 quant_min: 0,
                 quant_max: 0,
                 ..Default::default()

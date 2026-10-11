@@ -3,7 +3,7 @@
 use crate::QuaminaError;
 use crate::regexp::{
     LookaroundType, QuantifiedAtom, RegexpBranch, RegexpRoot, collect_lookarounds, concat_roots,
-    expand_word_boundaries, fixed_length, has_top_level_lookaround, has_word_boundary,
+    expand_word_boundaries, fixed_length, group_depth, has_top_level_lookaround, has_word_boundary,
     parse_regexp,
 };
 use crate::segments_tree::SEGMENT_SEPARATOR;
@@ -407,7 +407,7 @@ pub fn transform_lookaround_pattern(tree: &RegexpRoot) -> Result<MultiConditionP
                     // Byte length is computed from the lookbehind pattern
                     let byte_length = compute_lookbehind_byte_length(la_subtree)?;
                     conditions.push(LookaroundCondition::PositiveLookbehind {
-                        pattern: la_subtree.clone(),
+                        pattern: la_subtree.to_vec(),
                         byte_length,
                     });
                     // The assertion spells the preceding run out.
@@ -417,7 +417,7 @@ pub fn transform_lookaround_pattern(tree: &RegexpRoot) -> Result<MultiConditionP
                     // (?<!B)A → condition checks B does NOT precede A
                     let byte_length = compute_lookbehind_byte_length(la_subtree)?;
                     conditions.push(LookaroundCondition::NegativeLookbehind {
-                        pattern: la_subtree.clone(),
+                        pattern: la_subtree.to_vec(),
                         byte_length,
                     });
                     // Ruling a shape out says nothing about the run itself.
@@ -780,6 +780,11 @@ fn parse_anything_but_array(arr: &[Value]) -> Result<Matcher, QuaminaError> {
 fn parse_regexp_matcher(s: &str) -> Result<Matcher, QuaminaError> {
     let tree = parse_regexp(s)
         .map_err(|e| QuaminaError::InvalidPattern(format!("invalid regexp: {}", e.message)))?;
+    if group_depth(&tree) > MAX_GROUP_NESTING_DEPTH {
+        return Err(QuaminaError::InvalidPattern(format!(
+            "invalid regexp: groups nested deeper than {MAX_GROUP_NESTING_DEPTH} levels"
+        )));
+    }
 
     let tree = if has_word_boundary(&tree) {
         let expanded = expand_word_boundaries(&tree).map_err(|e| {
@@ -806,6 +811,11 @@ fn parse_regexp_matcher(s: &str) -> Result<Matcher, QuaminaError> {
 
     Ok(Matcher::ParsedRegexp(tree))
 }
+
+/// Maximum nesting depth for `(...)` groups. NFA construction recurses once
+/// per level, so without a cap a deeply nested regexp overflows the stack and
+/// aborts the process.
+const MAX_GROUP_NESTING_DEPTH: usize = 128;
 
 /// Parse numeric comparison like [">", 0, "<=", 100] or [">=", 5]
 fn parse_numeric_comparison(arr: &[Value]) -> Option<NumericComparison> {
