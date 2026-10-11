@@ -366,21 +366,9 @@ fn has_nested_lookaround(tree: &Root) -> bool {
     false
 }
 
-/// Recursively check if a tree contains any lookaround at any depth.
+/// Check if a tree contains any lookaround at any depth.
 fn tree_has_lookaround(tree: &Root) -> bool {
-    for branch in tree {
-        for atom in branch {
-            if atom.lookaround.is_some() {
-                return true;
-            }
-            if let Some(subtree) = &atom.subtree
-                && tree_has_lookaround(subtree)
-            {
-                return true;
-            }
-        }
-    }
-    false
+    atoms(tree).any(|atom| atom.lookaround.is_some())
 }
 
 /// Validate lookaround constructs in a parsed tree.
@@ -411,64 +399,139 @@ fn validate_lookarounds(tree: &Root) -> Result<(), String> {
 
 /// Check if a pattern can match strings of different lengths.
 /// Used to validate lookbehind patterns which require fixed length.
+///
+/// Lengths count characters, so a dot or a class is one whatever its UTF-8
+/// width. Any quantifier with `quant_min != quant_max` (`*`, `+`, `{m,n}`)
+/// makes the pattern variable.
 fn has_variable_length_pattern(tree: &Root) -> bool {
-    // A pattern is variable-length if its first branch is variable-length, or if
-    // any alternation branch has a different fixed length than the first. An empty
-    // tree matches only the empty string, which is fixed-length.
-    if tree.is_empty() {
-        return false;
-    }
-    let first_len = branch_fixed_length(&tree[0]);
-    if first_len.is_none() {
-        return true;
-    }
-    tree.iter()
-        .skip(1)
-        .any(|branch| branch_fixed_length(branch) != first_len)
+    let repeat = |atom: &QuantifiedAtom| {
+        if atom.quant_min == atom.quant_max {
+            usize::try_from(atom.quant_min).map_err(drop)
+        } else {
+            Err(())
+        }
+    };
+    let char_len = |atom: &QuantifiedAtom| (atom.is_dot || !atom.runes.is_empty()).then_some(1);
+    fixed_length(tree, repeat, char_len, || ()).is_err()
 }
 
-/// Calculate the fixed length of a branch, or None if variable length.
-fn branch_fixed_length(branch: &Branch) -> Option<usize> {
-    let mut total = 0usize;
-    for atom in branch {
-        // A fixed-length atom repeats a fixed number of times, so quant_min must
-        // equal quant_max; `*`, `+`, and `{m,n}` with m != n are all variable.
-        if atom.quant_min != atom.quant_max {
-            return None;
+/// Every atom of `tree` in pattern order, each group's contents straight
+/// after the group's own atom. The walk keeps its place in each enclosing group
+/// on the heap, so nesting depth costs no stack.
+pub fn atoms(tree: &[Branch]) -> Atoms<'_> {
+    Atoms {
+        levels: vec![(tree.iter(), std::slice::Iter::default())],
+    }
+}
+
+/// Iterator returned by [`atoms`].
+pub struct Atoms<'a> {
+    /// For the top level and each group entered: the branches not yet
+    /// started, and the rest of the current branch.
+    levels: Vec<(
+        std::slice::Iter<'a, Branch>,
+        std::slice::Iter<'a, QuantifiedAtom>,
+    )>,
+}
+
+impl<'a> Iterator for Atoms<'a> {
+    type Item = &'a QuantifiedAtom;
+
+    fn next(&mut self) -> Option<&'a QuantifiedAtom> {
+        loop {
+            let (branches, atoms) = self.levels.last_mut()?;
+            if let Some(atom) = atoms.next() {
+                if let Some(subtree) = &atom.subtree {
+                    self.levels
+                        .push((subtree.iter(), std::slice::Iter::default()));
+                }
+                return Some(atom);
+            }
+            match branches.next() {
+                Some(branch) => *atoms = branch.iter(),
+                None => {
+                    self.levels.pop();
+                }
+            }
+        }
+    }
+}
+
+/// The fixed length of `tree`: what every branch measures when they all agree.
+///
+/// A branch is the sum over its atoms of `repeat` (how often the atom occurs)
+/// times one occurrence's length. `atom_len` gives that length for a leaf atom
+/// and `None` for a group, which measures as its own branches do, or zero when
+/// it has none. `repeat` sees each atom before any of its group's contents, and
+/// `mismatch` is the error for branches that disagree. An empty tree is 0.
+///
+/// The walk keeps one entry per enclosing group on the heap, so nesting depth
+/// costs no stack.
+pub fn fixed_length<E>(
+    tree: &[Branch],
+    repeat: impl Fn(&QuantifiedAtom) -> Result<usize, E>,
+    atom_len: impl Fn(&QuantifiedAtom) -> Option<usize>,
+    mismatch: impl Fn() -> E,
+) -> Result<usize, E> {
+    /// A group, or the top level, partway through being measured.
+    struct Level<'a> {
+        branches: std::slice::Iter<'a, Branch>,
+        atoms: Option<std::slice::Iter<'a, QuantifiedAtom>>,
+        /// Length of the current branch so far.
+        branch_len: usize,
+        /// Length of the first branch, which the others must match.
+        agreed: Option<usize>,
+    }
+
+    impl<'a> Level<'a> {
+        fn new(branches: &'a [Branch]) -> Self {
+            Self {
+                branches: branches.iter(),
+                atoms: None,
+                branch_len: 0,
+                agreed: None,
+            }
+        }
+    }
+
+    // The level being measured, and below it each enclosing level paired with
+    // the repeat count of the group atom it is waiting on.
+    let mut level = Level::new(tree);
+    let mut enclosing: Vec<(Level<'_>, usize)> = Vec::new();
+    loop {
+        if let Some(atom) = level.atoms.as_mut().and_then(Iterator::next) {
+            let count = repeat(atom)?;
+            match (atom_len(atom), &atom.subtree) {
+                (Some(len), _) => level.branch_len += len * count,
+                (None, Some(subtree)) => {
+                    let outer = std::mem::replace(&mut level, Level::new(subtree));
+                    enclosing.push((outer, count));
+                }
+                (None, None) => {}
+            }
+            continue;
         }
 
-        let atom_len = if atom.is_dot {
-            // Dot matches one character, but UTF-8 encoding varies in length
-            // For simplicity, we allow single-character matchers
-            1
-        } else if !atom.runes.is_empty() {
-            // Character class - could have varying UTF-8 lengths
-            // But from a character count perspective, it's always 1 char
-            1
-        } else if let Some(subtree) = &atom.subtree {
-            // Group - recurse (but it's the match count, not UTF-8 bytes)
-            if subtree.len() == 1 {
-                branch_fixed_length(&subtree[0])?
-            } else {
-                // Alternation - check if all have same length
-                let first_len = branch_fixed_length(&subtree[0])?;
-                for b in subtree.iter().skip(1) {
-                    if branch_fixed_length(b) != Some(first_len) {
-                        return None;
-                    }
-                }
-                first_len
+        if level.atoms.is_some() {
+            match level.agreed {
+                None => level.agreed = Some(level.branch_len),
+                Some(agreed) if agreed != level.branch_len => return Err(mismatch()),
+                Some(_) => {}
             }
-        } else {
-            0 // Empty atom
-        };
+        }
+        if let Some(branch) = level.branches.next() {
+            level.atoms = Some(branch.iter());
+            level.branch_len = 0;
+            continue;
+        }
 
-        // Multiply by quantifier. The parser doesn't produce negative
-        // counts here, but if that ever changed we'd rather call the
-        // length unknown (None) than wrap a -1 into a giant usize.
-        total += atom_len * usize::try_from(atom.quant_min).ok()?;
+        let len = level.agreed.unwrap_or(0);
+        let Some((outer, count)) = enclosing.pop() else {
+            return Ok(len);
+        };
+        level = outer;
+        level.branch_len += len * count;
     }
-    Some(total)
 }
 
 /// Collect all lookaround atoms from a tree with their positions.

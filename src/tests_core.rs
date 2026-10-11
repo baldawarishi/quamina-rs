@@ -3198,6 +3198,24 @@ fn test_transform_lookbehind_single_char_class() {
 }
 
 #[test]
+fn test_transform_lookbehind_repeated_group() {
+    // A group counts its branches' length once per repeat, added to the atoms
+    // around it.
+    use crate::json::LookaroundCondition;
+    use crate::json::transform_lookaround_pattern;
+    use crate::regexp::parse_regexp;
+
+    let tree = parse_regexp("(?<=x(ab){3})y").unwrap();
+    let mc = transform_lookaround_pattern(&tree).unwrap();
+    match &mc.conditions[0] {
+        LookaroundCondition::PositiveLookbehind { byte_length, .. } => {
+            assert_eq!(*byte_length, 7, "x(ab){{3}} = 1 + 2 * 3 bytes");
+        }
+        other => panic!("Expected PositiveLookbehind, got {other:?}"),
+    }
+}
+
+#[test]
 fn test_transform_lookbehind_dot_byte_length() {
     // Tests the is_dot branch: dot → 4 bytes (conservative UTF-8 max)
     use crate::json::LookaroundCondition;

@@ -21,6 +21,7 @@ use crate::automaton::{
 
 use super::parser::{
     Branch as RegexpBranch, QuantifiedAtom, REGEXP_QUANTIFIER_MAX, Root as RegexpRoot, RuneRange,
+    atoms,
 };
 
 // ============================================================================
@@ -56,38 +57,14 @@ fn regexp_has_alternation(root: &RegexpRoot) -> bool {
     // More than one branch at any level means alternation. Compaction past this
     // gate only drops states that folding left unreachable, so gating it avoids
     // pointlessly cloning patterns that have none.
-    if root.len() > 1 {
-        return true;
-    }
-    for branch in root {
-        for qa in branch {
-            if let Some(ref subtree) = qa.subtree
-                && regexp_has_alternation(subtree)
-            {
-                return true;
-            }
-        }
-    }
-    false
+    root.len() > 1
+        || atoms(root).any(|qa| qa.subtree.as_ref().is_some_and(|subtree| subtree.len() > 1))
 }
 
 /// Check if a regexp tree has any `+` or `*` quantifiers that would benefit from arena-based NFA.
 #[must_use]
 pub fn regexp_has_plus_star(root: &RegexpRoot) -> bool {
-    for branch in root {
-        for qa in branch {
-            if qa.is_plus() || qa.is_star() {
-                return true;
-            }
-            // Recursively check subtrees (parenthesized groups)
-            if let Some(ref subtree) = qa.subtree
-                && regexp_has_plus_star(subtree)
-            {
-                return true;
-            }
-        }
-    }
-    false
+    atoms(root).any(|qa| qa.is_plus() || qa.is_star())
 }
 
 // ============================================================================
@@ -921,6 +898,16 @@ fn ensure_arena_tree_entry(node: &mut ArenaRuneTreeNode, byte: u8) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_regexp_has_alternation() {
+        let has_alternation =
+            |re: &str| regexp_has_alternation(&crate::regexp::parse_regexp(re).unwrap());
+        assert!(has_alternation("a|b"));
+        assert!(has_alternation("x(a|b)"));
+        assert!(!has_alternation("ab"));
+        assert!(!has_alternation("x(ab)"));
+    }
 
     #[test]
     fn test_remaining_byte_depth() {

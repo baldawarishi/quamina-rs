@@ -3,7 +3,8 @@
 use crate::QuaminaError;
 use crate::regexp::{
     LookaroundType, QuantifiedAtom, RegexpBranch, RegexpRoot, collect_lookarounds, concat_roots,
-    expand_word_boundaries, has_top_level_lookaround, has_word_boundary, parse_regexp,
+    expand_word_boundaries, fixed_length, has_top_level_lookaround, has_word_boundary,
+    parse_regexp,
 };
 use crate::segments_tree::SEGMENT_SEPARATOR;
 use rustc_hash::FxHashMap;
@@ -483,60 +484,49 @@ fn build_combined_pattern(
 /// Compute the fixed byte length of a lookbehind pattern.
 /// Lookbehind patterns must have a fixed length (validated during parsing).
 /// This computes the UTF-8 byte length for the pattern.
+///
+/// Every alternation branch must encode to the same byte length; any that
+/// disagrees is rejected so callers can rely on a single fixed lookbehind width.
 fn compute_lookbehind_byte_length(tree: &RegexpRoot) -> Result<usize, String> {
-    let Some((first, rest)) = tree.split_first() else {
-        return Ok(0);
-    };
-
-    // Every alternation branch must encode to the same byte length; reject any
-    // that disagrees so callers can rely on a single fixed lookbehind width.
-    let first_len = compute_branch_byte_length(first)?;
-    for branch in rest {
-        if compute_branch_byte_length(branch)? != first_len {
-            return Err("variable-length lookbehind not supported".into());
-        }
-    }
-    Ok(first_len)
+    fixed_length(
+        tree,
+        lookbehind_repeat_count,
+        lookbehind_atom_byte_length,
+        || "variable-length lookbehind not supported".to_owned(),
+    )
 }
 
-/// Compute the byte length of a single branch.
-/// Each atom contributes based on its character class and quantifier.
-fn compute_branch_byte_length(branch: &RegexpBranch) -> Result<usize, String> {
-    let mut total = 0usize;
-    for atom in branch {
-        // Must be singleton (no variable quantifiers)
-        if atom.quant_min != atom.quant_max {
-            return Err("variable quantifier in lookbehind not supported".into());
-        }
-        // Quantifier counts come out of the parser non-negative; if a stray
-        // negative ever reaches here we'd rather raise a clear error than
-        // wrap into an enormous usize.
-        let count = usize::try_from(atom.quant_min)
-            .map_err(|_| "negative quantifier count in lookbehind".to_owned())?;
-
-        // Compute per-atom byte length
-        let atom_len = if atom.is_dot {
-            // Dot can match any char, but for byte length we need worst case
-            // For simplicity, assume UTF-8 max (4 bytes) - this is conservative
-            // A more precise implementation would track actual character ranges
-            4
-        } else if !atom.runes.is_empty() {
-            // Character class - compute max UTF-8 length of any char in range
-            let mut max_len = 1;
-            for rp in &atom.runes {
-                max_len = max_len.max(rp.hi.len_utf8());
-            }
-            max_len
-        } else if let Some(subtree) = &atom.subtree {
-            // Nested group - recurse
-            compute_lookbehind_byte_length(subtree)?
-        } else {
-            0
-        };
-
-        total += atom_len * count;
+/// How many times an atom in a lookbehind repeats. It must be a fixed count.
+fn lookbehind_repeat_count(atom: &QuantifiedAtom) -> Result<usize, String> {
+    if atom.quant_min != atom.quant_max {
+        return Err("variable quantifier in lookbehind not supported".into());
     }
-    Ok(total)
+    // Quantifier counts come out of the parser non-negative; if a stray
+    // negative ever reaches here we'd rather raise a clear error than
+    // wrap into an enormous usize.
+    usize::try_from(atom.quant_min)
+        .map_err(|_| "negative quantifier count in lookbehind".to_owned())
+}
+
+/// The byte length of one occurrence of a non-group atom in a lookbehind, or
+/// `None` for a group.
+fn lookbehind_atom_byte_length(atom: &QuantifiedAtom) -> Option<usize> {
+    if atom.is_dot {
+        // Dot can match any char, but for byte length we need worst case
+        // For simplicity, assume UTF-8 max (4 bytes) - this is conservative
+        // A more precise implementation would track actual character ranges
+        Some(4)
+    } else if !atom.runes.is_empty() {
+        // Character class - compute max UTF-8 length of any char in range
+        Some(
+            atom.runes
+                .iter()
+                .map(|rp| rp.hi.len_utf8())
+                .fold(1, usize::max),
+        )
+    } else {
+        None
+    }
 }
 
 /// Parse a pattern JSON into field -> matchers map

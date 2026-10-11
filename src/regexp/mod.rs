@@ -27,6 +27,8 @@ pub use parser::{
     parse as parse_regexp,
 };
 
+pub(crate) use parser::fixed_length;
+
 // Crate-internal items are accessible via their original modules:
 // - nfa::make_dot_fa (pub(crate))
 // - parser::{invert_rune_range, simplify_rune_range} (pub(crate))
