@@ -221,7 +221,7 @@ const IMPLEMENTED_FEATURES: &[RegexpFeature] = &[
 
 /// Parser state for regexp parsing.
 struct RegexpParse {
-    bytes: Vec<u8>,
+    text: String,
     index: usize,
     last_index: usize,
     nesting: Vec<Root>,
@@ -247,7 +247,7 @@ impl std::error::Error for Error {}
 impl RegexpParse {
     fn new(re: &str) -> Self {
         Self {
-            bytes: re.as_bytes().to_vec(),
+            text: re.to_owned(),
             index: 0,
             last_index: 0,
             nesting: Vec::new(),
@@ -278,7 +278,7 @@ impl RegexpParse {
     }
 
     fn next_rune(&mut self) -> Result<char, Error> {
-        if self.index >= self.bytes.len() {
+        if self.is_empty() {
             return Err(Error {
                 message: "end of string".into(),
                 offset: self.index,
@@ -286,17 +286,17 @@ impl RegexpParse {
         }
         self.last_index = self.index;
 
-        // Decode UTF-8
-        let remaining = &self.bytes[self.index..];
-        let s = std::str::from_utf8(remaining).map_err(|_| Error {
-            message: "UTF-8 encoding error".into(),
-            offset: self.index,
-        })?;
-
-        let c = s.chars().next().ok_or_else(|| Error {
-            message: "empty string".into(),
-            offset: self.index,
-        })?;
+        // Decode only the next rune, so reading the regexp stays linear in its
+        // length. The text is a `str`, so this fails only if `index` is ever
+        // left off a character boundary.
+        let c = self
+            .text
+            .get(self.index..)
+            .and_then(|rest| rest.chars().next())
+            .ok_or_else(|| Error {
+                message: "UTF-8 encoding error".into(),
+                offset: self.index,
+            })?;
 
         self.index += c.len_utf8();
         Ok(c)
@@ -326,7 +326,7 @@ impl RegexpParse {
     }
 
     const fn is_empty(&self) -> bool {
-        self.index >= self.bytes.len()
+        self.index >= self.text.len()
     }
 
     fn record_feature(&mut self, feature: RegexpFeature) {
