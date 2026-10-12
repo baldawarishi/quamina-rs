@@ -188,19 +188,19 @@ impl fmt::Display for QuaminaError {
 /// Limits on pattern complexity to prevent OOM and stack exhaustion.
 ///
 /// Four complementary limits, each catching a different attack vector:
-/// - **Nesting depth**: prevents stack exhaustion and deep-nesting attacks
+/// - **Nesting depth**: bounds the work a deeply nested pattern can cause
 /// - **Field count**: prevents wide patterns with hundreds of fields
 /// - **Arena byte budget**: per-field backstop that catches automaton complexity whatever produced it
 /// - **State count**: prevents exponential field-matcher blowup from mixed-type matchers
 ///
 /// # Defaults
-/// - `max_pattern_depth`: 256 (jq precedent)
+/// - `max_pattern_depth`: 10000 (Go Quamina's JSON nesting limit)
 /// - `max_fields_per_pattern`: 256
 /// - `arena_byte_budget`: 10 MB (regex crate precedent)
 /// - `max_states_per_pattern`: 1024
 #[derive(Debug, Clone)]
 pub struct PatternLimits {
-    /// Maximum nesting depth of a pattern (default: 256)
+    /// Maximum nesting depth of a pattern (default: 10000)
     pub max_pattern_depth: usize,
     /// Maximum number of fields per pattern (default: 256)
     pub max_fields_per_pattern: usize,
@@ -221,7 +221,7 @@ pub struct PatternLimits {
 impl Default for PatternLimits {
     fn default() -> Self {
         Self {
-            max_pattern_depth: 256,
+            max_pattern_depth: 10_000,
             max_fields_per_pattern: 256,
             arena_byte_budget: 10 * 1024 * 1024, // 10 MB
             max_states_per_pattern: 1024,
@@ -395,7 +395,7 @@ impl<X: Clone + Eq + Hash + Send + Sync> QuaminaBuilder<X> {
         Ok(self)
     }
 
-    /// Set the maximum nesting depth for patterns (default: 256).
+    /// Set the maximum nesting depth for patterns (default: 10000).
     ///
     /// # Panics
     /// Panics if `depth` is 0.

@@ -13,7 +13,7 @@ use std::process::Command;
 
 use quamina::json::transform_lookaround_pattern;
 use quamina::regexp::{expand_word_boundaries, parse_regexp, regexp_has_plus_star};
-use quamina::{PatternLimits, Quamina, QuaminaBuilder};
+use quamina::{PatternLimits, Quamina, QuaminaBuilder, QuaminaError};
 
 /// Set in the child process to select the reproducer instead of the spawner.
 const GUARD: &str = "QUAMINA_DEEP_CHAIN_CHILD";
@@ -162,23 +162,64 @@ fn deep_anything_but_survives_small_stack() {
 }
 
 /// Pattern JSON nested to the default `max_pattern_depth`, with the operator
-/// syntax a leaf can add below that.
+/// syntax a leaf can add below that, and far deeper once the limit is raised.
+/// Parsing, adding, cloning and dropping each visit every level.
 #[test]
 #[cfg_attr(miri, ignore = "spawns a child process")]
 fn deepest_pattern_json_survives_small_stack() {
     if in_child() {
         on_small_stack(|| {
             let depth = PatternLimits::default().max_pattern_depth;
-            let pattern = format!(
-                r#"{}[{{"numeric": [">", 1]}}]{}"#,
-                r#"{"f": "#.repeat(depth),
-                "}".repeat(depth)
-            );
-            let event = format!("{}2{}", r#"{"f": "#.repeat(depth), "}".repeat(depth));
+            let deeper = 200_000;
 
             let mut q = Quamina::new();
-            q.add_pattern("deep", &pattern)
+            q.add_pattern("deep", &nested_numeric_pattern(depth))
                 .expect("nesting at max_pattern_depth is accepted");
+            let err = q
+                .add_pattern("deeper", &nested_numeric_pattern(deeper))
+                .expect_err("nesting past max_pattern_depth is rejected");
+            assert!(matches!(err, QuaminaError::PatternTooComplex(_)), "{err}");
+
+            let mut q = QuaminaBuilder::new()
+                .with_max_pattern_depth(deeper)
+                .build()
+                .expect("a raised depth limit is valid");
+            q.add_pattern("deeper", &nested_numeric_pattern(deeper))
+                .expect("nesting at a raised max_pattern_depth is accepted");
+            drop(q.clone());
+            drop(q.segments_tree().clone());
+
+            // Arrays nested inside an operator are parsed before the operator
+            // rejects them.
+            let pattern = format!(
+                r#"{{"f": [{{"numeric": {}{}}}]}}"#,
+                "[".repeat(deeper),
+                "]".repeat(deeper)
+            );
+            let err = q
+                .add_pattern("arrays", &pattern)
+                .expect_err("nested arrays are not a numeric comparison");
+            assert!(matches!(err, QuaminaError::InvalidPattern(_)), "{err}");
+        });
+        return;
+    }
+
+    respawn("deepest_pattern_json_survives_small_stack");
+}
+
+/// An event nested as deep as the deepest pattern the default limit accepts.
+#[test]
+#[cfg_attr(miri, ignore = "spawns a child process")]
+#[ignore = "the flattener's read_object still recurses once per nested object"]
+fn deepest_pattern_json_matches_on_small_stack() {
+    if in_child() {
+        on_small_stack(|| {
+            let depth = PatternLimits::default().max_pattern_depth;
+            let mut q = Quamina::new();
+            q.add_pattern("deep", &nested_numeric_pattern(depth))
+                .expect("nesting at max_pattern_depth is accepted");
+
+            let event = format!("{}2{}", r#"{"f": "#.repeat(depth), "}".repeat(depth));
             let matches = q
                 .matches_for_event(event.as_bytes())
                 .expect("matching the deeply nested event");
@@ -187,7 +228,7 @@ fn deepest_pattern_json_survives_small_stack() {
         return;
     }
 
-    respawn("deepest_pattern_json_survives_small_stack");
+    respawn("deepest_pattern_json_matches_on_small_stack");
 }
 
 /// Quantified regexp groups nested past where a recursive NFA builder runs
@@ -325,6 +366,16 @@ fn deeply_nested_event_arrays_survive_small_stack() {
     }
 
     respawn("deeply_nested_event_arrays_survive_small_stack");
+}
+
+/// A pattern with `depth` nested field objects and a numeric operator below
+/// the last.
+fn nested_numeric_pattern(depth: usize) -> String {
+    format!(
+        r#"{}[{{"numeric": [">", 1]}}]{}"#,
+        r#"{"f": "#.repeat(depth),
+        "}".repeat(depth)
+    )
 }
 
 /// True when this process is the spawned child that runs the reproducer.

@@ -1965,11 +1965,12 @@ fn test_pattern_depth_at_limit_miri_friendly() {
 #[test]
 #[cfg_attr(miri, ignore)]
 fn test_pattern_depth_exceeds_limit() {
-    // Pattern nested 257 levels should fail
+    // A pattern nested one level past the default limit should fail
+    let max = crate::PatternLimits::default().max_pattern_depth;
     let mut q = Quamina::new();
     let mut pattern = String::new();
     let mut closing = String::new();
-    for i in 0..257 {
+    for i in 0..=max {
         pattern.push_str(&format!("{{\"f{i}\": "));
         closing.push('}');
     }
@@ -1984,12 +1985,13 @@ fn test_pattern_depth_exceeds_limit() {
         "Error should mention depth: {err_msg}"
     );
     assert!(
-        err_msg.contains("257"),
-        "Error should mention actual depth 257: {err_msg}"
+        err_msg.contains(&(max + 1).to_string()),
+        "Error should mention actual depth {}: {err_msg}",
+        max + 1
     );
     assert!(
-        err_msg.contains("256"),
-        "Error should mention max depth 256: {err_msg}"
+        err_msg.contains(&max.to_string()),
+        "Error should mention max depth {max}: {err_msg}"
     );
 }
 
@@ -2742,7 +2744,7 @@ fn test_builder_with_flattener_blocks_second_call() {
     assert!(result.is_err(), "second with_flattener must fail");
 }
 
-/// Verify with_max_pattern_depth is applied: default is 256, setting to 2
+/// Verify with_max_pattern_depth is applied: default is 10000, setting to 2
 /// should reject depth-3 patterns but accept depth-2.
 #[test]
 fn test_builder_with_max_pattern_depth_is_applied() {
