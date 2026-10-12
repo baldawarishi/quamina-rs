@@ -16,6 +16,7 @@
 //! binary as a child for every case and classify its exit status.
 
 use std::alloc::{GlobalAlloc, Layout, System};
+use std::io::Write as _;
 use std::process::{Command, ExitCode};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
@@ -40,6 +41,11 @@ const CHILD_ENV: &str = "QUAMINA_DEPTH_PROBE_CHILD";
 
 static LIVE: AtomicUsize = AtomicUsize::new(0);
 static PEAK: AtomicUsize = AtomicUsize::new(0);
+
+/// Live heap at which a case aborts. Some shapes grow with the square of the
+/// depth, and a probe should report that rather than take the machine down.
+const HEAP_CAP: usize = 1 << 30;
+const HEAP_CAP_MESSAGE: &str = "depth_probe: heap cap exceeded";
 
 struct PeakAlloc;
 
@@ -77,6 +83,11 @@ static ALLOC: PeakAlloc = PeakAlloc;
 fn grow(bytes: usize) {
     let live = LIVE.fetch_add(bytes, Ordering::Relaxed) + bytes;
     PEAK.fetch_max(live, Ordering::Relaxed);
+    if live > HEAP_CAP {
+        // Formatting would allocate and land back here, so write raw bytes.
+        let _ = std::io::stderr().write_all(HEAP_CAP_MESSAGE.as_bytes());
+        std::process::abort();
+    }
 }
 
 /// Start a new peak window and return the baseline it is measured from.
@@ -351,6 +362,8 @@ fn run_child(shape: &str, depth: usize, opts: &Opts) -> ChildRun {
 
     let kind = if stderr.contains("overflowed its stack") {
         format!("overflow@{stage}")
+    } else if stderr.contains(HEAP_CAP_MESSAGE) {
+        format!("heap_cap@{stage}")
     } else if let Some((_, outcome)) = line.as_deref().and_then(|l| l.split_once(" outcome=")) {
         outcome.to_owned()
     } else {
