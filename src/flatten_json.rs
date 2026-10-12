@@ -302,40 +302,65 @@ impl<'a> FlattenContext<'a, '_> {
         }
     }
 
-    /// Read a JSON object, recursing into nested objects as needed.
-    #[allow(clippy::too_many_lines)] // single-pass JSON object reader; the state machine reads better as one function
-    fn read_object(&mut self, tree: &SegmentsTree) -> Result<(), FlattenError> {
+    /// Read the JSON object at `index` and every object and array nested in
+    /// it. The containers being read are kept on an explicit stack, so event
+    /// nesting is bounded by memory rather than by the call stack.
+    fn read_object<'t>(&mut self, tree: &'t SegmentsTree) -> Result<(), FlattenError> {
+        let mut enclosing: SmallVec<[Open<'t>; 8]> = SmallVec::new();
+        let mut innermost = Open::Object(self.open_object(tree)?);
+        loop {
+            let nested = match &mut innermost {
+                Open::Object(object) => self.read_members(object)?,
+                Open::Array(array) => self.read_elements(array)?,
+            };
+            if let Some(nested) = nested {
+                enclosing.push(std::mem::replace(&mut innermost, nested));
+            } else if let Some(parent) = enclosing.pop() {
+                // The parent carries on after the nested value's closing bracket.
+                innermost = parent;
+                self.step()?;
+            } else {
+                return Ok(());
+            }
+        }
+    }
+
+    /// Step into the object at `index`, snapshotting what reading its members
+    /// needs.
+    fn open_object<'t>(&mut self, tree: &'t SegmentsTree) -> Result<OpenObject<'t>, FlattenError> {
         // index points at {
         self.step()?;
+        Ok(OpenObject {
+            tree,
+            fields_count: tree.fields_count(),
+            nodes_count: tree.nodes_count(),
+            state: ObjectState::InObject,
+        })
+    }
 
-        let mut fields_count = tree.fields_count();
-        let mut nodes_count = tree.nodes_count();
-
-        // Snapshot array trail for object member fields
-        let array_trail: ArrayTrailVec = if self.skipping == 0 {
-            self.array_trail.clone()
-        } else {
-            ArrayTrailVec::new()
-        };
-
-        // These are written in ObjectState::InObject (when we read a `"key"`) and
-        // consumed later in ObjectState::MemberValue (when we parse the value).
-        // Rust can't prove the state-machine ordering, so we must initialize them
-        // here — but the initial values are never actually read.
-        #[allow(unused_assignments)]
-        let mut member_name: MemberName<'a> = MemberName::Borrowed(&[]);
-        #[allow(unused_assignments)]
-        let mut member_is_used = false;
+    /// Read members of `object` until it closes (`None`), or until a member's
+    /// value is an object or array that must be read: that container is
+    /// returned already stepped into, and `object` resumes after it.
+    #[allow(clippy::too_many_lines)] // single-pass JSON object reader; the state machine reads better as one function
+    fn read_members<'t>(
+        &mut self,
+        object: &mut OpenObject<'t>,
+    ) -> Result<Option<Open<'t>>, FlattenError> {
+        let OpenObject {
+            tree,
+            mut fields_count,
+            nodes_count,
+            mut state,
+        } = *object;
         let mut member_entry: Option<&SegmentEntry> = None;
-        let mut state = ObjectState::InObject;
-
         loop {
             // Early termination: all needed fields found
             if nodes_count == 0 && fields_count == 0 {
                 if tree.is_root() {
                     return Err(FlattenError::EarlyStop);
                 }
-                return self.leave_object();
+                self.leave_object()?;
+                return Ok(None);
             }
 
             let ch = self.ch();
@@ -345,17 +370,16 @@ impl<'a> FlattenContext<'a, '_> {
                     if is_whitespace(ch) {
                         // skip
                     } else if ch == b'"' {
-                        member_name = self.read_member_name()?;
+                        let member_name = self.read_member_name()?;
                         // Single fused lookup replaces separate is_segment_used + get + path_arc_for_segment
                         member_entry = if self.skipping == 0 {
                             tree.lookup(member_name.as_bytes())
                         } else {
                             None
                         };
-                        member_is_used = member_entry.is_some();
                         state = ObjectState::SeekingColon;
                     } else if ch == b'}' {
-                        return Ok(());
+                        return Ok(None);
                     } else {
                         return Err(FlattenError::Error(self.error(&format!(
                             "illegal character '{}' in JSON object",
@@ -385,6 +409,7 @@ impl<'a> FlattenContext<'a, '_> {
                         ch = self.ch();
                     }
 
+                    let member_is_used = member_entry.is_some();
                     let mut val: Option<FieldValue<'a>> = None;
                     let mut is_number = false;
                     let mut is_leaf = false;
@@ -427,6 +452,8 @@ impl<'a> FlattenContext<'a, '_> {
                             }
                             is_leaf = true;
                         }
+                        // A container is read only when the member is used, so
+                        // `skipping` was not raised for it and needs no undoing.
                         b'[' => {
                             if !member_is_used {
                                 self.skipping += 1;
@@ -438,7 +465,13 @@ impl<'a> FlattenContext<'a, '_> {
                                 let array_tree =
                                     member_entry.and_then(|e| e.node()).unwrap_or(tree);
                                 let path = member_entry.and_then(|e| e.field()).cloned();
-                                self.read_array(path, array_tree)?;
+                                *object = OpenObject {
+                                    tree,
+                                    fields_count,
+                                    nodes_count,
+                                    state: ObjectState::AfterValue,
+                                };
+                                return Ok(Some(Open::Array(self.open_array(path, array_tree)?)));
                             }
 
                             if !member_is_used {
@@ -453,8 +486,13 @@ impl<'a> FlattenContext<'a, '_> {
                             if is_in_skipped_subtree(self.skipping) {
                                 self.skip_block(b'{', b'}')?;
                             } else if let Some(child_tree) = member_entry.and_then(|e| e.node()) {
-                                nodes_count = nodes_count.saturating_sub(1);
-                                self.read_object(child_tree)?;
+                                *object = OpenObject {
+                                    tree,
+                                    fields_count,
+                                    nodes_count: nodes_count.saturating_sub(1),
+                                    state: ObjectState::AfterValue,
+                                };
+                                return Ok(Some(Open::Object(self.open_object(child_tree)?)));
                             } else {
                                 // No child tree - skip the block
                                 self.skip_block(b'{', b'}')?;
@@ -477,10 +515,12 @@ impl<'a> FlattenContext<'a, '_> {
                         && member_is_used
                         && let Some(path) = member_entry.and_then(|e| e.field()).cloned()
                     {
+                        // Arrays opened inside this object have all closed by
+                        // now, so the trail is the one it was entered with.
                         self.push_field(Field {
                             path,
                             val: v,
-                            array_trail: array_trail.clone(),
+                            array_trail: self.array_trail.clone(),
                             is_number,
                         });
                         fields_count = fields_count.saturating_sub(1);
@@ -495,7 +535,7 @@ impl<'a> FlattenContext<'a, '_> {
                     } else if ch == b',' {
                         state = ObjectState::InObject;
                     } else if ch == b'}' {
-                        return Ok(());
+                        return Ok(None);
                     } else {
                         return Err(FlattenError::Error(
                             self.error(&format!("illegal character '{}' in object", ch as char)),
@@ -508,12 +548,13 @@ impl<'a> FlattenContext<'a, '_> {
         }
     }
 
-    /// Read a JSON array, recursing into elements as needed.
-    fn read_array(
+    /// Step into the array at `index`. Its leaf elements are recorded under
+    /// `path`, and objects among them are read against `tree`.
+    fn open_array<'t>(
         &mut self,
         path: Option<PathArc>,
-        tree: &SegmentsTree,
-    ) -> Result<(), FlattenError> {
+        tree: &'t SegmentsTree,
+    ) -> Result<OpenArray<'t>, FlattenError> {
         // index points at [
         self.step()?;
 
@@ -521,8 +562,21 @@ impl<'a> FlattenContext<'a, '_> {
             self.enter_array();
         }
 
-        let mut state = ArrayState::InArray;
+        Ok(OpenArray {
+            path,
+            tree,
+            state: ArrayState::InArray,
+        })
+    }
 
+    /// Read elements of `array` until it closes (`None`), or until an element
+    /// is an object or array: that container is returned already stepped
+    /// into, and `array` resumes after it.
+    fn read_elements<'t>(
+        &mut self,
+        array: &mut OpenArray<'t>,
+    ) -> Result<Option<Open<'t>>, FlattenError> {
+        let mut state = array.state;
         loop {
             let mut ch = self.ch();
 
@@ -534,69 +588,55 @@ impl<'a> FlattenContext<'a, '_> {
                         ch = self.ch();
                     }
 
-                    let mut val: Option<FieldValue<'a>> = None;
-                    let mut is_number = false;
-                    let mut is_leaf = false;
-
-                    match ch {
-                        b'"' => {
-                            val = Some(self.read_string_value()?);
-                            is_leaf = true;
-                        }
+                    let (val, is_number) = match ch {
+                        b'"' => (self.read_string_value()?, false),
                         b't' => {
                             self.read_literal(b"true")?;
-                            val = Some(FieldValue::Borrowed(b"true"));
-                            is_leaf = true;
+                            (FieldValue::Borrowed(b"true"), false)
                         }
                         b'f' => {
                             self.read_literal(b"false")?;
-                            val = Some(FieldValue::Borrowed(b"false"));
-                            is_leaf = true;
+                            (FieldValue::Borrowed(b"false"), false)
                         }
                         b'n' => {
                             self.read_literal(b"null")?;
-                            val = Some(FieldValue::Borrowed(b"null"));
-                            is_leaf = true;
+                            (FieldValue::Borrowed(b"null"), false)
                         }
-                        b'-' | b'0'..=b'9' => {
-                            val = Some(self.read_number()?);
-                            is_number = true;
-                            is_leaf = true;
-                        }
+                        b'-' | b'0'..=b'9' => (self.read_number()?, true),
                         b'{' => {
                             if self.skipping == 0 {
                                 self.step_array_element();
                             }
-                            self.read_object(tree)?;
+                            array.state = ArrayState::AfterValue;
+                            return Ok(Some(Open::Object(self.open_object(array.tree)?)));
                         }
                         b'[' => {
                             if self.skipping == 0 {
                                 self.step_array_element();
                             }
-                            self.read_array(path.clone(), tree)?;
+                            array.state = ArrayState::AfterValue;
+                            let nested = self.open_array(array.path.clone(), array.tree)?;
+                            return Ok(Some(Open::Array(nested)));
                         }
                         b']' => {
                             if self.skipping == 0 {
                                 self.leave_array();
                             }
-                            return Ok(());
+                            return Ok(None);
                         }
                         _ => {
                             return Err(FlattenError::Error(
                                 self.error(&format!("illegal character '{}' in array", ch as char)),
                             ));
                         }
-                    }
+                    };
 
-                    if is_leaf
-                        && let Some(v) = val
-                        && self.skipping == 0
-                    {
+                    if self.skipping == 0 {
                         self.step_array_element();
-                        if let Some(ref p) = path {
+                        if let Some(ref p) = array.path {
                             self.push_field(Field {
                                 path: p.clone(),
-                                val: v,
+                                val,
                                 array_trail: self.array_trail.clone(),
                                 is_number,
                             });
@@ -613,7 +653,7 @@ impl<'a> FlattenContext<'a, '_> {
                         if self.skipping == 0 {
                             self.leave_array();
                         }
-                        return Ok(());
+                        return Ok(None);
                     } else if ch == b',' {
                         state = ArrayState::InArray;
                     } else {
@@ -1100,6 +1140,32 @@ enum ObjectState {
 enum ArrayState {
     InArray,
     AfterValue,
+}
+
+/// An object or array the flattener is inside, with what it needs to carry
+/// on reading after a nested value.
+enum Open<'t> {
+    Object(OpenObject<'t>),
+    Array(OpenArray<'t>),
+}
+
+#[derive(Clone, Copy)]
+struct OpenObject<'t> {
+    /// The segments tree for this object's members.
+    tree: &'t SegmentsTree,
+    /// Fields and nested objects of `tree` not yet seen; once both reach zero
+    /// the rest of the object is skipped.
+    fields_count: usize,
+    nodes_count: usize,
+    state: ObjectState,
+}
+
+struct OpenArray<'t> {
+    /// The path recorded on the array's leaf elements, if a pattern uses it.
+    path: Option<PathArc>,
+    /// The segments tree objects among the elements are read against.
+    tree: &'t SegmentsTree,
+    state: ArrayState,
 }
 
 enum FlattenError {

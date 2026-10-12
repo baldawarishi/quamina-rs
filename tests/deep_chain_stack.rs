@@ -210,7 +210,6 @@ fn deepest_pattern_json_survives_small_stack() {
 /// An event nested as deep as the deepest pattern the default limit accepts.
 #[test]
 #[cfg_attr(miri, ignore = "spawns a child process")]
-#[ignore = "the flattener's read_object still recurses once per nested object"]
 fn deepest_pattern_json_matches_on_small_stack() {
     if in_child() {
         on_small_stack(|| {
@@ -347,7 +346,6 @@ fn deeply_nested_regexp_groups_survive_small_stack() {
 /// shallow the pattern is, and Go Quamina has no depth limit for them.
 #[test]
 #[cfg_attr(miri, ignore = "spawns a child process")]
-#[ignore = "the flattener's read_array still recurses once per nested array"]
 fn deeply_nested_event_arrays_survive_small_stack() {
     if in_child() {
         on_small_stack(|| {
