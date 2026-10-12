@@ -2080,17 +2080,17 @@ fn test_deeply_nested_pattern_json_is_rejected() {
 }
 
 #[test]
-fn test_deeply_nested_regexp_is_rejected() {
+fn test_deeply_nested_regexp_builds_and_matches() {
     let n = 20_000;
     let pattern = format!(
         r#"{{"x": [{{"regexp": "{}a{}"}}]}}"#,
         "(".repeat(n),
         ")".repeat(n)
     );
-    let err = Quamina::<&str>::new()
-        .add_pattern("deep", &pattern)
-        .unwrap_err();
-    assert!(matches!(err, QuaminaError::InvalidPattern(_)), "{err}");
+    let mut q = Quamina::<&str>::new();
+    q.add_pattern("deep", &pattern).unwrap();
+    assert_eq!(q.matches_for_event(br#"{"x": "a"}"#).unwrap(), ["deep"]);
+    assert!(q.matches_for_event(br#"{"x": "aa"}"#).unwrap().is_empty());
 }
 
 // --- Field Count Limit Tests ---
@@ -3198,20 +3198,40 @@ fn test_transform_lookbehind_single_char_class() {
 }
 
 #[test]
-fn test_regexp_group_nesting_cap() {
-    // NFA construction recurses once per group, so add_pattern stops at 128
-    // levels even though the parser takes any depth.
-    let pattern = |depth: usize| {
+fn test_regexp_groups_nest_without_limit() {
+    // Each shape takes a different path through the NFA builder: a bare group,
+    // an alternation, an optional copy and a `+` loop. Only the outermost group
+    // loops, since nested loops grow the automaton with the square of the depth.
+    let depth = if cfg!(miri) { 8 } else { 500 };
+    let nested = |open: &str, close: &str, outermost: &str| {
         format!(
-            r#"{{"f": [{{"regexp": "{}a{}"}}]}}"#,
-            "(".repeat(depth),
-            ")".repeat(depth)
+            r#"{{"f": [{{"regexp": "{}a{}{outermost}"}}]}}"#,
+            open.repeat(depth),
+            close.repeat(depth - 1)
         )
     };
     let mut q = Quamina::new();
-    q.add_pattern("deepest", &pattern(128)).unwrap();
-    let err = q.add_pattern("too deep", &pattern(129)).unwrap_err();
-    assert!(err.to_string().contains("nested deeper than 128"), "{err}");
+    q.add_pattern("groups", &nested("(", ")", ")")).unwrap();
+    q.add_pattern("alternation", &nested("(x|", ")", ")"))
+        .unwrap();
+    q.add_pattern("optional", &nested("(", ")?", ")?")).unwrap();
+    q.add_pattern("plus", &nested("(", ")", ")+")).unwrap();
+
+    let matches_for = |value: &str| {
+        let mut matches = q
+            .matches_for_event(format!(r#"{{"f": "{value}"}}"#).as_bytes())
+            .unwrap();
+        matches.sort_unstable();
+        matches
+    };
+    assert_eq!(
+        matches_for("a"),
+        ["alternation", "groups", "optional", "plus"]
+    );
+    assert_eq!(matches_for("x"), ["alternation"]);
+    assert_eq!(matches_for(""), ["optional"]);
+    // More repeats than any bounded `{n,m}` allows.
+    assert_eq!(matches_for(&"a".repeat(150)), ["plus"]);
 }
 
 #[test]

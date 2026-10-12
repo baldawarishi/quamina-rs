@@ -607,17 +607,6 @@ impl<'a> Iterator for Atoms<'a> {
     }
 }
 
-/// How many groups deep the most deeply nested group in `tree` sits.
-pub fn group_depth(tree: &Root) -> usize {
-    let mut walk = atoms(tree);
-    let mut deepest = 0;
-    while walk.next().is_some() {
-        // The top level is one entry; each group being walked adds another.
-        deepest = deepest.max(walk.levels.len() - 1);
-    }
-    deepest
-}
-
 /// The fixed length of `tree`: what every branch measures when they all agree.
 ///
 /// A branch is the sum over its atoms of `repeat` (how often the atom occurs)
@@ -3018,7 +3007,6 @@ mod tests {
     fn test_deeply_nested_groups() {
         let depth = if cfg!(miri) { 64 } else { 10_000 };
         let tree = parse(&format!("{}a{}", "(".repeat(depth), ")+".repeat(depth))).unwrap();
-        assert_eq!(group_depth(&tree), depth);
         assert_eq!(atoms(&tree).count(), depth + 1);
 
         // The innermost atom is reached through one group per level.

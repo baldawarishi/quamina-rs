@@ -1,7 +1,8 @@
 //! Deep patterns must build and match on a small stack. A `prefix` pattern
 //! allocates one arena state per byte, so every walk over that chain is as deep
-//! as the pattern is long. Nested pattern JSON and nested regexp groups recurse
-//! once per level, so they are checked at the deepest nesting Quamina accepts.
+//! as the pattern is long. Nested pattern JSON and nested regexp groups are
+//! walked once per level, so they are checked far deeper than a recursive walk
+//! would survive.
 //!
 //! A stack overflow aborts the process rather than raising a catchable panic,
 //! and would take the test binary down with it. Each reproducer therefore runs
@@ -12,7 +13,7 @@ use std::process::Command;
 
 use quamina::json::transform_lookaround_pattern;
 use quamina::regexp::{expand_word_boundaries, parse_regexp, regexp_has_plus_star};
-use quamina::{PatternLimits, Quamina};
+use quamina::{PatternLimits, Quamina, QuaminaBuilder};
 
 /// Set in the child process to select the reproducer instead of the spawner.
 const GUARD: &str = "QUAMINA_DEEP_CHAIN_CHILD";
@@ -189,42 +190,53 @@ fn deepest_pattern_json_survives_small_stack() {
     respawn("deepest_pattern_json_survives_small_stack");
 }
 
-/// Regexp groups nested to the cap the parser enforces, each one quantified so
-/// that NFA construction recurses through every level too.
+/// Quantified regexp groups nested past where a recursive NFA builder runs
+/// out of stack. Every level's loop or skip reaches every level inside it, so
+/// the automaton grows with the square of the depth and needs a larger arena
+/// budget than the default.
 #[test]
 #[cfg_attr(miri, ignore = "spawns a child process")]
-fn deepest_regexp_groups_survive_small_stack() {
+fn deep_quantified_regexp_groups_survive_small_stack() {
     if in_child() {
         on_small_stack(|| {
-            let depth = 128;
-            let pattern = format!(
-                r#"{{"f": [{{"regexp": "{}a{}"}}]}}"#,
-                "(".repeat(depth),
-                ")*".repeat(depth)
-            );
+            let depth = 3_000;
+            let mut q = QuaminaBuilder::new()
+                .with_arena_byte_budget(256 * 1024 * 1024)
+                .build()
+                .expect("a larger arena budget is valid");
+            for (id, close) in [("plus", ")+"), ("optional", ")?")] {
+                let pattern = format!(
+                    r#"{{"f": [{{"regexp": "{}a{}"}}]}}"#,
+                    "(".repeat(depth),
+                    close.repeat(depth)
+                );
+                q.add_pattern(id, &pattern)
+                    .expect("quantified groups nest without a depth limit");
+            }
 
-            let mut q = Quamina::new();
-            q.add_pattern("deep", &pattern)
-                .expect("nesting at the group cap is accepted");
-            let matches = q
+            let mut matches = q
                 .matches_for_event(br#"{"f": "a"}"#)
-                .expect("matching against the nested regexp");
-            assert_eq!(matches, vec!["deep"]);
+                .expect("matching against the nested regexps");
+            matches.sort_unstable();
+            assert_eq!(matches, vec!["optional", "plus"]);
+            let matches = q
+                .matches_for_event(br#"{"f": "aaa"}"#)
+                .expect("matching against the nested regexps");
+            assert_eq!(matches, vec!["plus"]);
         });
         return;
     }
 
-    respawn("deepest_regexp_groups_survive_small_stack");
+    respawn("deep_quantified_regexp_groups_survive_small_stack");
 }
 
 /// Regexp groups nested deeper than Go Quamina reaches on its 1 GB maximum
 /// goroutine stack (about 196,000 levels).
 const REGEXP_GROUP_DEPTH: usize = 200_000;
 
-/// Parsing, validating, rewriting, copying and dropping a regexp all walk its
-/// groups level by level, so each is checked here at a depth far past where the
-/// NFA builder gives up. `add_pattern` must refuse such a regexp with an error,
-/// not overflow on the way to the refusal.
+/// Parsing, validating, rewriting, copying, dropping and building an NFA for a
+/// regexp all walk its groups level by level, so each is checked here at a
+/// depth far past where a recursive walk runs out of stack.
 #[test]
 #[cfg_attr(miri, ignore = "spawns a child process")]
 fn deeply_nested_regexp_groups_survive_small_stack() {
@@ -267,11 +279,22 @@ fn deeply_nested_regexp_groups_survive_small_stack() {
                 .expect("a word boundary between a word and a non-word char");
             expand_word_boundaries(&boundary).expect("the boundary resolves");
 
-            let pattern = format!(r#"{{"f": [{{"regexp": "{}"}}]}}"#, nested("(", "a", ")"));
-            let err = Quamina::new()
-                .add_pattern("deep", &pattern)
-                .expect_err("the NFA builder cannot take this depth");
-            assert!(err.to_string().contains("nested deeper"), "{err}");
+            // Groups and alternations of any depth build and match.
+            let mut q = Quamina::new();
+            for (id, open) in [("groups", "("), ("alternation", "(x|")] {
+                let pattern = format!(r#"{{"f": [{{"regexp": "{}"}}]}}"#, nested(open, "a", ")"));
+                q.add_pattern(id, &pattern)
+                    .expect("groups nest without a depth limit");
+            }
+            let mut matches = q
+                .matches_for_event(br#"{"f": "a"}"#)
+                .expect("matching against the nested regexps");
+            matches.sort_unstable();
+            assert_eq!(matches, vec!["alternation", "groups"]);
+            let matches = q
+                .matches_for_event(br#"{"f": "x"}"#)
+                .expect("matching against the nested regexps");
+            assert_eq!(matches, vec!["alternation"]);
         });
         return;
     }

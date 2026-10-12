@@ -411,7 +411,6 @@ Other limits:
 - Event input must use the `application/json` media type.
 - Pattern field names are case-sensitive.
 - `shellstyle` patterns do not support `\*` or `\\` escapes. Use `wildcard` or `regexp` instead.
-- `regexp` groups can nest at most 128 levels deep. Deeper nesting returns `QuaminaError::InvalidPattern`.
 
 ## Credits
 

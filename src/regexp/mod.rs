@@ -27,7 +27,7 @@ pub use parser::{
     has_top_level_lookaround, has_word_boundary, parse as parse_regexp,
 };
 
-pub(crate) use parser::{fixed_length, group_depth};
+pub(crate) use parser::fixed_length;
 
 // Crate-internal items are accessible via their original modules:
 // - nfa::make_dot_fa (pub(crate))
