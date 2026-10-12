@@ -627,7 +627,9 @@ pub fn group_depth(tree: &Root) -> usize {
 /// `mismatch` is the error for branches that disagree. An empty tree is 0.
 ///
 /// The walk keeps one entry per enclosing group on the heap, so nesting depth
-/// costs no stack.
+/// costs no stack. A length too large for `usize` also counts as `mismatch`:
+/// nested repeats like `((a{100}){100}){100}…` reach one in a few levels, and
+/// no lookbehind that long could ever be checked.
 pub fn fixed_length<E>(
     tree: &[Branch],
     repeat: impl Fn(&QuantifiedAtom) -> Result<usize, E>,
@@ -663,7 +665,10 @@ pub fn fixed_length<E>(
         if let Some(atom) = level.atoms.as_mut().and_then(Iterator::next) {
             let count = repeat(atom)?;
             match (atom_len(atom), &atom.subtree) {
-                (Some(len), _) => level.branch_len += len * count,
+                (Some(len), _) => {
+                    level.branch_len =
+                        add_repeated(level.branch_len, len, count).ok_or_else(&mismatch)?;
+                }
                 (None, Some(subtree)) => {
                     let outer = std::mem::replace(&mut level, Level::new(subtree));
                     enclosing.push((outer, count));
@@ -691,8 +696,14 @@ pub fn fixed_length<E>(
             return Ok(len);
         };
         level = outer;
-        level.branch_len += len * count;
+        level.branch_len = add_repeated(level.branch_len, len, count).ok_or_else(&mismatch)?;
     }
+}
+
+/// `total + len * count`, or `None` if that overflows.
+fn add_repeated(total: usize, len: usize, count: usize) -> Option<usize> {
+    len.checked_mul(count)
+        .and_then(|repeated| total.checked_add(repeated))
 }
 
 /// Collect all lookaround atoms from a tree with their positions.
@@ -2774,6 +2785,19 @@ mod tests {
             "lookbehind with fixed quantifier should parse: {:?}",
             result.err()
         );
+    }
+
+    #[test]
+    #[cfg(target_pointer_width = "64")]
+    fn test_lookbehind_length_overflow_rejected() {
+        // 100^12 characters is more than usize holds.
+        let product = format!("(?<={}a{})b", "(".repeat(12), "){100}".repeat(12));
+        assert!(parse(&product).is_err());
+
+        // 2^63 characters fit, but two runs of them side by side do not.
+        let half = format!("{}a{}){{8}}", "(".repeat(11), "){64}".repeat(10));
+        assert!(parse(&format!("(?<={half})b")).is_ok());
+        assert!(parse(&format!("(?<={half}{half})b")).is_err());
     }
 
     #[test]
