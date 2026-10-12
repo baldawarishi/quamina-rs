@@ -19,10 +19,7 @@ use crate::automaton::{
     },
 };
 
-use super::parser::{
-    Branch as RegexpBranch, QuantifiedAtom, REGEXP_QUANTIFIER_MAX, Root as RegexpRoot, RuneRange,
-    atoms,
-};
+use super::parser::{QuantifiedAtom, REGEXP_QUANTIFIER_MAX, Root as RegexpRoot, RuneRange, atoms};
 
 // ============================================================================
 // UTF-8 Encoding Constants
@@ -156,95 +153,141 @@ pub fn make_regexp_nfa_arena(root: RegexpRoot) -> (StateArena, StateId, Arc<Fiel
     }
 }
 
+/// One step of building a regexp NFA back to front.
+///
+/// Every construct continues to some state that is already built. A step finds
+/// that continuation on top of the state stack and replaces it with the entry
+/// state of what it built, so a group's body is built by queueing its steps
+/// rather than by recursing, and nesting depth costs heap instead of stack.
+enum BuildStep<'a> {
+    /// Alternatives sharing one continuation: a group's body or the regexp.
+    Branches(&'a RegexpRoot),
+    /// An atom with its quantifier.
+    Quantified(&'a QuantifiedAtom),
+    /// One copy of an atom, which may be skipped.
+    Optional(&'a QuantifiedAtom),
+    /// One copy of an atom.
+    Body(&'a QuantifiedAtom),
+    /// Give the copy just built a skip to `target`.
+    Skip { target: StateId, compound: bool },
+    /// Close the `+`/`*` loop whose body was just built ahead of `loopback`.
+    CloseLoop {
+        qa: &'a QuantifiedAtom,
+        loopback: StateId,
+        exit: StateId,
+    },
+    /// Make `next` the continuation of the branch about to be built.
+    Continue(StateId),
+    /// Fold the `count` branch entries just built into one entry.
+    Fold { count: usize, next: StateId },
+}
+
 /// Build arena NFA from branches (alternatives).
 ///
 /// This function does NOT add quote wrapping — that is handled by the
-/// top-level `make_regexp_nfa_arena` caller. Subtrees (groups) also call
-/// this function and must not add quotes.
+/// top-level `make_regexp_nfa_arena` caller. Groups are built by the same
+/// steps and must not add quotes either.
 fn make_arena_nfa_from_branches(
     root: &RegexpRoot,
     arena: &mut StateArena,
     next_step: StateId,
 ) -> StateId {
-    if root.is_empty() {
-        return next_step;
-    }
+    let mut steps = vec![BuildStep::Branches(root)];
+    let mut states = vec![next_step];
+    let continuation = |states: &mut Vec<StateId>| {
+        states
+            .pop()
+            .expect("every build step has a continuation to read")
+    };
 
-    if root.len() == 1 {
-        // Single branch - no alternation needed
-        return make_one_arena_branch_fa(&root[0], arena, next_step);
-    }
+    while let Some(step) = steps.pop() {
+        match step {
+            // An empty group matches nothing here: its entry is its continuation.
+            BuildStep::Branches(root) if root.is_empty() => {}
+            BuildStep::Branches(root) => {
+                // Build every branch against the same continuation, then fold
+                // them into one deterministic byte-dispatch entry that
+                // re-converges at that continuation; a lone branch folds to its
+                // own entry. A branch's atoms are built back to front. An empty
+                // alternative (e.g. the trailing `|` in `(a|b|)`) contributes
+                // the continuation itself as a branch start, so "match nothing
+                // here" stays a reachable option.
+                let next = continuation(&mut states);
+                steps.push(BuildStep::Fold {
+                    count: root.len(),
+                    next,
+                });
+                for branch in root.iter().rev() {
+                    steps.extend(branch.iter().map(BuildStep::Quantified));
+                    steps.push(BuildStep::Continue(next));
+                }
+            }
+            BuildStep::Quantified(qa) if qa.is_plus() || qa.is_star() => {
+                // Arena-based cyclic NFA for + and *
+                let exit = continuation(&mut states);
+                let loopback = arena.alloc();
+                steps.push(BuildStep::CloseLoop { qa, loopback, exit });
+                steps.push(BuildStep::Body(qa));
+                states.push(loopback);
+            }
+            BuildStep::Quantified(qa) => {
+                // `{n,m}`, which also covers `?` as `{0,1}` and a bare atom as
+                // `{1,1}`. The parser only ever stores non-negative counts
+                // here; if that ever stops being true we'd rather panic than
+                // silently turn a stray -1 into a 4-billion-iteration loop.
+                let n = usize::try_from(qa.quant_min).expect("quant_min must be non-negative");
+                let m = usize::try_from(qa.quant_max).expect("quant_max must be non-negative");
 
-    // Build every branch against the same continuation, then fold them into one
-    // deterministic byte-dispatch entry that re-converges at that continuation.
-    // An empty alternative (e.g. the trailing `|` in `(a|b|)`) contributes the
-    // continuation itself as a branch start, so "match nothing here" stays a
-    // reachable option.
-    let mut branch_starts = Vec::with_capacity(root.len());
-    for branch in root {
-        if branch.is_empty() {
-            branch_starts.push(next_step);
-        } else {
-            branch_starts.push(make_one_arena_branch_fa(branch, arena, next_step));
+                // One state is allocated per repetition, so this expansion
+                // relies on the parser capping both counts. `{n,}` and
+                // `{n,100}` reach this path with quant_max equal to the +/*
+                // sentinel when n > 1.
+                debug_assert!(
+                    qa.quant_max <= REGEXP_QUANTIFIER_MAX,
+                    "parser must bound quantifier repetition counts"
+                );
+
+                // The m-n optional copies, each with a skip, sit nearest the
+                // continuation and are built first; the n required copies go
+                // in front of them.
+                steps.extend((0..n).map(|_| BuildStep::Body(qa)));
+                steps.extend((n..m).map(|_| BuildStep::Optional(qa)));
+            }
+            BuildStep::Optional(qa) => {
+                let target = *states.last().expect("an optional copy has a continuation");
+                steps.push(BuildStep::Skip {
+                    target,
+                    compound: qa.subtree.is_some(),
+                });
+                steps.push(BuildStep::Body(qa));
+            }
+            BuildStep::Body(qa) => {
+                if let Some(subtree) = &qa.subtree {
+                    steps.push(BuildStep::Branches(subtree));
+                } else {
+                    let next = continuation(&mut states);
+                    states.push(make_arena_atom_fa(qa, arena, next));
+                }
+            }
+            BuildStep::Skip { target, compound } => {
+                let entry = continuation(&mut states);
+                states.push(add_skip_epsilon(arena, entry, target, compound));
+            }
+            BuildStep::CloseLoop { qa, loopback, exit } => {
+                let start = continuation(&mut states);
+                states.push(close_arena_plus_star_loop(qa, arena, start, loopback, exit));
+            }
+            BuildStep::Continue(next) => states.push(next),
+            BuildStep::Fold { count, next } => {
+                let first = states.len() - count;
+                let entry = determinize_branch_starts(arena, &states[first..], next);
+                states.truncate(first);
+                states.push(entry);
+            }
         }
     }
 
-    determinize_branch_starts(arena, &branch_starts, next_step)
-}
-
-/// Build arena NFA for one branch (sequence of atoms).
-fn make_one_arena_branch_fa(
-    branch: &RegexpBranch,
-    arena: &mut StateArena,
-    next_step: StateId,
-) -> StateId {
-    let mut current_next = next_step;
-
-    // Process atoms back to front
-    for qa in branch.iter().rev() {
-        let original_next = current_next;
-
-        if qa.is_plus() || qa.is_star() {
-            // Arena-based cyclic NFA for + and *
-            current_next = create_arena_plus_star_loop(qa, arena, original_next, qa.is_star());
-        } else if qa.is_qm() {
-            // Optional: build atom FA with epsilon to skip
-            let atom_state = make_arena_atom_fa(qa, arena, current_next);
-            current_next = add_skip_epsilon(arena, atom_state, original_next, qa.subtree.is_some());
-        } else if qa.is_singleton() {
-            // No quantifier - simple FA
-            current_next = make_arena_atom_fa(qa, arena, current_next);
-        } else {
-            // General {n,m} quantifier. The parser only ever stores
-            // non-negative counts here; if that ever stops being true we'd
-            // rather panic than silently turn a stray -1 into a 4-billion-
-            // iteration loop.
-            let n = usize::try_from(qa.quant_min).expect("quant_min must be non-negative");
-            let m = usize::try_from(qa.quant_max).expect("quant_max must be non-negative");
-
-            // One state is allocated per repetition, so this expansion relies
-            // on the parser capping both counts. `{n,}` and `{n,100}` reach
-            // this path with quant_max equal to the +/* sentinel when n > 1.
-            debug_assert!(
-                qa.quant_max <= REGEXP_QUANTIFIER_MAX,
-                "parser must bound quantifier repetition counts"
-            );
-
-            // First, build the optional part (m-n copies, each with epsilon skip)
-            for _ in n..m {
-                let atom_state = make_arena_atom_fa(qa, arena, current_next);
-                current_next =
-                    add_skip_epsilon(arena, atom_state, current_next, qa.subtree.is_some());
-            }
-
-            // Then, build the required part (n copies, no epsilon skip)
-            for _ in 0..n {
-                current_next = make_arena_atom_fa(qa, arena, current_next);
-            }
-        }
-    }
-
-    current_next
+    continuation(&mut states)
 }
 
 /// Wire a quantified atom's "match zero copies" skip (the bypass edge for `*`,
@@ -283,18 +326,16 @@ fn add_skip_epsilon(
 ///
 /// Structure for [abc]*:
 /// - Same as above, plus start has epsilon to exit (can match zero times)
-fn create_arena_plus_star_loop(
+///
+/// `loopback` is allocated before the body, and `start` is the body's entry
+/// built to continue to it.
+fn close_arena_plus_star_loop(
     qa: &QuantifiedAtom,
     arena: &mut StateArena,
+    start: StateId,
+    loopback: StateId,
     exit_state: StateId,
-    is_star: bool,
 ) -> StateId {
-    // Loopback state - will have epsilons to exit and back to start
-    let loopback = arena.alloc();
-
-    // Start state - matches the atom, transitions to loopback
-    let start = make_arena_atom_fa(qa, arena, loopback);
-
     // Set up loopback's epsilons: to exit AND back to start (CYCLE!)
     arena[loopback].table.epsilons = smallvec![exit_state, start];
 
@@ -324,19 +365,17 @@ fn create_arena_plus_star_loop(
     }
 
     // For *, offer the "match zero copies" bypass straight to the exit.
-    if is_star {
+    if qa.is_star() {
         add_skip_epsilon(arena, start, exit_state, qa.subtree.is_some())
     } else {
         start
     }
 }
 
-/// Build arena FA for a single atom.
+/// Build arena FA for a single atom that is not a group.
 fn make_arena_atom_fa(qa: &QuantifiedAtom, arena: &mut StateArena, next: StateId) -> StateId {
     if qa.is_dot {
         make_arena_dot_fa(arena, next)
-    } else if let Some(ref subtree) = qa.subtree {
-        make_arena_nfa_from_branches(subtree, arena, next)
     } else if let Some(ref cache_key) = qa.cache_key {
         // Use compact non-word char FA for word boundary expansion
         if cache_key == "wb_W" {
