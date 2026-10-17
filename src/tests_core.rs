@@ -2047,11 +2047,12 @@ fn test_delete_already_deleted_pattern_is_noop() {
 #[test]
 #[cfg_attr(miri, ignore)]
 fn test_pattern_depth_at_limit() {
-    // Pattern nested exactly 256 levels deep should succeed with default limits
+    // A pattern nested exactly as deep as the default limit should succeed
+    let max = crate::PatternLimits::default().max_pattern_depth;
     let mut q = Quamina::new();
     let mut pattern = String::new();
     let mut closing = String::new();
-    for i in 0..256 {
+    for i in 0..max {
         pattern.push_str(&format!("{{\"f{i}\": "));
         closing.push('}');
     }
@@ -2060,13 +2061,13 @@ fn test_pattern_depth_at_limit() {
 
     assert!(
         q.add_pattern("deep", &pattern).is_ok(),
-        "Pattern at exactly max depth (256) should succeed"
+        "Pattern at exactly max depth ({max}) should succeed"
     );
 }
 
 /// Miri-friendly variant of test_pattern_depth_at_limit.
 ///
-/// Uses 8 nesting levels instead of 256 to keep Miri runtime manageable while
+/// Uses 8 nesting levels instead of the default limit to keep Miri runtime manageable while
 /// still exercising deep-pattern parsing and automaton construction.
 #[test]
 fn test_pattern_depth_at_limit_miri_friendly() {
@@ -2139,7 +2140,7 @@ fn test_pattern_depth_custom_limit() {
         "Error should mention depth: {err_msg}"
     );
     // The message embeds the actual and configured depths. Asserting them here
-    // keeps that formatting covered under Miri, which skips the 256/257-deep
+    // keeps that formatting covered under Miri, which skips the default-depth
     // test_pattern_depth_{at,exceeds}_limit tests.
     assert!(
         err_msg.contains('6'),
