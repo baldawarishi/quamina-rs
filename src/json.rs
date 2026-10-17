@@ -559,42 +559,37 @@ fn extract_pattern_fields(
     fields: &mut FxHashMap<String, Vec<Matcher>>,
     limits: &crate::PatternLimits,
 ) -> Result<(), QuaminaError> {
-    // The objects being walked, outermost first, each with its members not yet
-    // visited and the length of its path. They are kept here rather than on
-    // the call stack, so nesting costs heap. `path` is the path of the member
-    // being visited; each level cuts it back to its own before the next member.
-    let mut levels: Vec<(std::slice::Iter<'_, (String, Value)>, usize)> = Vec::new();
-    let mut path = String::new();
-    let mut entering = Some(obj);
+    check_pattern_depth(0, "", limits)?;
+    // `members` are the unvisited members of the object being walked, and
+    // `prefix_len` is the length of its path in `prefix`. The objects around
+    // it wait in `outer`, kept here rather than on the call stack, so nesting
+    // costs heap. A top-level member's path is its key, so a flat pattern
+    // needs neither `outer` nor `prefix`.
+    let mut outer: Vec<(std::slice::Iter<'_, (String, Value)>, usize)> = Vec::new();
+    let mut members = obj.iter();
+    let mut prefix = String::new();
+    let mut prefix_len = 0;
     loop {
-        if let Some(members) = entering.take() {
-            if levels.len() >= limits.max_pattern_depth {
-                return Err(QuaminaError::PatternTooComplex(format!(
-                    "pattern nesting depth {} exceeds maximum of {} (at path '{}')",
-                    levels.len() + 1,
-                    limits.max_pattern_depth,
-                    path
-                )));
-            }
-            levels.push((members.iter(), path.len()));
-        }
-        let Some((members, prefix_len)) = levels.last_mut() else {
-            return Ok(());
-        };
-        path.truncate(*prefix_len);
         let Some((key, value)) = members.next() else {
-            levels.pop();
+            let Some((parent, parent_len)) = outer.pop() else {
+                return Ok(());
+            };
+            (members, prefix_len) = (parent, parent_len);
             continue;
         };
-        if !path.is_empty() {
-            path.push(SEGMENT_SEPARATOR);
-        }
-        path.push_str(key);
+        let path = if outer.is_empty() {
+            key.as_str()
+        } else {
+            prefix.truncate(prefix_len);
+            prefix.push(SEGMENT_SEPARATOR);
+            prefix.push_str(key);
+            prefix.as_str()
+        };
         match value {
             Value::Array(arr) => {
                 let matchers: Result<Vec<Matcher>, QuaminaError> =
                     arr.iter().map(value_to_matcher).collect();
-                fields.insert(path.clone(), matchers?);
+                fields.insert(path.to_owned(), matchers?);
                 if fields.len() > limits.max_fields_per_pattern {
                     return Err(QuaminaError::PatternTooComplex(format!(
                         "pattern has {} fields, exceeding maximum of {}",
@@ -603,7 +598,15 @@ fn extract_pattern_fields(
                     )));
                 }
             }
-            Value::Object(nested) => entering = Some(nested),
+            Value::Object(nested) => {
+                check_pattern_depth(outer.len() + 1, path, limits)?;
+                if outer.is_empty() {
+                    prefix.clear();
+                    prefix.push_str(key);
+                }
+                outer.push((std::mem::replace(&mut members, nested.iter()), prefix_len));
+                prefix_len = prefix.len();
+            }
             _ => {
                 return Err(QuaminaError::InvalidPattern(format!(
                     "pattern field '{path}' must be array or object"
@@ -611,6 +614,24 @@ fn extract_pattern_fields(
             }
         }
     }
+}
+
+/// Reject an object at `path` with `depth` objects around it if it nests
+/// deeper than the limit.
+fn check_pattern_depth(
+    depth: usize,
+    path: &str,
+    limits: &crate::PatternLimits,
+) -> Result<(), QuaminaError> {
+    if depth >= limits.max_pattern_depth {
+        return Err(QuaminaError::PatternTooComplex(format!(
+            "pattern nesting depth {} exceeds maximum of {} (at path '{}')",
+            depth + 1,
+            limits.max_pattern_depth,
+            path
+        )));
+    }
+    Ok(())
 }
 
 fn value_to_matcher(value: &Value) -> Result<Matcher, QuaminaError> {
@@ -913,10 +934,22 @@ enum Value {
 }
 
 impl Value {
-    /// Move this value's nested objects and arrays into `detached`.
+    /// Whether this is an object or array holding another object or array.
+    fn holds_containers(&self) -> bool {
+        let is_container = |value: &Self| matches!(value, Self::Object(_) | Self::Array(_));
+        match self {
+            Self::Object(members) => members.iter().any(|(_, value)| is_container(value)),
+            Self::Array(items) => items.iter().any(is_container),
+            Self::String(_) | Self::Number(_) | Self::Bool(_) | Self::Null => false,
+        }
+    }
+
+    /// Move this value's nested objects and arrays that hold containers of
+    /// their own into `detached`.
     fn detach_containers(&mut self, detached: &mut Vec<Self>) {
         let take = |value: &mut Self| {
-            matches!(value, Self::Object(_) | Self::Array(_))
+            value
+                .holds_containers()
                 .then(|| std::mem::replace(value, Self::Null))
         };
         match self {
@@ -931,8 +964,10 @@ impl Value {
 
 impl Drop for Value {
     fn drop(&mut self) {
-        // Detach every nested container before the one holding it drops, so
-        // each drop only ever frees one level.
+        // Detach every nested container that holds containers before the one
+        // holding it drops. What is left nests at most one level below this
+        // value, so its drop recurses no further than that, and a typical
+        // pattern needs no worklist at all.
         let mut detached = Vec::new();
         self.detach_containers(&mut detached);
         while let Some(mut value) = detached.pop() {
@@ -1223,14 +1258,17 @@ impl<'a> Parser<'a> {
         }
     }
 
+    #[inline]
     fn peek(&self) -> Option<char> {
         self.input[self.pos..].chars().next()
     }
+    #[inline]
     fn advance(&mut self) {
         if let Some(c) = self.peek() {
             self.pos += c.len_utf8();
         }
     }
+    #[inline]
     fn skip_whitespace(&mut self) {
         while self.peek().is_some_and(char::is_whitespace) {
             self.advance();

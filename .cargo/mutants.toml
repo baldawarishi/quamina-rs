@@ -68,6 +68,10 @@ exclude_re = [
   # `|` is an implemented feature, so recording it never changes what
   # found_unimplemented reports; the arm still consumes the separator either way.
   "delete match arm Ok\\('\\|'\\) in read_branches",
+  # Value's drop keeps containers that hold only scalars in place to skip the
+  # worklist; detaching every child instead frees the same values, just with
+  # more allocation.
+  'replace Value::holds_containers -> bool with true',
 ]
 
 # Don't mutate logging/debug/panic macros — not worth testing
