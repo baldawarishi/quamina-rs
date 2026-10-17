@@ -8,11 +8,17 @@ Style inspired by [ripgrep's CHANGELOG](https://github.com/BurntSushi/ripgrep/bl
 
 ## [Unreleased]
 
+### Added
+- `add_pattern` and `matches_for_event` return the new `QuaminaError::Panicked` instead of panicking, like Go's `recover()` in `AddPattern` and `MatchesForEvent`
+
 ### Fixed
 - Reject patterns whose JSON or regexp groups nest too deeply, instead of overflowing the stack and aborting the process (ported from Go a4e063e)
 
 ### Changed
 - Commit `Cargo.lock` so local builds, CI, and audits resolve the same dependency versions (#195)
+
+### Breaking
+- `QuaminaError` is `#[non_exhaustive]`, so matches on it need a wildcard arm
 
 ## [0.7.0] — 2026-08-03
 

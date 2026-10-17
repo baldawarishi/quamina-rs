@@ -808,6 +808,130 @@ fn test_pattern_count_and_clear() {
 // Error Handling Tests
 // ============================================================================
 
+/// A pattern id whose clone, hash and equality checks share a budget, and
+/// which panics once the budget is spent, so a test can make quamina panic at
+/// each point it touches an id.
+#[derive(Debug)]
+struct FragileId {
+    id: u32,
+    budget: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+}
+
+impl FragileId {
+    fn spend(&self) {
+        use std::sync::atomic::Ordering::Relaxed;
+        let left = self.budget.load(Relaxed);
+        assert!(left > 0, "FragileId budget spent");
+        self.budget.store(left - 1, Relaxed);
+    }
+}
+
+impl Clone for FragileId {
+    fn clone(&self) -> Self {
+        self.spend();
+        Self {
+            id: self.id,
+            budget: std::sync::Arc::clone(&self.budget),
+        }
+    }
+}
+
+impl PartialEq for FragileId {
+    fn eq(&self, other: &Self) -> bool {
+        self.spend();
+        self.id == other.id
+    }
+}
+
+impl Eq for FragileId {}
+
+impl Hash for FragileId {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.spend();
+        self.id.hash(state);
+    }
+}
+
+#[test]
+fn test_add_pattern_panic_becomes_error_and_rebuild_recovers() {
+    use std::sync::atomic::{AtomicUsize, Ordering::Relaxed};
+    let budget = std::sync::Arc::new(AtomicUsize::new(usize::MAX));
+    let id = |id| FragileId {
+        id,
+        budget: std::sync::Arc::clone(&budget),
+    };
+    let mut panicked = 0;
+    for allowed in 0.. {
+        let mut q = Quamina::new();
+        q.add_pattern(id(1), r#"{"a": ["x"], "b": ["y"]}"#).unwrap();
+        let before = q.matcher_stats();
+
+        budget.store(allowed, Relaxed);
+        let result = q.add_pattern(id(2), r#"{"a": ["z"], "c": [{"prefix": "w"}]}"#);
+        budget.store(usize::MAX, Relaxed);
+        let Err(err) = result else {
+            break;
+        };
+        panicked += 1;
+        assert!(matches!(err, QuaminaError::Panicked(_)), "{err}");
+        assert!(
+            err.to_string()
+                .starts_with("call to add_pattern caused a crash")
+        );
+
+        // Whatever part of the pattern reached the automaton goes on rebuild.
+        q.rebuild();
+        assert_eq!(q.matcher_stats(), before, "allowed {allowed}");
+        assert_eq!(q.pattern_count(), 1);
+        let hits = q.matches_for_event(br#"{"a":"x","b":"y"}"#).unwrap();
+        assert_eq!(hits.iter().map(|x| x.id).collect::<Vec<_>>(), [1]);
+    }
+    assert!(panicked > 0, "a budget of 0 must panic the add");
+}
+
+#[test]
+fn test_match_panic_becomes_error_and_matching_continues() {
+    use std::sync::atomic::{AtomicUsize, Ordering::Relaxed};
+    let budget = std::sync::Arc::new(AtomicUsize::new(usize::MAX));
+    let mut q = Quamina::new();
+    for (n, pattern) in [r#"{"a": ["x"]}"#, r#"{"a": [{"prefix": "x"}]}"#]
+        .into_iter()
+        .enumerate()
+    {
+        let id = FragileId {
+            id: u32::try_from(n).unwrap(),
+            budget: std::sync::Arc::clone(&budget),
+        };
+        q.add_pattern(id, pattern).unwrap();
+    }
+    let event = br#"{"a":"x"}"#;
+    let ids = |q: &Quamina<FragileId>| {
+        let mut ids: Vec<u32> = q
+            .matches_for_event(event)
+            .unwrap()
+            .iter()
+            .map(|x| x.id)
+            .collect();
+        ids.sort_unstable();
+        ids
+    };
+    assert_eq!(ids(&q), [0, 1]);
+
+    budget.store(0, Relaxed);
+    let err = q.matches_for_event(event).unwrap_err();
+    budget.store(usize::MAX, Relaxed);
+    assert!(matches!(err, QuaminaError::Panicked(_)), "{err}");
+    assert!(
+        err.to_string()
+            .starts_with("call to matches_for_event caused a crash")
+    );
+    assert_eq!(
+        ids(&q),
+        [0, 1],
+        "a caught panic must not break later matches"
+    );
+}
+
 #[test]
 fn test_invalid_json_events() {
     // Based on Go quamina's TestFJErrorCases
