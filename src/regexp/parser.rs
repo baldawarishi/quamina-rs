@@ -3004,8 +3004,17 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_deeply_nested_groups() {
-        let depth = if cfg!(miri) { 64 } else { 10_000 };
+        check_deeply_nested_groups(10_000);
+    }
+
+    #[test]
+    fn test_deeply_nested_groups_miri_friendly() {
+        check_deeply_nested_groups(64);
+    }
+
+    fn check_deeply_nested_groups(depth: usize) {
         let tree = parse(&format!("{}a{}", "(".repeat(depth), ")+".repeat(depth))).unwrap();
         assert_eq!(atoms(&tree).count(), depth + 1);
 

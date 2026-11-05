@@ -489,8 +489,17 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
     fn test_deep_tree_clones_and_drops() {
-        let depth = if cfg!(miri) { 64 } else { 100_000 };
+        check_deep_tree_clones_and_drops(100_000);
+    }
+
+    #[test]
+    fn test_deep_tree_clones_and_drops_miri_friendly() {
+        check_deep_tree_clones_and_drops(64);
+    }
+
+    fn check_deep_tree_clones_and_drops(depth: usize) {
         let path = vec!["s"; depth].join("\n");
         let mut tree = SegmentsTree::new();
         tree.add(&path);

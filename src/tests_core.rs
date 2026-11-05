@@ -2207,8 +2207,17 @@ fn test_deeply_nested_pattern_json_is_rejected() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn test_deeply_nested_regexp_builds_and_matches() {
-    let n = 20_000;
+    check_deeply_nested_regexp_builds_and_matches(20_000);
+}
+
+#[test]
+fn test_deeply_nested_regexp_builds_and_matches_miri_friendly() {
+    check_deeply_nested_regexp_builds_and_matches(64);
+}
+
+fn check_deeply_nested_regexp_builds_and_matches(n: usize) {
     let pattern = format!(
         r#"{{"x": [{{"regexp": "{}a{}"}}]}}"#,
         "(".repeat(n),
@@ -3325,11 +3334,20 @@ fn test_transform_lookbehind_single_char_class() {
 }
 
 #[test]
+#[cfg_attr(miri, ignore)]
 fn test_regexp_groups_nest_without_limit() {
+    check_regexp_groups_nest_without_limit(500);
+}
+
+#[test]
+fn test_regexp_groups_nest_without_limit_miri_friendly() {
+    check_regexp_groups_nest_without_limit(8);
+}
+
+fn check_regexp_groups_nest_without_limit(depth: usize) {
     // Each shape takes a different path through the NFA builder: a bare group,
     // an alternation, an optional copy and a `+` loop. Only the outermost group
     // loops, since nested loops grow the automaton with the square of the depth.
-    let depth = if cfg!(miri) { 8 } else { 500 };
     let nested = |open: &str, close: &str, outermost: &str| {
         format!(
             r#"{{"f": [{{"regexp": "{}a{}{outermost}"}}]}}"#,
