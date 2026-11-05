@@ -8,8 +8,21 @@ Style inspired by [ripgrep's CHANGELOG](https://github.com/BurntSushi/ripgrep/bl
 
 ## [Unreleased]
 
+### Added
+- `add_pattern` and `matches_for_event` return the new `QuaminaError::Panicked` instead of panicking, like Go's `recover()` in `AddPattern` and `MatchesForEvent`
+
+### Fixed
+- Deeply nested patterns, regexps and events no longer overflow the stack and abort the process; regexp groups nest without limit, patterns up to `max_pattern_depth`, and events to any depth (ported from Go a4e063e)
+- Long regexps parse in linear time; each character used to re-validate the rest of the string
+- A lookbehind whose repeats overflow its fixed length is rejected instead of panicking in debug builds
+
 ### Changed
 - Commit `Cargo.lock` so local builds, CI, and audits resolve the same dependency versions (#195)
+- `max_pattern_depth` defaults to 10000, Go's JSON nesting limit, up from 256
+
+### Breaking
+- `QuaminaError` is `#[non_exhaustive]`, so matches on it need a wildcard arm
+- `regexp::QuantifiedAtom::subtree` is an `Option<RegexpSubtree>` (was `Option<RegexpRoot>`), which derefs to the root and drops it without recursing
 
 ## [0.7.0] — 2026-08-03
 

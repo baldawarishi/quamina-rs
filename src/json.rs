@@ -3,7 +3,8 @@
 use crate::QuaminaError;
 use crate::regexp::{
     LookaroundType, QuantifiedAtom, RegexpBranch, RegexpRoot, collect_lookarounds, concat_roots,
-    expand_word_boundaries, has_top_level_lookaround, has_word_boundary, parse_regexp,
+    expand_word_boundaries, fixed_length, has_top_level_lookaround, has_word_boundary,
+    parse_regexp,
 };
 use crate::segments_tree::SEGMENT_SEPARATOR;
 use rustc_hash::FxHashMap;
@@ -406,7 +407,7 @@ pub fn transform_lookaround_pattern(tree: &RegexpRoot) -> Result<MultiConditionP
                     // Byte length is computed from the lookbehind pattern
                     let byte_length = compute_lookbehind_byte_length(la_subtree)?;
                     conditions.push(LookaroundCondition::PositiveLookbehind {
-                        pattern: la_subtree.clone(),
+                        pattern: la_subtree.to_vec(),
                         byte_length,
                     });
                     // The assertion spells the preceding run out.
@@ -416,7 +417,7 @@ pub fn transform_lookaround_pattern(tree: &RegexpRoot) -> Result<MultiConditionP
                     // (?<!B)A → condition checks B does NOT precede A
                     let byte_length = compute_lookbehind_byte_length(la_subtree)?;
                     conditions.push(LookaroundCondition::NegativeLookbehind {
-                        pattern: la_subtree.clone(),
+                        pattern: la_subtree.to_vec(),
                         byte_length,
                     });
                     // Ruling a shape out says nothing about the run itself.
@@ -483,60 +484,49 @@ fn build_combined_pattern(
 /// Compute the fixed byte length of a lookbehind pattern.
 /// Lookbehind patterns must have a fixed length (validated during parsing).
 /// This computes the UTF-8 byte length for the pattern.
+///
+/// Every alternation branch must encode to the same byte length; any that
+/// disagrees is rejected so callers can rely on a single fixed lookbehind width.
 fn compute_lookbehind_byte_length(tree: &RegexpRoot) -> Result<usize, String> {
-    let Some((first, rest)) = tree.split_first() else {
-        return Ok(0);
-    };
-
-    // Every alternation branch must encode to the same byte length; reject any
-    // that disagrees so callers can rely on a single fixed lookbehind width.
-    let first_len = compute_branch_byte_length(first)?;
-    for branch in rest {
-        if compute_branch_byte_length(branch)? != first_len {
-            return Err("variable-length lookbehind not supported".into());
-        }
-    }
-    Ok(first_len)
+    fixed_length(
+        tree,
+        lookbehind_repeat_count,
+        lookbehind_atom_byte_length,
+        || "variable-length lookbehind not supported".to_owned(),
+    )
 }
 
-/// Compute the byte length of a single branch.
-/// Each atom contributes based on its character class and quantifier.
-fn compute_branch_byte_length(branch: &RegexpBranch) -> Result<usize, String> {
-    let mut total = 0usize;
-    for atom in branch {
-        // Must be singleton (no variable quantifiers)
-        if atom.quant_min != atom.quant_max {
-            return Err("variable quantifier in lookbehind not supported".into());
-        }
-        // Quantifier counts come out of the parser non-negative; if a stray
-        // negative ever reaches here we'd rather raise a clear error than
-        // wrap into an enormous usize.
-        let count = usize::try_from(atom.quant_min)
-            .map_err(|_| "negative quantifier count in lookbehind".to_owned())?;
-
-        // Compute per-atom byte length
-        let atom_len = if atom.is_dot {
-            // Dot can match any char, but for byte length we need worst case
-            // For simplicity, assume UTF-8 max (4 bytes) - this is conservative
-            // A more precise implementation would track actual character ranges
-            4
-        } else if !atom.runes.is_empty() {
-            // Character class - compute max UTF-8 length of any char in range
-            let mut max_len = 1;
-            for rp in &atom.runes {
-                max_len = max_len.max(rp.hi.len_utf8());
-            }
-            max_len
-        } else if let Some(subtree) = &atom.subtree {
-            // Nested group - recurse
-            compute_lookbehind_byte_length(subtree)?
-        } else {
-            0
-        };
-
-        total += atom_len * count;
+/// How many times an atom in a lookbehind repeats. It must be a fixed count.
+fn lookbehind_repeat_count(atom: &QuantifiedAtom) -> Result<usize, String> {
+    if atom.quant_min != atom.quant_max {
+        return Err("variable quantifier in lookbehind not supported".into());
     }
-    Ok(total)
+    // Quantifier counts come out of the parser non-negative; if a stray
+    // negative ever reaches here we'd rather raise a clear error than
+    // wrap into an enormous usize.
+    usize::try_from(atom.quant_min)
+        .map_err(|_| "negative quantifier count in lookbehind".to_owned())
+}
+
+/// The byte length of one occurrence of a non-group atom in a lookbehind, or
+/// `None` for a group.
+fn lookbehind_atom_byte_length(atom: &QuantifiedAtom) -> Option<usize> {
+    if atom.is_dot {
+        // Dot can match any char, but for byte length we need worst case
+        // For simplicity, assume UTF-8 max (4 bytes) - this is conservative
+        // A more precise implementation would track actual character ranges
+        Some(4)
+    } else if !atom.runes.is_empty() {
+        // Character class - compute max UTF-8 length of any char in range
+        Some(
+            atom.runes
+                .iter()
+                .map(|rp| rp.hi.len_utf8())
+                .fold(1, usize::max),
+        )
+    } else {
+        None
+    }
 }
 
 /// Parse a pattern JSON into field -> matchers map
@@ -546,46 +536,60 @@ pub fn parse_pattern(
     json: &str,
     limits: &crate::PatternLimits,
 ) -> Result<FxHashMap<String, Vec<Matcher>>, QuaminaError> {
-    let mut parser = Parser::new(json);
+    let mut parser = Parser::new(
+        json,
+        limits.max_pattern_depth.saturating_add(OPERATOR_NESTING),
+    );
     let value = parser.parse_value()?;
 
-    let Value::Object(obj) = value else {
+    let Value::Object(obj) = &value else {
         return Err(QuaminaError::InvalidPattern(
             "pattern must be an object".into(),
         ));
     };
 
     let mut fields = FxHashMap::default();
-    extract_pattern_fields(&obj, String::new(), &mut fields, 0, limits)?;
+    extract_pattern_fields(obj, &mut fields, limits)?;
     Ok(fields)
 }
 
+/// Collect the matchers of every field in a pattern object, keyed by path.
 fn extract_pattern_fields(
     obj: &[(String, Value)],
-    prefix: String,
     fields: &mut FxHashMap<String, Vec<Matcher>>,
-    depth: usize,
     limits: &crate::PatternLimits,
 ) -> Result<(), QuaminaError> {
-    if depth >= limits.max_pattern_depth {
-        return Err(QuaminaError::PatternTooComplex(format!(
-            "pattern nesting depth {} exceeds maximum of {} (at path '{}')",
-            depth + 1,
-            limits.max_pattern_depth,
-            prefix
-        )));
-    }
-    for (key, value) in obj {
-        let path = if prefix.is_empty() {
-            key.clone()
+    check_pattern_depth(0, "", limits)?;
+    // `members` are the unvisited members of the object being walked, and
+    // `prefix_len` is the length of its path in `prefix`. The objects around
+    // it wait in `outer`, kept here rather than on the call stack, so nesting
+    // costs heap. A top-level member's path is its key, so a flat pattern
+    // needs neither `outer` nor `prefix`.
+    let mut outer: Vec<(std::slice::Iter<'_, (String, Value)>, usize)> = Vec::new();
+    let mut members = obj.iter();
+    let mut prefix = String::new();
+    let mut prefix_len = 0;
+    loop {
+        let Some((key, value)) = members.next() else {
+            let Some((parent, parent_len)) = outer.pop() else {
+                return Ok(());
+            };
+            (members, prefix_len) = (parent, parent_len);
+            continue;
+        };
+        let path = if outer.is_empty() {
+            key.as_str()
         } else {
-            format!("{prefix}{SEGMENT_SEPARATOR}{key}")
+            prefix.truncate(prefix_len);
+            prefix.push(SEGMENT_SEPARATOR);
+            prefix.push_str(key);
+            prefix.as_str()
         };
         match value {
             Value::Array(arr) => {
                 let matchers: Result<Vec<Matcher>, QuaminaError> =
                     arr.iter().map(value_to_matcher).collect();
-                fields.insert(path, matchers?);
+                fields.insert(path.to_owned(), matchers?);
                 if fields.len() > limits.max_fields_per_pattern {
                     return Err(QuaminaError::PatternTooComplex(format!(
                         "pattern has {} fields, exceeding maximum of {}",
@@ -595,7 +599,13 @@ fn extract_pattern_fields(
                 }
             }
             Value::Object(nested) => {
-                extract_pattern_fields(nested, path, fields, depth + 1, limits)?;
+                check_pattern_depth(outer.len() + 1, path, limits)?;
+                if outer.is_empty() {
+                    prefix.clear();
+                    prefix.push_str(key);
+                }
+                outer.push((std::mem::replace(&mut members, nested.iter()), prefix_len));
+                prefix_len = prefix.len();
             }
             _ => {
                 return Err(QuaminaError::InvalidPattern(format!(
@@ -603,6 +613,23 @@ fn extract_pattern_fields(
                 )));
             }
         }
+    }
+}
+
+/// Reject an object at `path` with `depth` objects around it if it nests
+/// deeper than the limit.
+fn check_pattern_depth(
+    depth: usize,
+    path: &str,
+    limits: &crate::PatternLimits,
+) -> Result<(), QuaminaError> {
+    if depth >= limits.max_pattern_depth {
+        return Err(QuaminaError::PatternTooComplex(format!(
+            "pattern nesting depth {} exceeds maximum of {} (at path '{}')",
+            depth + 1,
+            limits.max_pattern_depth,
+            path
+        )));
     }
     Ok(())
 }
@@ -891,7 +918,12 @@ fn validate_wildcard(pattern: &str) -> bool {
     true
 }
 
-#[derive(Debug, Clone)]
+/// A parsed pattern JSON value.
+///
+/// Patterns nest as deep as `max_pattern_depth`, so dropping one walks its
+/// levels with a heap worklist rather than recursing once per level, which
+/// would overflow the stack on a deep enough pattern.
+#[derive(Debug)]
 enum Value {
     Object(Vec<(String, Self)>),
     Array(Vec<Self>),
@@ -901,83 +933,172 @@ enum Value {
     Null,
 }
 
+impl Value {
+    /// Whether this is an object or array holding another object or array.
+    fn holds_containers(&self) -> bool {
+        let is_container = |value: &Self| matches!(value, Self::Object(_) | Self::Array(_));
+        match self {
+            Self::Object(members) => members.iter().any(|(_, value)| is_container(value)),
+            Self::Array(items) => items.iter().any(is_container),
+            Self::String(_) | Self::Number(_) | Self::Bool(_) | Self::Null => false,
+        }
+    }
+
+    /// Move this value's nested objects and arrays that hold containers of
+    /// their own into `detached`.
+    fn detach_containers(&mut self, detached: &mut Vec<Self>) {
+        let take = |value: &mut Self| {
+            value
+                .holds_containers()
+                .then(|| std::mem::replace(value, Self::Null))
+        };
+        match self {
+            Self::Object(members) => {
+                detached.extend(members.iter_mut().filter_map(|(_, value)| take(value)));
+            }
+            Self::Array(items) => detached.extend(items.iter_mut().filter_map(take)),
+            Self::String(_) | Self::Number(_) | Self::Bool(_) | Self::Null => {}
+        }
+    }
+}
+
+impl Drop for Value {
+    fn drop(&mut self) {
+        // Detach every nested container that holds containers before the one
+        // holding it drops. What is left nests at most one level below this
+        // value, so its drop recurses no further than that, and a typical
+        // pattern needs no worklist at all.
+        let mut detached = Vec::new();
+        self.detach_containers(&mut detached);
+        while let Some(mut value) = detached.pop() {
+            value.detach_containers(&mut detached);
+        }
+    }
+}
+
+/// Containers a valid pattern nests below its deepest field object: the
+/// matcher array, an operator object, and the operator's argument array, as in
+/// `{"numeric": [">", 1]}`.
+const OPERATOR_NESTING: usize = 3;
+
+/// An object or array [`Parser::parse_value`] has opened and not yet closed.
+enum Open {
+    /// The members so far, and the key of the member whose value is next.
+    Object(Vec<(String, Value)>, String),
+    /// The items so far.
+    Array(Vec<Value>),
+}
+
 struct Parser<'a> {
     input: &'a str,
     pos: usize,
+    /// Most objects and arrays open at once.
+    max_depth: usize,
 }
 
 impl<'a> Parser<'a> {
-    const fn new(input: &'a str) -> Self {
-        Self { input, pos: 0 }
+    const fn new(input: &'a str, max_depth: usize) -> Self {
+        Self {
+            input,
+            pos: 0,
+            max_depth,
+        }
     }
 
     fn parse_value(&mut self) -> Result<Value, QuaminaError> {
-        self.skip_whitespace();
-        match self.peek() {
-            Some('{') => self.parse_object(),
-            Some('[') => self.parse_array(),
-            Some('"') => self.parse_string().map(Value::String),
-            Some('t' | 'f') => self.parse_bool(),
-            Some('n') => self.parse_null(),
-            Some(c) if c == '-' || c.is_ascii_digit() => self.parse_number(),
-            Some(c) => Err(QuaminaError::InvalidJson(format!("unexpected char: {c}"))),
-            None => Err(QuaminaError::InvalidJson("unexpected end".into())),
+        // The containers around the value being parsed, innermost last. They
+        // are kept here rather than on the call stack, so nesting costs heap.
+        let mut open = Vec::new();
+        loop {
+            self.skip_whitespace();
+            let mut value = match self.peek() {
+                Some('{') => {
+                    self.enter_container(open.len())?;
+                    if self.peek() == Some('}') {
+                        self.advance();
+                        Value::Object(Vec::new())
+                    } else {
+                        open.push(Open::Object(Vec::new(), self.parse_member_key()?));
+                        continue;
+                    }
+                }
+                Some('[') => {
+                    self.enter_container(open.len())?;
+                    if self.peek() == Some(']') {
+                        self.advance();
+                        Value::Array(Vec::new())
+                    } else {
+                        open.push(Open::Array(Vec::new()));
+                        continue;
+                    }
+                }
+                Some('"') => Value::String(self.parse_string()?),
+                Some('t' | 'f') => self.parse_bool()?,
+                Some('n') => self.parse_null()?,
+                Some(c) if c == '-' || c.is_ascii_digit() => self.parse_number()?,
+                Some(c) => return Err(QuaminaError::InvalidJson(format!("unexpected char: {c}"))),
+                None => return Err(QuaminaError::InvalidJson("unexpected end".into())),
+            };
+
+            // `value` is complete. Add it to the innermost open container, and
+            // close each container that ends right after it.
+            loop {
+                let Some(container) = open.last_mut() else {
+                    return Ok(value);
+                };
+                self.skip_whitespace();
+                value = match container {
+                    Open::Object(members, key) => {
+                        members.push((std::mem::take(key), value));
+                        match self.peek() {
+                            Some(',') => {
+                                self.advance();
+                                *key = self.parse_member_key()?;
+                                break;
+                            }
+                            Some('}') => Value::Object(std::mem::take(members)),
+                            _ => return Err(QuaminaError::InvalidJson("expected , or }".into())),
+                        }
+                    }
+                    Open::Array(items) => {
+                        items.push(value);
+                        match self.peek() {
+                            Some(',') => {
+                                self.advance();
+                                break;
+                            }
+                            Some(']') => Value::Array(std::mem::take(items)),
+                            _ => return Err(QuaminaError::InvalidJson("expected , or ]".into())),
+                        }
+                    }
+                };
+                self.advance();
+                open.pop();
+            }
         }
     }
 
-    fn parse_object(&mut self) -> Result<Value, QuaminaError> {
-        self.expect('{')?;
-        let mut pairs = Vec::new();
+    /// Step past the `{` or `[` of a container opened inside `open` others,
+    /// and any whitespace after it.
+    fn enter_container(&mut self, open: usize) -> Result<(), QuaminaError> {
+        if open >= self.max_depth {
+            return Err(QuaminaError::PatternTooComplex(format!(
+                "pattern JSON nests deeper than {} levels",
+                self.max_depth
+            )));
+        }
+        self.advance();
         self.skip_whitespace();
-        if self.peek() == Some('}') {
-            self.advance();
-            return Ok(Value::Object(pairs));
-        }
-        loop {
-            self.skip_whitespace();
-            let key = self.parse_string()?;
-            self.skip_whitespace();
-            self.expect(':')?;
-            let value = self.parse_value()?;
-            pairs.push((key, value));
-            self.skip_whitespace();
-            match self.peek() {
-                Some(',') => {
-                    self.advance();
-                }
-                Some('}') => {
-                    self.advance();
-                    break;
-                }
-                _ => return Err(QuaminaError::InvalidJson("expected , or }".into())),
-            }
-        }
-        Ok(Value::Object(pairs))
+        Ok(())
     }
 
-    fn parse_array(&mut self) -> Result<Value, QuaminaError> {
-        self.expect('[')?;
-        let mut items = Vec::new();
+    /// Parse an object member's key and the `:` after it.
+    fn parse_member_key(&mut self) -> Result<String, QuaminaError> {
         self.skip_whitespace();
-        if self.peek() == Some(']') {
-            self.advance();
-            return Ok(Value::Array(items));
-        }
-        loop {
-            items.push(self.parse_value()?);
-            self.skip_whitespace();
-            match self.peek() {
-                Some(',') => {
-                    self.advance();
-                }
-                Some(']') => {
-                    self.advance();
-                    break;
-                }
-                _ => return Err(QuaminaError::InvalidJson("expected , or ]".into())),
-            }
-        }
-        Ok(Value::Array(items))
+        let key = self.parse_string()?;
+        self.skip_whitespace();
+        self.expect(':')?;
+        Ok(key)
     }
 
     fn parse_string(&mut self) -> Result<String, QuaminaError> {
@@ -1137,14 +1258,17 @@ impl<'a> Parser<'a> {
         }
     }
 
+    #[inline]
     fn peek(&self) -> Option<char> {
         self.input[self.pos..].chars().next()
     }
+    #[inline]
     fn advance(&mut self) {
         if let Some(c) = self.peek() {
             self.pos += c.len_utf8();
         }
     }
+    #[inline]
     fn skip_whitespace(&mut self) {
         while self.peek().is_some_and(char::is_whitespace) {
             self.advance();
@@ -1165,8 +1289,30 @@ mod tests {
     use super::*;
 
     #[test]
+    #[cfg_attr(miri, ignore)]
+    fn deep_pattern_parses_and_drops() {
+        check_deep_pattern_parses_and_drops(100_000);
+    }
+
+    #[test]
+    fn deep_pattern_parses_and_drops_miri_friendly() {
+        check_deep_pattern_parses_and_drops(64);
+    }
+
+    fn check_deep_pattern_parses_and_drops(depth: usize) {
+        let limits = crate::PatternLimits {
+            max_pattern_depth: depth,
+            ..crate::PatternLimits::default()
+        };
+        let pattern = format!(r#"{}["x"]{}"#, r#"{"a":"#.repeat(depth), "}".repeat(depth));
+        let fields = parse_pattern(&pattern, &limits).expect("nesting at the limit parses");
+        let path = vec!["a"; depth].join("\n");
+        assert_eq!(fields.keys().collect::<Vec<_>>(), [&path]);
+    }
+
+    #[test]
     fn parse_string_rejects_unknown_escape() {
-        let mut parser = Parser::new(r#""\z""#);
+        let mut parser = Parser::new(r#""\z""#, 1);
         let err = parser.parse_string().unwrap_err();
         assert!(
             matches!(err, QuaminaError::InvalidPattern(ref msg) if msg.contains("\\z")),

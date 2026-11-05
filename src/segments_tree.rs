@@ -22,7 +22,7 @@ pub(crate) const SEGMENT_SEPARATOR: char = '\n';
 ///
 /// A single segment name can be a leaf field (with a full path Arc),
 /// a node leading to deeper fields, or both simultaneously.
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub(crate) enum SegmentEntry {
     /// Leaf field only — stores the full path as `Arc<[u8]>`
     Field(Arc<[u8]>),
@@ -48,6 +48,23 @@ impl SegmentEntry {
         match self {
             Self::Node(n) | Self::Both(_, n) => Some(n),
             Self::Field(_) => None,
+        }
+    }
+
+    /// Get the child tree mutably, if this entry has a node component.
+    const fn node_mut(&mut self) -> Option<&mut SegmentsTree> {
+        match self {
+            Self::Node(n) | Self::Both(_, n) => Some(n),
+            Self::Field(_) => None,
+        }
+    }
+
+    /// Copy this entry with its child tree, if any, left empty.
+    fn clone_level(&self) -> Self {
+        match self {
+            Self::Field(f) => Self::Field(f.clone()),
+            Self::Node(_) => Self::Node(SegmentsTree::new_node()),
+            Self::Both(f, _) => Self::Both(f.clone(), SegmentsTree::new_node()),
         }
     }
 
@@ -95,7 +112,11 @@ impl SegmentEntry {
 /// - Skip "c" since it's not used in any pattern
 /// - Track how many fields/nodes remain to be processed
 /// - Early-terminate when all needed fields are found
-#[derive(Clone, Debug)]
+///
+/// Paths nest as deep as patterns do, so dropping and cloning a tree walk its
+/// levels with a heap worklist rather than recursing once per level, which
+/// would overflow the stack on a deep enough pattern.
+#[derive(Debug)]
 pub struct SegmentsTree {
     /// Whether this is the root node
     is_root: bool,
@@ -105,6 +126,39 @@ pub struct SegmentsTree {
     field_count: usize,
     /// Number of entries that have a node component
     node_count: usize,
+}
+
+impl Drop for SegmentsTree {
+    fn drop(&mut self) {
+        // Detach every child tree before the node holding it drops, so each
+        // drop only ever frees one level.
+        let mut detached = Vec::new();
+        self.detach_children(&mut detached);
+        while let Some(mut node) = detached.pop() {
+            node.detach_children(&mut detached);
+        }
+    }
+}
+
+impl Clone for SegmentsTree {
+    fn clone(&self) -> Self {
+        // Copy one level at a time, then queue each child copy to be filled
+        // from the child it was copied from.
+        let mut copy = self.clone_level();
+        let mut pending = vec![(self, &mut copy)];
+        while let Some((source, target)) = pending.pop() {
+            for (key, entry) in &mut target.entries {
+                if let Some(child) = entry.node_mut() {
+                    let source_child = source.entries[key]
+                        .node()
+                        .expect("a copied entry keeps its child tree");
+                    *child = source_child.clone_level();
+                    pending.push((source_child, child));
+                }
+            }
+        }
+        copy
+    }
 }
 
 impl Default for SegmentsTree {
@@ -132,6 +186,30 @@ impl SegmentsTree {
             entries: FxHashMap::default(),
             field_count: 0,
             node_count: 0,
+        }
+    }
+
+    /// Move this node's child trees into `detached`, leaving empty nodes.
+    fn detach_children(&mut self, detached: &mut Vec<Self>) {
+        detached.extend(
+            self.entries
+                .values_mut()
+                .filter_map(SegmentEntry::node_mut)
+                .map(std::mem::take),
+        );
+    }
+
+    /// Copy this node with every child tree left empty.
+    fn clone_level(&self) -> Self {
+        Self {
+            is_root: self.is_root,
+            entries: self
+                .entries
+                .iter()
+                .map(|(key, entry)| (key.clone(), entry.clone_level()))
+                .collect(),
+            field_count: self.field_count,
+            node_count: self.node_count,
         }
     }
 
@@ -386,5 +464,52 @@ mod tests {
 
         // Missing segment returns None
         assert!(x_node.path_arc_for_segment(b"z").is_none());
+    }
+
+    #[test]
+    fn test_clone_copies_every_level() {
+        let mut tree = SegmentsTree::new();
+        tree.add("a\nb\nc");
+        tree.add("a\nb");
+        tree.add("a\nd");
+        tree.add("e");
+        let copy = tree.clone();
+        drop(tree);
+
+        assert!(copy.is_root());
+        assert_eq!((copy.fields_count(), copy.nodes_count()), (1, 1));
+        assert_eq!(copy.path_for_segment(b"e"), Some(b"e".as_slice()));
+        let a = copy.get(b"a").unwrap();
+        assert!(!a.is_root());
+        assert_eq!((a.fields_count(), a.nodes_count()), (2, 1));
+        assert_eq!(a.path_for_segment(b"b"), Some(b"a\nb".as_slice()));
+        assert_eq!(a.path_for_segment(b"d"), Some(b"a\nd".as_slice()));
+        let b = a.get(b"b").unwrap();
+        assert_eq!(b.path_for_segment(b"c"), Some(b"a\nb\nc".as_slice()));
+    }
+
+    #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_deep_tree_clones_and_drops() {
+        check_deep_tree_clones_and_drops(100_000);
+    }
+
+    #[test]
+    fn test_deep_tree_clones_and_drops_miri_friendly() {
+        check_deep_tree_clones_and_drops(64);
+    }
+
+    fn check_deep_tree_clones_and_drops(depth: usize) {
+        let path = vec!["s"; depth].join("\n");
+        let mut tree = SegmentsTree::new();
+        tree.add(&path);
+        let copy = tree.clone();
+        drop(tree);
+
+        let mut node = &copy;
+        for _ in 1..depth {
+            node = node.get(b"s").expect("every level is copied");
+        }
+        assert_eq!(node.path_for_segment(b"s"), Some(path.as_bytes()));
     }
 }

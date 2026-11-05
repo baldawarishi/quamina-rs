@@ -22,10 +22,12 @@ mod parser;
 pub use nfa::{clear_fa_shell_cache, make_regexp_nfa_arena, regexp_has_plus_star};
 pub use parser::{
     Branch as RegexpBranch, Error as RegexpError, LookaroundType, QuantifiedAtom,
-    REGEXP_QUANTIFIER_MAX, RUNE_MAX, Root as RegexpRoot, RunePair, RuneRange, collect_lookarounds,
-    concat_roots, expand_word_boundaries, has_top_level_lookaround, has_word_boundary,
-    parse as parse_regexp,
+    REGEXP_QUANTIFIER_MAX, RUNE_MAX, Root as RegexpRoot, RunePair, RuneRange,
+    Subtree as RegexpSubtree, collect_lookarounds, concat_roots, expand_word_boundaries,
+    has_top_level_lookaround, has_word_boundary, parse as parse_regexp,
 };
+
+pub(crate) use parser::fixed_length;
 
 // Crate-internal items are accessible via their original modules:
 // - nfa::make_dot_fa (pub(crate))

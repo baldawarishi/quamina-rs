@@ -22,9 +22,12 @@ exclude_globs = [
 # Library unit tests only. Do NOT add `--all-targets`: it builds the Criterion
 # benches unoptimized, which overruns the per-mutant timeout and fails the
 # baseline. The two excluded tests are slow (concurrent-stress and regexp
-# fuzzing) and catch nothing the rest of the suite doesn't.
+# fuzzing) and catch nothing the rest of the suite doesn't. `--max-fail` kills
+# the tests still running once one fails, so a mutant that fails some tests at
+# once and makes others crawl is caught rather than timed out.
 additional_cargo_test_args = [
   "--lib",
+  "--max-fail=1:immediate",
   "-E",
   "not (test(test_concurrent_update_during_matching) | test(test_regexp_validity))",
 ]
@@ -62,6 +65,13 @@ exclude_re = [
   # [0, arena_len), so growing on `<=` instead of `<` only reallocates one extra
   # time when they are equal — same closures, just a wasted alloc.
   'replace < with <= in ClosureScratch::ensure_seen_capacity',
+  # `|` is an implemented feature, so recording it never changes what
+  # found_unimplemented reports; the arm still consumes the separator either way.
+  "delete match arm Ok\\('\\|'\\) in read_branches",
+  # Value's drop keeps containers that hold only scalars in place to skip the
+  # worklist; detaching every child instead frees the same values, just with
+  # more allocation.
+  'replace Value::holds_containers -> bool with true',
 ]
 
 # Don't mutate logging/debug/panic macros — not worth testing

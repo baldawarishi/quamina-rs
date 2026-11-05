@@ -278,7 +278,7 @@ let count   = q.count_matches(event)?;       // number of matches
 
 ### Handle errors
 
-`add_pattern` returns an error when a pattern contains malformed JSON, uses invalid syntax, or exceeds a configured complexity limit. `matches_for_event` returns an error when the event is not valid JSON.
+`add_pattern` returns an error when a pattern contains malformed JSON, uses invalid syntax, or exceeds a configured complexity limit. `matches_for_event` returns an error when the event is not valid JSON. As in Go Quamina, a panic inside either call comes back as `QuaminaError::Panicked`; after one from `add_pattern`, call `rebuild()` to drop whatever part of the pattern was built.
 
 ```rust
 match q.add_pattern("bad", r#"{"x": "not-an-array"}"#) {
@@ -399,7 +399,7 @@ Quamina limits pattern complexity to control memory use and processing time:
 
 | Limit | Default | Builder method |
 |-------|---------|----------------|
-| Max nesting depth | 256 | `with_max_pattern_depth` |
+| Max nesting depth | 10000 | `with_max_pattern_depth` |
 | Max fields per pattern | 256 | `with_max_fields_per_pattern` |
 | Arena byte budget | 10 MB | `with_arena_byte_budget` |
 | Max states per pattern | 1024 | `with_max_states_per_pattern` |

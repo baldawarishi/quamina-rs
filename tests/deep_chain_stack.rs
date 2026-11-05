@@ -1,6 +1,8 @@
-//! Long single-chain patterns must build and freeze on a small stack. A
-//! `prefix` pattern allocates one arena state per byte, so every walk over that
-//! chain is as deep as the pattern is long.
+//! Deep patterns must build and match on a small stack. A `prefix` pattern
+//! allocates one arena state per byte, so every walk over that chain is as deep
+//! as the pattern is long. Nested pattern JSON and nested regexp groups are
+//! walked once per level, so they are checked far deeper than a recursive walk
+//! would survive.
 //!
 //! A stack overflow aborts the process rather than raising a catchable panic,
 //! and would take the test binary down with it. Each reproducer therefore runs
@@ -9,7 +11,9 @@
 
 use std::process::Command;
 
-use quamina::Quamina;
+use quamina::json::transform_lookaround_pattern;
+use quamina::regexp::{expand_word_boundaries, parse_regexp, regexp_has_plus_star};
+use quamina::{PatternLimits, Quamina, QuaminaBuilder, QuaminaError};
 
 /// Set in the child process to select the reproducer instead of the spawner.
 const GUARD: &str = "QUAMINA_DEEP_CHAIN_CHILD";
@@ -157,6 +161,221 @@ fn deep_anything_but_survives_small_stack() {
     respawn("deep_anything_but_survives_small_stack");
 }
 
+/// Pattern JSON nested to the default `max_pattern_depth`, with the operator
+/// syntax a leaf can add below that, and far deeper once the limit is raised.
+/// Parsing, adding, cloning and dropping each visit every level.
+#[test]
+#[cfg_attr(miri, ignore = "spawns a child process")]
+fn deepest_pattern_json_survives_small_stack() {
+    if in_child() {
+        on_small_stack(|| {
+            let depth = PatternLimits::default().max_pattern_depth;
+            let deeper = 200_000;
+
+            let mut q = Quamina::new();
+            q.add_pattern("deep", &nested_numeric_pattern(depth))
+                .expect("nesting at max_pattern_depth is accepted");
+            let err = q
+                .add_pattern("deeper", &nested_numeric_pattern(deeper))
+                .expect_err("nesting past max_pattern_depth is rejected");
+            assert!(matches!(err, QuaminaError::PatternTooComplex(_)), "{err}");
+
+            let mut q = QuaminaBuilder::new()
+                .with_max_pattern_depth(deeper)
+                .build()
+                .expect("a raised depth limit is valid");
+            q.add_pattern("deeper", &nested_numeric_pattern(deeper))
+                .expect("nesting at a raised max_pattern_depth is accepted");
+            drop(q.clone());
+            drop(q.segments_tree().clone());
+
+            // Arrays nested inside an operator are parsed before the operator
+            // rejects them.
+            let pattern = format!(
+                r#"{{"f": [{{"numeric": {}{}}}]}}"#,
+                "[".repeat(deeper),
+                "]".repeat(deeper)
+            );
+            let err = q
+                .add_pattern("arrays", &pattern)
+                .expect_err("nested arrays are not a numeric comparison");
+            assert!(matches!(err, QuaminaError::InvalidPattern(_)), "{err}");
+        });
+        return;
+    }
+
+    respawn("deepest_pattern_json_survives_small_stack");
+}
+
+/// An event nested as deep as the deepest pattern the default limit accepts.
+#[test]
+#[cfg_attr(miri, ignore = "spawns a child process")]
+fn deepest_pattern_json_matches_on_small_stack() {
+    if in_child() {
+        on_small_stack(|| {
+            let depth = PatternLimits::default().max_pattern_depth;
+            let mut q = Quamina::new();
+            q.add_pattern("deep", &nested_numeric_pattern(depth))
+                .expect("nesting at max_pattern_depth is accepted");
+
+            let event = format!("{}2{}", r#"{"f": "#.repeat(depth), "}".repeat(depth));
+            let matches = q
+                .matches_for_event(event.as_bytes())
+                .expect("matching the deeply nested event");
+            assert_eq!(matches, vec!["deep"]);
+        });
+        return;
+    }
+
+    respawn("deepest_pattern_json_matches_on_small_stack");
+}
+
+/// Quantified regexp groups nested past where a recursive NFA builder runs
+/// out of stack. Every level's loop or skip reaches every level inside it, so
+/// the automaton grows with the square of the depth and needs a larger arena
+/// budget than the default.
+#[test]
+#[cfg_attr(miri, ignore = "spawns a child process")]
+fn deep_quantified_regexp_groups_survive_small_stack() {
+    if in_child() {
+        on_small_stack(|| {
+            let depth = 3_000;
+            let mut q = QuaminaBuilder::new()
+                .with_arena_byte_budget(256 * 1024 * 1024)
+                .build()
+                .expect("a larger arena budget is valid");
+            for (id, close) in [("plus", ")+"), ("optional", ")?")] {
+                let pattern = format!(
+                    r#"{{"f": [{{"regexp": "{}a{}"}}]}}"#,
+                    "(".repeat(depth),
+                    close.repeat(depth)
+                );
+                q.add_pattern(id, &pattern)
+                    .expect("quantified groups nest without a depth limit");
+            }
+
+            let mut matches = q
+                .matches_for_event(br#"{"f": "a"}"#)
+                .expect("matching against the nested regexps");
+            matches.sort_unstable();
+            assert_eq!(matches, vec!["optional", "plus"]);
+            let matches = q
+                .matches_for_event(br#"{"f": "aaa"}"#)
+                .expect("matching against the nested regexps");
+            assert_eq!(matches, vec!["plus"]);
+        });
+        return;
+    }
+
+    respawn("deep_quantified_regexp_groups_survive_small_stack");
+}
+
+/// Regexp groups nested deeper than Go Quamina reaches on its 1 GB maximum
+/// goroutine stack (about 196,000 levels).
+const REGEXP_GROUP_DEPTH: usize = 200_000;
+
+/// Parsing, validating, rewriting, copying, dropping and building an NFA for a
+/// regexp all walk its groups level by level, so each is checked here at a
+/// depth far past where a recursive walk runs out of stack.
+#[test]
+#[cfg_attr(miri, ignore = "spawns a child process")]
+fn deeply_nested_regexp_groups_survive_small_stack() {
+    if in_child() {
+        on_small_stack(|| {
+            let nested = |open: &str, leaf: &str, close: &str| {
+                format!(
+                    "{}{leaf}{}",
+                    open.repeat(REGEXP_GROUP_DEPTH),
+                    close.repeat(REGEXP_GROUP_DEPTH)
+                )
+            };
+
+            let tree = parse_regexp(&nested("(", "a", ")+")).expect("nesting depth is unlimited");
+            assert!(regexp_has_plus_star(&tree));
+            let copy = tree.clone();
+            drop(tree);
+            drop(copy);
+
+            // Each failure drops the half-built tree it was holding.
+            assert!(
+                parse_regexp(&nested("(", "a", "")).is_err(),
+                "unclosed groups"
+            );
+            assert!(
+                parse_regexp(&format!("(?={})", nested("(", "(?=a)", ")"))).is_err(),
+                "a lookahead nested in a lookahead"
+            );
+            assert!(
+                parse_regexp(&format!("(?<={})", nested("(", "a+", ")"))).is_err(),
+                "a variable-length lookbehind"
+            );
+
+            // A lookbehind is measured and copied out into a condition, and a
+            // word boundary copies the atoms around it into new branches.
+            let lookbehind = parse_regexp(&format!("(?<={})b", nested("(", "a", ")")))
+                .expect("a fixed-length lookbehind");
+            transform_lookaround_pattern(&lookbehind).expect("one lookbehind and a primary");
+            let boundary = parse_regexp(&format!("a~b-{}", nested("(", "a", ")")))
+                .expect("a word boundary between a word and a non-word char");
+            expand_word_boundaries(&boundary).expect("the boundary resolves");
+
+            // Groups and alternations of any depth build and match.
+            let mut q = Quamina::new();
+            for (id, open) in [("groups", "("), ("alternation", "(x|")] {
+                let pattern = format!(r#"{{"f": [{{"regexp": "{}"}}]}}"#, nested(open, "a", ")"));
+                q.add_pattern(id, &pattern)
+                    .expect("groups nest without a depth limit");
+            }
+            let mut matches = q
+                .matches_for_event(br#"{"f": "a"}"#)
+                .expect("matching against the nested regexps");
+            matches.sort_unstable();
+            assert_eq!(matches, vec!["alternation", "groups"]);
+            let matches = q
+                .matches_for_event(br#"{"f": "x"}"#)
+                .expect("matching against the nested regexps");
+            assert_eq!(matches, vec!["alternation"]);
+        });
+        return;
+    }
+
+    respawn("deeply_nested_regexp_groups_survive_small_stack");
+}
+
+/// Arrays nested in an event field a pattern uses are flattened however
+/// shallow the pattern is, and Go Quamina has no depth limit for them.
+#[test]
+#[cfg_attr(miri, ignore = "spawns a child process")]
+fn deeply_nested_event_arrays_survive_small_stack() {
+    if in_child() {
+        on_small_stack(|| {
+            let depth = 100_000;
+            let mut q = Quamina::new();
+            q.add_pattern("deep", r#"{"a": ["x"]}"#)
+                .expect("a flat pattern");
+
+            let event = format!(r#"{{"a": {}"x"{}}}"#, "[".repeat(depth), "]".repeat(depth));
+            let matches = q
+                .matches_for_event(event.as_bytes())
+                .expect("matching the deeply nested event");
+            assert_eq!(matches, vec!["deep"]);
+        });
+        return;
+    }
+
+    respawn("deeply_nested_event_arrays_survive_small_stack");
+}
+
+/// A pattern with `depth` nested field objects and a numeric operator below
+/// the last.
+fn nested_numeric_pattern(depth: usize) -> String {
+    format!(
+        r#"{}[{{"numeric": [">", 1]}}]{}"#,
+        r#"{"f": "#.repeat(depth),
+        "}".repeat(depth)
+    )
+}
+
 /// True when this process is the spawned child that runs the reproducer.
 fn in_child() -> bool {
     std::env::var_os(GUARD).is_some()
@@ -167,7 +386,7 @@ fn in_child() -> bool {
 fn respawn(test_name: &str) {
     let exe = std::env::current_exe().expect("path to this test binary");
     let status = Command::new(exe)
-        .args([test_name, "--exact", "--nocapture"])
+        .args([test_name, "--exact", "--include-ignored", "--nocapture"])
         .env(GUARD, "1")
         .status()
         .expect("spawn the reproducer in a child process");

@@ -51,7 +51,7 @@ pub struct QuantifiedAtom {
     /// Maximum number of times to match
     pub quant_max: i32,
     /// Subtree for parenthesized groups
-    pub subtree: Option<Root>,
+    pub subtree: Option<Subtree>,
     /// Cache key for large Unicode categories (e.g., "L", "Lu", "-L" for negated)
     /// Used to cache pre-built FA shells for performance.
     pub cache_key: Option<String>,
@@ -93,6 +93,33 @@ impl QuantifiedAtom {
         }
     }
 
+    /// A copy of every field but the group's branches, which the caller
+    /// fills in.
+    fn clone_without_subtree(&self) -> Self {
+        let Self {
+            is_dot,
+            runes,
+            quant_min,
+            quant_max,
+            subtree: _,
+            cache_key,
+            lookaround,
+            ascii_negated_bytes,
+            is_word_boundary,
+        } = self;
+        Self {
+            is_dot: *is_dot,
+            runes: runes.clone(),
+            quant_min: *quant_min,
+            quant_max: *quant_max,
+            subtree: None,
+            cache_key: cache_key.clone(),
+            lookaround: *lookaround,
+            ascii_negated_bytes: ascii_negated_bytes.clone(),
+            is_word_boundary: *is_word_boundary,
+        }
+    }
+
     /// Returns true if this atom matches exactly once (no quantifier).
     #[inline]
     #[must_use]
@@ -128,6 +155,114 @@ pub type Branch = Vec<QuantifiedAtom>;
 /// The root of a parsed regexp (alternatives separated by |).
 pub type Root = Vec<Branch>;
 
+/// The branches of a parenthesized group.
+///
+/// Groups nest without limit, so dropping and cloning one walk its levels with
+/// a heap worklist rather than recursing once per level, which would overflow
+/// the stack on a deep enough regexp.
+#[derive(Default)]
+pub struct Subtree(Root);
+
+impl From<Root> for Subtree {
+    fn from(branches: Root) -> Self {
+        Self(branches)
+    }
+}
+
+impl std::ops::Deref for Subtree {
+    type Target = Root;
+
+    fn deref(&self) -> &Root {
+        &self.0
+    }
+}
+
+impl std::fmt::Debug for Subtree {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+impl Drop for Subtree {
+    fn drop(&mut self) {
+        // Detach every nested group before the atom holding it drops, so each
+        // drop only ever frees one level.
+        let mut detached = Vec::new();
+        let mut branches = std::mem::take(&mut self.0);
+        loop {
+            for atom in branches.iter_mut().flatten() {
+                if let Some(mut nested) = atom.subtree.take() {
+                    detached.push(std::mem::take(&mut nested.0));
+                }
+            }
+            match detached.pop() {
+                Some(next) => branches = next,
+                None => return,
+            }
+        }
+    }
+}
+
+impl Clone for Subtree {
+    fn clone(&self) -> Self {
+        /// A group partway through being copied.
+        struct Level<'a> {
+            /// Source branches not yet started.
+            branches: std::slice::Iter<'a, Branch>,
+            /// The rest of the source branch being copied, once one has started.
+            atoms: Option<std::slice::Iter<'a, QuantifiedAtom>>,
+            /// Finished copies of this level's branches.
+            copied: Root,
+            /// The copy of the current branch so far.
+            branch: Branch,
+        }
+
+        impl<'a> Level<'a> {
+            fn new(source: &'a Root) -> Self {
+                Self {
+                    branches: source.iter(),
+                    atoms: None,
+                    copied: Root::with_capacity(source.len()),
+                    branch: Branch::new(),
+                }
+            }
+        }
+
+        // The copy in progress, and below it each enclosing group's copy paired
+        // with the group atom waiting for this one's branches.
+        let mut copy = Level::new(&self.0);
+        let mut enclosing: Vec<(Level<'_>, QuantifiedAtom)> = Vec::new();
+        loop {
+            if let Some(atom) = copy.atoms.as_mut().and_then(Iterator::next) {
+                match &atom.subtree {
+                    None => copy.branch.push(atom.clone()),
+                    Some(nested) => {
+                        let outer = std::mem::replace(&mut copy, Level::new(&nested.0));
+                        enclosing.push((outer, atom.clone_without_subtree()));
+                    }
+                }
+                continue;
+            }
+
+            if copy.atoms.is_some() {
+                copy.copied.push(std::mem::take(&mut copy.branch));
+            }
+            if let Some(source_branch) = copy.branches.next() {
+                copy.atoms = Some(source_branch.iter());
+                copy.branch = Branch::with_capacity(source_branch.len());
+                continue;
+            }
+
+            let finished = Self(copy.copied);
+            let Some((outer, mut group)) = enclosing.pop() else {
+                return finished;
+            };
+            group.subtree = Some(finished);
+            copy = outer;
+            copy.branch.push(group);
+        }
+    }
+}
 /// Concatenate two trees: `a|b` followed by `c|d` gives `ac|ad|bc|bd`.
 ///
 /// Every branch on the left is paired with every branch on the right. A tree
@@ -219,12 +354,22 @@ const IMPLEMENTED_FEATURES: &[RegexpFeature] = &[
     RegexpFeature::WordBoundary,
 ];
 
+/// A `(` whose `)` has not been read yet. It holds the enclosing level's
+/// progress, which parsing picks up again once the group closes.
+struct OpenGroup {
+    /// The enclosing level's finished branches.
+    tree: Root,
+    /// The atoms of the enclosing branch read before the group.
+    branch: Branch,
+    lookaround: Option<LookaroundType>,
+}
+
 /// Parser state for regexp parsing.
 struct RegexpParse {
-    bytes: Vec<u8>,
+    text: String,
     index: usize,
     last_index: usize,
-    nesting: Vec<Root>,
+    nesting: Vec<OpenGroup>,
     found_features: Vec<RegexpFeature>,
     tree: Root,
 }
@@ -247,7 +392,7 @@ impl std::error::Error for Error {}
 impl RegexpParse {
     fn new(re: &str) -> Self {
         Self {
-            bytes: re.as_bytes().to_vec(),
+            text: re.to_owned(),
             index: 0,
             last_index: 0,
             nesting: Vec::new(),
@@ -256,14 +401,26 @@ impl RegexpParse {
         }
     }
 
-    fn nest(&mut self) {
-        self.nesting.push(std::mem::take(&mut self.tree));
+    /// Set the current level aside to read a group's branches.
+    fn nest(&mut self, branch: Branch, lookaround: Option<LookaroundType>) {
+        self.nesting.push(OpenGroup {
+            tree: std::mem::take(&mut self.tree),
+            branch,
+            lookaround,
+        });
     }
 
-    fn unnest(&mut self) -> Root {
-        let subtree = std::mem::take(&mut self.tree);
-        self.tree = self.nesting.pop().unwrap_or_default();
-        subtree
+    /// Close the innermost group. Returns its atom and the enclosing branch to
+    /// carry on with, or `None` outside any group.
+    fn unnest(&mut self) -> Option<(QuantifiedAtom, Branch)> {
+        let open = self.nesting.pop()?;
+        let subtree = std::mem::replace(&mut self.tree, open.tree);
+        let group = QuantifiedAtom {
+            subtree: Some(subtree.into()),
+            lookaround: open.lookaround,
+            ..Default::default()
+        };
+        Some((group, open.branch))
     }
 
     const fn is_nested(&self) -> bool {
@@ -271,7 +428,7 @@ impl RegexpParse {
     }
 
     fn next_rune(&mut self) -> Result<char, Error> {
-        if self.index >= self.bytes.len() {
+        if self.is_empty() {
             return Err(Error {
                 message: "end of string".into(),
                 offset: self.index,
@@ -279,17 +436,17 @@ impl RegexpParse {
         }
         self.last_index = self.index;
 
-        // Decode UTF-8
-        let remaining = &self.bytes[self.index..];
-        let s = std::str::from_utf8(remaining).map_err(|_| Error {
-            message: "UTF-8 encoding error".into(),
-            offset: self.index,
-        })?;
-
-        let c = s.chars().next().ok_or_else(|| Error {
-            message: "empty string".into(),
-            offset: self.index,
-        })?;
+        // Decode only the next rune, so reading the regexp stays linear in its
+        // length. The text is a `str`, so this fails only if `index` is ever
+        // left off a character boundary.
+        let c = self
+            .text
+            .get(self.index..)
+            .and_then(|rest| rest.chars().next())
+            .ok_or_else(|| Error {
+                message: "UTF-8 encoding error".into(),
+                offset: self.index,
+            })?;
 
         self.index += c.len_utf8();
         Ok(c)
@@ -319,7 +476,7 @@ impl RegexpParse {
     }
 
     const fn is_empty(&self) -> bool {
-        self.index >= self.bytes.len()
+        self.index >= self.text.len()
     }
 
     fn record_feature(&mut self, feature: RegexpFeature) {
@@ -359,21 +516,9 @@ fn has_nested_lookaround(tree: &Root) -> bool {
     false
 }
 
-/// Recursively check if a tree contains any lookaround at any depth.
+/// Check if a tree contains any lookaround at any depth.
 fn tree_has_lookaround(tree: &Root) -> bool {
-    for branch in tree {
-        for atom in branch {
-            if atom.lookaround.is_some() {
-                return true;
-            }
-            if let Some(subtree) = &atom.subtree
-                && tree_has_lookaround(subtree)
-            {
-                return true;
-            }
-        }
-    }
-    false
+    atoms(tree).any(|atom| atom.lookaround.is_some())
 }
 
 /// Validate lookaround constructs in a parsed tree.
@@ -404,64 +549,150 @@ fn validate_lookarounds(tree: &Root) -> Result<(), String> {
 
 /// Check if a pattern can match strings of different lengths.
 /// Used to validate lookbehind patterns which require fixed length.
+///
+/// Lengths count characters, so a dot or a class is one whatever its UTF-8
+/// width. Any quantifier with `quant_min != quant_max` (`*`, `+`, `{m,n}`)
+/// makes the pattern variable.
 fn has_variable_length_pattern(tree: &Root) -> bool {
-    // A pattern is variable-length if its first branch is variable-length, or if
-    // any alternation branch has a different fixed length than the first. An empty
-    // tree matches only the empty string, which is fixed-length.
-    if tree.is_empty() {
-        return false;
-    }
-    let first_len = branch_fixed_length(&tree[0]);
-    if first_len.is_none() {
-        return true;
-    }
-    tree.iter()
-        .skip(1)
-        .any(|branch| branch_fixed_length(branch) != first_len)
+    let repeat = |atom: &QuantifiedAtom| {
+        if atom.quant_min == atom.quant_max {
+            usize::try_from(atom.quant_min).map_err(drop)
+        } else {
+            Err(())
+        }
+    };
+    let char_len = |atom: &QuantifiedAtom| (atom.is_dot || !atom.runes.is_empty()).then_some(1);
+    fixed_length(tree, repeat, char_len, || ()).is_err()
 }
 
-/// Calculate the fixed length of a branch, or None if variable length.
-fn branch_fixed_length(branch: &Branch) -> Option<usize> {
-    let mut total = 0usize;
-    for atom in branch {
-        // A fixed-length atom repeats a fixed number of times, so quant_min must
-        // equal quant_max; `*`, `+`, and `{m,n}` with m != n are all variable.
-        if atom.quant_min != atom.quant_max {
-            return None;
+/// Every atom of `tree` in pattern order, each group's contents straight
+/// after the group's own atom. The walk keeps its place in each enclosing group
+/// on the heap, so nesting depth costs no stack.
+pub fn atoms(tree: &[Branch]) -> Atoms<'_> {
+    Atoms {
+        levels: vec![(tree.iter(), std::slice::Iter::default())],
+    }
+}
+
+/// Iterator returned by [`atoms`].
+pub struct Atoms<'a> {
+    /// For the top level and each group entered: the branches not yet
+    /// started, and the rest of the current branch.
+    levels: Vec<(
+        std::slice::Iter<'a, Branch>,
+        std::slice::Iter<'a, QuantifiedAtom>,
+    )>,
+}
+
+impl<'a> Iterator for Atoms<'a> {
+    type Item = &'a QuantifiedAtom;
+
+    fn next(&mut self) -> Option<&'a QuantifiedAtom> {
+        loop {
+            let (branches, atoms) = self.levels.last_mut()?;
+            if let Some(atom) = atoms.next() {
+                if let Some(subtree) = &atom.subtree {
+                    self.levels
+                        .push((subtree.iter(), std::slice::Iter::default()));
+                }
+                return Some(atom);
+            }
+            match branches.next() {
+                Some(branch) => *atoms = branch.iter(),
+                None => {
+                    self.levels.pop();
+                }
+            }
+        }
+    }
+}
+
+/// The fixed length of `tree`: what every branch measures when they all agree.
+///
+/// A branch is the sum over its atoms of `repeat` (how often the atom occurs)
+/// times one occurrence's length. `atom_len` gives that length for a leaf atom
+/// and `None` for a group, which measures as its own branches do, or zero when
+/// it has none. `repeat` sees each atom before any of its group's contents, and
+/// `mismatch` is the error for branches that disagree. An empty tree is 0.
+///
+/// The walk keeps one entry per enclosing group on the heap, so nesting depth
+/// costs no stack. A length too large for `usize` also counts as `mismatch`:
+/// nested repeats like `((a{100}){100}){100}…` reach one in a few levels, and
+/// no lookbehind that long could ever be checked.
+pub fn fixed_length<E>(
+    tree: &[Branch],
+    repeat: impl Fn(&QuantifiedAtom) -> Result<usize, E>,
+    atom_len: impl Fn(&QuantifiedAtom) -> Option<usize>,
+    mismatch: impl Fn() -> E,
+) -> Result<usize, E> {
+    /// A group, or the top level, partway through being measured.
+    struct Level<'a> {
+        branches: std::slice::Iter<'a, Branch>,
+        atoms: Option<std::slice::Iter<'a, QuantifiedAtom>>,
+        /// Length of the current branch so far.
+        branch_len: usize,
+        /// Length of the first branch, which the others must match.
+        agreed: Option<usize>,
+    }
+
+    impl<'a> Level<'a> {
+        fn new(branches: &'a [Branch]) -> Self {
+            Self {
+                branches: branches.iter(),
+                atoms: None,
+                branch_len: 0,
+                agreed: None,
+            }
+        }
+    }
+
+    // The level being measured, and below it each enclosing level paired with
+    // the repeat count of the group atom it is waiting on.
+    let mut level = Level::new(tree);
+    let mut enclosing: Vec<(Level<'_>, usize)> = Vec::new();
+    loop {
+        if let Some(atom) = level.atoms.as_mut().and_then(Iterator::next) {
+            let count = repeat(atom)?;
+            match (atom_len(atom), &atom.subtree) {
+                (Some(len), _) => {
+                    level.branch_len =
+                        add_repeated(level.branch_len, len, count).ok_or_else(&mismatch)?;
+                }
+                (None, Some(subtree)) => {
+                    let outer = std::mem::replace(&mut level, Level::new(subtree));
+                    enclosing.push((outer, count));
+                }
+                (None, None) => {}
+            }
+            continue;
         }
 
-        let atom_len = if atom.is_dot {
-            // Dot matches one character, but UTF-8 encoding varies in length
-            // For simplicity, we allow single-character matchers
-            1
-        } else if !atom.runes.is_empty() {
-            // Character class - could have varying UTF-8 lengths
-            // But from a character count perspective, it's always 1 char
-            1
-        } else if let Some(subtree) = &atom.subtree {
-            // Group - recurse (but it's the match count, not UTF-8 bytes)
-            if subtree.len() == 1 {
-                branch_fixed_length(&subtree[0])?
-            } else {
-                // Alternation - check if all have same length
-                let first_len = branch_fixed_length(&subtree[0])?;
-                for b in subtree.iter().skip(1) {
-                    if branch_fixed_length(b) != Some(first_len) {
-                        return None;
-                    }
-                }
-                first_len
+        if level.atoms.is_some() {
+            match level.agreed {
+                None => level.agreed = Some(level.branch_len),
+                Some(agreed) if agreed != level.branch_len => return Err(mismatch()),
+                Some(_) => {}
             }
-        } else {
-            0 // Empty atom
-        };
+        }
+        if let Some(branch) = level.branches.next() {
+            level.atoms = Some(branch.iter());
+            level.branch_len = 0;
+            continue;
+        }
 
-        // Multiply by quantifier. The parser doesn't produce negative
-        // counts here, but if that ever changed we'd rather call the
-        // length unknown (None) than wrap a -1 into a giant usize.
-        total += atom_len * usize::try_from(atom.quant_min).ok()?;
+        let len = level.agreed.unwrap_or(0);
+        let Some((outer, count)) = enclosing.pop() else {
+            return Ok(len);
+        };
+        level = outer;
+        level.branch_len = add_repeated(level.branch_len, len, count).ok_or_else(&mismatch)?;
     }
-    Some(total)
+}
+
+/// `total + len * count`, or `None` if that overflows.
+fn add_repeated(total: usize, len: usize, count: usize) -> Option<usize> {
+    len.checked_mul(count)
+        .and_then(|repeated| total.checked_add(repeated))
 }
 
 /// Collect all lookaround atoms from a tree with their positions.
@@ -474,7 +705,7 @@ pub fn collect_lookarounds(tree: &Root) -> Vec<(usize, usize, LookaroundType, Ro
             if let Some(la_type) = atom.lookaround
                 && let Some(subtree) = &atom.subtree
             {
-                result.push((branch_idx, atom_idx, la_type, subtree.clone()));
+                result.push((branch_idx, atom_idx, la_type, subtree.to_vec()));
             }
         }
     }
@@ -920,50 +1151,87 @@ pub fn parse(re: &str) -> Result<Root, Error> {
     Ok(tree)
 }
 
-/// Read branches separated by |
+/// Read branches separated by `|`, and the branches of every group in them.
+///
+/// A group holds branches of its own in the middle of a branch. Instead of
+/// recursing into it, the enclosing level is set aside on `parse.nesting` and
+/// resumed at the `)`, so nesting depth costs heap rather than stack.
 fn read_branches(parse: &mut RegexpParse) -> Result<(), Error> {
-    while !parse.is_empty() {
-        let branch = read_branch(parse)?;
-        parse.tree.push(branch);
-
-        if parse.is_empty() {
-            return Ok(());
-        }
-
-        let b = parse.next_rune()?;
-        if b == '|' {
-            parse.record_feature(RegexpFeature::OrBar);
+    let mut branch = Branch::new();
+    let mut closed_group = None;
+    while closed_group.is_some() || !parse.is_empty() {
+        if let BranchEnd::GroupOpen(lookaround) =
+            read_branch(parse, &mut branch, closed_group.take())?
+        {
+            parse.nest(std::mem::take(&mut branch), lookaround);
             continue;
-        } else if b == ')' {
-            parse.backup1(b);
-            return Ok(());
         }
-        // Shouldn't reach here
+        parse.tree.push(std::mem::take(&mut branch));
+
+        match parse.next_rune() {
+            Ok('|') => parse.record_feature(RegexpFeature::OrBar),
+            // A `)` only ends a branch inside a group; at the top level it is
+            // an error from `read_atom`.
+            Ok(')') => {
+                if let Some((group, enclosing)) = parse.unnest() {
+                    closed_group = Some(group);
+                    branch = enclosing;
+                }
+            }
+            _ => {}
+        }
     }
     Ok(())
 }
 
-/// Read a single branch (sequence of pieces).
-fn read_branch(parse: &mut RegexpParse) -> Result<Branch, Error> {
-    let mut branch = Vec::new();
+/// Why `read_branch` stopped.
+enum BranchEnd {
+    /// The branch is complete.
+    Done,
+    /// A group opened. Its branches come next, then the rest of this branch.
+    GroupOpen(Option<LookaroundType>),
+}
 
+/// Read pieces onto `branch` until it ends or a group opens. A `closed_group`
+/// has just had its `)` read, so its quantifier is next.
+fn read_branch(
+    parse: &mut RegexpParse,
+    branch: &mut Branch,
+    mut closed_group: Option<QuantifiedAtom>,
+) -> Result<BranchEnd, Error> {
     loop {
-        match read_piece(parse) {
-            Ok(piece) => branch.push(piece),
-            Err(e) if e.message == "stuck" => break,
-            Err(e) if e.message == "end of string" => break,
+        let piece = match closed_group.take() {
+            Some(mut group) => read_quantifier(parse, &mut group).map(|()| Piece::Atom(group)),
+            None => read_piece(parse),
+        };
+        match piece {
+            Ok(Piece::Atom(qa)) => branch.push(qa),
+            Ok(Piece::GroupOpen(lookaround)) => return Ok(BranchEnd::GroupOpen(lookaround)),
+            Err(e) if e.message == "stuck" => return Ok(BranchEnd::Done),
+            Err(e) if e.message == "end of string" => return Ok(BranchEnd::Done),
             Err(e) => return Err(e),
         }
     }
-
-    Ok(branch)
 }
 
-/// Read a piece (atom with optional quantifier).
-fn read_piece(parse: &mut RegexpParse) -> Result<QuantifiedAtom, Error> {
-    let mut qa = read_atom(parse)?;
-    read_quantifier(parse, &mut qa)?;
-    Ok(qa)
+/// The next element of a branch.
+enum Piece {
+    /// An atom, with its quantifier once `read_piece` has read it.
+    Atom(QuantifiedAtom),
+    /// The opening of a group, with its lookaround kind if it has one.
+    GroupOpen(Option<LookaroundType>),
+}
+
+/// Read a piece (atom with optional quantifier). A group's quantifier follows
+/// its `)`, so an opening group comes back without one.
+fn read_piece(parse: &mut RegexpParse) -> Result<Piece, Error> {
+    match read_atom(parse)? {
+        Piece::Atom(mut qa) => {
+            read_quantifier(parse, &mut qa)?;
+            Ok(Piece::Atom(qa))
+        }
+        group_open @ Piece::GroupOpen(_) => Ok(group_open),
+    }
 }
 
 /// Check if a character is a "normal" character (not special).
@@ -1158,11 +1426,11 @@ fn check_multi_char_escape(c: char) -> Option<(RuneRange, Option<String>)> {
     }
 }
 
-/// Read an atom.
-fn read_atom(parse: &mut RegexpParse) -> Result<QuantifiedAtom, Error> {
+/// Read an atom. For a group that is only its opening, up to the branches.
+fn read_atom(parse: &mut RegexpParse) -> Result<Piece, Error> {
     let b = parse.next_rune()?;
 
-    match b {
+    let atom = match b {
         c if is_normal_char(c) => Ok(QuantifiedAtom {
             runes: vec![RunePair { lo: c, hi: c }],
             ..Default::default()
@@ -1174,7 +1442,7 @@ fn read_atom(parse: &mut RegexpParse) -> Result<QuantifiedAtom, Error> {
                 ..Default::default()
             })
         }
-        '(' => read_group(parse),
+        '(' => return read_group_extension(parse).map(Piece::GroupOpen),
         ')' => {
             if parse.is_nested() {
                 parse.backup1(b);
@@ -1216,24 +1484,12 @@ fn read_atom(parse: &mut RegexpParse) -> Result<QuantifiedAtom, Error> {
                 offset: parse.last_index,
             })
         }
-    }
+    };
+    atom.map(Piece::Atom)
 }
 
-/// Read a `(...)` group, including the `(?:`, `(?=`, `(?!`, `(?<=`, `(?<!` extensions.
-fn read_group(parse: &mut RegexpParse) -> Result<QuantifiedAtom, Error> {
-    parse.nest();
-    let lookaround_type = read_group_extension(parse)?;
-    read_branches(parse)?;
-    parse.require(')')?;
-    let subtree = parse.unnest();
-    Ok(QuantifiedAtom {
-        subtree: Some(subtree),
-        lookaround: lookaround_type,
-        ..Default::default()
-    })
-}
-
-/// Classify what follows the opening `(`. Returns the lookaround kind if any.
+/// Classify what follows the opening `(`, covering the `(?:`, `(?=`, `(?!`,
+/// `(?<=` and `(?<!` extensions. Returns the lookaround kind if any.
 fn read_group_extension(parse: &mut RegexpParse) -> Result<Option<LookaroundType>, Error> {
     match parse.next_rune() {
         Ok('?') => read_question_extension(parse),
@@ -2521,6 +2777,19 @@ mod tests {
     }
 
     #[test]
+    #[cfg(target_pointer_width = "64")]
+    fn test_lookbehind_length_overflow_rejected() {
+        // 100^12 characters is more than usize holds.
+        let product = format!("(?<={}a{})b", "(".repeat(12), "){100}".repeat(12));
+        assert!(parse(&product).is_err());
+
+        // 2^63 characters fit, but two runs of them side by side do not.
+        let half = format!("{}a{}){{8}}", "(".repeat(11), "){64}".repeat(10));
+        assert!(parse(&format!("(?<={half})b")).is_ok());
+        assert!(parse(&format!("(?<={half}{half})b")).is_err());
+    }
+
+    #[test]
     fn test_lookbehind_range_quantifier_rejected() {
         // (?<=a{2,4})x — variable range quantifier
         let result = parse("(?<=a{2,4})x");
@@ -2735,6 +3004,40 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)]
+    fn test_deeply_nested_groups() {
+        check_deeply_nested_groups(10_000);
+    }
+
+    #[test]
+    fn test_deeply_nested_groups_miri_friendly() {
+        check_deeply_nested_groups(64);
+    }
+
+    fn check_deeply_nested_groups(depth: usize) {
+        let tree = parse(&format!("{}a{}", "(".repeat(depth), ")+".repeat(depth))).unwrap();
+        assert_eq!(atoms(&tree).count(), depth + 1);
+
+        // The innermost atom is reached through one group per level.
+        let mut level = &tree;
+        for _ in 0..depth {
+            assert_eq!(level.len(), 1);
+            assert!(level[0][0].is_plus());
+            level = level[0][0].subtree.as_ref().unwrap();
+        }
+        assert_eq!(level[0][0].runes, vec![RunePair { lo: 'a', hi: 'a' }]);
+
+        let copy = tree.clone();
+        assert_eq!(atoms(&copy).count(), atoms(&tree).count());
+        for (copied, original) in atoms(&copy).zip(atoms(&tree)) {
+            assert_eq!(copied.runes, original.runes);
+            assert_eq!(copied.quant_min, original.quant_min);
+            assert_eq!(copied.quant_max, original.quant_max);
+            assert_eq!(copied.subtree.is_some(), original.subtree.is_some());
+        }
+    }
+
+    #[test]
     fn test_property_escape_inside_char_class() {
         // A `~p{...}` / `~P{...}` property escape is valid inside a character
         // class, not just at top level.
@@ -2867,7 +3170,7 @@ mod tests {
                 ..Default::default()
             },
             QuantifiedAtom {
-                subtree: Some(parse("ab").unwrap()),
+                subtree: Some(parse("ab").unwrap().into()),
                 quant_min: 0,
                 quant_max: 0,
                 ..Default::default()

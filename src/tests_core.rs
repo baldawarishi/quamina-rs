@@ -808,6 +808,130 @@ fn test_pattern_count_and_clear() {
 // Error Handling Tests
 // ============================================================================
 
+/// A pattern id whose clone, hash and equality checks share a budget, and
+/// which panics once the budget is spent, so a test can make quamina panic at
+/// each point it touches an id.
+#[derive(Debug)]
+struct FragileId {
+    id: u32,
+    budget: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+}
+
+impl FragileId {
+    fn spend(&self) {
+        use std::sync::atomic::Ordering::Relaxed;
+        let left = self.budget.load(Relaxed);
+        assert!(left > 0, "FragileId budget spent");
+        self.budget.store(left - 1, Relaxed);
+    }
+}
+
+impl Clone for FragileId {
+    fn clone(&self) -> Self {
+        self.spend();
+        Self {
+            id: self.id,
+            budget: std::sync::Arc::clone(&self.budget),
+        }
+    }
+}
+
+impl PartialEq for FragileId {
+    fn eq(&self, other: &Self) -> bool {
+        self.spend();
+        self.id == other.id
+    }
+}
+
+impl Eq for FragileId {}
+
+impl Hash for FragileId {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.spend();
+        self.id.hash(state);
+    }
+}
+
+#[test]
+fn test_add_pattern_panic_becomes_error_and_rebuild_recovers() {
+    use std::sync::atomic::{AtomicUsize, Ordering::Relaxed};
+    let budget = std::sync::Arc::new(AtomicUsize::new(usize::MAX));
+    let id = |id| FragileId {
+        id,
+        budget: std::sync::Arc::clone(&budget),
+    };
+    let mut panicked = 0;
+    for allowed in 0.. {
+        let mut q = Quamina::new();
+        q.add_pattern(id(1), r#"{"a": ["x"], "b": ["y"]}"#).unwrap();
+        let before = q.matcher_stats();
+
+        budget.store(allowed, Relaxed);
+        let result = q.add_pattern(id(2), r#"{"a": ["z"], "c": [{"prefix": "w"}]}"#);
+        budget.store(usize::MAX, Relaxed);
+        let Err(err) = result else {
+            break;
+        };
+        panicked += 1;
+        assert!(matches!(err, QuaminaError::Panicked(_)), "{err}");
+        assert!(
+            err.to_string()
+                .starts_with("call to add_pattern caused a crash")
+        );
+
+        // Whatever part of the pattern reached the automaton goes on rebuild.
+        q.rebuild();
+        assert_eq!(q.matcher_stats(), before, "allowed {allowed}");
+        assert_eq!(q.pattern_count(), 1);
+        let hits = q.matches_for_event(br#"{"a":"x","b":"y"}"#).unwrap();
+        assert_eq!(hits.iter().map(|x| x.id).collect::<Vec<_>>(), [1]);
+    }
+    assert!(panicked > 0, "a budget of 0 must panic the add");
+}
+
+#[test]
+fn test_match_panic_becomes_error_and_matching_continues() {
+    use std::sync::atomic::{AtomicUsize, Ordering::Relaxed};
+    let budget = std::sync::Arc::new(AtomicUsize::new(usize::MAX));
+    let mut q = Quamina::new();
+    for (n, pattern) in [r#"{"a": ["x"]}"#, r#"{"a": [{"prefix": "x"}]}"#]
+        .into_iter()
+        .enumerate()
+    {
+        let id = FragileId {
+            id: u32::try_from(n).unwrap(),
+            budget: std::sync::Arc::clone(&budget),
+        };
+        q.add_pattern(id, pattern).unwrap();
+    }
+    let event = br#"{"a":"x"}"#;
+    let ids = |q: &Quamina<FragileId>| {
+        let mut ids: Vec<u32> = q
+            .matches_for_event(event)
+            .unwrap()
+            .iter()
+            .map(|x| x.id)
+            .collect();
+        ids.sort_unstable();
+        ids
+    };
+    assert_eq!(ids(&q), [0, 1]);
+
+    budget.store(0, Relaxed);
+    let err = q.matches_for_event(event).unwrap_err();
+    budget.store(usize::MAX, Relaxed);
+    assert!(matches!(err, QuaminaError::Panicked(_)), "{err}");
+    assert!(
+        err.to_string()
+            .starts_with("call to matches_for_event caused a crash")
+    );
+    assert_eq!(
+        ids(&q),
+        [0, 1],
+        "a caught panic must not break later matches"
+    );
+}
+
 #[test]
 fn test_invalid_json_events() {
     // Based on Go quamina's TestFJErrorCases
@@ -1923,11 +2047,12 @@ fn test_delete_already_deleted_pattern_is_noop() {
 #[test]
 #[cfg_attr(miri, ignore)]
 fn test_pattern_depth_at_limit() {
-    // Pattern nested exactly 256 levels deep should succeed with default limits
+    // A pattern nested exactly as deep as the default limit should succeed
+    let max = crate::PatternLimits::default().max_pattern_depth;
     let mut q = Quamina::new();
     let mut pattern = String::new();
     let mut closing = String::new();
-    for i in 0..256 {
+    for i in 0..max {
         pattern.push_str(&format!("{{\"f{i}\": "));
         closing.push('}');
     }
@@ -1936,13 +2061,13 @@ fn test_pattern_depth_at_limit() {
 
     assert!(
         q.add_pattern("deep", &pattern).is_ok(),
-        "Pattern at exactly max depth (256) should succeed"
+        "Pattern at exactly max depth ({max}) should succeed"
     );
 }
 
 /// Miri-friendly variant of test_pattern_depth_at_limit.
 ///
-/// Uses 8 nesting levels instead of 256 to keep Miri runtime manageable while
+/// Uses 8 nesting levels instead of the default limit to keep Miri runtime manageable while
 /// still exercising deep-pattern parsing and automaton construction.
 #[test]
 fn test_pattern_depth_at_limit_miri_friendly() {
@@ -1965,11 +2090,12 @@ fn test_pattern_depth_at_limit_miri_friendly() {
 #[test]
 #[cfg_attr(miri, ignore)]
 fn test_pattern_depth_exceeds_limit() {
-    // Pattern nested 257 levels should fail
+    // A pattern nested one level past the default limit should fail
+    let max = crate::PatternLimits::default().max_pattern_depth;
     let mut q = Quamina::new();
     let mut pattern = String::new();
     let mut closing = String::new();
-    for i in 0..257 {
+    for i in 0..=max {
         pattern.push_str(&format!("{{\"f{i}\": "));
         closing.push('}');
     }
@@ -1984,12 +2110,13 @@ fn test_pattern_depth_exceeds_limit() {
         "Error should mention depth: {err_msg}"
     );
     assert!(
-        err_msg.contains("257"),
-        "Error should mention actual depth 257: {err_msg}"
+        err_msg.contains(&(max + 1).to_string()),
+        "Error should mention actual depth {}: {err_msg}",
+        max + 1
     );
     assert!(
-        err_msg.contains("256"),
-        "Error should mention max depth 256: {err_msg}"
+        err_msg.contains(&max.to_string()),
+        "Error should mention max depth {max}: {err_msg}"
     );
 }
 
@@ -2013,7 +2140,7 @@ fn test_pattern_depth_custom_limit() {
         "Error should mention depth: {err_msg}"
     );
     // The message embeds the actual and configured depths. Asserting them here
-    // keeps that formatting covered under Miri, which skips the 256/257-deep
+    // keeps that formatting covered under Miri, which skips the default-depth
     // test_pattern_depth_{at,exceeds}_limit tests.
     assert!(
         err_msg.contains('6'),
@@ -2034,6 +2161,72 @@ fn test_pattern_depth_shallow_ok() {
         result.is_ok(),
         "Normal 3-level nesting should succeed with defaults"
     );
+}
+
+#[test]
+fn test_pattern_depth_limit_leaves_room_for_operators() {
+    // Two field objects, then the matcher array, operator object and argument
+    // array: the deepest syntax a pattern at max_pattern_depth can need.
+    let mut q = QuaminaBuilder::<&str>::new()
+        .with_max_pattern_depth(2)
+        .build()
+        .unwrap();
+    q.add_pattern("p", r#"{"a": {"b": [{"numeric": [">", 1]}]}}"#)
+        .unwrap();
+    assert_eq!(
+        q.matches_for_event(br#"{"a": {"b": 2}}"#).unwrap(),
+        vec!["p"]
+    );
+}
+
+#[test]
+fn test_pattern_depth_limit_counts_nesting_not_siblings() {
+    let mut q = QuaminaBuilder::<&str>::new()
+        .with_max_pattern_depth(2)
+        .build()
+        .unwrap();
+    q.add_pattern(
+        "p",
+        r#"{"a": {"x": ["1"]}, "b": {"y": ["2"]}, "c": {"z": ["3"]}, "d": {"w": ["4"]}}"#,
+    )
+    .unwrap();
+}
+
+#[test]
+fn test_deeply_nested_pattern_json_is_rejected() {
+    // Parsing recurses per container, so these would overflow the stack if
+    // the parser only checked depth after building the whole value.
+    let n = 20_000;
+    let arrays = format!(r#"{{"a": {}1{}}}"#, "[".repeat(n), "]".repeat(n));
+    let objects = format!("{}[1]{}", r#"{"a": "#.repeat(n), "}".repeat(n));
+    let mut q = Quamina::new();
+    for pattern in [arrays, objects] {
+        let err = q.add_pattern("deep", &pattern).unwrap_err();
+        assert!(matches!(err, QuaminaError::PatternTooComplex(_)), "{err}");
+    }
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn test_deeply_nested_regexp_builds_and_matches() {
+    check_deeply_nested_regexp_builds_and_matches(20_000);
+}
+
+#[test]
+fn test_deeply_nested_regexp_builds_and_matches_miri_friendly() {
+    check_deeply_nested_regexp_builds_and_matches(64);
+}
+
+fn check_deeply_nested_regexp_builds_and_matches(n: usize) {
+    let pattern = format!(
+        r#"{{"x": [{{"regexp": "{}a{}"}}]}}"#,
+        "(".repeat(n),
+        ")".repeat(n)
+    );
+    let mut q = Quamina::<&str>::new();
+    q.add_pattern("deep", &pattern).unwrap();
+    assert_eq!(q.matches_for_event(br#"{"x": "a"}"#).unwrap(), ["deep"]);
+    assert!(q.matches_for_event(br#"{"x": "aa"}"#).unwrap().is_empty());
 }
 
 // --- Field Count Limit Tests ---
@@ -2685,7 +2878,7 @@ fn test_builder_with_flattener_blocks_second_call() {
     assert!(result.is_err(), "second with_flattener must fail");
 }
 
-/// Verify with_max_pattern_depth is applied: default is 256, setting to 2
+/// Verify with_max_pattern_depth is applied: default is 10000, setting to 2
 /// should reject depth-3 patterns but accept depth-2.
 #[test]
 fn test_builder_with_max_pattern_depth_is_applied() {
@@ -3135,6 +3328,70 @@ fn test_transform_lookbehind_single_char_class() {
     match &mc.conditions[0] {
         LookaroundCondition::PositiveLookbehind { byte_length, .. } => {
             assert_eq!(*byte_length, 3, "[a-z]{{3}} = 3 bytes");
+        }
+        other => panic!("Expected PositiveLookbehind, got {other:?}"),
+    }
+}
+
+#[test]
+#[cfg_attr(miri, ignore)]
+fn test_regexp_groups_nest_without_limit() {
+    check_regexp_groups_nest_without_limit(500);
+}
+
+#[test]
+fn test_regexp_groups_nest_without_limit_miri_friendly() {
+    check_regexp_groups_nest_without_limit(8);
+}
+
+fn check_regexp_groups_nest_without_limit(depth: usize) {
+    // Each shape takes a different path through the NFA builder: a bare group,
+    // an alternation, an optional copy and a `+` loop. Only the outermost group
+    // loops, since nested loops grow the automaton with the square of the depth.
+    let nested = |open: &str, close: &str, outermost: &str| {
+        format!(
+            r#"{{"f": [{{"regexp": "{}a{}{outermost}"}}]}}"#,
+            open.repeat(depth),
+            close.repeat(depth - 1)
+        )
+    };
+    let mut q = Quamina::new();
+    q.add_pattern("groups", &nested("(", ")", ")")).unwrap();
+    q.add_pattern("alternation", &nested("(x|", ")", ")"))
+        .unwrap();
+    q.add_pattern("optional", &nested("(", ")?", ")?")).unwrap();
+    q.add_pattern("plus", &nested("(", ")", ")+")).unwrap();
+
+    let matches_for = |value: &str| {
+        let mut matches = q
+            .matches_for_event(format!(r#"{{"f": "{value}"}}"#).as_bytes())
+            .unwrap();
+        matches.sort_unstable();
+        matches
+    };
+    assert_eq!(
+        matches_for("a"),
+        ["alternation", "groups", "optional", "plus"]
+    );
+    assert_eq!(matches_for("x"), ["alternation"]);
+    assert_eq!(matches_for(""), ["optional"]);
+    // More repeats than any bounded `{n,m}` allows.
+    assert_eq!(matches_for(&"a".repeat(150)), ["plus"]);
+}
+
+#[test]
+fn test_transform_lookbehind_repeated_group() {
+    // A group counts its branches' length once per repeat, added to the atoms
+    // around it.
+    use crate::json::LookaroundCondition;
+    use crate::json::transform_lookaround_pattern;
+    use crate::regexp::parse_regexp;
+
+    let tree = parse_regexp("(?<=x(ab){3})y").unwrap();
+    let mc = transform_lookaround_pattern(&tree).unwrap();
+    match &mc.conditions[0] {
+        LookaroundCondition::PositiveLookbehind { byte_length, .. } => {
+            assert_eq!(*byte_length, 7, "x(ab){{3}} = 1 + 2 * 3 bytes");
         }
         other => panic!("Expected PositiveLookbehind, got {other:?}"),
     }
