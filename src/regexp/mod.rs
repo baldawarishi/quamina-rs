@@ -23,8 +23,8 @@ pub(crate) use nfa::make_regexp_nfa_arena_within;
 pub use nfa::{clear_fa_shell_cache, make_regexp_nfa_arena, regexp_has_plus_star};
 pub use parser::{
     Branch as RegexpBranch, Error as RegexpError, LookaroundType, QuantifiedAtom,
-    REGEXP_QUANTIFIER_MAX, RUNE_MAX, Root as RegexpRoot, RunePair, RuneRange,
-    Subtree as RegexpSubtree, collect_lookarounds, concat_roots, expand_word_boundaries,
+    REGEXP_QUANTIFIER_MAX, REGEXP_QUANTIFIER_UNBOUNDED, RUNE_MAX, Root as RegexpRoot, RunePair,
+    RuneRange, Subtree as RegexpSubtree, collect_lookarounds, concat_roots, expand_word_boundaries,
     has_top_level_lookaround, has_word_boundary, parse as parse_regexp,
 };
 
@@ -499,7 +499,7 @@ mod tests {
         assert_eq!(root.len(), 1);
         assert_eq!(root[0].len(), 1);
         assert_eq!(root[0][0].quant_min, 2);
-        assert_eq!(root[0][0].quant_max, REGEXP_QUANTIFIER_MAX);
+        assert_eq!(root[0][0].quant_max, REGEXP_QUANTIFIER_UNBOUNDED);
 
         // Test {0,} which has no mandatory steps which is same as *
         let root = parse_regexp("a{0,}").unwrap();

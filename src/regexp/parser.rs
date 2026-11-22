@@ -26,8 +26,14 @@ pub struct RunePair {
 /// A collection of rune pairs representing a character class.
 pub type RuneRange = Vec<RunePair>;
 
-/// Maximum quantifier value (Go uses 100).
+/// Largest repetition count a `{n}`, `{n,}` or `{n,m}` quantifier may spell
+/// out. The NFA builder materializes one state per counted repetition.
 pub const REGEXP_QUANTIFIER_MAX: i32 = 100;
+
+/// `quant_max` of a quantifier with no upper bound: `*`, `+` and `{n,}`.
+/// Kept apart from [`REGEXP_QUANTIFIER_MAX`] so that a counted `{1,100}` is
+/// never mistaken for `+`.
+pub const REGEXP_QUANTIFIER_UNBOUNDED: i32 = i32::MAX;
 
 /// The escape character (~ instead of \ to avoid JSON escaping).
 const ESCAPE: char = '~';
@@ -88,7 +94,7 @@ impl QuantifiedAtom {
         Self {
             is_dot: true,
             quant_min: 0,
-            quant_max: REGEXP_QUANTIFIER_MAX,
+            quant_max: REGEXP_QUANTIFIER_UNBOUNDED,
             ..Self::default()
         }
     }
@@ -138,14 +144,14 @@ impl QuantifiedAtom {
     #[inline]
     #[must_use]
     pub const fn is_plus(&self) -> bool {
-        self.quant_min == 1 && self.quant_max == REGEXP_QUANTIFIER_MAX
+        self.quant_min == 1 && self.quant_max == REGEXP_QUANTIFIER_UNBOUNDED
     }
 
     /// Returns true if this atom uses * (zero or more).
     #[inline]
     #[must_use]
     pub const fn is_star(&self) -> bool {
-        self.quant_min == 0 && self.quant_max == REGEXP_QUANTIFIER_MAX
+        self.quant_min == 0 && self.quant_max == REGEXP_QUANTIFIER_UNBOUNDED
     }
 }
 
@@ -847,8 +853,8 @@ fn constrain_atom_at_boundary(
     let _ = is_last_char; // Used for documentation; both sides reduce by 1
     let (new_min, new_max) = (
         (atom.quant_min - 1).max(0),
-        if atom.quant_max == REGEXP_QUANTIFIER_MAX {
-            REGEXP_QUANTIFIER_MAX
+        if atom.quant_max == REGEXP_QUANTIFIER_UNBOUNDED {
+            REGEXP_QUANTIFIER_UNBOUNDED
         } else {
             atom.quant_max - 1
         },
@@ -2171,12 +2177,12 @@ fn read_quantifier(parse: &mut RegexpParse, qa: &mut QuantifiedAtom) -> Result<(
         '*' => {
             parse.record_feature(RegexpFeature::Star);
             qa.quant_min = 0;
-            qa.quant_max = REGEXP_QUANTIFIER_MAX;
+            qa.quant_max = REGEXP_QUANTIFIER_UNBOUNDED;
         }
         '+' => {
             parse.record_feature(RegexpFeature::Plus);
             qa.quant_min = 1;
-            qa.quant_max = REGEXP_QUANTIFIER_MAX;
+            qa.quant_max = REGEXP_QUANTIFIER_UNBOUNDED;
         }
         '?' => {
             parse.record_feature(RegexpFeature::QuestionMark);
@@ -2275,7 +2281,7 @@ fn read_range_quantifier(parse: &mut RegexpParse, qa: &mut QuantifiedAtom) -> Re
                 // {n,} or {n,m} - will parse upper bound below
                 ',' => {
                     // Set to unbounded initially for {n,} case
-                    qa.quant_max = REGEXP_QUANTIFIER_MAX;
+                    qa.quant_max = REGEXP_QUANTIFIER_UNBOUNDED;
                     break;
                 }
                 _ => {

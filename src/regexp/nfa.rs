@@ -20,7 +20,10 @@ use crate::automaton::{
     },
 };
 
-use super::parser::{QuantifiedAtom, REGEXP_QUANTIFIER_MAX, Root as RegexpRoot, RuneRange, atoms};
+use super::parser::{
+    QuantifiedAtom, REGEXP_QUANTIFIER_MAX, REGEXP_QUANTIFIER_UNBOUNDED, Root as RegexpRoot,
+    RuneRange, atoms,
+};
 
 // ============================================================================
 // UTF-8 Encoding Constants
@@ -239,10 +242,16 @@ fn make_arena_nfa_from_branches(
                     steps.push(BuildStep::Continue(next));
                 }
             }
-            BuildStep::Quantified(qa) if qa.is_plus() || qa.is_star() => {
-                // Arena-based cyclic NFA for + and *
+            BuildStep::Quantified(qa) if qa.quant_max == REGEXP_QUANTIFIER_UNBOUNDED => {
+                // Arena-based cyclic NFA for `+` and `*`. `{n,}` with n > 1 is
+                // n - 1 plain copies in front of a `+` loop that matches the
+                // last required copy and any number more.
                 let exit = continuation(&mut states);
                 let loopback = arena.alloc();
+                let plain_copies = usize::try_from(qa.quant_min)
+                    .expect("quant_min must be non-negative")
+                    .saturating_sub(1);
+                steps.extend((0..plain_copies).map(|_| BuildStep::Body(qa)));
                 steps.push(BuildStep::CloseLoop { qa, loopback, exit });
                 steps.push(BuildStep::Body(qa));
                 states.push(loopback);
@@ -256,9 +265,7 @@ fn make_arena_nfa_from_branches(
                 let m = usize::try_from(qa.quant_max).expect("quant_max must be non-negative");
 
                 // One state is allocated per repetition, so this expansion
-                // relies on the parser capping both counts. `{n,}` and
-                // `{n,100}` reach this path with quant_max equal to the +/*
-                // sentinel when n > 1.
+                // relies on the parser capping both counts.
                 debug_assert!(
                     qa.quant_max <= REGEXP_QUANTIFIER_MAX,
                     "parser must bound quantifier repetition counts"
