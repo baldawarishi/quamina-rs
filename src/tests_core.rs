@@ -155,6 +155,19 @@ fn test_deeply_nested() {
     assert_matches!(q, r#"{"a": {"b": {"c": "value"}}}"#, vec!["p1"]);
 }
 
+/// An empty member name is a path segment like any other, at the top level
+/// as much as below it, so it never collapses into its parent, as in Go.
+#[test]
+fn test_empty_member_name_is_a_path_segment() {
+    let q = q!("p1" => r#"{"": {"x": [1]}}"#);
+    assert_matches!(q, r#"{"": {"x": 1}}"#, vec!["p1"]);
+    assert_no_match!(q, r#"{"x": 1}"#);
+
+    let q = q!("p1" => r#"{"a": {"": {"x": [1]}}}"#);
+    assert_matches!(q, r#"{"a": {"": {"x": 1}}}"#, vec!["p1"]);
+    assert_no_match!(q, r#"{"a": {"x": 1}}"#);
+}
+
 // ============================================================================
 // Array Element Matching Tests
 // ============================================================================
