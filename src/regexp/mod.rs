@@ -1377,10 +1377,7 @@ mod tests {
         }
     }
 
-    // MIRI SKIP RATIONALE: Building two NFAs (a{1,} and a+) with REGEXP_QUANTIFIER_MAX expansion
-    // is slow under Miri (~51s).
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_range_quantifier_equivalence_plus() {
         use crate::automaton::arena::{ARENA_VALUE_TERMINATOR, NfaBuffers, traverse_arena_nfa};
 
@@ -1434,10 +1431,7 @@ mod tests {
         }
     }
 
-    // MIRI SKIP RATIONALE: Building two NFAs (a{0,} and a*) with REGEXP_QUANTIFIER_MAX expansion
-    // is slow under Miri (~51s).
     #[test]
-    #[cfg_attr(miri, ignore)]
     fn test_range_quantifier_equivalence_star() {
         use crate::automaton::arena::{ARENA_VALUE_TERMINATOR, NfaBuffers, traverse_arena_nfa};
 
@@ -1482,69 +1476,6 @@ mod tests {
                 "Pattern should {} match '{}'",
                 if should_match { "" } else { "NOT" },
                 desc
-            );
-        }
-    }
-
-    // MIRI SKIP RATIONALE: Building 4 NFAs with quantifiers (star/plus via range syntax)
-    // takes ~101s under Miri.
-    /// Miri-friendly combined test for star and plus range quantifier equivalence.
-    #[test]
-    #[cfg_attr(miri, ignore)]
-    fn test_range_quantifier_equivalence_miri_friendly() {
-        use crate::automaton::arena::{ARENA_VALUE_TERMINATOR, NfaBuffers, traverse_arena_nfa};
-
-        let mut bufs = NfaBuffers::new();
-
-        // Star equivalence: a{0,} should behave like a*
-        let root_range = parse_regexp("a{0,}").unwrap();
-        let root_star = parse_regexp("a*").unwrap();
-        let (arena_range, start_range, fm_range) = make_regexp_nfa_arena(root_range);
-        let (arena_star, start_star, fm_star) = make_regexp_nfa_arena(root_star);
-
-        for (value, desc) in [
-            (vec![b'"', b'"', ARENA_VALUE_TERMINATOR], "empty"),
-            (vec![b'"', b'a', b'"', ARENA_VALUE_TERMINATOR], "a"),
-        ] {
-            bufs.clear();
-            traverse_arena_nfa(&arena_range, start_range, &value, &mut bufs);
-            let range_matched = bufs
-                .transitions
-                .contains(&(Arc::as_ptr(&fm_range) as usize));
-
-            bufs.clear();
-            traverse_arena_nfa(&arena_star, start_star, &value, &mut bufs);
-            let star_matched = bufs.transitions.contains(&(Arc::as_ptr(&fm_star) as usize));
-
-            assert_eq!(
-                range_matched, star_matched,
-                "a{{0,}} and a* should agree on '{desc}'"
-            );
-        }
-
-        // Plus equivalence: a{1,} should behave like a+
-        let root_range = parse_regexp("a{1,}").unwrap();
-        let root_plus = parse_regexp("a+").unwrap();
-        let (arena_range, start_range, fm_range) = make_regexp_nfa_arena(root_range);
-        let (arena_plus, start_plus, fm_plus) = make_regexp_nfa_arena(root_plus);
-
-        for (value, desc) in [
-            (vec![b'"', b'"', ARENA_VALUE_TERMINATOR], "empty"),
-            (vec![b'"', b'a', b'"', ARENA_VALUE_TERMINATOR], "a"),
-        ] {
-            bufs.clear();
-            traverse_arena_nfa(&arena_range, start_range, &value, &mut bufs);
-            let range_matched = bufs
-                .transitions
-                .contains(&(Arc::as_ptr(&fm_range) as usize));
-
-            bufs.clear();
-            traverse_arena_nfa(&arena_plus, start_plus, &value, &mut bufs);
-            let plus_matched = bufs.transitions.contains(&(Arc::as_ptr(&fm_plus) as usize));
-
-            assert_eq!(
-                range_matched, plus_matched,
-                "a{{1,}} and a+ should agree on '{desc}'"
             );
         }
     }
