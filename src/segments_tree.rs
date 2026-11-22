@@ -115,8 +115,8 @@ impl SegmentEntry {
 ///
 /// Paths nest as deep as patterns do, so dropping and cloning a tree walk its
 /// levels with a heap worklist rather than recursing once per level, which
-/// would overflow the stack on a deep enough pattern.
-#[derive(Debug)]
+/// would overflow the stack on a deep enough pattern. Debug output stops after
+/// a fixed number of levels for the same reason.
 pub struct SegmentsTree {
     /// Whether this is the root node
     is_root: bool,
@@ -126,6 +126,19 @@ pub struct SegmentsTree {
     field_count: usize,
     /// Number of entries that have a node component
     node_count: usize,
+}
+
+impl std::fmt::Debug for SegmentsTree {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        crate::fmt_tree_level(f, "SegmentsTree { .. }", |f| {
+            f.debug_struct("SegmentsTree")
+                .field("is_root", &self.is_root)
+                .field("entries", &self.entries)
+                .field("field_count", &self.field_count)
+                .field("node_count", &self.node_count)
+                .finish()
+        })
+    }
 }
 
 impl Drop for SegmentsTree {
@@ -338,6 +351,21 @@ impl SegmentsTree {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Debug output writes `DEBUG_TREE_DEPTH` levels and elides the rest. Each
+    /// call starts counting afresh, so a long tree doesn't cut short the next.
+    #[test]
+    fn test_debug_elides_levels_past_depth_limit() {
+        let tree = |levels: usize| {
+            let mut tree = SegmentsTree::new();
+            tree.add(&vec!["a"; levels].join("\n"));
+            tree
+        };
+        let limit = crate::DEBUG_TREE_DEPTH;
+        let elided = "SegmentsTree { .. }";
+        assert_eq!(format!("{:?}", tree(limit + 1)).matches(elided).count(), 1);
+        assert!(!format!("{:?}", tree(limit)).contains(elided));
+    }
 
     #[test]
     fn test_single_field() {

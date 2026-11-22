@@ -159,7 +159,8 @@ pub type Root = Vec<Branch>;
 ///
 /// Groups nest without limit, so dropping and cloning one walk its levels with
 /// a heap worklist rather than recursing once per level, which would overflow
-/// the stack on a deep enough regexp.
+/// the stack on a deep enough regexp. Debug output stops after a fixed number
+/// of levels for the same reason.
 #[derive(Default)]
 pub struct Subtree(Root);
 
@@ -179,7 +180,7 @@ impl std::ops::Deref for Subtree {
 
 impl std::fmt::Debug for Subtree {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.0.fmt(f)
+        crate::fmt_tree_level(f, "[..]", |f| self.0.fmt(f))
     }
 }
 
@@ -2333,6 +2334,23 @@ fn read_range_quantifier(parse: &mut RegexpParse, qa: &mut QuantifiedAtom) -> Re
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Debug output writes `DEBUG_TREE_DEPTH` levels of groups and elides the
+    /// rest. Each call starts counting afresh, so a deep regexp doesn't cut
+    /// short the next.
+    #[test]
+    fn test_debug_elides_groups_past_depth_limit() {
+        let nested = |depth: usize| {
+            crate::regexp::parse_regexp(&format!("{}a{}", "(".repeat(depth), ")".repeat(depth)))
+                .unwrap()
+        };
+        let limit = crate::DEBUG_TREE_DEPTH;
+        assert_eq!(
+            format!("{:?}", nested(limit + 1)).matches("[..]").count(),
+            1
+        );
+        assert!(!format!("{:?}", nested(limit)).contains("[..]"));
+    }
 
     #[test]
     fn test_is_cc_char_supplementary_boundaries() {

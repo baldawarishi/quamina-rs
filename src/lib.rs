@@ -208,6 +208,39 @@ fn panicked(call: &str, payload: &(dyn std::any::Any + Send)) -> QuaminaError {
     })
 }
 
+/// How many levels of a tree [`fmt_tree_level`] writes before eliding the rest.
+const DEBUG_TREE_DEPTH: usize = 64;
+
+/// Debug-format one level of a tree that nests without limit, such as regexp
+/// groups or pattern field paths.
+///
+/// Formatting recurses once per level, so a tree that parses, clones and drops
+/// fine could still overflow the stack when logged. Past [`DEBUG_TREE_DEPTH`]
+/// levels open on this thread, `elided` is written in place of the level.
+pub(crate) fn fmt_tree_level(
+    f: &mut fmt::Formatter<'_>,
+    elided: &str,
+    level: impl FnOnce(&mut fmt::Formatter<'_>) -> fmt::Result,
+) -> fmt::Result {
+    thread_local! {
+        static OPEN_LEVELS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    }
+    /// Closes the level even if formatting it panics.
+    struct Open;
+    impl Drop for Open {
+        fn drop(&mut self) {
+            OPEN_LEVELS.set(OPEN_LEVELS.get() - 1);
+        }
+    }
+
+    if OPEN_LEVELS.get() >= DEBUG_TREE_DEPTH {
+        return f.write_str(elided);
+    }
+    OPEN_LEVELS.set(OPEN_LEVELS.get() + 1);
+    let _open = Open;
+    level(f)
+}
+
 /// Limits on pattern complexity to prevent OOM and stack exhaustion.
 ///
 /// Four complementary limits, each catching a different attack vector:

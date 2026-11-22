@@ -163,7 +163,8 @@ fn deep_anything_but_survives_small_stack() {
 
 /// Pattern JSON nested to the default `max_pattern_depth`, with the operator
 /// syntax a leaf can add below that, and far deeper once the limit is raised.
-/// Parsing, adding, cloning and dropping each visit every level.
+/// Parsing, adding, cloning, dropping and debug formatting each visit every
+/// level.
 #[test]
 #[cfg_attr(miri, ignore = "spawns a child process")]
 fn deepest_pattern_json_survives_small_stack() {
@@ -188,6 +189,9 @@ fn deepest_pattern_json_survives_small_stack() {
                 .expect("nesting at a raised max_pattern_depth is accepted");
             drop(q.clone());
             drop(q.segments_tree().clone());
+            let tree = q.segments_tree();
+            assert!(format!("{tree:?}").contains(".."), "debug output elides");
+            assert!(format!("{tree:#?}").contains(".."), "debug output elides");
 
             // Arrays nested inside an operator are parsed before the operator
             // rejects them.
@@ -274,9 +278,9 @@ fn deep_quantified_regexp_groups_survive_small_stack() {
 /// goroutine stack (about 196,000 levels).
 const REGEXP_GROUP_DEPTH: usize = 200_000;
 
-/// Parsing, validating, rewriting, copying, dropping and building an NFA for a
-/// regexp all walk its groups level by level, so each is checked here at a
-/// depth far past where a recursive walk runs out of stack.
+/// Parsing, validating, rewriting, copying, dropping, debug formatting and
+/// building an NFA for a regexp all walk its groups level by level, so each is
+/// checked here at a depth far past where a recursive walk runs out of stack.
 #[test]
 #[cfg_attr(miri, ignore = "spawns a child process")]
 fn deeply_nested_regexp_groups_survive_small_stack() {
@@ -292,6 +296,8 @@ fn deeply_nested_regexp_groups_survive_small_stack() {
 
             let tree = parse_regexp(&nested("(", "a", ")+")).expect("nesting depth is unlimited");
             assert!(regexp_has_plus_star(&tree));
+            assert!(format!("{tree:?}").contains(".."), "debug output elides");
+            assert!(format!("{tree:#?}").contains(".."), "debug output elides");
             let copy = tree.clone();
             drop(tree);
             drop(copy);
