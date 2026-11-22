@@ -13,6 +13,7 @@ Style inspired by [ripgrep's CHANGELOG](https://github.com/BurntSushi/ripgrep/bl
 
 ### Fixed
 - Deeply nested patterns, regexps and events no longer overflow the stack and abort the process; regexp groups nest without limit, patterns up to `max_pattern_depth`, and events to any depth (ported from Go a4e063e)
+- Match `-0` as zero, so `[0]` matches an event's `-0` and `[-0]` matches `0` (ported from Go 5806547)
 - Reading a regexp's characters takes linear time; each one used to re-validate the rest of the string
 - A lookbehind whose repeats overflow its fixed length is rejected instead of panicking in debug builds
 - Debug-formatting a deeply nested regexp or `SegmentsTree` no longer overflows the stack; output stops after 64 levels
