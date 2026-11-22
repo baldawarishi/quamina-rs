@@ -2427,10 +2427,7 @@ fn test_arena_budget_custom() {
 /// hundreds of megabytes of automaton. The add is refused once the automaton
 /// under construction passes the budget, and leaves nothing behind.
 #[test]
-#[cfg_attr(
-    miri,
-    ignore = "minutes under Miri; safe build code whose closure pass other tests cover"
-)]
+#[cfg_attr(miri, ignore = "minutes under Miri; smaller tests run this build code")]
 fn test_arena_budget_stops_regexp_build() {
     let budget = 64 * 1024;
     let mut q = QuaminaBuilder::<&str>::new()

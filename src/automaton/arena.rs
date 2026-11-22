@@ -2354,12 +2354,15 @@ fn unpack_arena_table(table: &SmallTable, unpacked: &mut [StateId; BYTE_CEILING]
 ///
 /// New states are appended to `arena`; the original branch entries are left
 /// unreachable and dropped by the later reachability compaction
-/// ([`clone_arena_subset`]).
+/// ([`clone_arena_subset`]). Merging many branches can allocate far more than
+/// the branches themselves, so the fold fails once the arena passes `budget`
+/// bytes (0 means unlimited).
 pub(crate) fn determinize_branch_starts(
     arena: &mut StateArena,
     starts: &[StateId],
     next_step: StateId,
-) -> StateId {
+    budget: usize,
+) -> Result<StateId, QuaminaError> {
     debug_assert!(
         !starts.is_empty(),
         "alternation must have at least one branch"
@@ -2370,9 +2373,9 @@ pub(crate) fn determinize_branch_starts(
     let mut memo: FxHashMap<(StateId, StateId), StateId> = FxHashMap::default();
     for &next in &starts[1..] {
         memo.clear();
-        acc = merge_branch_pair(arena, acc, next, next_step, &mut memo);
+        acc = merge_branch_pair(arena, acc, next, next_step, &mut memo, budget)?;
     }
-    acc
+    Ok(acc)
 }
 
 /// Merge two alternation branch states within a single arena. `boundary` is the
@@ -2386,15 +2389,17 @@ fn merge_branch_pair(
     b: StateId,
     boundary: StateId,
     memo: &mut FxHashMap<(StateId, StateId), StateId>,
-) -> StateId {
+    budget: usize,
+) -> Result<StateId, QuaminaError> {
     let mut pending: Vec<(StateId, StateId, StateId)> = Vec::new();
     let start = resolve_branch_pair(arena, a, b, memo, &mut pending);
 
     while let Some((a, b, new_id)) = pending.pop() {
         fill_merged_branch_state(arena, a, b, new_id, boundary, memo, &mut pending);
+        check_byte_budget(arena.estimated_byte_size(), budget)?;
     }
 
-    start
+    Ok(start)
 }
 
 /// The state a pair of branch states merges into, allocating and queueing it

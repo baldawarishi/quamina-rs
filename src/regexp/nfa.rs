@@ -297,7 +297,7 @@ fn make_arena_nfa_from_branches(
             BuildStep::Continue(next) => states.push(next),
             BuildStep::Fold { count, next } => {
                 let first = states.len() - count;
-                let entry = determinize_branch_starts(arena, &states[first..], next);
+                let entry = determinize_branch_starts(arena, &states[first..], next, budget)?;
                 states.truncate(first);
                 states.push(entry);
             }
@@ -1054,10 +1054,7 @@ mod tests {
     /// Nested repeats would build nearly a million states here, hundreds of
     /// megabytes; the build has to stop within a few doublings of the budget.
     #[test]
-    #[cfg_attr(
-        miri,
-        ignore = "minutes under Miri; safe build code whose closure pass other tests cover"
-    )]
+    #[cfg_attr(miri, ignore = "minutes under Miri; smaller tests run this build code")]
     fn test_regexp_build_stops_at_budget() {
         let budget = 64 * 1024;
         for re in ["((a{99}){99}){99}", "(x|((a{99}){99}){99})"] {
@@ -1077,10 +1074,7 @@ mod tests {
     /// it finishes. The alternation closes its states while dropping the
     /// unreachable branch entries.
     #[test]
-    #[cfg_attr(
-        miri,
-        ignore = "minutes under Miri; safe build code whose closure pass other tests cover"
-    )]
+    #[cfg_attr(miri, ignore = "minutes under Miri; smaller tests run this build code")]
     fn test_regexp_closures_stop_at_budget() {
         for (re, budget) in [
             ("((a?){10}){10}", 32 * 1024),
@@ -1097,12 +1091,34 @@ mod tests {
         }
     }
 
+    /// Folding branches that share a prefix copies that prefix once per merge,
+    /// so the fold can outgrow branches that fit the budget together, and the
+    /// compaction afterwards shrinks the arena back under it. Only a check
+    /// inside the fold sees the overrun.
+    #[test]
+    #[cfg_attr(miri, ignore = "minutes under Miri; smaller tests run this build code")]
+    fn test_regexp_fold_stops_at_budget() {
+        let budget = 24 * 1024;
+        let branches: Vec<String> = ('a'..='h').map(|c| format!("xxxxxxxx{c}")).collect();
+        let root = crate::regexp::parse_regexp(&branches.join("|")).unwrap();
+
+        // Every branch built side by side, the way they sit before the fold.
+        let mut unfolded = StateArena::with_capacity(16);
+        let next = unfolded.alloc();
+        for branch in &root {
+            make_arena_nfa_from_branches(&vec![branch.clone()], &mut unfolded, next, 0).unwrap();
+        }
+        assert!(unfolded.estimated_byte_size() < budget);
+        let (finished, _, _) = make_regexp_nfa_arena(root.clone());
+        assert!(finished.estimated_byte_size() < budget);
+
+        let size = stopped_at(&root, budget);
+        assert!(size > budget && size < 2 * budget, "stopped at {size}");
+    }
+
     /// A budget the finished automaton fits is not exceeded part way.
     #[test]
-    #[cfg_attr(
-        miri,
-        ignore = "minutes under Miri; safe build code whose closure pass other tests cover"
-    )]
+    #[cfg_attr(miri, ignore = "minutes under Miri; smaller tests run this build code")]
     fn test_regexp_build_within_budget_matches_unlimited_build() {
         for re in ["((a?){10}){10}", "(x|((a?){10}){10})", ""] {
             let root = crate::regexp::parse_regexp(re).unwrap();
