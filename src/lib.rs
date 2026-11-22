@@ -169,9 +169,12 @@ pub enum QuaminaError {
     UnsupportedMediaType(String),
     /// The pattern exceeded configured complexity limits (see [`PatternLimits`]).
     PatternTooComplex(String),
-    /// Adding a pattern or matching an event panicked. As in Go Quamina, the
-    /// panic is caught and returned as this error rather than unwinding into
-    /// the caller. A build with `panic = "abort"` aborts instead.
+    /// Adding a pattern or matching an event panicked, for instance in the
+    /// `Clone`, `Hash` or `Eq` of a pattern ID. As in Go Quamina, the panic is
+    /// caught and returned as this error rather than unwinding into the caller.
+    /// A custom [`Flattener`](flattener::Flattener) runs outside that guard,
+    /// so its panics still unwind. A build with `panic = "abort"` aborts
+    /// instead.
     Panicked(String),
 }
 
@@ -190,6 +193,19 @@ impl fmt::Display for QuaminaError {
             Self::Panicked(msg) => f.write_str(msg),
         }
     }
+}
+
+/// The error for a panic caught in the public method `call`, carrying the
+/// panic's message when it has one.
+fn panicked(call: &str, payload: &(dyn std::any::Any + Send)) -> QuaminaError {
+    let message = payload
+        .downcast_ref::<&str>()
+        .copied()
+        .or_else(|| payload.downcast_ref::<String>().map(String::as_str));
+    QuaminaError::Panicked(match message {
+        Some(message) => format!("call to {call} caused a crash: {message}"),
+        None => format!("call to {call} caused a crash"),
+    })
 }
 
 /// Limits on pattern complexity to prevent OOM and stack exhaustion.
@@ -724,13 +740,13 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
     pub fn add_pattern(&mut self, x: X, pattern_json: &str) -> Result<(), QuaminaError> {
         // Go's AddPattern recovers from a panic the same way. The add may have
         // stopped part way into the automaton, which only a rebuild reclaims.
-        panic::catch_unwind(AssertUnwindSafe(|| self.add_pattern_unguarded(x, pattern_json)))
-            .unwrap_or_else(|_| {
-                self.automaton_is_stale = true;
-                Err(QuaminaError::Panicked(
-                    "call to add_pattern caused a crash, probably because the pattern is too large or too deeply nested".into(),
-                ))
-            })
+        panic::catch_unwind(AssertUnwindSafe(|| {
+            self.add_pattern_unguarded(x, pattern_json)
+        }))
+        .unwrap_or_else(|payload| {
+            self.automaton_is_stale = true;
+            Err(panicked("add_pattern", payload.as_ref()))
+        })
     }
 
     fn add_pattern_unguarded(&mut self, x: X, pattern_json: &str) -> Result<(), QuaminaError> {
@@ -793,7 +809,8 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
     /// method propagates any [`QuaminaError`] its
     /// [`flatten`](flattener::Flattener::flatten) implementation returns.
     /// Returns [`QuaminaError::Panicked`] if matching the flattened event
-    /// panicked.
+    /// panicked, including in the `Clone`, `Hash` or `Eq` of a pattern ID. A
+    /// panic in a custom flattener is not caught.
     pub fn matches_for_event(&self, event: &[u8]) -> Result<Vec<X>, QuaminaError> {
         // Check if we have a custom flattener
         if let Some(ref custom_flattener_mutex) = self.custom_flattener {
@@ -808,8 +825,7 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
                 let mut bufs = bufs_cell.borrow_mut();
 
                 let streaming_fields = flattener.flatten(event, &self.segments_tree)?;
-                let raw_matches = self.match_fields(streaming_fields, &mut bufs)?;
-                Ok(self.filter_deleted_matches(raw_matches))
+                self.match_fields(streaming_fields, &mut bufs)
             })
         })
     }
@@ -841,16 +857,18 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
         // Get matches from automaton using thread-local NFA buffers
         TL_NFA_BUFS.with(|bufs_cell| {
             let mut bufs = bufs_cell.borrow_mut();
-            let raw_matches = self.match_fields(&mut streaming_fields, &mut bufs)?;
-            Ok(self.filter_deleted_matches(raw_matches))
+            self.match_fields(&mut streaming_fields, &mut bufs)
         })
     }
 
-    /// Run a flattened event's fields through the automaton, sorted by path.
+    /// Run a flattened event's fields through the automaton, sorted by path,
+    /// and drop the IDs of deleted patterns.
     ///
-    /// Like Go's `matchesForFields`, a panic here becomes an error. Flattening
-    /// stays outside, as in Go. `bufs` is cleared at the start of every match,
-    /// so a panic leaves nothing in it for the next one.
+    /// Like Go's `matchesForFields`, a panic here becomes an error. That covers
+    /// the `Clone`, `Hash` and `Eq` of `X`, which matching and the deleted-ID
+    /// filter both call. Flattening stays outside, as in Go, so a custom
+    /// flattener's panic is its caller's. `bufs` is cleared at the start of
+    /// every match, so a panic leaves nothing in it for the next one.
     fn match_fields(
         &self,
         fields: &mut [flatten_json::Field<'_>],
@@ -858,13 +876,10 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
     ) -> Result<Vec<X>, QuaminaError> {
         panic::catch_unwind(AssertUnwindSafe(|| {
             fields.sort_unstable_by(|a, b| a.path.cmp(&b.path));
-            self.automaton.matches_for_fields_direct(fields, bufs)
+            let raw_matches = self.automaton.matches_for_fields_direct(fields, bufs);
+            self.filter_deleted_matches(raw_matches)
         }))
-        .map_err(|_| {
-            QuaminaError::Panicked(
-                "call to matches_for_event caused a crash, probably because the event is too large or too deeply nested".into(),
-            )
-        })
+        .map_err(|payload| panicked("matches_for_event", payload.as_ref()))
     }
 
     /// Build a fresh automaton and segments tree from the live pattern

@@ -932,6 +932,46 @@ fn test_match_panic_becomes_error_and_matching_continues() {
     );
 }
 
+/// With a pattern deleted, every hit is also looked up among the deleted IDs,
+/// which hashes and compares it. A panic there comes back as an error too.
+#[test]
+fn test_match_panic_while_filtering_deleted_ids_becomes_error() {
+    use std::sync::atomic::{AtomicUsize, Ordering::Relaxed};
+    let budget = std::sync::Arc::new(AtomicUsize::new(usize::MAX));
+    let id = |id| FragileId {
+        id,
+        budget: std::sync::Arc::clone(&budget),
+    };
+    let mut q = Quamina::new();
+    q.add_pattern(id(0), r#"{"a": ["x"]}"#).unwrap();
+    q.add_pattern(id(1), r#"{"a": [{"prefix": "x"}]}"#).unwrap();
+    q.delete_patterns(&id(1)).unwrap();
+
+    // Every allowance short of a whole match panics at a later step, the last
+    // of them in the deleted-ID filter.
+    let mut panicked = 0;
+    for allowed in 0.. {
+        budget.store(allowed, Relaxed);
+        let result = q.matches_for_event(br#"{"a":"x"}"#);
+        budget.store(usize::MAX, Relaxed);
+        match result {
+            Ok(hits) => {
+                assert_eq!(hits.iter().map(|x| x.id).collect::<Vec<_>>(), [0]);
+                break;
+            }
+            Err(err) => {
+                assert!(matches!(err, QuaminaError::Panicked(_)), "{err}");
+                assert_eq!(
+                    err.to_string(),
+                    "call to matches_for_event caused a crash: FragileId budget spent"
+                );
+                panicked += 1;
+            }
+        }
+    }
+    assert!(panicked > 0, "a budget of 0 must panic the match");
+}
+
 #[test]
 fn test_invalid_json_events() {
     // Based on Go quamina's TestFJErrorCases
