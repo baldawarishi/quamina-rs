@@ -1054,6 +1054,10 @@ mod tests {
     /// Nested repeats would build nearly a million states here, hundreds of
     /// megabytes; the build has to stop within a few doublings of the budget.
     #[test]
+    #[cfg_attr(
+        miri,
+        ignore = "minutes under Miri; safe build code whose closure pass other tests cover"
+    )]
     fn test_regexp_build_stops_at_budget() {
         let budget = 64 * 1024;
         for re in ["((a{99}){99}){99}", "(x|((a{99}){99}){99})"] {
@@ -1073,6 +1077,10 @@ mod tests {
     /// it finishes. The alternation closes its states while dropping the
     /// unreachable branch entries.
     #[test]
+    #[cfg_attr(
+        miri,
+        ignore = "minutes under Miri; safe build code whose closure pass other tests cover"
+    )]
     fn test_regexp_closures_stop_at_budget() {
         for (re, budget) in [
             ("((a?){10}){10}", 32 * 1024),
@@ -1091,6 +1099,10 @@ mod tests {
 
     /// A budget the finished automaton fits is not exceeded part way.
     #[test]
+    #[cfg_attr(
+        miri,
+        ignore = "minutes under Miri; safe build code whose closure pass other tests cover"
+    )]
     fn test_regexp_build_within_budget_matches_unlimited_build() {
         for re in ["((a?){10}){10}", "(x|((a?){10}){10})", ""] {
             let root = crate::regexp::parse_regexp(re).unwrap();
