@@ -39,6 +39,7 @@ use smallvec::{SmallVec, smallvec};
 
 use super::small_table::{AccelInfo, BYTE_CEILING, BYTE_CEILING_U8, FieldMatcher};
 use super::sparse_set::SparseSet;
+use crate::QuaminaError;
 
 /// A state identifier - just an index into the arena.
 ///
@@ -855,10 +856,24 @@ impl StateArena {
         &mut self,
         scratch: &mut ClosureScratch,
     ) -> usize {
+        self.precompute_epsilon_closures_within(scratch, 0)
+            .expect("an unlimited budget is never exceeded")
+    }
+
+    /// [`Self::precompute_epsilon_closures_into`], failing as soon as the arena
+    /// passes `budget` bytes (0 means unlimited). Closures can grow with the
+    /// square of the state count, so this is where a fresh automaton is most
+    /// likely to outgrow its budget. A failed pass leaves the closures
+    /// unfinished, so the arena is only fit to be dropped.
+    pub(crate) fn precompute_epsilon_closures_within(
+        &mut self,
+        scratch: &mut ClosureScratch,
+        budget: usize,
+    ) -> Result<usize, QuaminaError> {
         let arena_len = self.states.len();
         let start_idx = self.closures_computed;
         if start_idx >= arena_len {
-            return 0;
+            return Ok(0);
         }
 
         // Reuse the settled prefix and re-close only the new tail; a
@@ -932,13 +947,21 @@ impl StateArena {
                         .expect("epsilon closure exceeds u16::MAX states");
                     closure_data.extend_from_slice(closure_buf.as_slice());
                     self.states[state_idx].closure_len = len;
+                    if budget != 0 {
+                        let size = self.estimated_byte_size()
+                            + closure_data.capacity() * std::mem::size_of::<StateId>();
+                        if let Err(err) = check_byte_budget(size, budget) {
+                            self.closure_data = closure_data;
+                            return Err(err);
+                        }
+                    }
                 }
             }
         }
 
         self.closure_data = closure_data;
         self.closures_computed = arena_len;
-        arena_len - start_idx
+        Ok(arena_len - start_idx)
     }
 
     /// Build frozen lookup structures for fast traversal.
@@ -2025,16 +2048,38 @@ pub fn merge_arena_dfas(
 
 /// Clone a subset of an arena starting from a given state.
 pub(crate) fn clone_arena_subset(arena: &StateArena, start: StateId) -> (StateArena, StateId) {
+    clone_arena_subset_within(arena, start, 0).expect("an unlimited budget is never exceeded")
+}
+
+/// [`clone_arena_subset`], failing once the clone passes `budget` bytes (0
+/// means unlimited). The clone has no more states than `arena`, but its
+/// epsilon closures can still outgrow the budget.
+pub(crate) fn clone_arena_subset_within(
+    arena: &StateArena,
+    start: StateId,
+    budget: usize,
+) -> Result<(StateArena, StateId), QuaminaError> {
     if start.is_none() {
-        return (StateArena::new(), StateId::NONE);
+        return Ok((StateArena::new(), StateId::NONE));
     }
 
     let mut new_arena = StateArena::new();
     let mut id_map: FxHashMap<u32, StateId> = FxHashMap::default();
 
     let new_start = clone_states_into_arena(arena, start, &mut new_arena, &mut id_map);
-    new_arena.precompute_epsilon_closures();
-    (new_arena, new_start)
+    new_arena.precompute_epsilon_closures_within(&mut ClosureScratch::new(), budget)?;
+    Ok((new_arena, new_start))
+}
+
+/// Fail with [`QuaminaError::PatternTooComplex`] if an arena of `size` bytes
+/// is over `budget`. A budget of 0 means unlimited.
+pub(crate) fn check_byte_budget(size: usize, budget: usize) -> Result<(), QuaminaError> {
+    if budget != 0 && size > budget {
+        return Err(QuaminaError::PatternTooComplex(format!(
+            "automaton byte size ({size} bytes) exceeds budget ({budget} bytes)"
+        )));
+    }
+    Ok(())
 }
 
 /// Clone `start` and everything it reaches into `target`. Records old-to-new

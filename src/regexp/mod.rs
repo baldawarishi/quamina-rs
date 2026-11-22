@@ -19,6 +19,7 @@ mod parser;
 // Re-export public API. Bare names live inside their submodule (e.g.
 // `parser::Root`); the `Regexp*` / `*regexp` aliases below mirror long-stable
 // Go upstream names and are what external callers see.
+pub(crate) use nfa::make_regexp_nfa_arena_within;
 pub use nfa::{clear_fa_shell_cache, make_regexp_nfa_arena, regexp_has_plus_star};
 pub use parser::{
     Branch as RegexpBranch, Error as RegexpError, LookaroundType, QuantifiedAtom,

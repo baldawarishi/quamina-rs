@@ -2423,6 +2423,42 @@ fn test_arena_budget_custom() {
     }
 }
 
+/// Nested repeats in a regexp or in a lookaround's condition would build
+/// hundreds of megabytes of automaton. The add is refused once the automaton
+/// under construction passes the budget, and leaves nothing behind.
+#[test]
+fn test_arena_budget_stops_regexp_build() {
+    let budget = 64 * 1024;
+    let mut q = QuaminaBuilder::<&str>::new()
+        .with_arena_byte_budget(budget)
+        .build()
+        .unwrap();
+    q.add_pattern("small", r#"{"x": [{"regexp": "a+"}]}"#)
+        .unwrap();
+    let before = q.matcher_stats();
+
+    let huge = "((a{99}){99}){99}";
+    for regexp in [
+        huge.to_owned(),
+        format!("b(?={huge})"),
+        format!("(?<!{huge})b"),
+    ] {
+        let pattern = format!(r#"{{"x": [{{"regexp": "{regexp}"}}]}}"#);
+        let err = q.add_pattern("huge", &pattern).unwrap_err();
+        let QuaminaError::PatternTooComplex(msg) = &err else {
+            panic!("{regexp}: {err}");
+        };
+        let size: usize = msg
+            .split_once('(')
+            .and_then(|(_, rest)| rest.split_once(' '))
+            .and_then(|(size, _)| size.parse().ok())
+            .unwrap_or_else(|| panic!("{regexp}: {msg}"));
+        assert!(size < 4 * budget, "{regexp}: stopped at {size}");
+        assert_eq!(q.matcher_stats(), before, "{regexp}");
+    }
+    assert_eq!(q.matches_for_event(br#"{"x":"aa"}"#).unwrap(), ["small"]);
+}
+
 // --- Error Message Quality Tests ---
 
 #[test]

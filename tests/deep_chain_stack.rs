@@ -325,8 +325,14 @@ fn deeply_nested_regexp_groups_survive_small_stack() {
                 .expect("a word boundary between a word and a non-word char");
             expand_word_boundaries(&boundary).expect("the boundary resolves");
 
-            // Groups and alternations of any depth build and match.
-            let mut q = Quamina::new();
+            // Groups and alternations of any depth build and match. Folding
+            // each level's alternation leaves the level below it unreachable
+            // until the build compacts, so the build needs more than the
+            // default arena budget.
+            let mut q = QuaminaBuilder::new()
+                .with_arena_byte_budget(128 * 1024 * 1024)
+                .build()
+                .expect("a larger arena budget is valid");
             for (id, open) in [("groups", "("), ("alternation", "(x|")] {
                 let pattern = format!(r#"{{"f": [{{"regexp": "{}"}}]}}"#, nested(open, "a", ")"));
                 q.add_pattern(id, &pattern)

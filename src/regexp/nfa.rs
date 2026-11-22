@@ -11,11 +11,12 @@ use rustc_hash::FxHashMap;
 
 use smallvec::smallvec;
 
+use crate::QuaminaError;
 use crate::automaton::{
     BYTE_CEILING, FieldMatcher,
     arena::{
-        ARENA_VALUE_TERMINATOR, SmallTable, StateArena, StateId, clone_arena_subset,
-        determinize_branch_starts,
+        ARENA_VALUE_TERMINATOR, ClosureScratch, SmallTable, StateArena, StateId, check_byte_budget,
+        clone_arena_subset_within, determinize_branch_starts,
     },
 };
 
@@ -77,6 +78,19 @@ pub fn regexp_has_plus_star(root: &RegexpRoot) -> bool {
 /// A tuple of (arena, start_state_id, field_matcher)
 #[must_use]
 pub fn make_regexp_nfa_arena(root: RegexpRoot) -> (StateArena, StateId, Arc<FieldMatcher>) {
+    make_regexp_nfa_arena_within(&root, 0).expect("an unlimited budget is never exceeded")
+}
+
+/// [`make_regexp_nfa_arena`], failing with [`QuaminaError::PatternTooComplex`]
+/// as soon as the arena passes `budget` bytes (0 means unlimited).
+///
+/// Nested repeats multiply: `((a{99}){99}){99}` is 17 characters and nearly a
+/// million states. Checking only the finished arena would let a short regexp
+/// cost far more memory and time than the budget allows before it is refused.
+pub fn make_regexp_nfa_arena_within(
+    root: &RegexpRoot,
+    budget: usize,
+) -> Result<(StateArena, StateId, Arc<FieldMatcher>), QuaminaError> {
     let next_field = Arc::new(FieldMatcher::new());
 
     // Handle empty regexp specially - it matches only the empty string
@@ -128,7 +142,7 @@ pub fn make_regexp_nfa_arena(root: RegexpRoot) -> (StateArena, StateId, Arc<Fiel
             arena.alloc_with_table(SmallTable::with_mappings(StateId::NONE, b"\"", &[vt_state]));
 
         // Build the NFA from branches
-        let branch_start = make_arena_nfa_from_branches(&root, &mut arena, next_step);
+        let branch_start = make_arena_nfa_from_branches(root, &mut arena, next_step, budget)?;
 
         // Wrap with leading quote at the top level only
         let start = arena.alloc_with_table(SmallTable::with_mappings(
@@ -140,17 +154,18 @@ pub fn make_regexp_nfa_arena(root: RegexpRoot) -> (StateArena, StateId, Arc<Fiel
         (arena, start)
     };
 
-    if regexp_has_alternation(&root) {
+    let (arena, start) = if regexp_has_alternation(root) {
         // Folded branches leave their original entry states unreachable. Rebuild
         // from the reachable set so they don't bloat this arena and every later
         // merge that clones it; the rebuild also precomputes the epsilon
         // closures.
-        let (arena, start) = clone_arena_subset(&arena, start);
-        (arena, start, next_field)
+        clone_arena_subset_within(&arena, start, budget)?
     } else {
-        arena.precompute_epsilon_closures();
-        (arena, start, next_field)
-    }
+        arena.precompute_epsilon_closures_within(&mut ClosureScratch::new(), budget)?;
+        (arena, start)
+    };
+    check_byte_budget(arena.estimated_byte_size(), budget)?;
+    Ok((arena, start, next_field))
 }
 
 /// One step of building a regexp NFA back to front.
@@ -191,7 +206,8 @@ fn make_arena_nfa_from_branches(
     root: &RegexpRoot,
     arena: &mut StateArena,
     next_step: StateId,
-) -> StateId {
+    budget: usize,
+) -> Result<StateId, QuaminaError> {
     let mut steps = vec![BuildStep::Branches(root)];
     let mut states = vec![next_step];
     let continuation = |states: &mut Vec<StateId>| {
@@ -201,6 +217,7 @@ fn make_arena_nfa_from_branches(
     };
 
     while let Some(step) = steps.pop() {
+        check_byte_budget(arena.estimated_byte_size(), budget)?;
         match step {
             // An empty group matches nothing here: its entry is its continuation.
             BuildStep::Branches(root) if root.is_empty() => {}
@@ -287,7 +304,7 @@ fn make_arena_nfa_from_branches(
         }
     }
 
-    continuation(&mut states)
+    Ok(continuation(&mut states))
 }
 
 /// Wire a quantified atom's "match zero copies" skip (the bypass edge for `*`,
@@ -1017,6 +1034,72 @@ mod tests {
     #[test]
     fn test_clear_fa_shell_cache_drops_entries_miri_friendly() {
         verify_shell_cache_populate_then_clear("~p{Cc}");
+    }
+
+    /// Build `root` within `budget`, which must fail, and return the arena size
+    /// the error reports: where the build stopped.
+    fn stopped_at(root: &RegexpRoot, budget: usize) -> usize {
+        let Err(err) = make_regexp_nfa_arena_within(root, budget) else {
+            panic!("the build must not fit {budget} bytes");
+        };
+        let msg = err.to_string();
+        let size = msg
+            .split_once("automaton byte size (")
+            .and_then(|(_, rest)| rest.split_once(" bytes)"))
+            .unwrap_or_else(|| panic!("not a budget error: {msg}"))
+            .0;
+        size.parse().unwrap()
+    }
+
+    /// Nested repeats would build nearly a million states here, hundreds of
+    /// megabytes; the build has to stop within a few doublings of the budget.
+    #[test]
+    fn test_regexp_build_stops_at_budget() {
+        let budget = 64 * 1024;
+        for re in ["((a{99}){99}){99}", "(x|((a{99}){99}){99})"] {
+            let root = crate::regexp::parse_regexp(re).unwrap();
+            let size = stopped_at(&root, budget);
+            assert!(
+                size > budget && size < 4 * budget,
+                "{re}: stopped at {size}"
+            );
+        }
+    }
+
+    /// Nested optionals give each state an epsilon closure that reaches most of
+    /// the states after it, so the closures outweigh the states many times
+    /// over. Each budget fits the states (about 18 KB) and sits below the
+    /// closure buffer's last doubling, so the closure pass has to stop before
+    /// it finishes. The alternation closes its states while dropping the
+    /// unreachable branch entries.
+    #[test]
+    fn test_regexp_closures_stop_at_budget() {
+        for (re, budget) in [
+            ("((a?){10}){10}", 32 * 1024),
+            ("(x|((a?){10}){10})", 24 * 1024),
+        ] {
+            let root = crate::regexp::parse_regexp(re).unwrap();
+            let (full, _, _) = make_regexp_nfa_arena(root.clone());
+            let size = stopped_at(&root, budget);
+            assert!(
+                size > budget && size < full.estimated_byte_size(),
+                "{re}: stopped at {size} of {}",
+                full.estimated_byte_size()
+            );
+        }
+    }
+
+    /// A budget the finished automaton fits is not exceeded part way.
+    #[test]
+    fn test_regexp_build_within_budget_matches_unlimited_build() {
+        for re in ["((a?){10}){10}", "(x|((a?){10}){10})", ""] {
+            let root = crate::regexp::parse_regexp(re).unwrap();
+            let (full, _, _) = make_regexp_nfa_arena(root.clone());
+            let size = full.estimated_byte_size();
+            let (within, _, _) = make_regexp_nfa_arena_within(&root, size).unwrap();
+            assert_eq!(within.len(), full.len(), "{re}");
+            assert_eq!(stopped_at(&root, size - 1), size, "{re}");
+        }
     }
 
     #[test]

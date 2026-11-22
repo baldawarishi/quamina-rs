@@ -263,6 +263,8 @@ pub struct PatternLimits {
     /// Maximum arena byte size for any one value matcher (default: 10 MB).
     /// A pattern is rejected when the arena for one of its fields would exceed
     /// this; the matcher as a whole holds one such arena per field it matches on.
+    /// A regexp is held to it while its automaton is built, so one whose build
+    /// passes the budget is rejected even if the finished automaton would fit.
     pub arena_byte_budget: usize,
     /// Maximum number of field-matcher states during pattern construction (default: 1024).
     ///
