@@ -13,7 +13,8 @@
 //! phase started.
 //!
 //! A stack overflow aborts the whole process, so `limit` and `sweep` re-run this
-//! binary as a child for every case and classify its exit status.
+//! binary as a child for every case and classify its exit status. `sweep` exits
+//! nonzero if any case failed: a wrong match, an error, or an abort.
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::io::Write as _;
@@ -417,16 +418,24 @@ fn default_depths(shape: &str) -> Vec<usize> {
     }
 }
 
+/// Run every case, then fail if any of them did, so a script can rely on the
+/// exit status and still get the whole report.
 fn sweep(shapes: &[&str], opts: &Opts) -> ExitCode {
+    let mut all_ok = true;
     for shape in shapes {
         let depths = opts.depths.clone().unwrap_or_else(|| default_depths(shape));
         for depth in depths {
             let run = run_child(shape, depth, opts);
+            all_ok &= run.ok;
             match run.line {
                 Some(line) if run.ok => println!("{line}"),
                 _ => println!("shape={shape} depth={depth} outcome={}", run.kind),
             }
         }
     }
-    ExitCode::SUCCESS
+    if all_ok {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
+    }
 }
