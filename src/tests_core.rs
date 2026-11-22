@@ -1019,6 +1019,34 @@ fn test_invalid_json_events() {
 }
 
 #[test]
+fn test_event_literal_must_end_at_a_delimiter() {
+    // Based on Go quamina's TestLiteralPrefix. Each event holds the only field
+    // its pattern needs, so flattening stops right after the literal and the
+    // byte that follows is never seen by the object parser.
+    for (pattern, event) in [
+        (r#"{"x": [true]}"#, r#"{"x":trueish}"#),
+        (r#"{"x": [true]}"#, r#"{"x":truex"#),
+        (r#"{"x": [false]}"#, r#"{"x":false1}"#),
+        (r#"{"x": [null]}"#, r#"{"x":null"}"#),
+        (r#"{"a": {"x": [true]}}"#, r#"{"a":{"x":trueish},"b":1}"#),
+    ] {
+        let q = q!("p" => pattern);
+        assert!(q.matches_for_event(event.as_bytes()).is_err(), "{event}");
+    }
+
+    let q = q!("p" => r#"{"x": [true]}"#);
+    for event in [
+        r#"{"x": true}"#,
+        r#"{"x":true,"y":null}"#,
+        r#"{"x": [true]}"#,
+        "{\"x\": true\r\n}",
+        "{\"x\": true\t}",
+    ] {
+        assert_has_match!(q, event, "p");
+    }
+}
+
+#[test]
 fn test_invalid_pattern_handling() {
     let mut q = Quamina::new();
 
