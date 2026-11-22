@@ -547,30 +547,71 @@ impl<X: Clone + Eq + Hash + Send + Sync> ThreadSafeCoreMatcher<X> {
     pub fn matcher_stats(&self) -> crate::MatcherStats {
         self.ensure_frozen();
         let root = self.root.load();
+        let mut stats = crate::MatcherStats::default();
+        Self::for_each_value_matcher(&root, |vm| {
+            if let Some(singleton) = vm.singleton_match.as_ref() {
+                stats.bytes += singleton.capacity();
+            }
+            if let Some((ref arena, _)) = vm.main_arena {
+                arena.accumulate_matcher_stats(&mut stats);
+            }
+            if let Some((ref arena, _)) = vm.suffix_arena {
+                arena.accumulate_matcher_stats(&mut stats);
+            }
+            for mc in &vm.multi_condition_nfas {
+                mc.primary_arena.accumulate_matcher_stats(&mut stats);
+                for cond in &mc.conditions {
+                    cond.arena.accumulate_matcher_stats(&mut stats);
+                }
+            }
+            if let Some(ref lazy_dfa) = vm.lazy_dfa {
+                lazy_dfa.lock().accumulate_matcher_stats(&mut stats);
+            }
+        });
+        stats
+    }
+
+    /// Empty every lazy DFA cache in the frozen matcher, as if just frozen.
+    ///
+    /// Matching fills these caches as it goes, so a panic part way through a
+    /// match can leave one inconsistent; a caught match panic calls this.
+    pub(crate) fn reset_lazy_dfas(&self) {
+        Self::for_each_value_matcher(&self.root.load(), |vm| {
+            if let Some(ref lazy_dfa) = vm.lazy_dfa {
+                lazy_dfa.lock().reset();
+            }
+        });
+    }
+
+    /// Call `visit` once for every distinct value matcher reachable from
+    /// `root`, deduplicated by identity since matchers are shared between
+    /// field paths.
+    fn for_each_value_matcher(
+        root: &FrozenFieldMatcher<X>,
+        mut visit: impl FnMut(&FrozenValueMatcher<X>),
+    ) {
         let mut field_seen: FxHashSet<usize> = FxHashSet::default();
         let mut value_seen: FxHashSet<usize> = FxHashSet::default();
-        let mut stats = crate::MatcherStats::default();
-        Self::walk_field_matcher(&root, &mut field_seen, &mut value_seen, &mut stats);
-        stats
+        Self::walk_field_matcher(root, &mut field_seen, &mut value_seen, &mut visit);
     }
 
     fn walk_field_matcher(
         fm: &FrozenFieldMatcher<X>,
         field_seen: &mut FxHashSet<usize>,
         value_seen: &mut FxHashSet<usize>,
-        stats: &mut crate::MatcherStats,
+        visit: &mut impl FnMut(&FrozenValueMatcher<X>),
     ) {
         if !field_seen.insert(std::ptr::from_ref(fm) as usize) {
             return;
         }
         for vm in fm.transitions.values() {
-            Self::walk_value_matcher(vm, field_seen, value_seen, stats);
+            Self::walk_value_matcher(vm, field_seen, value_seen, visit);
         }
         for next in fm.exists_true.values() {
-            Self::walk_field_matcher(next, field_seen, value_seen, stats);
+            Self::walk_field_matcher(next, field_seen, value_seen, visit);
         }
         for next in fm.exists_false.values() {
-            Self::walk_field_matcher(next, field_seen, value_seen, stats);
+            Self::walk_field_matcher(next, field_seen, value_seen, visit);
         }
     }
 
@@ -578,34 +619,17 @@ impl<X: Clone + Eq + Hash + Send + Sync> ThreadSafeCoreMatcher<X> {
         vm: &FrozenValueMatcher<X>,
         field_seen: &mut FxHashSet<usize>,
         value_seen: &mut FxHashSet<usize>,
-        stats: &mut crate::MatcherStats,
+        visit: &mut impl FnMut(&FrozenValueMatcher<X>),
     ) {
         if !value_seen.insert(std::ptr::from_ref(vm) as usize) {
             return;
         }
-        if let Some(singleton) = vm.singleton_match.as_ref() {
-            stats.bytes += singleton.capacity();
-        }
-        if let Some((ref arena, _)) = vm.main_arena {
-            arena.accumulate_matcher_stats(stats);
-        }
-        if let Some((ref arena, _)) = vm.suffix_arena {
-            arena.accumulate_matcher_stats(stats);
-        }
-        for mc in &vm.multi_condition_nfas {
-            mc.primary_arena.accumulate_matcher_stats(stats);
-            for cond in &mc.conditions {
-                cond.arena.accumulate_matcher_stats(stats);
-            }
-        }
-        if let Some(ref lazy_dfa) = vm.lazy_dfa {
-            lazy_dfa.lock().accumulate_matcher_stats(stats);
-        }
+        visit(vm);
         for next in vm.transition_map.values() {
-            Self::walk_field_matcher(next, field_seen, value_seen, stats);
+            Self::walk_field_matcher(next, field_seen, value_seen, visit);
         }
         if let Some(ref next) = vm.singleton_transition {
-            Self::walk_field_matcher(next, field_seen, value_seen, stats);
+            Self::walk_field_matcher(next, field_seen, value_seen, visit);
         }
     }
 

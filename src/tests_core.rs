@@ -4204,6 +4204,43 @@ fn test_matcher_stats_counts_the_lazy_dfa() {
     );
 }
 
+/// A panic part way through a match could leave a lazy DFA cache half
+/// updated, so a caught match panic empties every cache, back to the state
+/// the matcher was frozen in. Later matches refill it and still match.
+///
+/// Skipped under Miri, which never runs the DFA conversion.
+#[cfg(not(miri))]
+#[test]
+fn test_match_panic_resets_lazy_dfa_caches() {
+    use std::sync::atomic::{AtomicUsize, Ordering::Relaxed};
+    let budget = std::sync::Arc::new(AtomicUsize::new(usize::MAX));
+    let mut q: Quamina<FragileId> = Quamina::new();
+    q.set_matcher_build_mode(MatcherBuildMode::BuiltForSpeed);
+    let id = FragileId {
+        id: 7,
+        budget: std::sync::Arc::clone(&budget),
+    };
+    q.add_pattern(id, LAZY_DFA_PATTERN).unwrap();
+    let frozen = q.matcher_stats();
+
+    for value in lazy_dfa_values() {
+        q.matches_for_event(value.as_bytes()).unwrap();
+    }
+    assert!(
+        q.matcher_stats().states > frozen.states,
+        "matching fills the cache"
+    );
+
+    budget.store(0, Relaxed);
+    let err = q.matches_for_event(br#"{"x": "aaaaaaaaaa"}"#).unwrap_err();
+    budget.store(usize::MAX, Relaxed);
+    assert!(matches!(err, QuaminaError::Panicked(_)), "{err}");
+    assert_eq!(q.matcher_stats(), frozen);
+
+    let hits = q.matches_for_event(br#"{"x": "zaababababa"}"#).unwrap();
+    assert_eq!(hits.iter().map(|x| x.id).collect::<Vec<_>>(), [7]);
+}
+
 /// The lazy cache owns a full copy of the NFA arena, so the aggregate arena
 /// figures have to count it alongside the arena it was cloned from.
 ///

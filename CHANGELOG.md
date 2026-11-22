@@ -9,7 +9,7 @@ Style inspired by [ripgrep's CHANGELOG](https://github.com/BurntSushi/ripgrep/bl
 ## [Unreleased]
 
 ### Added
-- `add_pattern` and `matches_for_event` return the new `QuaminaError::Panicked` instead of panicking, like Go's `recover()` in `AddPattern` and `MatchesForEvent`; a custom flattener's panics still unwind
+- `add_pattern` and `matches_for_event` return the new `QuaminaError::Panicked` instead of panicking, like Go's `recover()` in `AddPattern` and `MatchesForEvent`; a custom flattener's panics still unwind, and a caught match panic empties the lazy DFA caches in case one was mid-update
 
 ### Fixed
 - Deeply nested patterns, regexps and events no longer overflow the stack and abort the process; regexp groups nest without limit, patterns up to `max_pattern_depth`, and events to any depth (ported from Go a4e063e)

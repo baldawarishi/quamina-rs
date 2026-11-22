@@ -1310,6 +1310,7 @@ struct LazyDfaState {
 /// still "snap back" to a cached state on the next byte transition.
 pub(crate) struct LazyDfa {
     nfa_arena: StateArena,
+    nfa_start: StateId,
     states: Vec<LazyDfaState>,
     state_map: FxHashMap<Vec<u32>, StateId>,
     nfa_sets: Vec<Vec<StateId>>,
@@ -1330,22 +1331,33 @@ impl LazyDfa {
         );
         let mut lazy = Self {
             nfa_arena,
+            nfa_start,
             states: Vec::new(),
             state_map: FxHashMap::default(),
             nfa_sets: Vec::new(),
             state_budget,
             cached_count: 0,
         };
+        lazy.reset();
+        lazy
+    }
+
+    /// Drop every cached DFA state and start again from the NFA start state,
+    /// as if just created. A panic part way through caching a state can leave
+    /// the cache inconsistent, and this is how matching recovers from one.
+    pub fn reset(&mut self) {
+        self.states = Vec::new();
+        self.state_map = FxHashMap::default();
+        self.nfa_sets = Vec::new();
+        self.cached_count = 0;
 
         // Create the start state from the NFA start's epsilon closure
-        if !nfa_start.is_none() {
+        if !self.nfa_start.is_none() {
             let mut closure = Vec::new();
-            lazy.nfa_arena
-                .extend_closure_or_self(nfa_start, &mut closure);
-            lazy.intern_state(&closure, true);
+            self.nfa_arena
+                .extend_closure_or_self(self.nfa_start, &mut closure);
+            self.intern_state(&closure, true);
         }
-
-        lazy
     }
 
     fn intern_state(&mut self, nfa_states: &[StateId], allow_cache: bool) -> StateId {

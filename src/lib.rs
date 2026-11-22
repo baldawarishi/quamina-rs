@@ -903,7 +903,8 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
     /// the `Clone`, `Hash` and `Eq` of `X`, which matching and the deleted-ID
     /// filter both call. Flattening stays outside, as in Go, so a custom
     /// flattener's panic is its caller's. `bufs` is cleared at the start of
-    /// every match, so a panic leaves nothing in it for the next one.
+    /// every match, so a panic leaves nothing in it for the next one, and the
+    /// lazy DFA caches matching fills are emptied in case one was mid-update.
     fn match_fields(
         &self,
         fields: &mut [flatten_json::Field<'_>],
@@ -914,7 +915,10 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
             let raw_matches = self.automaton.matches_for_fields_direct(fields, bufs);
             self.filter_deleted_matches(raw_matches)
         }))
-        .map_err(|payload| panicked("matches_for_event", payload.as_ref()))
+        .map_err(|payload| {
+            self.automaton.reset_lazy_dfas();
+            panicked("matches_for_event", payload.as_ref())
+        })
     }
 
     /// Build a fresh automaton and segments tree from the live pattern
