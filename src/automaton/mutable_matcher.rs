@@ -13,7 +13,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::arena::{
     ArenaInsertRollback, ClosureScratch, NfaBuffers as ArenaNfaBuffers, StateArena, StateId,
-    append_merge_arena_nfas, clone_arena_subset, insert_string, insert_suffix,
+    append_merge_arena_nfas, check_byte_budget, clone_arena_subset, insert_string, insert_suffix,
     make_anything_but_arena_fa, make_cidr_arena_fa, make_monocase_arena_fa,
     make_numeric_greater_arena_fa, make_numeric_less_arena_fa, make_numeric_range_arena_fa,
     make_prefix_arena_fa, make_shellstyle_arena_fa, make_string_arena_fa, make_suffix_dfa,
@@ -21,7 +21,7 @@ use super::arena::{
     traverse_arena_nfa,
 };
 use super::small_table::{FieldMatcher, NfaBuffers, TL_MATCH_BUFS};
-use crate::regexp::make_regexp_nfa_arena;
+use crate::regexp::make_regexp_nfa_arena_within;
 
 /// Wrap a byte slice in quotes: `val` → `"val"`.
 ///
@@ -331,25 +331,11 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
         }
     }
 
-    /// Check whether the given arena size exceeds the budget.
-    ///
-    /// A budget of 0 means unlimited; otherwise it bounds how large any single
-    /// value matcher's arena may grow — the binding constraint for complex
-    /// regexps.
-    fn check_budget(size: usize, budget: usize) -> Result<(), crate::QuaminaError> {
-        if budget != 0 && size > budget {
-            return Err(crate::QuaminaError::PatternTooComplex(format!(
-                "automaton byte size ({size} bytes) exceeds budget ({budget} bytes)"
-            )));
-        }
-        Ok(())
-    }
-
     /// Check main_arena budget. Call after any in-place arena mutation.
     fn check_main_arena_budget(&self, budget: usize) -> Result<(), crate::QuaminaError> {
         let main = self.main_arena.borrow();
         if let Some((arena, _)) = main.as_ref() {
-            Self::check_budget(arena.estimated_byte_size(), budget)
+            check_byte_budget(arena.estimated_byte_size(), budget)
         } else {
             Ok(())
         }
@@ -358,7 +344,7 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
     fn check_suffix_arena_budget(&self, budget: usize) -> Result<(), crate::QuaminaError> {
         let suffix = self.suffix_arena.borrow();
         if let Some((arena, _)) = suffix.as_ref() {
-            Self::check_budget(arena.estimated_byte_size(), budget)
+            check_byte_budget(arena.estimated_byte_size(), budget)
         } else {
             Ok(())
         }
@@ -488,7 +474,7 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
         new_start: StateId,
         budget: usize,
     ) -> Result<(), crate::QuaminaError> {
-        Self::check_budget(new_arena.estimated_byte_size(), budget)?;
+        check_byte_budget(new_arena.estimated_byte_size(), budget)?;
 
         let mut main = self.main_arena.borrow_mut();
         if let Some((existing_arena, existing_start)) = main.as_mut() {
@@ -509,13 +495,10 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
                     // compacted automaton has to fit the budget.
                     let (compacted, compacted_start) =
                         clone_arena_subset(existing_arena, merged_start);
-                    let compacted_size = compacted.estimated_byte_size();
-                    if compacted_size > budget {
+                    if let Err(err) = check_byte_budget(compacted.estimated_byte_size(), budget) {
                         existing_arena.truncate_states(old_len);
                         *existing_start = old_start;
-                        return Err(crate::QuaminaError::PatternTooComplex(format!(
-                            "automaton byte size ({compacted_size} bytes) exceeds budget ({budget} bytes)"
-                        )));
+                        return Err(err);
                     }
                     *existing_arena = compacted;
                     *existing_start = compacted_start;
@@ -1030,7 +1013,7 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
     ) -> Result<Rc<MutableFieldMatcher<X>>, crate::QuaminaError> {
         let next_fm = Rc::new(MutableFieldMatcher::new());
 
-        let (arena, start, field_matcher_arc) = make_regexp_nfa_arena(tree.clone());
+        let (arena, start, field_matcher_arc) = make_regexp_nfa_arena_within(tree, budget)?;
         let marks_main_arena_nfa = arena.is_nondeterministic();
         let registered = self.register_transition(next_fm, field_matcher_arc);
 
@@ -1061,8 +1044,7 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
         let primary_verify =
             build_primary_verify_pattern(&mc.primary, has_lookbehind, mc.trailing_lookahead);
         let (primary_arena, primary_start, field_matcher_arc) =
-            make_regexp_nfa_arena(primary_verify);
-        let registered = self.register_transition(next_fm, field_matcher_arc);
+            make_regexp_nfa_arena_within(&primary_verify, budget)?;
 
         // Build condition automata
         let mut condition_nfas = Vec::new();
@@ -1099,7 +1081,7 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
             };
 
             // Build automaton for the combined pattern (with quote transitions)
-            let (arena, start, _) = make_regexp_nfa_arena(combined_pattern);
+            let (arena, start, _) = make_regexp_nfa_arena_within(&combined_pattern, budget)?;
             let is_nfa = arena.is_nondeterministic();
             condition_nfas.push(ConditionNfa {
                 arena,
@@ -1109,17 +1091,7 @@ impl<X: Clone + Eq + std::hash::Hash> MutableValueMatcher<X> {
             });
         }
 
-        // Check budget for the primary arena and all condition arenas
-        if let Err(err) = Self::check_budget(primary_arena.estimated_byte_size(), budget) {
-            self.remove_transition(registered.transition_key);
-            return Err(err);
-        }
-        for cond in &condition_nfas {
-            if let Err(err) = Self::check_budget(cond.arena.estimated_byte_size(), budget) {
-                self.remove_transition(registered.transition_key);
-                return Err(err);
-            }
-        }
+        let registered = self.register_transition(next_fm, field_matcher_arc);
 
         // Store in multi_condition_nfas for condition verification during matching
         let primary_is_nfa = primary_arena.is_nondeterministic();

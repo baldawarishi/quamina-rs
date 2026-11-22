@@ -39,6 +39,7 @@ use segments_tree::SegmentsTree;
 use std::cell::RefCell;
 use std::fmt;
 use std::hash::Hash;
+use std::panic::{self, AssertUnwindSafe};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 thread_local! {
@@ -156,6 +157,7 @@ struct StoredPattern {
 
 /// Errors that can occur during pattern matching
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum QuaminaError {
     /// The event JSON was syntactically invalid.
     InvalidJson(String),
@@ -167,6 +169,13 @@ pub enum QuaminaError {
     UnsupportedMediaType(String),
     /// The pattern exceeded configured complexity limits (see [`PatternLimits`]).
     PatternTooComplex(String),
+    /// Adding a pattern or matching an event panicked, for instance in the
+    /// `Clone`, `Hash` or `Eq` of a pattern ID. As in Go Quamina, the panic is
+    /// caught and returned as this error rather than unwinding into the caller.
+    /// A custom [`Flattener`](flattener::Flattener) runs outside that guard,
+    /// so its panics still unwind. A build with `panic = "abort"` aborts
+    /// instead.
+    Panicked(String),
 }
 
 impl fmt::Display for QuaminaError {
@@ -181,32 +190,81 @@ impl fmt::Display for QuaminaError {
             Self::PatternTooComplex(msg) => {
                 write!(f, "pattern too complex: {msg}")
             }
+            Self::Panicked(msg) => f.write_str(msg),
         }
     }
+}
+
+/// The error for a panic caught in the public method `call`, carrying the
+/// panic's message when it has one.
+fn panicked(call: &str, payload: &(dyn std::any::Any + Send)) -> QuaminaError {
+    let message = payload
+        .downcast_ref::<&str>()
+        .copied()
+        .or_else(|| payload.downcast_ref::<String>().map(String::as_str));
+    QuaminaError::Panicked(match message {
+        Some(message) => format!("call to {call} caused a crash: {message}"),
+        None => format!("call to {call} caused a crash"),
+    })
+}
+
+/// How many levels of a tree [`fmt_tree_level`] writes before eliding the rest.
+const DEBUG_TREE_DEPTH: usize = 64;
+
+/// Debug-format one level of a tree that nests without limit, such as regexp
+/// groups or pattern field paths.
+///
+/// Formatting recurses once per level, so a tree that parses, clones and drops
+/// fine could still overflow the stack when logged. Past [`DEBUG_TREE_DEPTH`]
+/// levels open on this thread, `elided` is written in place of the level.
+pub(crate) fn fmt_tree_level(
+    f: &mut fmt::Formatter<'_>,
+    elided: &str,
+    level: impl FnOnce(&mut fmt::Formatter<'_>) -> fmt::Result,
+) -> fmt::Result {
+    thread_local! {
+        static OPEN_LEVELS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    }
+    /// Closes the level even if formatting it panics.
+    struct Open;
+    impl Drop for Open {
+        fn drop(&mut self) {
+            OPEN_LEVELS.set(OPEN_LEVELS.get() - 1);
+        }
+    }
+
+    if OPEN_LEVELS.get() >= DEBUG_TREE_DEPTH {
+        return f.write_str(elided);
+    }
+    OPEN_LEVELS.set(OPEN_LEVELS.get() + 1);
+    let _open = Open;
+    level(f)
 }
 
 /// Limits on pattern complexity to prevent OOM and stack exhaustion.
 ///
 /// Four complementary limits, each catching a different attack vector:
-/// - **Nesting depth**: prevents stack exhaustion and deep-nesting attacks
+/// - **Nesting depth**: bounds the work a deeply nested pattern can cause
 /// - **Field count**: prevents wide patterns with hundreds of fields
 /// - **Arena byte budget**: per-field backstop that catches automaton complexity whatever produced it
 /// - **State count**: prevents exponential field-matcher blowup from mixed-type matchers
 ///
 /// # Defaults
-/// - `max_pattern_depth`: 256 (jq precedent)
+/// - `max_pattern_depth`: 10000 (Go Quamina's JSON nesting limit)
 /// - `max_fields_per_pattern`: 256
 /// - `arena_byte_budget`: 10 MB (regex crate precedent)
 /// - `max_states_per_pattern`: 1024
 #[derive(Debug, Clone)]
 pub struct PatternLimits {
-    /// Maximum nesting depth of a pattern (default: 256)
+    /// Maximum nesting depth of a pattern (default: 10000)
     pub max_pattern_depth: usize,
     /// Maximum number of fields per pattern (default: 256)
     pub max_fields_per_pattern: usize,
     /// Maximum arena byte size for any one value matcher (default: 10 MB).
     /// A pattern is rejected when the arena for one of its fields would exceed
     /// this; the matcher as a whole holds one such arena per field it matches on.
+    /// A regexp is held to it while its automaton is built, so one whose build
+    /// passes the budget is rejected even if the finished automaton would fit.
     pub arena_byte_budget: usize,
     /// Maximum number of field-matcher states during pattern construction (default: 1024).
     ///
@@ -221,7 +279,7 @@ pub struct PatternLimits {
 impl Default for PatternLimits {
     fn default() -> Self {
         Self {
-            max_pattern_depth: 256,
+            max_pattern_depth: 10_000,
             max_fields_per_pattern: 256,
             arena_byte_budget: 10 * 1024 * 1024, // 10 MB
             max_states_per_pattern: 1024,
@@ -395,7 +453,7 @@ impl<X: Clone + Eq + Hash + Send + Sync> QuaminaBuilder<X> {
         Ok(self)
     }
 
-    /// Set the maximum nesting depth for patterns (default: 256).
+    /// Set the maximum nesting depth for patterns (default: 10000).
     ///
     /// # Panics
     /// Panics if `depth` is 0.
@@ -711,8 +769,22 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
     /// or the pattern uses unsupported syntax), and
     /// [`QuaminaError::PatternTooComplex`] when the pattern would exceed the
     /// configured [`PatternLimits`] (depth, field count, state count) or the
-    /// shared arena byte budget.
+    /// shared arena byte budget. Returns [`QuaminaError::Panicked`] if adding
+    /// panicked; the automaton may then hold part of the pattern until
+    /// [`rebuild`](Self::rebuild).
     pub fn add_pattern(&mut self, x: X, pattern_json: &str) -> Result<(), QuaminaError> {
+        // Go's AddPattern recovers from a panic the same way. The add may have
+        // stopped part way into the automaton, which only a rebuild reclaims.
+        panic::catch_unwind(AssertUnwindSafe(|| {
+            self.add_pattern_unguarded(x, pattern_json)
+        }))
+        .unwrap_or_else(|payload| {
+            self.automaton_is_stale = true;
+            Err(panicked("add_pattern", payload.as_ref()))
+        })
+    }
+
+    fn add_pattern_unguarded(&mut self, x: X, pattern_json: &str) -> Result<(), QuaminaError> {
         let fields = json::parse_pattern(pattern_json, &self.pattern_limits)?;
 
         // Route to automaton first — if this fails (e.g. budget exceeded),
@@ -771,6 +843,9 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
     /// [`Flattener`] was configured via the builder, this
     /// method propagates any [`QuaminaError`] its
     /// [`flatten`](flattener::Flattener::flatten) implementation returns.
+    /// Returns [`QuaminaError::Panicked`] if matching the flattened event
+    /// panicked, including in the `Clone`, `Hash` or `Eq` of a pattern ID. A
+    /// panic in a custom flattener is not caught.
     pub fn matches_for_event(&self, event: &[u8]) -> Result<Vec<X>, QuaminaError> {
         // Check if we have a custom flattener
         if let Some(ref custom_flattener_mutex) = self.custom_flattener {
@@ -785,15 +860,7 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
                 let mut bufs = bufs_cell.borrow_mut();
 
                 let streaming_fields = flattener.flatten(event, &self.segments_tree)?;
-
-                // Sort by path for automaton matching
-                streaming_fields.sort_unstable_by(|a, b| a.path.cmp(&b.path));
-
-                let raw_matches = self
-                    .automaton
-                    .matches_for_fields_direct(streaming_fields, &mut bufs);
-
-                Ok(self.filter_deleted_matches(raw_matches))
+                self.match_fields(streaming_fields, &mut bufs)
             })
         })
     }
@@ -822,19 +889,36 @@ impl<X: Clone + Eq + Hash + Send + Sync> Quamina<X> {
             })
             .collect();
 
-        // Sort by path for automaton matching
-        streaming_fields.sort_unstable_by(|a, b| a.path.cmp(&b.path));
-
         // Get matches from automaton using thread-local NFA buffers
-        let matches = TL_NFA_BUFS.with(|bufs_cell| {
+        TL_NFA_BUFS.with(|bufs_cell| {
             let mut bufs = bufs_cell.borrow_mut();
-            let raw_matches = self
-                .automaton
-                .matches_for_fields_direct(&streaming_fields, &mut bufs);
-            self.filter_deleted_matches(raw_matches)
-        });
+            self.match_fields(&mut streaming_fields, &mut bufs)
+        })
+    }
 
-        Ok(matches)
+    /// Run a flattened event's fields through the automaton, sorted by path,
+    /// and drop the IDs of deleted patterns.
+    ///
+    /// Like Go's `matchesForFields`, a panic here becomes an error. That covers
+    /// the `Clone`, `Hash` and `Eq` of `X`, which matching and the deleted-ID
+    /// filter both call. Flattening stays outside, as in Go, so a custom
+    /// flattener's panic is its caller's. `bufs` is cleared at the start of
+    /// every match, so a panic leaves nothing in it for the next one, and the
+    /// lazy DFA caches matching fills are emptied in case one was mid-update.
+    fn match_fields(
+        &self,
+        fields: &mut [flatten_json::Field<'_>],
+        bufs: &mut NfaBuffers,
+    ) -> Result<Vec<X>, QuaminaError> {
+        panic::catch_unwind(AssertUnwindSafe(|| {
+            fields.sort_unstable_by(|a, b| a.path.cmp(&b.path));
+            let raw_matches = self.automaton.matches_for_fields_direct(fields, bufs);
+            self.filter_deleted_matches(raw_matches)
+        }))
+        .map_err(|payload| {
+            self.automaton.reset_lazy_dfas();
+            panicked("matches_for_event", payload.as_ref())
+        })
     }
 
     /// Build a fresh automaton and segments tree from the live pattern

@@ -39,6 +39,7 @@ use smallvec::{SmallVec, smallvec};
 
 use super::small_table::{AccelInfo, BYTE_CEILING, BYTE_CEILING_U8, FieldMatcher};
 use super::sparse_set::SparseSet;
+use crate::QuaminaError;
 
 /// A state identifier - just an index into the arena.
 ///
@@ -855,10 +856,24 @@ impl StateArena {
         &mut self,
         scratch: &mut ClosureScratch,
     ) -> usize {
+        self.precompute_epsilon_closures_within(scratch, 0)
+            .expect("an unlimited budget is never exceeded")
+    }
+
+    /// [`Self::precompute_epsilon_closures_into`], failing as soon as the arena
+    /// passes `budget` bytes (0 means unlimited). Closures can grow with the
+    /// square of the state count, so this is where a fresh automaton is most
+    /// likely to outgrow its budget. A failed pass leaves the closures
+    /// unfinished, so the arena is only fit to be dropped.
+    pub(crate) fn precompute_epsilon_closures_within(
+        &mut self,
+        scratch: &mut ClosureScratch,
+        budget: usize,
+    ) -> Result<usize, QuaminaError> {
         let arena_len = self.states.len();
         let start_idx = self.closures_computed;
         if start_idx >= arena_len {
-            return 0;
+            return Ok(0);
         }
 
         // Reuse the settled prefix and re-close only the new tail; a
@@ -932,13 +947,21 @@ impl StateArena {
                         .expect("epsilon closure exceeds u16::MAX states");
                     closure_data.extend_from_slice(closure_buf.as_slice());
                     self.states[state_idx].closure_len = len;
+                    if budget != 0 {
+                        let size = self.estimated_byte_size()
+                            + closure_data.capacity() * std::mem::size_of::<StateId>();
+                        if let Err(err) = check_byte_budget(size, budget) {
+                            self.closure_data = closure_data;
+                            return Err(err);
+                        }
+                    }
                 }
             }
         }
 
         self.closure_data = closure_data;
         self.closures_computed = arena_len;
-        arena_len - start_idx
+        Ok(arena_len - start_idx)
     }
 
     /// Build frozen lookup structures for fast traversal.
@@ -964,19 +987,18 @@ impl StateArena {
         }
         let mut ft_ptrs = Vec::new();
 
-        for state_idx in 0..arena_len {
-            let state = &self.states[state_idx];
+        for state in &mut self.states {
             let ft_start = ft_ptrs.len();
             let ft_len = state.field_transitions.len();
             for ft in &state.field_transitions {
                 ft_ptrs.push(Arc::as_ptr(ft) as usize);
             }
-            self.states[state_idx].ft_start = buffer_offset_u32(ft_start, "ft_start offset");
+            state.ft_start = buffer_offset_u32(ft_start, "ft_start offset");
             // `ft_len` is u8 because we expect 0 or 1 field transitions per
             // state in practice (the SmallVec is sized for that). Anything
             // approaching 256 would mean something else has already gone
             // very wrong.
-            self.states[state_idx].ft_len =
+            state.ft_len =
                 u8::try_from(ft_len).expect("per-state field_transitions.len() fits in u8");
         }
         self.ft_ptrs = ft_ptrs;
@@ -996,8 +1018,7 @@ impl StateArena {
         }
         let mut dfa_lookup = vec![StateId::NONE; arena_len * 256];
 
-        for state_idx in 0..arena_len {
-            let state = &self.states[state_idx];
+        for (state_idx, state) in self.states.iter().enumerate() {
             let ceilings = state.table.ceilings.as_slice();
             let steps = state.table.steps.as_slice();
 
@@ -1289,6 +1310,7 @@ struct LazyDfaState {
 /// still "snap back" to a cached state on the next byte transition.
 pub(crate) struct LazyDfa {
     nfa_arena: StateArena,
+    nfa_start: StateId,
     states: Vec<LazyDfaState>,
     state_map: FxHashMap<Vec<u32>, StateId>,
     nfa_sets: Vec<Vec<StateId>>,
@@ -1309,22 +1331,33 @@ impl LazyDfa {
         );
         let mut lazy = Self {
             nfa_arena,
+            nfa_start,
             states: Vec::new(),
             state_map: FxHashMap::default(),
             nfa_sets: Vec::new(),
             state_budget,
             cached_count: 0,
         };
+        lazy.reset();
+        lazy
+    }
+
+    /// Drop every cached DFA state and start again from the NFA start state,
+    /// as if just created. A panic part way through caching a state can leave
+    /// the cache inconsistent, and this is how matching recovers from one.
+    pub fn reset(&mut self) {
+        self.states = Vec::new();
+        self.state_map = FxHashMap::default();
+        self.nfa_sets = Vec::new();
+        self.cached_count = 0;
 
         // Create the start state from the NFA start's epsilon closure
-        if !nfa_start.is_none() {
+        if !self.nfa_start.is_none() {
             let mut closure = Vec::new();
-            lazy.nfa_arena
-                .extend_closure_or_self(nfa_start, &mut closure);
-            lazy.intern_state(&closure, true);
+            self.nfa_arena
+                .extend_closure_or_self(self.nfa_start, &mut closure);
+            self.intern_state(&closure, true);
         }
-
-        lazy
     }
 
     fn intern_state(&mut self, nfa_states: &[StateId], allow_cache: bool) -> StateId {
@@ -1456,8 +1489,8 @@ impl LazyDfa {
         };
 
         // Verify: each exit byte must NOT self-loop in the lazy DFA
-        for i in 0..accel.len as usize {
-            let next = self.step(state_idx, accel.exit_bytes[i], scratch);
+        for &byte in &accel.exit_bytes[..accel.len as usize] {
+            let next = self.step(state_idx, byte, scratch);
             if next == state_idx {
                 return;
             }
@@ -2025,16 +2058,38 @@ pub fn merge_arena_dfas(
 
 /// Clone a subset of an arena starting from a given state.
 pub(crate) fn clone_arena_subset(arena: &StateArena, start: StateId) -> (StateArena, StateId) {
+    clone_arena_subset_within(arena, start, 0).expect("an unlimited budget is never exceeded")
+}
+
+/// [`clone_arena_subset`], failing once the clone passes `budget` bytes (0
+/// means unlimited). The clone has no more states than `arena`, but its
+/// epsilon closures can still outgrow the budget.
+pub(crate) fn clone_arena_subset_within(
+    arena: &StateArena,
+    start: StateId,
+    budget: usize,
+) -> Result<(StateArena, StateId), QuaminaError> {
     if start.is_none() {
-        return (StateArena::new(), StateId::NONE);
+        return Ok((StateArena::new(), StateId::NONE));
     }
 
     let mut new_arena = StateArena::new();
     let mut id_map: FxHashMap<u32, StateId> = FxHashMap::default();
 
     let new_start = clone_states_into_arena(arena, start, &mut new_arena, &mut id_map);
-    new_arena.precompute_epsilon_closures();
-    (new_arena, new_start)
+    new_arena.precompute_epsilon_closures_within(&mut ClosureScratch::new(), budget)?;
+    Ok((new_arena, new_start))
+}
+
+/// Fail with [`QuaminaError::PatternTooComplex`] if an arena of `size` bytes
+/// is over `budget`. A budget of 0 means unlimited.
+pub(crate) fn check_byte_budget(size: usize, budget: usize) -> Result<(), QuaminaError> {
+    if budget != 0 && size > budget {
+        return Err(QuaminaError::PatternTooComplex(format!(
+            "automaton byte size ({size} bytes) exceeds budget ({budget} bytes)"
+        )));
+    }
+    Ok(())
 }
 
 /// Clone `start` and everything it reaches into `target`. Records old-to-new
@@ -2311,12 +2366,15 @@ fn unpack_arena_table(table: &SmallTable, unpacked: &mut [StateId; BYTE_CEILING]
 ///
 /// New states are appended to `arena`; the original branch entries are left
 /// unreachable and dropped by the later reachability compaction
-/// ([`clone_arena_subset`]).
+/// ([`clone_arena_subset`]). Merging many branches can allocate far more than
+/// the branches themselves, so the fold fails once the arena passes `budget`
+/// bytes (0 means unlimited).
 pub(crate) fn determinize_branch_starts(
     arena: &mut StateArena,
     starts: &[StateId],
     next_step: StateId,
-) -> StateId {
+    budget: usize,
+) -> Result<StateId, QuaminaError> {
     debug_assert!(
         !starts.is_empty(),
         "alternation must have at least one branch"
@@ -2327,9 +2385,9 @@ pub(crate) fn determinize_branch_starts(
     let mut memo: FxHashMap<(StateId, StateId), StateId> = FxHashMap::default();
     for &next in &starts[1..] {
         memo.clear();
-        acc = merge_branch_pair(arena, acc, next, next_step, &mut memo);
+        acc = merge_branch_pair(arena, acc, next, next_step, &mut memo, budget)?;
     }
-    acc
+    Ok(acc)
 }
 
 /// Merge two alternation branch states within a single arena. `boundary` is the
@@ -2343,15 +2401,17 @@ fn merge_branch_pair(
     b: StateId,
     boundary: StateId,
     memo: &mut FxHashMap<(StateId, StateId), StateId>,
-) -> StateId {
+    budget: usize,
+) -> Result<StateId, QuaminaError> {
     let mut pending: Vec<(StateId, StateId, StateId)> = Vec::new();
     let start = resolve_branch_pair(arena, a, b, memo, &mut pending);
 
     while let Some((a, b, new_id)) = pending.pop() {
         fill_merged_branch_state(arena, a, b, new_id, boundary, memo, &mut pending);
+        check_byte_budget(arena.estimated_byte_size(), budget)?;
     }
 
-    start
+    Ok(start)
 }
 
 /// The state a pair of branch states merges into, allocating and queueing it

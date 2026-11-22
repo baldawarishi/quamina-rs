@@ -11,17 +11,16 @@ use rustc_hash::FxHashMap;
 
 use smallvec::smallvec;
 
+use crate::QuaminaError;
 use crate::automaton::{
     BYTE_CEILING, FieldMatcher,
     arena::{
-        ARENA_VALUE_TERMINATOR, SmallTable, StateArena, StateId, clone_arena_subset,
-        determinize_branch_starts,
+        ARENA_VALUE_TERMINATOR, ClosureScratch, SmallTable, StateArena, StateId, check_byte_budget,
+        clone_arena_subset_within, determinize_branch_starts,
     },
 };
 
-use super::parser::{
-    Branch as RegexpBranch, QuantifiedAtom, REGEXP_QUANTIFIER_MAX, Root as RegexpRoot, RuneRange,
-};
+use super::parser::{QuantifiedAtom, REGEXP_QUANTIFIER_MAX, Root as RegexpRoot, RuneRange, atoms};
 
 // ============================================================================
 // UTF-8 Encoding Constants
@@ -56,38 +55,14 @@ fn regexp_has_alternation(root: &RegexpRoot) -> bool {
     // More than one branch at any level means alternation. Compaction past this
     // gate only drops states that folding left unreachable, so gating it avoids
     // pointlessly cloning patterns that have none.
-    if root.len() > 1 {
-        return true;
-    }
-    for branch in root {
-        for qa in branch {
-            if let Some(ref subtree) = qa.subtree
-                && regexp_has_alternation(subtree)
-            {
-                return true;
-            }
-        }
-    }
-    false
+    root.len() > 1
+        || atoms(root).any(|qa| qa.subtree.as_ref().is_some_and(|subtree| subtree.len() > 1))
 }
 
 /// Check if a regexp tree has any `+` or `*` quantifiers that would benefit from arena-based NFA.
 #[must_use]
 pub fn regexp_has_plus_star(root: &RegexpRoot) -> bool {
-    for branch in root {
-        for qa in branch {
-            if qa.is_plus() || qa.is_star() {
-                return true;
-            }
-            // Recursively check subtrees (parenthesized groups)
-            if let Some(ref subtree) = qa.subtree
-                && regexp_has_plus_star(subtree)
-            {
-                return true;
-            }
-        }
-    }
-    false
+    atoms(root).any(|qa| qa.is_plus() || qa.is_star())
 }
 
 // ============================================================================
@@ -103,6 +78,19 @@ pub fn regexp_has_plus_star(root: &RegexpRoot) -> bool {
 /// A tuple of (arena, start_state_id, field_matcher)
 #[must_use]
 pub fn make_regexp_nfa_arena(root: RegexpRoot) -> (StateArena, StateId, Arc<FieldMatcher>) {
+    make_regexp_nfa_arena_within(&root, 0).expect("an unlimited budget is never exceeded")
+}
+
+/// [`make_regexp_nfa_arena`], failing with [`QuaminaError::PatternTooComplex`]
+/// as soon as the arena passes `budget` bytes (0 means unlimited).
+///
+/// Nested repeats multiply: `((a{99}){99}){99}` is 17 characters and nearly a
+/// million states. Checking only the finished arena would let a short regexp
+/// cost far more memory and time than the budget allows before it is refused.
+pub fn make_regexp_nfa_arena_within(
+    root: &RegexpRoot,
+    budget: usize,
+) -> Result<(StateArena, StateId, Arc<FieldMatcher>), QuaminaError> {
     let next_field = Arc::new(FieldMatcher::new());
 
     // Handle empty regexp specially - it matches only the empty string
@@ -154,7 +142,7 @@ pub fn make_regexp_nfa_arena(root: RegexpRoot) -> (StateArena, StateId, Arc<Fiel
             arena.alloc_with_table(SmallTable::with_mappings(StateId::NONE, b"\"", &[vt_state]));
 
         // Build the NFA from branches
-        let branch_start = make_arena_nfa_from_branches(&root, &mut arena, next_step);
+        let branch_start = make_arena_nfa_from_branches(root, &mut arena, next_step, budget)?;
 
         // Wrap with leading quote at the top level only
         let start = arena.alloc_with_table(SmallTable::with_mappings(
@@ -166,108 +154,157 @@ pub fn make_regexp_nfa_arena(root: RegexpRoot) -> (StateArena, StateId, Arc<Fiel
         (arena, start)
     };
 
-    if regexp_has_alternation(&root) {
+    let (arena, start) = if regexp_has_alternation(root) {
         // Folded branches leave their original entry states unreachable. Rebuild
         // from the reachable set so they don't bloat this arena and every later
         // merge that clones it; the rebuild also precomputes the epsilon
         // closures.
-        let (arena, start) = clone_arena_subset(&arena, start);
-        (arena, start, next_field)
+        clone_arena_subset_within(&arena, start, budget)?
     } else {
-        arena.precompute_epsilon_closures();
-        (arena, start, next_field)
-    }
+        arena.precompute_epsilon_closures_within(&mut ClosureScratch::new(), budget)?;
+        (arena, start)
+    };
+    check_byte_budget(arena.estimated_byte_size(), budget)?;
+    Ok((arena, start, next_field))
+}
+
+/// One step of building a regexp NFA back to front.
+///
+/// Every construct continues to some state that is already built. A step finds
+/// that continuation on top of the state stack and replaces it with the entry
+/// state of what it built, so a group's body is built by queueing its steps
+/// rather than by recursing, and nesting depth costs heap instead of stack.
+enum BuildStep<'a> {
+    /// Alternatives sharing one continuation: a group's body or the regexp.
+    Branches(&'a RegexpRoot),
+    /// An atom with its quantifier.
+    Quantified(&'a QuantifiedAtom),
+    /// One copy of an atom, which may be skipped.
+    Optional(&'a QuantifiedAtom),
+    /// One copy of an atom.
+    Body(&'a QuantifiedAtom),
+    /// Give the copy just built a skip to `target`.
+    Skip { target: StateId, compound: bool },
+    /// Close the `+`/`*` loop whose body was just built ahead of `loopback`.
+    CloseLoop {
+        qa: &'a QuantifiedAtom,
+        loopback: StateId,
+        exit: StateId,
+    },
+    /// Make `next` the continuation of the branch about to be built.
+    Continue(StateId),
+    /// Fold the `count` branch entries just built into one entry.
+    Fold { count: usize, next: StateId },
 }
 
 /// Build arena NFA from branches (alternatives).
 ///
 /// This function does NOT add quote wrapping — that is handled by the
-/// top-level `make_regexp_nfa_arena` caller. Subtrees (groups) also call
-/// this function and must not add quotes.
+/// top-level `make_regexp_nfa_arena` caller. Groups are built by the same
+/// steps and must not add quotes either.
 fn make_arena_nfa_from_branches(
     root: &RegexpRoot,
     arena: &mut StateArena,
     next_step: StateId,
-) -> StateId {
-    if root.is_empty() {
-        return next_step;
-    }
+    budget: usize,
+) -> Result<StateId, QuaminaError> {
+    let mut steps = vec![BuildStep::Branches(root)];
+    let mut states = vec![next_step];
+    let continuation = |states: &mut Vec<StateId>| {
+        states
+            .pop()
+            .expect("every build step has a continuation to read")
+    };
 
-    if root.len() == 1 {
-        // Single branch - no alternation needed
-        return make_one_arena_branch_fa(&root[0], arena, next_step);
-    }
+    while let Some(step) = steps.pop() {
+        check_byte_budget(arena.estimated_byte_size(), budget)?;
+        match step {
+            // An empty group matches nothing here: its entry is its continuation.
+            BuildStep::Branches(root) if root.is_empty() => {}
+            BuildStep::Branches(root) => {
+                // Build every branch against the same continuation, then fold
+                // them into one deterministic byte-dispatch entry that
+                // re-converges at that continuation; a lone branch folds to its
+                // own entry. A branch's atoms are built back to front. An empty
+                // alternative (e.g. the trailing `|` in `(a|b|)`) contributes
+                // the continuation itself as a branch start, so "match nothing
+                // here" stays a reachable option.
+                let next = continuation(&mut states);
+                steps.push(BuildStep::Fold {
+                    count: root.len(),
+                    next,
+                });
+                for branch in root.iter().rev() {
+                    steps.extend(branch.iter().map(BuildStep::Quantified));
+                    steps.push(BuildStep::Continue(next));
+                }
+            }
+            BuildStep::Quantified(qa) if qa.is_plus() || qa.is_star() => {
+                // Arena-based cyclic NFA for + and *
+                let exit = continuation(&mut states);
+                let loopback = arena.alloc();
+                steps.push(BuildStep::CloseLoop { qa, loopback, exit });
+                steps.push(BuildStep::Body(qa));
+                states.push(loopback);
+            }
+            BuildStep::Quantified(qa) => {
+                // `{n,m}`, which also covers `?` as `{0,1}` and a bare atom as
+                // `{1,1}`. The parser only ever stores non-negative counts
+                // here; if that ever stops being true we'd rather panic than
+                // silently turn a stray -1 into a 4-billion-iteration loop.
+                let n = usize::try_from(qa.quant_min).expect("quant_min must be non-negative");
+                let m = usize::try_from(qa.quant_max).expect("quant_max must be non-negative");
 
-    // Build every branch against the same continuation, then fold them into one
-    // deterministic byte-dispatch entry that re-converges at that continuation.
-    // An empty alternative (e.g. the trailing `|` in `(a|b|)`) contributes the
-    // continuation itself as a branch start, so "match nothing here" stays a
-    // reachable option.
-    let mut branch_starts = Vec::with_capacity(root.len());
-    for branch in root {
-        if branch.is_empty() {
-            branch_starts.push(next_step);
-        } else {
-            branch_starts.push(make_one_arena_branch_fa(branch, arena, next_step));
+                // One state is allocated per repetition, so this expansion
+                // relies on the parser capping both counts. `{n,}` and
+                // `{n,100}` reach this path with quant_max equal to the +/*
+                // sentinel when n > 1.
+                debug_assert!(
+                    qa.quant_max <= REGEXP_QUANTIFIER_MAX,
+                    "parser must bound quantifier repetition counts"
+                );
+
+                // The m-n optional copies, each with a skip, sit nearest the
+                // continuation and are built first; the n required copies go
+                // in front of them.
+                steps.extend((0..n).map(|_| BuildStep::Body(qa)));
+                steps.extend((n..m).map(|_| BuildStep::Optional(qa)));
+            }
+            BuildStep::Optional(qa) => {
+                let target = *states.last().expect("an optional copy has a continuation");
+                steps.push(BuildStep::Skip {
+                    target,
+                    compound: qa.subtree.is_some(),
+                });
+                steps.push(BuildStep::Body(qa));
+            }
+            BuildStep::Body(qa) => {
+                if let Some(subtree) = &qa.subtree {
+                    steps.push(BuildStep::Branches(subtree));
+                } else {
+                    let next = continuation(&mut states);
+                    states.push(make_arena_atom_fa(qa, arena, next));
+                }
+            }
+            BuildStep::Skip { target, compound } => {
+                let entry = continuation(&mut states);
+                states.push(add_skip_epsilon(arena, entry, target, compound));
+            }
+            BuildStep::CloseLoop { qa, loopback, exit } => {
+                let start = continuation(&mut states);
+                states.push(close_arena_plus_star_loop(qa, arena, start, loopback, exit));
+            }
+            BuildStep::Continue(next) => states.push(next),
+            BuildStep::Fold { count, next } => {
+                let first = states.len() - count;
+                let entry = determinize_branch_starts(arena, &states[first..], next, budget)?;
+                states.truncate(first);
+                states.push(entry);
+            }
         }
     }
 
-    determinize_branch_starts(arena, &branch_starts, next_step)
-}
-
-/// Build arena NFA for one branch (sequence of atoms).
-fn make_one_arena_branch_fa(
-    branch: &RegexpBranch,
-    arena: &mut StateArena,
-    next_step: StateId,
-) -> StateId {
-    let mut current_next = next_step;
-
-    // Process atoms back to front
-    for qa in branch.iter().rev() {
-        let original_next = current_next;
-
-        if qa.is_plus() || qa.is_star() {
-            // Arena-based cyclic NFA for + and *
-            current_next = create_arena_plus_star_loop(qa, arena, original_next, qa.is_star());
-        } else if qa.is_qm() {
-            // Optional: build atom FA with epsilon to skip
-            let atom_state = make_arena_atom_fa(qa, arena, current_next);
-            current_next = add_skip_epsilon(arena, atom_state, original_next, qa.subtree.is_some());
-        } else if qa.is_singleton() {
-            // No quantifier - simple FA
-            current_next = make_arena_atom_fa(qa, arena, current_next);
-        } else {
-            // General {n,m} quantifier. The parser only ever stores
-            // non-negative counts here; if that ever stops being true we'd
-            // rather panic than silently turn a stray -1 into a 4-billion-
-            // iteration loop.
-            let n = usize::try_from(qa.quant_min).expect("quant_min must be non-negative");
-            let m = usize::try_from(qa.quant_max).expect("quant_max must be non-negative");
-
-            // One state is allocated per repetition, so this expansion relies
-            // on the parser capping both counts. `{n,}` and `{n,100}` reach
-            // this path with quant_max equal to the +/* sentinel when n > 1.
-            debug_assert!(
-                qa.quant_max <= REGEXP_QUANTIFIER_MAX,
-                "parser must bound quantifier repetition counts"
-            );
-
-            // First, build the optional part (m-n copies, each with epsilon skip)
-            for _ in n..m {
-                let atom_state = make_arena_atom_fa(qa, arena, current_next);
-                current_next =
-                    add_skip_epsilon(arena, atom_state, current_next, qa.subtree.is_some());
-            }
-
-            // Then, build the required part (n copies, no epsilon skip)
-            for _ in 0..n {
-                current_next = make_arena_atom_fa(qa, arena, current_next);
-            }
-        }
-    }
-
-    current_next
+    Ok(continuation(&mut states))
 }
 
 /// Wire a quantified atom's "match zero copies" skip (the bypass edge for `*`,
@@ -306,18 +343,16 @@ fn add_skip_epsilon(
 ///
 /// Structure for [abc]*:
 /// - Same as above, plus start has epsilon to exit (can match zero times)
-fn create_arena_plus_star_loop(
+///
+/// `loopback` is allocated before the body, and `start` is the body's entry
+/// built to continue to it.
+fn close_arena_plus_star_loop(
     qa: &QuantifiedAtom,
     arena: &mut StateArena,
+    start: StateId,
+    loopback: StateId,
     exit_state: StateId,
-    is_star: bool,
 ) -> StateId {
-    // Loopback state - will have epsilons to exit and back to start
-    let loopback = arena.alloc();
-
-    // Start state - matches the atom, transitions to loopback
-    let start = make_arena_atom_fa(qa, arena, loopback);
-
     // Set up loopback's epsilons: to exit AND back to start (CYCLE!)
     arena[loopback].table.epsilons = smallvec![exit_state, start];
 
@@ -347,19 +382,17 @@ fn create_arena_plus_star_loop(
     }
 
     // For *, offer the "match zero copies" bypass straight to the exit.
-    if is_star {
+    if qa.is_star() {
         add_skip_epsilon(arena, start, exit_state, qa.subtree.is_some())
     } else {
         start
     }
 }
 
-/// Build arena FA for a single atom.
+/// Build arena FA for a single atom that is not a group.
 fn make_arena_atom_fa(qa: &QuantifiedAtom, arena: &mut StateArena, next: StateId) -> StateId {
     if qa.is_dot {
         make_arena_dot_fa(arena, next)
-    } else if let Some(ref subtree) = qa.subtree {
-        make_arena_nfa_from_branches(subtree, arena, next)
     } else if let Some(ref cache_key) = qa.cache_key {
         // Use compact non-word char FA for word boundary expansion
         if cache_key == "wb_W" {
@@ -923,6 +956,16 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_regexp_has_alternation() {
+        let has_alternation =
+            |re: &str| regexp_has_alternation(&crate::regexp::parse_regexp(re).unwrap());
+        assert!(has_alternation("a|b"));
+        assert!(has_alternation("x(a|b)"));
+        assert!(!has_alternation("ab"));
+        assert!(!has_alternation("x(ab)"));
+    }
+
+    #[test]
     fn test_remaining_byte_depth() {
         // Verifies the residual-depth formula for 2-, 3-, and 4-byte UTF-8 encodings
         // across all recursion indices and per-call offsets used by the callers.
@@ -991,6 +1034,100 @@ mod tests {
     #[test]
     fn test_clear_fa_shell_cache_drops_entries_miri_friendly() {
         verify_shell_cache_populate_then_clear("~p{Cc}");
+    }
+
+    /// Build `root` within `budget`, which must fail, and return the arena size
+    /// the error reports: where the build stopped.
+    fn stopped_at(root: &RegexpRoot, budget: usize) -> usize {
+        let Err(err) = make_regexp_nfa_arena_within(root, budget) else {
+            panic!("the build must not fit {budget} bytes");
+        };
+        let msg = err.to_string();
+        let size = msg
+            .split_once("automaton byte size (")
+            .and_then(|(_, rest)| rest.split_once(" bytes)"))
+            .unwrap_or_else(|| panic!("not a budget error: {msg}"))
+            .0;
+        size.parse().unwrap()
+    }
+
+    /// Nested repeats would build nearly a million states here, hundreds of
+    /// megabytes; the build has to stop within a few doublings of the budget.
+    #[test]
+    #[cfg_attr(miri, ignore = "minutes under Miri; smaller tests run this build code")]
+    fn test_regexp_build_stops_at_budget() {
+        let budget = 64 * 1024;
+        for re in ["((a{99}){99}){99}", "(x|((a{99}){99}){99})"] {
+            let root = crate::regexp::parse_regexp(re).unwrap();
+            let size = stopped_at(&root, budget);
+            assert!(
+                size > budget && size < 4 * budget,
+                "{re}: stopped at {size}"
+            );
+        }
+    }
+
+    /// Nested optionals give each state an epsilon closure that reaches most of
+    /// the states after it, so the closures outweigh the states many times
+    /// over. Each budget fits the states (about 18 KB) and sits below the
+    /// closure buffer's last doubling, so the closure pass has to stop before
+    /// it finishes. The alternation closes its states while dropping the
+    /// unreachable branch entries.
+    #[test]
+    #[cfg_attr(miri, ignore = "minutes under Miri; smaller tests run this build code")]
+    fn test_regexp_closures_stop_at_budget() {
+        for (re, budget) in [
+            ("((a?){10}){10}", 32 * 1024),
+            ("(x|((a?){10}){10})", 24 * 1024),
+        ] {
+            let root = crate::regexp::parse_regexp(re).unwrap();
+            let (full, _, _) = make_regexp_nfa_arena(root.clone());
+            let size = stopped_at(&root, budget);
+            assert!(
+                size > budget && size < full.estimated_byte_size(),
+                "{re}: stopped at {size} of {}",
+                full.estimated_byte_size()
+            );
+        }
+    }
+
+    /// Folding branches that share a prefix copies that prefix once per merge,
+    /// so the fold can outgrow branches that fit the budget together, and the
+    /// compaction afterwards shrinks the arena back under it. Only a check
+    /// inside the fold sees the overrun.
+    #[test]
+    #[cfg_attr(miri, ignore = "minutes under Miri; smaller tests run this build code")]
+    fn test_regexp_fold_stops_at_budget() {
+        let budget = 24 * 1024;
+        let branches: Vec<String> = ('a'..='h').map(|c| format!("xxxxxxxx{c}")).collect();
+        let root = crate::regexp::parse_regexp(&branches.join("|")).unwrap();
+
+        // Every branch built side by side, the way they sit before the fold.
+        let mut unfolded = StateArena::with_capacity(16);
+        let next = unfolded.alloc();
+        for branch in &root {
+            make_arena_nfa_from_branches(&vec![branch.clone()], &mut unfolded, next, 0).unwrap();
+        }
+        assert!(unfolded.estimated_byte_size() < budget);
+        let (finished, _, _) = make_regexp_nfa_arena(root.clone());
+        assert!(finished.estimated_byte_size() < budget);
+
+        let size = stopped_at(&root, budget);
+        assert!(size > budget && size < 2 * budget, "stopped at {size}");
+    }
+
+    /// A budget the finished automaton fits is not exceeded part way.
+    #[test]
+    #[cfg_attr(miri, ignore = "minutes under Miri; smaller tests run this build code")]
+    fn test_regexp_build_within_budget_matches_unlimited_build() {
+        for re in ["((a?){10}){10}", "(x|((a?){10}){10})", ""] {
+            let root = crate::regexp::parse_regexp(re).unwrap();
+            let (full, _, _) = make_regexp_nfa_arena(root.clone());
+            let size = full.estimated_byte_size();
+            let (within, _, _) = make_regexp_nfa_arena_within(&root, size).unwrap();
+            assert_eq!(within.len(), full.len(), "{re}");
+            assert_eq!(stopped_at(&root, size - 1), size, "{re}");
+        }
     }
 
     #[test]

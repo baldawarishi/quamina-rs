@@ -8,8 +8,24 @@ Style inspired by [ripgrep's CHANGELOG](https://github.com/BurntSushi/ripgrep/bl
 
 ## [Unreleased]
 
+### Added
+- `add_pattern` and `matches_for_event` return the new `QuaminaError::Panicked` instead of panicking, like Go's `recover()` in `AddPattern` and `MatchesForEvent`; a custom flattener's panics still unwind, and a caught match panic empties the lazy DFA caches in case one was mid-update
+
+### Fixed
+- Deeply nested patterns, regexps and events no longer overflow the stack and abort the process; regexp groups nest without limit, patterns up to `max_pattern_depth`, and events to any depth (ported from Go a4e063e)
+- Reading a regexp's characters takes linear time; each one used to re-validate the rest of the string
+- A lookbehind whose repeats overflow its fixed length is rejected instead of panicking in debug builds
+- Debug-formatting a deeply nested regexp or `SegmentsTree` no longer overflows the stack; output stops after 64 levels
+- A pattern field under an empty top-level member name, like `{"": {"x": [1]}}`, matches that path as in Go instead of the top-level `x`
+
 ### Changed
 - Commit `Cargo.lock` so local builds, CI, and audits resolve the same dependency versions (#195)
+- `max_pattern_depth` defaults to 10000, Go's JSON nesting limit, up from 256
+- The arena byte budget applies while a regexp's automaton is built, not only once it is finished, so `((a{99}){99}){99}` is refused at about the budget instead of after building 150 MB; a long alternation whose build passes the budget is refused even if the finished automaton would fit
+
+### Breaking
+- `QuaminaError` is `#[non_exhaustive]`, so matches on it need a wildcard arm
+- `regexp::QuantifiedAtom::subtree` is an `Option<RegexpSubtree>` (was `Option<RegexpRoot>`), which derefs to the root and drops it without recursing
 
 ## [0.7.0] — 2026-08-03
 
