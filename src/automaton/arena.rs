@@ -987,19 +987,18 @@ impl StateArena {
         }
         let mut ft_ptrs = Vec::new();
 
-        for state_idx in 0..arena_len {
-            let state = &self.states[state_idx];
+        for state in &mut self.states {
             let ft_start = ft_ptrs.len();
             let ft_len = state.field_transitions.len();
             for ft in &state.field_transitions {
                 ft_ptrs.push(Arc::as_ptr(ft) as usize);
             }
-            self.states[state_idx].ft_start = buffer_offset_u32(ft_start, "ft_start offset");
+            state.ft_start = buffer_offset_u32(ft_start, "ft_start offset");
             // `ft_len` is u8 because we expect 0 or 1 field transitions per
             // state in practice (the SmallVec is sized for that). Anything
             // approaching 256 would mean something else has already gone
             // very wrong.
-            self.states[state_idx].ft_len =
+            state.ft_len =
                 u8::try_from(ft_len).expect("per-state field_transitions.len() fits in u8");
         }
         self.ft_ptrs = ft_ptrs;
@@ -1019,8 +1018,7 @@ impl StateArena {
         }
         let mut dfa_lookup = vec![StateId::NONE; arena_len * 256];
 
-        for state_idx in 0..arena_len {
-            let state = &self.states[state_idx];
+        for (state_idx, state) in self.states.iter().enumerate() {
             let ceilings = state.table.ceilings.as_slice();
             let steps = state.table.steps.as_slice();
 
@@ -1479,8 +1477,8 @@ impl LazyDfa {
         };
 
         // Verify: each exit byte must NOT self-loop in the lazy DFA
-        for i in 0..accel.len as usize {
-            let next = self.step(state_idx, accel.exit_bytes[i], scratch);
+        for &byte in &accel.exit_bytes[..accel.len as usize] {
+            let next = self.step(state_idx, byte, scratch);
             if next == state_idx {
                 return;
             }
