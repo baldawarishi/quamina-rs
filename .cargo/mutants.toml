@@ -12,11 +12,12 @@ test_tool = "nextest"
 
 # Only mutate real source code, not generated tables or test fixtures
 exclude_globs = [
-  "src/case_folding.rs",       # auto-generated Unicode tables
-  "src/unicode_categories.rs", # auto-generated Unicode tables
-  "src/regexp_test_data.rs",   # test data loader
-  "src/test_helpers.rs",       # test utilities
-  "src/kani_proofs.rs",        # formal verification, not runtime code
+  "src/case_folding.rs",            # auto-generated Unicode tables
+  "src/unicode_categories.rs",      # Unicode block tables
+  "src/unicode_category_tables.rs", # auto-generated Unicode tables
+  "src/regexp_test_data.rs",        # test data loader
+  "src/test_helpers.rs",            # test utilities
+  "src/kani_proofs.rs",             # formal verification, not runtime code
 ]
 
 # Library unit tests only. Do NOT add `--all-targets`: it builds the Criterion
