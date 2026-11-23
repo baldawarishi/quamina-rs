@@ -671,34 +671,65 @@ pub fn fa_shell_cache_size() -> usize {
 // Rune Range to NFA (Arena version)
 // ============================================================================
 
-/// Arena version of the rune tree entry
-struct ArenaRuneTreeEntry {
-    next: Option<StateId>,
-    child: Option<ArenaRuneTreeNode>,
+/// What one byte of a UTF-8 sequence leads to in a rune range's byte tree.
+enum RuneTreeEdge {
+    /// More bytes follow, and which ones depends on this byte.
+    Child(RuneTreeNode),
+    /// Any `n` further continuation bytes complete a character of the range,
+    /// zero when this byte completes one. Such suffixes are built once per
+    /// range and shared, so a range spanning whole lead bytes costs a few
+    /// states rather than up to 64 * 64 nodes under each lead byte.
+    AnyContinuation(usize),
 }
 
-type ArenaRuneTreeNode = Vec<Option<ArenaRuneTreeEntry>>;
+type RuneTreeNode = Vec<Option<RuneTreeEdge>>;
 
-fn new_arena_rune_tree_node() -> ArenaRuneTreeNode {
+fn new_rune_tree_node() -> RuneTreeNode {
     (0..BYTE_CEILING).map(|_| None).collect()
 }
 
-fn arena_nfa_from_rune_tree(arena: &mut StateArena, root: &ArenaRuneTreeNode) -> StateId {
-    arena_table_from_rune_tree_node(arena, root)
+/// The child node under `byte`, created if need be, or `None` when every
+/// sequence through `byte` is already in the range.
+fn rune_tree_child(node: &mut RuneTreeNode, byte: u8) -> Option<&mut RuneTreeNode> {
+    match node[byte as usize].get_or_insert_with(|| RuneTreeEdge::Child(new_rune_tree_node())) {
+        RuneTreeEdge::Child(child) => Some(child),
+        RuneTreeEdge::AnyContinuation(_) => None,
+    }
 }
 
-fn arena_table_from_rune_tree_node(arena: &mut StateArena, node: &ArenaRuneTreeNode) -> StateId {
+/// Mark every sequence through `byte` followed by `depth` continuation bytes
+/// as in the range, replacing whatever part of it was added before.
+fn cover_rune_tree_byte(node: &mut RuneTreeNode, byte: u8, depth: usize) {
+    node[byte as usize] = Some(RuneTreeEdge::AnyContinuation(depth));
+}
+
+/// Allocate the states for `node`, with every completed character going to
+/// `continuations[0]`. `continuations[n]` accepts any `n` continuation bytes;
+/// the deeper ones are built on first use.
+fn arena_table_from_rune_tree_node(
+    arena: &mut StateArena,
+    node: &RuneTreeNode,
+    continuations: &mut Vec<StateId>,
+) -> StateId {
     let mut unpacked: [StateId; BYTE_CEILING] = [StateId::NONE; BYTE_CEILING];
 
-    for (b, entry_opt) in node.iter().enumerate() {
-        if let Some(entry) = entry_opt {
-            if let Some(next) = entry.next {
-                unpacked[b] = next;
-            } else if let Some(ref child) = entry.child {
-                let child_state = arena_table_from_rune_tree_node(arena, child);
-                unpacked[b] = child_state;
+    for (b, edge) in node.iter().enumerate() {
+        unpacked[b] = match edge {
+            None => continue,
+            Some(RuneTreeEdge::Child(child)) => {
+                arena_table_from_rune_tree_node(arena, child, continuations)
             }
-        }
+            Some(RuneTreeEdge::AnyContinuation(depth)) => {
+                for _ in continuations.len()..=*depth {
+                    let mut steps = [StateId::NONE; BYTE_CEILING];
+                    steps[0x80..0xC0].fill(*continuations.last().unwrap());
+                    let mut table = SmallTable::new();
+                    table.pack(&steps);
+                    continuations.push(arena.alloc_with_table(table));
+                }
+                continuations[*depth]
+            }
+        };
     }
 
     let mut table = SmallTable::new();
@@ -708,17 +739,17 @@ fn arena_table_from_rune_tree_node(arena: &mut StateArena, node: &ArenaRuneTreeN
 
 /// Build arena NFA for a rune range.
 fn make_arena_rune_range_fa(rr: &RuneRange, arena: &mut StateArena, next: StateId) -> StateId {
-    let mut root = new_arena_rune_tree_node();
+    let mut root = new_rune_tree_node();
 
     for pair in rr {
-        add_arena_rune_pair_tree_entry(&mut root, pair.lo, pair.hi, next);
+        add_arena_rune_pair_tree_entry(&mut root, pair.lo, pair.hi);
     }
 
-    arena_nfa_from_rune_tree(arena, &root)
+    arena_table_from_rune_tree_node(arena, &root, &mut vec![next])
 }
 
 /// Add a range of runes [lo, hi] to the arena tree without iterating through each code point.
-fn add_arena_rune_pair_tree_entry(root: &mut ArenaRuneTreeNode, lo: char, hi: char, dest: StateId) {
+fn add_arena_rune_pair_tree_entry(root: &mut RuneTreeNode, lo: char, hi: char) {
     let lo_u32 = lo as u32;
     let hi_u32 = hi as u32;
 
@@ -742,7 +773,7 @@ fn add_arena_rune_pair_tree_entry(root: &mut ArenaRuneTreeNode, lo: char, hi: ch
                 let pre_end = (SURROGATE_START - 1).min(segment_end);
                 if let (Some(start), Some(end)) = (char::from_u32(current), char::from_u32(pre_end))
                 {
-                    add_arena_utf8_range_to_tree(root, start, end, dest);
+                    add_arena_utf8_range_to_tree(root, start, end);
                 }
             }
             if after_surrogate(segment_end) {
@@ -750,34 +781,33 @@ fn add_arena_rune_pair_tree_entry(root: &mut ArenaRuneTreeNode, lo: char, hi: ch
                 if let (Some(start), Some(end)) =
                     (char::from_u32(post_start), char::from_u32(segment_end))
                 {
-                    add_arena_utf8_range_to_tree(root, start, end, dest);
+                    add_arena_utf8_range_to_tree(root, start, end);
                 }
             }
         } else if let (Some(start), Some(end)) =
             (char::from_u32(current), char::from_u32(segment_end))
         {
-            add_arena_utf8_range_to_tree(root, start, end, dest);
+            add_arena_utf8_range_to_tree(root, start, end);
         }
 
         current = segment_end + 1;
     }
 }
 
-fn add_arena_utf8_range_to_tree(root: &mut ArenaRuneTreeNode, lo: char, hi: char, dest: StateId) {
+fn add_arena_utf8_range_to_tree(root: &mut RuneTreeNode, lo: char, hi: char) {
     let lo_bytes = rune_to_utf8(lo);
     let hi_bytes = rune_to_utf8(hi);
 
     debug_assert_eq!(lo_bytes.len(), hi_bytes.len());
 
-    add_arena_byte_range_recursive(root, &lo_bytes, &hi_bytes, 0, dest);
+    add_arena_byte_range_recursive(root, &lo_bytes, &hi_bytes, 0);
 }
 
 fn add_arena_byte_range_recursive(
-    node: &mut ArenaRuneTreeNode,
+    node: &mut RuneTreeNode,
     lo_bytes: &[u8],
     hi_bytes: &[u8],
     idx: usize,
-    dest: StateId,
 ) {
     if idx >= lo_bytes.len() {
         return;
@@ -788,35 +818,22 @@ fn add_arena_byte_range_recursive(
     let is_last = idx == lo_bytes.len() - 1;
 
     if lo_byte == hi_byte {
-        ensure_arena_tree_entry(node, lo_byte);
-        let entry = node[lo_byte as usize].as_mut().unwrap();
-
         if is_last {
-            entry.next = Some(dest);
-        } else {
-            if entry.child.is_none() {
-                entry.child = Some(new_arena_rune_tree_node());
-            }
-            add_arena_byte_range_recursive(
-                entry.child.as_mut().unwrap(),
-                lo_bytes,
-                hi_bytes,
-                idx + 1,
-                dest,
-            );
+            cover_rune_tree_byte(node, lo_byte, 0);
+        } else if let Some(child) = rune_tree_child(node, lo_byte) {
+            add_arena_byte_range_recursive(child, lo_bytes, hi_bytes, idx + 1);
         }
     } else {
-        add_arena_lo_range_to_tree(node, lo_bytes, idx, dest);
+        add_arena_lo_range_to_tree(node, lo_bytes, idx);
 
         add_arena_middle_range_to_tree(
             node,
             lo_byte + 1,
             hi_byte - 1,
             remaining_byte_depth(lo_bytes.len(), idx, 1),
-            dest,
         );
 
-        add_arena_hi_range_to_tree(node, hi_bytes, idx, dest);
+        add_arena_hi_range_to_tree(node, hi_bytes, idx);
     }
 }
 
@@ -845,58 +862,33 @@ const fn after_surrogate(segment_end: u32) -> bool {
     segment_end > SURROGATE_END
 }
 
-fn add_arena_lo_range_to_tree(
-    node: &mut ArenaRuneTreeNode,
-    lo_bytes: &[u8],
-    idx: usize,
-    dest: StateId,
-) {
+fn add_arena_lo_range_to_tree(node: &mut RuneTreeNode, lo_bytes: &[u8], idx: usize) {
     let lo_byte = lo_bytes[idx];
     let is_last = idx == lo_bytes.len() - 1;
 
-    ensure_arena_tree_entry(node, lo_byte);
-    let entry = node[lo_byte as usize].as_mut().unwrap();
-
     if is_last {
-        entry.next = Some(dest);
-    } else {
-        if entry.child.is_none() {
-            entry.child = Some(new_arena_rune_tree_node());
-        }
-        let child = entry.child.as_mut().unwrap();
+        cover_rune_tree_byte(node, lo_byte, 0);
+    } else if let Some(child) = rune_tree_child(node, lo_byte) {
         let next_byte = lo_bytes[idx + 1];
 
-        add_arena_lo_range_to_tree(child, lo_bytes, idx + 1, dest);
+        add_arena_lo_range_to_tree(child, lo_bytes, idx + 1);
 
         add_arena_middle_range_to_tree(
             child,
             next_byte.wrapping_add(1),
             0xBF,
             remaining_byte_depth(lo_bytes.len(), idx, 2),
-            dest,
         );
     }
 }
 
-fn add_arena_hi_range_to_tree(
-    node: &mut ArenaRuneTreeNode,
-    hi_bytes: &[u8],
-    idx: usize,
-    dest: StateId,
-) {
+fn add_arena_hi_range_to_tree(node: &mut RuneTreeNode, hi_bytes: &[u8], idx: usize) {
     let hi_byte = hi_bytes[idx];
     let is_last = idx == hi_bytes.len() - 1;
 
-    ensure_arena_tree_entry(node, hi_byte);
-    let entry = node[hi_byte as usize].as_mut().unwrap();
-
     if is_last {
-        entry.next = Some(dest);
-    } else {
-        if entry.child.is_none() {
-            entry.child = Some(new_arena_rune_tree_node());
-        }
-        let child = entry.child.as_mut().unwrap();
+        cover_rune_tree_byte(node, hi_byte, 0);
+    } else if let Some(child) = rune_tree_child(node, hi_byte) {
         let next_byte = hi_bytes[idx + 1];
 
         add_arena_middle_range_to_tree(
@@ -904,57 +896,20 @@ fn add_arena_hi_range_to_tree(
             0x80,
             next_byte.wrapping_sub(1),
             remaining_byte_depth(hi_bytes.len(), idx, 2),
-            dest,
         );
 
-        add_arena_hi_range_to_tree(child, hi_bytes, idx + 1, dest);
+        add_arena_hi_range_to_tree(child, hi_bytes, idx + 1);
     }
 }
 
-fn add_arena_middle_range_to_tree(
-    node: &mut ArenaRuneTreeNode,
-    lo: u8,
-    hi: u8,
-    depth: usize,
-    dest: StateId,
-) {
-    // UTF-8 encodes at most 4 bytes, so the residual depth after peeling the
-    // first byte is at most 3. Depth growing beyond this would cause
-    // exponential state expansion.
+fn add_arena_middle_range_to_tree(node: &mut RuneTreeNode, lo: u8, hi: u8, depth: usize) {
+    // A UTF-8 sequence has at most three continuation bytes.
     debug_assert!(
         depth <= 3,
         "rune-range middle depth bounded by UTF-8 byte length, got {depth}"
     );
-    if depth == 0 {
-        for byte in lo..=hi {
-            ensure_arena_tree_entry(node, byte);
-            node[byte as usize].as_mut().unwrap().next = Some(dest);
-        }
-    } else {
-        for byte in lo..=hi {
-            ensure_arena_tree_entry(node, byte);
-            let entry = node[byte as usize].as_mut().unwrap();
-            if entry.child.is_none() {
-                entry.child = Some(new_arena_rune_tree_node());
-            }
-            add_arena_middle_range_to_tree(
-                entry.child.as_mut().unwrap(),
-                0x80,
-                0xBF,
-                depth - 1,
-                dest,
-            );
-        }
-    }
-}
-
-fn ensure_arena_tree_entry(node: &mut ArenaRuneTreeNode, byte: u8) {
-    let idx = byte as usize;
-    if node[idx].is_none() {
-        node[idx] = Some(ArenaRuneTreeEntry {
-            next: None,
-            child: None,
-        });
+    for byte in lo..=hi {
+        cover_rune_tree_byte(node, byte, depth);
     }
 }
 

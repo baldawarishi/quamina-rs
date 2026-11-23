@@ -10760,13 +10760,6 @@ mod dfa_accel_tests {
     fn test_lazy_dfa_accel_negated_char_class() {
         let (nfa, nfa_start) = build_regexp_nfa("a[^x]+x");
 
-        // NFA→DFA exceeds budget for this Unicode-heavy NFA
-        assert!(
-            nfa.nfa_to_dfa(nfa_start, 1000).is_none(),
-            "expected budget exceeded for [^x]+ Unicode NFA"
-        );
-
-        // Lazy DFA should still work and acquire AccelInfo during traversal
         let mut lazy = LazyDfa::new(nfa, nfa_start, 10_000);
 
         // Build a long value: "aaa...ax" (1000 'a's + 'x')

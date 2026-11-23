@@ -22,6 +22,7 @@ Style inspired by [ripgrep's CHANGELOG](https://github.com/BurntSushi/ripgrep/bl
 - Reject events with a literal that runs on, like `trueish`, instead of reading it as `true` (ported from Go 74ba31b)
 
 ### Changed
+- A regexp character class spanning many multi-byte characters, like `[^a]` or `~S`, shares its UTF-8 continuation states, so it builds hundreds of times faster and stays well inside the arena byte budget
 - Commit `Cargo.lock` so local builds, CI, and audits resolve the same dependency versions (#195)
 - `max_pattern_depth` defaults to 10000, Go's JSON nesting limit, up from 256
 - The arena byte budget applies while a regexp's automaton is built, not only once it is finished, so `((a{99}){99}){99}` is refused at about the budget instead of after building 150 MB; a long alternation whose build passes the budget is refused even if the finished automaton would fit
