@@ -16,6 +16,8 @@ jobs:
         run: cargo run --example smoke
       - name: Run tests
         run: cargo test
+      - name: Compare regexps with the regex crate
+        run: cargo run --example alternation_difftest -- 2000
       - name: Check formatting
         run: cargo fmt --check
       - name: Run clippy

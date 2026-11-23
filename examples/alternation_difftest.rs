@@ -8,8 +8,9 @@
 //!      both engines agree on (literals, char classes, `.`, concatenation,
 //!      alternation, groups, and `* + ? {n,m}` quantifiers).
 //!
-//! Exits non-zero on any mismatch. Run with:
-//!   cargo run --release --example alternation_difftest
+//! Both engines must accept every pattern; a pattern only one of them accepts
+//! counts as a mismatch. Exits non-zero on any mismatch. Run with:
+//!   cargo run --release --example alternation_difftest [fuzz patterns per seed]
 
 use quamina::Quamina;
 use rand::{RngExt, SeedableRng, rngs::StdRng};
@@ -38,6 +39,8 @@ const CURATED: &[&str] = &[
     "(a(b|c)d|e(f|g)h)+",
 ];
 
+/// Escapes only what the generated patterns and strings can hold, which
+/// includes no control characters.
 fn json_escape(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for ch in s.chars() {
@@ -71,15 +74,24 @@ fn enumerate(alphabet: &[char], max_len: usize) -> Vec<String> {
 /// Check one pattern against the oracle over all `strings`. Returns the mismatch
 /// count and prints the first few.
 fn check(pat: &str, strings: &[String], shown: &mut usize) -> usize {
-    let oracle = match Regex::new(&format!("^(?:{pat})$")) {
-        Ok(r) => r,
-        Err(_) => return 0, // not a valid oracle regex; skip
-    };
+    let oracle = Regex::new(&format!("^(?:{pat})$"));
     let mut q = Quamina::new();
     let pattern_json = format!(r#"{{"x": [{{"regexp": "{}"}}]}}"#, json_escape(pat));
-    if q.add_pattern("p".to_string(), &pattern_json).is_err() {
-        return 0; // quamina rejected the pattern; nothing to compare
-    }
+    let added = q.add_pattern("p".to_string(), &pattern_json);
+    let oracle = match (oracle, added) {
+        (Ok(oracle), Ok(())) => oracle,
+        (oracle, added) => {
+            if *shown < 40 {
+                *shown += 1;
+                println!(
+                    "REJECTED pat={pat:?} quamina={:?} oracle={:?}",
+                    added.err(),
+                    oracle.err()
+                );
+            }
+            return 1;
+        }
+    };
 
     let mut mismatches = 0usize;
     for s in strings {
@@ -119,8 +131,8 @@ fn gen_regexp(rng: &mut StdRng, depth: u32) -> String {
             c.to_string()
         }
         1 | 2 => {
-            // char class
-            let opts = ["[ab]", "[bc]", "[abc]", "[ac]"];
+            // char class, possibly negated
+            let opts = ["[ab]", "[bc]", "[abc]", "[ac]", "[^a]", "[^bc]"];
             opts[rng.random_range(0usize..opts.len())].to_string()
         }
         3 => {
@@ -144,11 +156,19 @@ fn gen_regexp(rng: &mut StdRng, depth: u32) -> String {
             format!("({joined})")
         }
         7 => {
-            // quantified group; the body may itself contain quantifiers.
+            // quantified group or bare atom; a group's body may itself
+            // contain quantifiers.
             let inner = gen_regexp(rng, depth - 1);
             let quantifiers = ["*", "+", "?", "{1,2}", "{0,2}", "{2,3}"];
             let q = quantifiers[rng.random_range(0usize..quantifiers.len())];
-            format!("(?:{inner}){q}")
+            if rng.random_range(0usize..2) == 0 {
+                let atom = std::iter::repeat_with(|| gen_regexp(rng, 0))
+                    .find(|atom| !atom.is_empty())
+                    .unwrap();
+                format!("{atom}{q}")
+            } else {
+                format!("(?:{inner}){q}")
+            }
         }
         _ => {
             // group
@@ -176,7 +196,9 @@ fn main() {
     // per pattern) but many patterns.
     let fuzz_alphabet: Vec<char> = "abc".chars().collect();
     let fuzz_strings = enumerate(&fuzz_alphabet, 5);
-    let n_patterns = 20000;
+    let n_patterns = std::env::args()
+        .nth(1)
+        .map_or(20000, |n| n.parse().expect("fuzz patterns per seed"));
     println!(
         "phase 2 (fuzz): {} patterns x {} strings",
         n_patterns,
