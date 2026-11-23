@@ -1772,8 +1772,7 @@ fn test_wb_utf8_nonword_to_word() {
 #[test]
 #[cfg_attr(miri, ignore)] // matching ~100-char strings through ~100-state NFAs is slow under Miri
 fn test_range_quantifier_at_max_accepted() {
-    // Counts up to REGEXP_QUANTIFIER_MAX (100) are accepted, including the
-    // {n,} and {n,100} forms whose quant_max equals the +/* sentinel value.
+    // Counts up to REGEXP_QUANTIFIER_MAX (100) are accepted.
     let q = q!("p" => r#"{"v": [{"regexp": "x{98,100}"}]}"#);
     assert_has_match!(q, &format!(r#"{{"v": "{}"}}"#, "x".repeat(99)), "p");
     assert_no_has_match!(q, r#"{"v": "x"}"#, "p");
@@ -1784,6 +1783,43 @@ fn test_range_quantifier_at_max_accepted() {
     let q = q!("p" => r#"{"v": [{"regexp": "x{2,}"}]}"#);
     assert_has_match!(q, r#"{"v": "xxx"}"#, "p");
     assert_no_has_match!(q, r#"{"v": "x"}"#, "p");
+}
+
+#[test]
+#[cfg_attr(miri, ignore)] // matching ~100-char strings through ~100-state NFAs is slow under Miri
+fn test_range_quantifier_at_max_is_not_unbounded() {
+    // An upper bound of 100 once shared its value with the +/* sentinel, so
+    // {1,100} matched like + and {0,100} like *.
+    let x = |n: usize| format!(r#"{{"v": "{}"}}"#, "x".repeat(n));
+    let q = q!("plus" => r#"{"v": [{"regexp": "x{1,100}"}]}"#,
+               "star" => r#"{"v": [{"regexp": "x{0,100}"}]}"#,
+               "exact" => r#"{"v": [{"regexp": "x{100}"}]}"#);
+    for name in ["exact", "plus", "star"] {
+        assert_has_match!(q, &x(100), name);
+    }
+    assert_matches!(q, &x(101), Vec::<&str>::new());
+}
+
+#[test]
+fn test_range_quantifier_minimum_only_is_unbounded() {
+    // {n,} once stopped at 100 repetitions.
+    let x = |n: usize| format!(r#"{{"v": "{}"}}"#, "x".repeat(n));
+    let q = q!("p" => r#"{"v": [{"regexp": "x{3,}"}]}"#,
+               "g" => r#"{"v": [{"regexp": "(xy){2,}"}]}"#);
+    assert_no_has_match!(q, &x(2), "p");
+    for n in [3, 4, 5, 8] {
+        assert_has_match!(q, &x(n), "p");
+    }
+    assert_no_has_match!(q, r#"{"v": "xy"}"#, "g");
+    assert_has_match!(q, r#"{"v": "xyxyxy"}"#, "g");
+    assert_no_has_match!(q, r#"{"v": "xyxyx"}"#, "g");
+}
+
+#[test]
+#[cfg_attr(miri, ignore)] // matching a 150-char string is slow under Miri
+fn test_range_quantifier_minimum_only_past_max() {
+    let q = q!("p" => r#"{"v": [{"regexp": "x{3,}"}]}"#);
+    assert_has_match!(q, &format!(r#"{{"v": "{}"}}"#, "x".repeat(150)), "p");
 }
 
 /// Miri-only: covers the gap left by skipping test_range_quantifier_at_max_accepted.

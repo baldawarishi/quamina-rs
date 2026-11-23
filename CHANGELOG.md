@@ -18,6 +18,7 @@ Style inspired by [ripgrep's CHANGELOG](https://github.com/BurntSushi/ripgrep/bl
 - A lookbehind whose repeats overflow its fixed length is rejected instead of panicking in debug builds
 - Debug-formatting a deeply nested regexp or `SegmentsTree` no longer overflows the stack; output stops after 64 levels
 - A pattern field under an empty top-level member name, like `{"": {"x": [1]}}`, matches that path as in Go instead of the top-level `x`
+- Stop treating a regexp `{1,100}` as `+` and `{0,100}` as `*`, and let `{n,}` match more than 100 repetitions (ported from Go 797e711)
 
 ### Changed
 - Commit `Cargo.lock` so local builds, CI, and audits resolve the same dependency versions (#195)
