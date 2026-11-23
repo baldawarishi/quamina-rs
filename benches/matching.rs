@@ -1313,7 +1313,7 @@ fn bench_array_heavy(c: &mut Criterion) {
 
     // Verify match
     let matches = q.matches_for_event(event_many_tags.as_bytes()).unwrap();
-    assert!(!matches.is_empty());
+    assert_ne!(matches, Vec::<&str>::new());
 
     c.bench_function("array_heavy_100_elements", |b| {
         b.iter(|| {
@@ -1368,20 +1368,17 @@ fn bench_state_acceleration(c: &mut Criterion) {
     let event_short = r#"{"value": "AAAAAX"}"#;
 
     // Verify matches
-    assert!(
-        !q.matches_for_event(event_long.as_bytes())
-            .unwrap()
-            .is_empty()
+    assert_ne!(
+        q.matches_for_event(event_long.as_bytes()).unwrap(),
+        Vec::<&str>::new()
     );
-    assert!(
-        !q.matches_for_event(event_medium.as_bytes())
-            .unwrap()
-            .is_empty()
+    assert_ne!(
+        q.matches_for_event(event_medium.as_bytes()).unwrap(),
+        Vec::<&str>::new()
     );
-    assert!(
-        !q.matches_for_event(event_short.as_bytes())
-            .unwrap()
-            .is_empty()
+    assert_ne!(
+        q.matches_for_event(event_short.as_bytes()).unwrap(),
+        Vec::<&str>::new()
     );
 
     c.bench_function("accel_suffix_10k_chars", |b| {

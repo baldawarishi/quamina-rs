@@ -182,7 +182,7 @@ fn test_arc_snapshot_isolation() {
     let matches = q_arc
         .matches_for_event(br#"{"status": "pending"}"#)
         .unwrap();
-    assert!(matches.is_empty());
+    assert_eq!(matches, Vec::<String>::new());
 
     // Clone has p2
     let matches = q_clone
@@ -205,7 +205,7 @@ fn test_concurrent_miri_friendly() {
         let q_ref = Arc::clone(&q_arc);
         let event = format!(r#"{{"x": {}}}"#, i % 2 + 1);
         let matches = q_ref.matches_for_event(event.as_bytes()).unwrap();
-        assert!(!matches.is_empty());
+        assert_ne!(matches, Vec::<String>::new());
     }
 }
 
@@ -514,7 +514,7 @@ fn test_concurrent_citylots_stress() {
                     _ => r#"{"x": "abcquxdef"}"#,
                 };
                 let matches = q_clone.matches_for_event(event.as_bytes()).unwrap();
-                assert!(!matches.is_empty());
+                assert_ne!(matches, Vec::<String>::new());
             }
         });
         handles.push(handle);

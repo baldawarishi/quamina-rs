@@ -411,7 +411,7 @@ mod tests {
     #[test]
     fn test_zero_handling() {
         let q_zero = q_num_from_f64(0.0);
-        assert!(!q_zero.is_empty());
+        assert_ne!(q_zero, []);
         assert_eq!(q_num_from_f64(-0.0), q_zero);
     }
 

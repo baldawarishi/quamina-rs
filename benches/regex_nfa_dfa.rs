@@ -77,7 +77,7 @@ fn run_match_loop(c: &mut Criterion, name: &str, q: &Quamina<String>, events: &[
             let matches = q
                 .matches_for_event(black_box(&events[i % events.len()]))
                 .unwrap();
-            assert!(!matches.is_empty());
+            assert_ne!(matches, Vec::<String>::new());
             i += 1;
         });
     });

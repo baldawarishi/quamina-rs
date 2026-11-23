@@ -5577,7 +5577,7 @@ mod tests {
         // Should NOT match "b"
         bufs.clear();
         traverse_arena_nfa(&arena, start, b"b", &mut bufs);
-        assert!(bufs.transitions.is_empty());
+        assert_eq!(bufs.transitions, []);
     }
 
     #[test]
@@ -6049,7 +6049,7 @@ mod tests {
         let arena = StateArena::new();
         let mut transitions = Vec::new();
         traverse_arena_dfa_backward(&arena, StateId::NONE, b"suffix", &mut transitions);
-        assert!(transitions.is_empty());
+        assert_eq!(transitions, []);
     }
 
     /// Verify that `StateArena::dstep` via `dfa_lookup` returns the same result
@@ -6467,20 +6467,20 @@ mod arena_stats_utility_tests {
         let s2 = arena.alloc();
         let looped = arena.alloc();
         arena[looped].table.epsilons.push(looped);
-        assert!(arena.closure_of(s0).is_empty());
-        assert!(arena.closure_of(s1).is_empty());
-        assert!(arena.closure_of(s2).is_empty());
-        assert!(arena.closure_of(looped).is_empty());
-        assert!(arena.closure_data.is_empty());
+        assert_eq!(arena.closure_of(s0), []);
+        assert_eq!(arena.closure_of(s1), []);
+        assert_eq!(arena.closure_of(s2), []);
+        assert_eq!(arena.closure_of(looped), []);
+        assert_eq!(arena.closure_data, []);
         assert_eq!(arena.closure_data.capacity(), 0);
 
         arena.precompute_epsilon_closures();
         assert_eq!(arena.closures_computed, arena.len());
-        assert!(arena.closure_of(s0).is_empty());
-        assert!(arena.closure_of(s1).is_empty());
-        assert!(arena.closure_of(s2).is_empty());
-        assert!(arena.closure_of(looped).is_empty());
-        assert!(arena.closure_data.is_empty());
+        assert_eq!(arena.closure_of(s0), []);
+        assert_eq!(arena.closure_of(s1), []);
+        assert_eq!(arena.closure_of(s2), []);
+        assert_eq!(arena.closure_of(looped), []);
+        assert_eq!(arena.closure_data, []);
         assert_eq!(arena.closure_data.capacity(), 0);
     }
 
@@ -6513,7 +6513,7 @@ mod arena_stats_utility_tests {
             arena.alloc_with_table(SmallTable::with_mappings(StateId::NONE, b"a", &[vt_state]));
         arena.precompute_epsilon_closures();
         assert!(arena.states.iter().all(|state| state.closure_len == 0));
-        assert!(arena.closure_data.is_empty());
+        assert_eq!(arena.closure_data, []);
         assert_eq!(arena.closure_data.capacity(), 0);
 
         let mut bufs = NfaBuffers::new();
@@ -6662,7 +6662,7 @@ mod arena_stats_utility_tests {
         );
 
         // Unfrozen path: ft_ptrs not yet populated, so field_transitions are read.
-        assert!(arena.ft_ptrs.is_empty());
+        assert_eq!(arena.ft_ptrs, []);
         let mut bufs = NfaBuffers::new();
         traverse_arena_nfa(&arena, start, b"a", &mut bufs);
         assert!(
@@ -6672,7 +6672,7 @@ mod arena_stats_utility_tests {
 
         // Frozen path: flatten_tables populates ft_ptrs.
         arena.flatten_tables();
-        assert!(!arena.ft_ptrs.is_empty());
+        assert_ne!(arena.ft_ptrs, []);
         let mut bufs = NfaBuffers::new();
         traverse_arena_nfa(&arena, start, b"a", &mut bufs);
         assert!(
@@ -6702,7 +6702,7 @@ mod arena_stats_utility_tests {
         assert!(arena.closure_of(fork).len() >= 2);
 
         // Unfrozen path.
-        assert!(arena.ft_ptrs.is_empty());
+        assert_eq!(arena.ft_ptrs, []);
         let mut bufs = NfaBuffers::new();
         traverse_arena_nfa(&arena, start, b"ab", &mut bufs);
         assert!(
@@ -8136,7 +8136,7 @@ mod nfa_merge_tests {
         assert_eq!(arena.len(), 5);
         assert_eq!(arena.closure_data.len(), 6);
         assert_eq!(arena.closure_of(ids[0]), &[ids[0], ids[1]]);
-        assert!(arena.closure_of(ids[1]).is_empty());
+        assert_eq!(arena.closure_of(ids[1]), []);
 
         // Truncating below the current length drops the tail states and trims
         // their closure slots without discarding the stored surviving closure.
@@ -8144,13 +8144,13 @@ mod nfa_merge_tests {
         assert_eq!(arena.len(), 2);
         assert_eq!(arena.closure_data.len(), 2);
         assert_eq!(arena.closure_of(ids[0]), &[ids[0], ids[1]]);
-        assert!(arena.closure_of(ids[1]).is_empty());
+        assert_eq!(arena.closure_of(ids[1]), []);
         assert_eq!(arena[ids[1]].closure_start, 2);
 
         // Truncating to zero clears the arena and its closure buffer entirely.
         arena.truncate_states(0);
         assert!(arena.is_empty());
-        assert!(arena.closure_data.is_empty());
+        assert_eq!(arena.closure_data, []);
     }
 
     #[test]
