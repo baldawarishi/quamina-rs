@@ -1059,6 +1059,12 @@ impl<'a> FlattenContext<'a, '_> {
             }
             self.step()?;
         }
+        // The literal has to be the whole token, not a prefix of one like
+        // `trueish`, so a delimiter must follow.
+        let next = self.ch();
+        if !(is_whitespace(next) || matches!(next, b',' | b']' | b'}')) {
+            return Err(FlattenError::Error(self.error("unknown literal")));
+        }
         self.index -= 1; // back up so caller can advance
         Ok(())
     }
