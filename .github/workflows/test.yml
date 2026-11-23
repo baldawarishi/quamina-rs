@@ -6,10 +6,13 @@ on:
   pull_request:
     branches: [main]
 
+# Timeouts sit about 1.5x above each job's slowest passing run (5 min floor),
+# so a change that makes the suite markedly slower fails here instead of
+# quietly eating into a generous limit. Fuzz and bench run for a fixed time.
 jobs:
   test:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 6
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
@@ -30,7 +33,7 @@ jobs:
   # its timeout; to split further, raise SHARDS and extend the matrix together.
   miri:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -106,7 +109,7 @@ jobs:
 
   kani:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v7
       - name: Run Kani proofs
@@ -116,7 +119,7 @@ jobs:
 
   stress:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
@@ -136,6 +139,7 @@ jobs:
 
   security:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
