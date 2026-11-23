@@ -1,8 +1,8 @@
 name: mutation-testing
 
 on:
+  # Any base branch, so PRs stacked on another PR's branch get checked too.
   pull_request:
-    branches: [main]
   workflow_dispatch:
 
 jobs:

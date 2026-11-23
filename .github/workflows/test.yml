@@ -3,8 +3,8 @@ name: test
 on:
   push:
     branches: [main]
+  # Any base branch, so PRs stacked on another PR's branch get checked too.
   pull_request:
-    branches: [main]
 
 # Timeouts sit about 1.5x above each job's slowest passing run (5 min floor),
 # so a change that makes the suite markedly slower fails here instead of

@@ -3,8 +3,8 @@ name: CodeQL
 on:
   push:
     branches: [main]
+  # Any base branch, so PRs stacked on another PR's branch get checked too.
   pull_request:
-    branches: [main]
 
 jobs:
   analyze:
