@@ -81,7 +81,7 @@ fn bench_regex_alternation(c: &mut Criterion) {
     let keywords = ["foo", "bar", "baz", "quux", "xyzzy"];
     for i in 0..20 {
         let kw = keywords[i % keywords.len()];
-        let p = format!(r#"{{"x": [{{"regex": "({kw}|alt{i})\\d+"}}]}}"#);
+        let p = format!(r#"{{"x": [{{"regex": "({kw}|alt{i})[0-9]+"}}]}}"#);
         q.add_pattern(format!("p{i}"), &p).unwrap();
     }
     let events = vec![br#"{"x":"foo42"}"#.to_vec()];
@@ -94,8 +94,11 @@ fn bench_regex_alternation(c: &mut Criterion) {
 /// Long literal substring inside a regex. Real log-line shape.
 fn bench_literal_in_regex(c: &mut Criterion) {
     let mut q = Quamina::new();
-    q.add_pattern("p".to_string(), r#"{"x": [{"regex": ".*ERROR.*\\d+.*"}]}"#)
-        .unwrap();
+    q.add_pattern(
+        "p".to_string(),
+        r#"{"x": [{"regex": ".*ERROR.*[0-9]+.*"}]}"#,
+    )
+    .unwrap();
     let events =
         vec![br#"{"x":"2026-05-18T10:00:00 ERROR request_id=42 connection refused"}"#.to_vec()];
     warm(&q, &events, 100);
