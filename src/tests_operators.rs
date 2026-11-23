@@ -4723,3 +4723,205 @@ fn test_mut_memory_usage_accumulates_suffix_and_lookaround() {
          {used} should exceed the suffix-only {suffix_bytes}"
     );
 }
+
+// Full-match vectors for RFC 9485 I-Regexp from
+// https://github.com/f3ath/iregexp/blob/e6fd0cfd903107f8833e1929c6d69b9cfcf95b8a/test/iregexp_match_test.dart
+// (MIT), with `\` escapes written as `~`.
+const IREGEXP_MATCHES: &[(&str, &str)] = &[
+    ("[0-9~.]+", "123"),
+    ("[0-9~.]+", "123.456"),
+    ("a.b", "a\u{10101}b"),
+    ("a.b", "a\u{2028}b"),
+    ("a.b", "a\u{2029}b"),
+    ("foo|bar", "foo"),
+    ("[ab]{3}", "aba"),
+    ("[ab]{3,5}", "abab"),
+    ("[^ab]", "c"),
+    ("~p{L}", "a"),
+    ("~p{Lu}", "A"),
+    ("~p{Ll}", "a"),
+    ("~p{Lt}", "\u{1c5}"),
+    ("~p{Lm}", "\u{2b0}"),
+    ("~p{Lo}", "\u{1bb}"),
+    ("~p{Mn}", "\u{303}"),
+    ("~p{Mc}", "\u{903}"),
+    ("~p{Me}", "\u{20e3}"),
+    ("~p{Nd}", "0"),
+    ("~p{Nl}", "\u{216b}"),
+    ("~p{No}", "\u{bc}"),
+    ("~p{Pc}", "\u{203f}"),
+    ("~p{Pd}", "\u{2010}"),
+    ("~p{Ps}", "("),
+    ("~p{Pe}", ")"),
+    ("~p{Pi}", "\u{2018}"),
+    ("~p{Pf}", "\u{2019}"),
+    ("~p{Po}", "\u{203d}"),
+    ("~p{Sm}", "\u{2200}"),
+    ("~p{Sc}", "\u{a4}"),
+    ("~p{Sk}", "\u{2da}"),
+    ("~p{So}", "\u{a9}"),
+    ("~p{Zs}", " "),
+    ("~p{Zl}", "\u{2028}"),
+    ("~p{Zp}", "\u{2029}"),
+    ("~p{Cc}", "\u{0}"),
+    ("~p{Cf}", "\u{ad}"),
+    ("~p{Co}", "\u{e000}"),
+    ("~p{Cn}", "\u{378}"),
+    ("~P{L}", "1"),
+    ("~P{Lu}", "a"),
+    ("~P{Ll}", "A"),
+    ("~P{Lt}", "a"),
+    ("~P{Lm}", "a"),
+    ("~P{Lo}", "a"),
+    ("~P{Mn}", "a"),
+    ("~P{Mc}", "a"),
+    ("~P{Me}", "a"),
+    ("~P{Nd}", "a"),
+    ("~P{Nl}", "a"),
+    ("~P{No}", "a"),
+    ("~P{Pc}", "a"),
+    ("~P{Pd}", "a"),
+    ("~P{Ps}", "a"),
+    ("~P{Pe}", "a"),
+    ("~P{Pi}", "a"),
+    ("~P{Pf}", "a"),
+    ("~P{Po}", "a"),
+    ("~P{Sm}", "a"),
+    ("~P{Sc}", "a"),
+    ("~P{Sk}", "a"),
+    ("~P{So}", "a"),
+    ("~P{Zs}", "a"),
+    ("~P{Zl}", "a"),
+    ("~P{Zp}", "a"),
+    ("~P{Cc}", "a"),
+    ("~P{Cf}", "a"),
+    ("~P{Co}", "a"),
+    ("~P{Cn}", "a"),
+];
+
+const IREGEXP_NONMATCHES: &[(&str, &str)] = &[
+    ("[0-9~.]+", "abc"),
+    ("foo|bar", "baz"),
+    ("a|b", "ac"),
+    ("a|b", "a123"),
+    ("a|b", "cb"),
+    ("a|b", "123b"),
+    ("[ab]{3}", "a"),
+    ("[ab]{3,5}", "a"),
+    ("[^ab]", "a"),
+    ("~p{L}", "1"),
+    ("~p{Lu}", "a"),
+    ("~p{Ll}", "A"),
+    ("~p{Lt}", "a"),
+    ("~p{Lm}", "a"),
+    ("~p{Lo}", "a"),
+    ("~p{Mn}", "a"),
+    ("~p{Mc}", "a"),
+    ("~p{Me}", "a"),
+    ("~p{Nd}", "a"),
+    ("~p{Nl}", "a"),
+    ("~p{No}", "a"),
+    ("~p{Pc}", "a"),
+    ("~p{Pd}", "a"),
+    ("~p{Ps}", "a"),
+    ("~p{Pe}", "a"),
+    ("~p{Pi}", "a"),
+    ("~p{Pf}", "a"),
+    ("~p{Po}", "a"),
+    ("~p{Sm}", "a"),
+    ("~p{Sc}", "a"),
+    ("~p{Sk}", "a"),
+    ("~p{So}", "a"),
+    ("~p{Zs}", "a"),
+    ("~p{Zl}", "a"),
+    ("~p{Zp}", "a"),
+    ("~p{Cc}", "a"),
+    ("~p{Cf}", "a"),
+    ("~p{Co}", "a"),
+    ("~p{Cn}", "a"),
+    ("~P{L}", "a"),
+    ("~P{Lu}", "A"),
+    ("~P{Ll}", "a"),
+    ("~P{Lt}", "\u{1c5}"),
+    ("~P{Lm}", "\u{2b0}"),
+    ("~P{Lo}", "\u{1bb}"),
+    ("~P{Mn}", "\u{303}"),
+    ("~P{Mc}", "\u{903}"),
+    ("~P{Me}", "\u{20e3}"),
+    ("~P{Nd}", "0"),
+    ("~P{Nl}", "\u{216b}"),
+    ("~P{No}", "\u{bc}"),
+    ("~P{Pc}", "\u{203f}"),
+    ("~P{Pd}", "\u{2010}"),
+    ("~P{Ps}", "("),
+    ("~P{Pe}", ")"),
+    ("~P{Pi}", "\u{2018}"),
+    ("~P{Pf}", "\u{2019}"),
+    ("~P{Po}", "\u{203d}"),
+    ("~P{Sm}", "\u{2200}"),
+    ("~P{Sc}", "\u{a4}"),
+    ("~P{Sk}", "\u{2da}"),
+    ("~P{So}", "\u{a9}"),
+    ("~P{Zs}", " "),
+    ("~P{Zl}", "\u{2028}"),
+    ("~P{Zp}", "\u{2029}"),
+    ("~P{Cc}", "\u{0}"),
+    ("~P{Cf}", "\u{ad}"),
+    ("~P{Co}", "\u{e000}"),
+    ("~P{Cn}", "\u{378}"),
+];
+
+const IREGEXP_INVALID: &[(&str, &str)] = &[
+    ("(?<group>[a-z]+)", "named groups"),
+    ("[~S ]+", "character classes"),
+    ("~S+", "character classes"),
+    ("~d*(~.~d*){1,127}", "character classes"),
+    ("(~w)~1", "backreferences"),
+    ("(?=.*[a-z])(?=.*[A-Z])(?=.*)[a-zA-Z]{8,}", "lookaheads"),
+    ("(?<=[a-z]{4})~[a-z]{2}", "lookbehinds"),
+    ("(?:[a-z]+)", "non-capturing groups"),
+    ("(?>[a-z]+)", "atomic groups"),
+    ("(?(1)a|b)", "conditional groups"),
+    ("(?#comment)", "comments"),
+    ("(?i)[a-z]+", "flags"),
+    ("(?m)^.*$", "line breaks"),
+    ("(?u)~w+", "unicode"),
+    ("(?s).+", "dotall"),
+    ("(?x)~w+", "extended"),
+    ("~p{IsBasicLatin}", "unicode properties"),
+];
+
+// MIRI SKIP RATIONALE: builds dozens of Unicode category automata.
+#[test]
+#[cfg_attr(miri, ignore)]
+fn test_iregexp_vectors() {
+    use crate::test_helpers::{matches_for_x, regexp_pattern};
+
+    let matches = |re: &str, subject: &str| {
+        let mut q = Quamina::<u8>::new();
+        q.add_pattern(0, &regexp_pattern(re))
+            .unwrap_or_else(|e| panic!("{re:?}: {e}"));
+        !matches_for_x(&q, subject).is_empty()
+    };
+    for (re, subject) in IREGEXP_MATCHES {
+        assert!(matches(re, subject), "{re:?} should match {subject:?}");
+    }
+    for (re, subject) in IREGEXP_NONMATCHES {
+        assert!(!matches(re, subject), "{re:?} should not match {subject:?}");
+    }
+
+    // I-Regexp leaves these out; Quamina supports them as extensions.
+    let extensions = [
+        "[~S ]+",
+        "~S+",
+        "(?=.*[a-z])(?=.*[A-Z])(?=.*)[a-zA-Z]{8,}",
+        "(?:[a-z]+)",
+        "~p{IsBasicLatin}",
+    ];
+    for (re, feature) in IREGEXP_INVALID {
+        let accepted = Quamina::<u8>::new()
+            .add_pattern(0, &regexp_pattern(re))
+            .is_ok();
+        assert_eq!(accepted, extensions.contains(re), "{re:?} ({feature})");
+    }
+}
