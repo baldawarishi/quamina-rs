@@ -22,7 +22,7 @@ pub mod segments_tree;
 mod unicode_categories;
 
 #[cfg(test)]
-mod regexp_samples;
+mod regexp_test_data;
 
 #[cfg(kani)]
 mod kani_proofs;

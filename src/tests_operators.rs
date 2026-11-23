@@ -2102,110 +2102,99 @@ fn test_regex_various_patterns() {
 }
 
 /// Regexp samples ported from Go's `TestRegexpEnd2End`.
-const END2END_REGEXP_SAMPLES: &[crate::regexp_samples::RegexpSample] = &[
-    crate::regexp_samples::RegexpSample {
+struct End2EndSample {
+    regex: &'static str,
+    matches: &'static [&'static str],
+    nomatches: &'static [&'static str],
+}
+
+const END2END_REGEXP_SAMPLES: &[End2EndSample] = &[
+    End2EndSample {
         regex: "(xyz)?a?b",
-        pattern_ids: &["xyzb", "xyzab", "ab", "b"],
+        matches: &["xyzb", "xyzab", "ab", "b"],
         nomatches: &["xyzc", "c", "xyza"],
-        valid: true,
     },
-    crate::regexp_samples::RegexpSample {
+    End2EndSample {
         regex: "a|b",
-        pattern_ids: &["a", "b"],
+        matches: &["a", "b"],
         nomatches: &["x"],
-        valid: true,
     },
-    crate::regexp_samples::RegexpSample {
+    End2EndSample {
         regex: "a",
-        pattern_ids: &["a"],
+        matches: &["a"],
         nomatches: &["b", ""],
-        valid: true,
     },
-    crate::regexp_samples::RegexpSample {
+    End2EndSample {
         regex: "a.b",
-        pattern_ids: &["axb", "a.b"],
+        matches: &["axb", "a.b"],
         nomatches: &["ab", "axxb"],
-        valid: true,
     },
-    crate::regexp_samples::RegexpSample {
+    End2EndSample {
         regex: "abc|def",
-        pattern_ids: &["abc", "def"],
+        matches: &["abc", "def"],
         nomatches: &["x"],
-        valid: true,
     },
-    crate::regexp_samples::RegexpSample {
+    End2EndSample {
         regex: "[hij]",
-        pattern_ids: &["h", "i", "j"],
+        matches: &["h", "i", "j"],
         nomatches: &["x"],
-        valid: true,
     },
-    crate::regexp_samples::RegexpSample {
+    End2EndSample {
         regex: "a[e-g]x",
-        pattern_ids: &["aex", "afx", "agx"],
+        matches: &["aex", "afx", "agx"],
         nomatches: &["ax", "axx"],
-        valid: true,
     },
-    crate::regexp_samples::RegexpSample {
+    End2EndSample {
         regex: "[ae-gx]",
-        pattern_ids: &["a", "e", "f", "g", "x"],
+        matches: &["a", "e", "f", "g", "x"],
         nomatches: &["b"],
-        valid: true,
     },
-    crate::regexp_samples::RegexpSample {
+    End2EndSample {
         regex: "[-ab]",
-        pattern_ids: &["-", "a", "b"],
+        matches: &["-", "a", "b"],
         nomatches: &["c"],
-        valid: true,
     },
-    crate::regexp_samples::RegexpSample {
+    End2EndSample {
         regex: "[ab-]",
-        pattern_ids: &["-", "a", "b"],
+        matches: &["-", "a", "b"],
         nomatches: &["c"],
-        valid: true,
     },
-    crate::regexp_samples::RegexpSample {
+    End2EndSample {
         regex: "[~[~]]",
-        pattern_ids: &["[", "]"],
+        matches: &["[", "]"],
         nomatches: &["a"],
-        valid: true,
     },
     // Go also tests [~r~t~n] matching the literal CR/TAB/LF bytes; in JSON those
     // would be escaped, so we cover the same shape with [~[~]] above.
-    crate::regexp_samples::RegexpSample {
+    End2EndSample {
         regex: "[a-c]|[xz]",
-        pattern_ids: &["a", "b", "c", "x", "z"],
+        matches: &["a", "b", "c", "x", "z"],
         nomatches: &["w"],
-        valid: true,
     },
-    crate::regexp_samples::RegexpSample {
+    End2EndSample {
         regex: "[ac-e]h|p[xy]",
-        pattern_ids: &["ah", "ch", "dh", "eh", "px", "py"],
+        matches: &["ah", "ch", "dh", "eh", "px", "py"],
         nomatches: &["xp"],
-        valid: true,
     },
-    crate::regexp_samples::RegexpSample {
+    End2EndSample {
         regex: "[0-9][0-9][rtn][dh]",
-        pattern_ids: &["11th", "23rd", "22nd"],
+        matches: &["11th", "23rd", "22nd"],
         nomatches: &["first", "9th"],
-        valid: true,
     },
-    crate::regexp_samples::RegexpSample {
+    End2EndSample {
         regex: "a(h|i)z",
-        pattern_ids: &["ahz", "aiz"],
+        matches: &["ahz", "aiz"],
         nomatches: &["a.z"],
-        valid: true,
     },
-    crate::regexp_samples::RegexpSample {
+    End2EndSample {
         regex: "a([1-3]|ac)z",
-        pattern_ids: &["a1z", "a2z", "a3z", "aacz"],
+        matches: &["a1z", "a2z", "a3z", "aacz"],
         nomatches: &["a.z", "a0z"],
-        valid: true,
     },
-    crate::regexp_samples::RegexpSample {
+    End2EndSample {
         regex: "a(h|([x-z]|(1|2)))z",
-        pattern_ids: &["ahz", "axz", "a1z", "a2z"],
+        matches: &["ahz", "axz", "a1z", "a2z"],
         nomatches: &["a.z"],
-        valid: true,
     },
 ];
 
@@ -2220,7 +2209,7 @@ fn test_regexp_end2end() {
         q.add_pattern("test", &pattern)
             .unwrap_or_else(|e| panic!("Failed to add pattern '{}': {}", test.regex, e));
 
-        for m in test.pattern_ids {
+        for m in test.matches {
             let event = format!(r#"{{"a": "{m}"}}"#);
             let pattern_ids = q.matches_for_event(event.as_bytes()).unwrap();
             assert!(
@@ -2255,7 +2244,7 @@ fn test_regexp_end2end() {
 
     for (i, test) in END2END_REGEXP_SAMPLES.iter().enumerate() {
         let expected_name = format!("p{i}");
-        for m in test.pattern_ids {
+        for m in test.matches {
             let event = format!(r#"{{"a": "{m}"}}"#);
             let pattern_ids = all_patterns.matches_for_event(event.as_bytes()).unwrap();
             assert!(
@@ -3268,158 +3257,243 @@ fn test_shellstyle_double_wildcard_variations() {
     }
 }
 
-#[test]
-fn test_regexp_samples_exist() {
-    assert!(
-        !crate::regexp_samples::REGEXP_SAMPLES.is_empty(),
-        "No regexp samples found"
-    );
-    assert_eq!(
-        crate::regexp_samples::REGEXP_SAMPLES.len(),
-        993,
-        "Expected 993 samples"
-    );
-}
-
-/// Regexps with `*` that match the empty string — used to suppress false
-/// positives when the negative-match list contains "".
-#[cfg(test)]
-fn regexp_star_samples_matching_empty(regex: &str) -> bool {
-    matches!(
-        regex,
-        "(([~.~~~?~*~+~{~}~[~]~(~)~|]?)*)+"
-            | "[~~~|~.~?~*~+~(~)~{~}~-~[~]~^]*"
-            | "[~*a]*"
-            | "[a-]*"
-            | "[~n~r~t~~~|~.~-~^~?~*~+~{~}~[~]~(~)]*"
-            | "[a~*]*"
-            | "[0-9]*"
-            | "(([a-d]*)|([a-z]*))"
-            | "(([d-f]*)|([c-e]*))"
-            | "(([c-e]*)|([d-f]*))"
-            | "(([a-d]*)|(.*))"
-            | "(([d-f]*)|(.*))"
-            | "(([c-e]*)|(.*))"
-            | "(.*)"
-            | "([^~?])*"
-    )
-}
-
-#[cfg(test)]
-fn regexp_should_skip(re: &str) -> bool {
-    let chars: Vec<char> = re.chars().collect();
-    for i in 0..chars.len().saturating_sub(1) {
-        if chars[i] == '~' && matches!(chars[i + 1], 'b' | 'B') {
-            return true;
-        }
-    }
-    false
-}
-
-#[cfg(test)]
-fn regexp_is_known_extension(re: &str) -> bool {
-    let chars: Vec<char> = re.chars().collect();
-    for i in 0..chars.len() {
-        if i + 1 < chars.len()
-            && chars[i] == '~'
-            && matches!(
-                chars[i + 1],
-                'd' | 'D' | 'w' | 'W' | 's' | 'S' | 'p' | 'P' | 'i' | 'I' | 'c' | 'C'
-            )
-        {
-            return true;
-        }
-        if i + 1 < chars.len() && matches!(chars[i], '*' | '+' | '?' | '}') && chars[i + 1] == '?' {
-            return true;
-        }
-        if i + 2 < chars.len() && chars[i] == '(' && chars[i + 1] == '?' && chars[i + 2] == ':' {
-            return true;
-        }
-    }
-    false
-}
-
-/// Evaluate a single regexp sample's match/non-match expectations and return
-/// the number of validation failures observed.
-#[cfg(test)]
-fn evaluate_regexp_sample(sample: &crate::regexp_samples::RegexpSample) -> usize {
-    use crate::automaton::arena::{ARENA_VALUE_TERMINATOR, NfaBuffers, traverse_arena_nfa};
-    use crate::regexp::{make_regexp_nfa_arena, parse_regexp};
-    use std::sync::Arc;
-
-    let parse_result = parse_regexp(sample.regex);
-    let mut problems = 0;
-
-    if sample.valid {
-        let Ok(tree) = parse_result else {
-            return 0;
-        };
-        let (arena, start, field_matcher) = make_regexp_nfa_arena(tree);
-        let mut bufs = NfaBuffers::new();
-        let fm_ptr = Arc::as_ptr(&field_matcher) as usize;
-
-        let mut traverse = |s: &str| -> bool {
-            let mut value: Vec<u8> = Vec::with_capacity(s.len() + 3);
-            value.push(b'"');
-            value.extend_from_slice(s.as_bytes());
-            value.push(b'"');
-            value.push(ARENA_VALUE_TERMINATOR);
-            bufs.clear();
-            traverse_arena_nfa(&arena, start, &value, &mut bufs);
-            bufs.transitions.contains(&fm_ptr)
-        };
-
-        for should_match in sample.pattern_ids {
-            if !traverse(should_match) && !should_match.is_empty() {
-                problems += 1;
-            }
-        }
-
-        for should_not_match in sample.nomatches {
-            let matched = traverse(should_not_match);
-            if matched
-                && !(should_not_match.is_empty()
-                    && regexp_star_samples_matching_empty(sample.regex))
-                && !should_not_match.is_empty()
-            {
-                problems += 1;
-            }
-        }
-    } else if parse_result.is_ok() && !regexp_is_known_extension(sample.regex) {
-        problems += 1;
-    }
-
-    problems
-}
-
-// MIRI SKIP RATIONALE: Iterates over 993 REGEXP_SAMPLES, building and traversing NFAs for
-// each. Under Miri this takes 8+ minutes and causes the CI job to time out.
+// MIRI SKIP RATIONALE: reads the catalog from testdata/, which Miri's isolation blocks.
 #[test]
 #[cfg_attr(miri, ignore)]
-fn test_regexp_validity() {
-    use crate::regexp_samples::REGEXP_SAMPLES;
+fn test_regexp_catalog_empty_list_holds_no_subjects() {
+    // `[0-9]*` lists no nonmatching subject at all, rather than an empty one.
+    let catalog = crate::regexp_test_data::catalog();
+    let star = catalog
+        .iter()
+        .find(|c| c.id == "regex-syntax-0542")
+        .unwrap();
+    assert_eq!((star.regex.as_str(), star.nomatches.len()), ("[0-9]*", 0));
+}
 
-    let mut problems = 0;
-    for sample in REGEXP_SAMPLES {
-        if regexp_should_skip(sample.regex) {
-            continue;
-        }
-        if sample.pattern_ids.iter().any(|s| s.len() > 50)
-            || sample.nomatches.iter().any(|s| s.len() > 50)
-        {
-            continue;
-        }
+/// How Quamina departs from the XPath result for one catalog case.
+#[cfg(test)]
+#[derive(Debug)]
+enum Departure {
+    /// XPath rejects the regex; Quamina accepts it.
+    Accepts,
+    /// XPath accepts the regex; Quamina does not.
+    Rejects,
+    /// Quamina gives the opposite answer for these subjects.
+    Subjects(Vec<String>),
+}
 
-        problems += evaluate_regexp_sample(sample);
-        if problems >= 10 {
-            break;
+/// A departure listed in [`REGEXP_CATALOG_EXCEPTIONS`].
+#[cfg(test)]
+#[derive(Debug)]
+enum Listed {
+    Accepts,
+    Rejects,
+    /// Exactly these subjects.
+    Subjects(&'static [&'static str]),
+    /// This many subjects, for cases with too many to list.
+    SubjectCount(usize),
+}
+
+#[cfg(test)]
+impl Listed {
+    fn covers(&self, found: &Departure) -> bool {
+        match (self, found) {
+            (Self::Accepts, Departure::Accepts) | (Self::Rejects, Departure::Rejects) => true,
+            (Self::Subjects(want), Departure::Subjects(got)) => got == want,
+            (Self::SubjectCount(n), Departure::Subjects(got)) => got.len() == *n,
+            _ => false,
         }
     }
+}
 
+/// Every case where Quamina knowingly departs from the catalog, as
+/// `(case id, departure, reason)`. An unlisted departure fails
+/// `test_regexp_catalog`, and so does a listed one that changes or goes away.
+#[cfg(test)]
+const REGEXP_CATALOG_EXCEPTIONS: &[(&str, Listed, &str)] = {
+    use Listed::{Accepts, Rejects, SubjectCount, Subjects};
+    const HYPHEN: &str = "a `-` between two ranges is an XSD 1.1 form; XSD 1.0 and Go reject it";
+    const REPEAT_CAP: &str = "repetition counts above 100 are rejected";
+    const ASCII_D: &str = "`~d` is ASCII [0-9], not every Unicode digit";
+    const ASCII_W: &str = "`~w` is ASCII [a-zA-Z0-9_], not XSD's Unicode word class";
+    const BACKREF: &str = "back-references are not supported";
+    const WORD_BOUNDARY: &str = "word boundaries are an extension; XPath added them in 4.0";
+    const IMPOSSIBLE: &str = "a word boundary that can never hold is rejected";
+    const LOOKAROUND: &str = "lookarounds are an extension; XPath added them in 4.0";
+    const CONSUMED: &str = "a lookahead consumes the characters it checks";
+    const ANCHOR: &str = "`^` and `$` are literals, as in XSD, not XPath anchors";
+    &[
+        ("regex-syntax-0056a", Rejects, HYPHEN),
+        ("regex-syntax-0086a", Rejects, HYPHEN),
+        ("regex-syntax-0102a", Rejects, HYPHEN),
+        ("regex-syntax-0136", Rejects, REPEAT_CAP),
+        ("regex-syntax-0503", SubjectCount(36), ASCII_D),
+        ("regex-syntax-0504", SubjectCount(36), ASCII_D),
+        ("regex-syntax-0506", SubjectCount(39), ASCII_W),
+        ("regex-syntax-0617", Rejects, BACKREF),
+        ("regex-syntax-0649a", Rejects, IMPOSSIBLE),
+        ("regex-syntax-0650a", Rejects, IMPOSSIBLE),
+        ("regex-syntax-0651a", Rejects, IMPOSSIBLE),
+        ("regex-syntax-0652", Accepts, WORD_BOUNDARY),
+        ("regex-syntax-0653", Accepts, WORD_BOUNDARY),
+        ("regex-syntax-0654", Accepts, WORD_BOUNDARY),
+        (
+            "regex-syntax-0655",
+            Subjects(&["foo\u{2b0} bar\u{2b1}"]),
+            ASCII_W,
+        ),
+        ("regex-syntax-0767", Accepts, LOOKAROUND),
+        ("regex-syntax-0768", Accepts, LOOKAROUND),
+        ("regex-syntax-0784", Accepts, WORD_BOUNDARY),
+        ("regex-syntax-0792", Accepts, WORD_BOUNDARY),
+        ("regex-syntax-0807", Accepts, WORD_BOUNDARY),
+        ("regex-syntax-0808", Accepts, WORD_BOUNDARY),
+        ("regex-syntax-0809a", Rejects, IMPOSSIBLE),
+        ("regex-syntax-0810a", Rejects, IMPOSSIBLE),
+        ("regex-syntax-0811a", Rejects, IMPOSSIBLE),
+        ("regex-syntax-0812a", Rejects, IMPOSSIBLE),
+        ("regex-syntax-0825", Rejects, BACKREF),
+        ("regex-syntax-0883", Subjects(&["ab"]), ANCHOR),
+        ("regex-syntax-0932", Rejects, BACKREF),
+        ("regex-syntax-0933", Rejects, BACKREF),
+        ("regex-syntax-0934", Rejects, BACKREF),
+        ("regex-syntax-0935", Rejects, BACKREF),
+        ("regex-syntax-0936", Rejects, BACKREF),
+        ("regex-syntax-0939", Accepts, LOOKAROUND),
+        ("regex-syntax-0940", Accepts, LOOKAROUND),
+        ("regex-syntax-0941", Accepts, LOOKAROUND),
+        ("regex-syntax-0957", Rejects, BACKREF),
+        ("regex-syntax-0972", Rejects, BACKREF),
+        ("regex-syntax-0973", Rejects, BACKREF),
+        ("regex-syntax-0974", Rejects, BACKREF),
+        ("regex-syntax-0975", Rejects, BACKREF),
+        ("regex-syntax-0976", Rejects, BACKREF),
+        ("regex-syntax-0978", Accepts, LOOKAROUND),
+        ("regex-syntax-0978a", Subjects(&["xaa"]), CONSUMED),
+        (
+            "regex-syntax-0982",
+            Subjects(&["test@someverylongemailaddress.com"]),
+            ANCHOR,
+        ),
+        (
+            "regex-syntax-0983",
+            Subjects(&["first_last@seznam.cz"]),
+            ASCII_W,
+        ),
+        ("regex-syntax-0984", SubjectCount(9225), ASCII_W),
+        ("regex-syntax-0985", SubjectCount(179), ASCII_D),
+    ]
+};
+
+/// Run one catalog case through the public API and report how Quamina
+/// departs from it, if it does.
+#[cfg(test)]
+fn catalog_departure(case: &crate::regexp_test_data::CatalogCase) -> Option<Departure> {
+    use crate::test_helpers::{matches_for_x, regexp_pattern};
+
+    let mut q = Quamina::<u8>::new();
+    match (
+        q.add_pattern(0, &regexp_pattern(&case.regex)).is_ok(),
+        case.valid,
+    ) {
+        (true, false) => return Some(Departure::Accepts),
+        (false, true) => return Some(Departure::Rejects),
+        (false, false) => return None,
+        (true, true) => {}
+    }
+    let matches = |s: &str| !matches_for_x(&q, s).is_empty();
+    let wrong: Vec<_> = case
+        .matches
+        .iter()
+        .filter(|s| !matches(s))
+        .chain(case.nomatches.iter().filter(|s| matches(s)))
+        .cloned()
+        .collect();
+    (!wrong.is_empty()).then_some(Departure::Subjects(wrong))
+}
+
+// MIRI SKIP RATIONALE: reads the catalog from testdata/, which Miri's isolation blocks.
+#[test]
+#[cfg_attr(miri, ignore)]
+fn test_regexp_catalog() {
+    let catalog = crate::regexp_test_data::catalog();
+    let mut problems: Vec<_> = REGEXP_CATALOG_EXCEPTIONS
+        .iter()
+        .filter(|(id, _, _)| !catalog.iter().any(|c| c.id == *id))
+        .map(|(id, _, _)| format!("{id} is not in the catalog"))
+        .collect();
+    for case in &catalog {
+        let listed = REGEXP_CATALOG_EXCEPTIONS
+            .iter()
+            .find(|(id, _, _)| *id == case.id)
+            .map(|(_, listed, _)| listed);
+        let found = catalog_departure(case);
+        let agrees = match (&found, listed) {
+            (None, None) => true,
+            (Some(found), Some(listed)) => listed.covers(found),
+            _ => false,
+        };
+        if !agrees {
+            let found = match found {
+                Some(Departure::Subjects(wrong)) if wrong.len() > 5 => {
+                    format!("{} subjects", wrong.len())
+                }
+                found => format!("{found:?}"),
+            };
+            problems.push(format!(
+                "{} {:?}: found {found}, listed {listed:?}",
+                case.id, case.regex
+            ));
+        }
+    }
     assert!(
-        problems <= 4,
-        "Found {problems} regexp validation problems (expected <= 4)"
+        problems.is_empty(),
+        "regexp catalog cases that disagree with REGEXP_CATALOG_EXCEPTIONS:\n{}",
+        problems.join("\n")
     );
+}
+
+/// Merging regexps into one automaton must not change which of them match. For
+/// each batch of catalog regexps, every subject from the batch must match
+/// exactly the regexps that match it one at a time, no more and no fewer.
+// MIRI SKIP RATIONALE: reads the catalog from testdata/.
+#[test]
+#[cfg_attr(miri, ignore)]
+fn test_regexp_catalog_merged_exact_sets() {
+    use crate::test_helpers::{matches_for_x, regexp_pattern};
+    use std::collections::BTreeSet;
+
+    const BATCH: usize = 32;
+    let catalog = crate::regexp_test_data::catalog();
+    let accepted: Vec<_> = catalog
+        .iter()
+        .filter_map(|c| {
+            let mut q = Quamina::<usize>::new();
+            q.add_pattern(0, &regexp_pattern(&c.regex))
+                .ok()
+                .map(|()| (c, q))
+        })
+        .collect();
+
+    for batch in accepted.chunks(BATCH) {
+        let mut merged = Quamina::<usize>::new();
+        for (i, (c, _)) in batch.iter().enumerate() {
+            merged.add_pattern(i, &regexp_pattern(&c.regex)).unwrap();
+        }
+        let subjects: BTreeSet<&str> = batch
+            .iter()
+            .flat_map(|(c, _)| c.matches.iter().chain(&c.nomatches))
+            .map(String::as_str)
+            .collect();
+        for subject in subjects {
+            let want: BTreeSet<usize> = (0..batch.len())
+                .filter(|&i| !matches_for_x(&batch[i].1, subject).is_empty())
+                .collect();
+            let got: BTreeSet<usize> = matches_for_x(&merged, subject).into_iter().collect();
+            let ids: Vec<_> = batch.iter().map(|(c, _)| c.id.as_str()).collect();
+            assert_eq!(got, want, "subject {subject:?} against merged {ids:?}");
+        }
+    }
 }
 
 /// Miri-only: exercises parse_regexp + make_regexp_nfa_arena + traverse_arena_nfa

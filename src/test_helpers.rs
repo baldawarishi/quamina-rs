@@ -207,3 +207,37 @@ pub fn exercise_wildcard(pattern: &str, should_match: &[&str], should_not_match:
         );
     }
 }
+
+/// A pattern that matches field `x` against the regexp `re`.
+pub fn regexp_pattern(re: &str) -> String {
+    format!(r#"{{"x": [{{"regexp": {}}}]}}"#, json_string(re))
+}
+
+/// The patterns in `q` that match an event whose field `x` is the string
+/// `value`, which may hold any character.
+pub fn matches_for_x<X>(q: &crate::Quamina<X>, value: &str) -> Vec<X>
+where
+    X: Clone + Eq + std::hash::Hash + Send + Sync,
+{
+    let event = format!(r#"{{"x": {}}}"#, json_string(value));
+    q.matches_for_event(event.as_bytes()).unwrap()
+}
+
+/// Quote `s` as a JSON string literal.
+fn json_string(s: &str) -> String {
+    use std::fmt::Write;
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('"');
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            c if u32::from(c) < 0x20 => {
+                let _ = write!(out, "\\u{:04x}", u32::from(c));
+            }
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
