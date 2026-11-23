@@ -3,12 +3,8 @@ name: test
 on:
   push:
     branches: [main]
-  # Any base branch, so PRs stacked on another PR's branch get checked too.
   pull_request:
 
-# Each timeout is the job's slowest recent passing run plus about a minute for
-# runner noise, so a change that makes a job noticeably slower fails here
-# instead of quietly eating into a generous limit.
 jobs:
   test:
     runs-on: ubuntu-latest
