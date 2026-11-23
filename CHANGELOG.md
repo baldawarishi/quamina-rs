@@ -23,6 +23,7 @@ Style inspired by [ripgrep's CHANGELOG](https://github.com/BurntSushi/ripgrep/bl
 - Read `[^a-[b]]` as XSD does: everything outside `a`, minus `b`
 - Reject a regexp that ends part way through an atom, like `~p{L` or `[~p{L`, instead of silently dropping the unfinished atom
 - Accept a word boundary beside a group that matches once, like `.*~b(~w+)~b`, instead of rejecting it as impossible
+- A `[^x]+` loop no longer skips past characters the rest of the regexp needs, so `[^x]+x` matches `ax` and `[^x]+ax` matches `bax`
 - `~p{..}` and `~P{..}` cover every code point of their Unicode 17.0 general category; `~p{Lu}` missed letters such as `Ā`, and `~p{Cn}` matched nothing
 
 ### Changed

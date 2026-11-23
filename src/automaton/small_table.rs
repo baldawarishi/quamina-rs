@@ -44,6 +44,59 @@ pub struct AccelInfo {
 }
 
 impl AccelInfo {
+    /// Marks a state worth checking for an accelerator while its automaton is
+    /// being built; `StateArena::settle_accels` replaces it with a checked
+    /// accelerator or removes it before anything is traversed. Having no exit
+    /// bytes, it would never skip anyway.
+    pub(crate) const CANDIDATE: Self = Self {
+        exit_bytes: [0; 3],
+        len: 0,
+    };
+
+    /// The accelerator for a state that `step` keeps returning to, if skipping
+    /// ahead from it is sound.
+    ///
+    /// Skipping to the next exit byte has to land exactly where stepping one
+    /// byte at a time would. So every ASCII byte except at most three exits,
+    /// and every whole multi-byte character, must lead straight back to
+    /// `state`. A character that leads anywhere else can't be made an exit,
+    /// since memchr only finds single bytes. `step` returns `None` where the
+    /// match dies, which for an ASCII byte makes it an exit too.
+    pub(crate) fn for_self_loop<S: PartialEq>(
+        state: &S,
+        mut step: impl FnMut(&S, u8) -> Option<S>,
+    ) -> Option<Self> {
+        let mut accel = Self::default();
+        for byte in 0..0x80 {
+            if step(state, byte).as_ref() != Some(state) {
+                *accel.exit_bytes.get_mut(usize::from(accel.len))? = byte;
+                accel.len += 1;
+            }
+        }
+        if accel.len == 0 {
+            return None;
+        }
+        for lead in 0xC2..=0xF4 {
+            let mut reached = vec![step(state, lead)?];
+            for &(lo, hi) in utf8_continuations(lead) {
+                let mut next = Vec::new();
+                for s in &reached {
+                    for byte in lo..=hi {
+                        let t = step(s, byte)?;
+                        if !next.contains(&t) {
+                            next.push(t);
+                        }
+                    }
+                }
+                reached = next;
+            }
+            if reached.iter().any(|s| s != state) {
+                return None;
+            }
+        }
+        Some(accel)
+    }
+
     /// Find the next exit byte in `remaining` using SIMD-accelerated memchr.
     ///
     /// Returns the strictly positive number of bytes the caller may skip
@@ -66,6 +119,23 @@ impl AccelInfo {
             _ => None,
         }?;
         NonZero::new(offset)
+    }
+}
+
+/// The continuation bytes allowed after a UTF-8 lead byte, one range per
+/// position, leaving out overlong forms, surrogates and code points past
+/// U+10FFFF.
+const fn utf8_continuations(lead: u8) -> &'static [(u8, u8)] {
+    const ANY: (u8, u8) = (0x80, 0xBF);
+    match lead {
+        0xC2..=0xDF => &[ANY],
+        0xE0 => &[(0xA0, 0xBF), ANY],
+        0xED => &[(0x80, 0x9F), ANY],
+        0xE1..=0xEF => &[ANY, ANY],
+        0xF0 => &[(0x90, 0xBF), ANY, ANY],
+        0xF4 => &[(0x80, 0x8F), ANY, ANY],
+        0xF1..=0xF3 => &[ANY, ANY, ANY],
+        _ => &[],
     }
 }
 

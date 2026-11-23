@@ -1224,17 +1224,8 @@ mod tests {
         );
     }
 
-    /// Test ASCII fast path acceleration for patterns like [^x]+.
-    ///
-    /// With the ASCII fast path optimization, patterns like [^x]+ that negate only
-    /// ASCII characters (1-3 bytes) can use memchr acceleration. The exit bytes
-    /// are just the negated characters, not the UTF-8 validation bytes.
-    ///
-    /// For [^x]+:
-    /// - Previously: no acceleration (68+ exit bytes from UTF-8 validation)
-    /// - Now: acceleration with exit_bytes = [b'x'] (just the negated char)
-    ///
-    /// Coverage: regexp::parser::tests::test_detect_ascii_negated_bytes_* tests the detection logic.
+    /// `[^x]+` loops on every character but `x`, so traversal can memchr from
+    /// the loop state to the next `x` or closing quote.
     #[test]
     #[cfg_attr(miri, ignore)] // Arena NFA construction for negated classes too slow under miri
     fn test_negated_single_char_ascii_fast_path() {
@@ -1245,17 +1236,17 @@ mod tests {
         let root = parse_regexp(pattern).unwrap_or_else(|_| panic!("Failed to parse: {pattern}"));
         let (arena, start, field_matcher) = make_regexp_nfa_arena(root);
 
-        // The start state is the leading-quote transition; follow it to the inner regex state
+        // Past the leading quote, the first character enters the loop. The
+        // loop state skips to an `x`, or to the closing quote that may end it.
         let inner_start = arena[start].table.dstep(b'"');
         assert!(!inner_start.is_none(), "start should transition on '\"'");
-        let inner_state = &arena[inner_start];
         assert!(
-            inner_state.table.accel.is_some(),
-            "[^x]+ should have acceleration with ASCII fast path"
+            arena[inner_start].table.accel.is_none(),
+            "the loop entry needs one character before it loops"
         );
-        let accel = inner_state.table.accel.as_ref().unwrap();
-        assert_eq!(accel.len, 1, "Should have 1 exit byte");
-        assert_eq!(accel.exit_bytes[0], b'x', "Exit byte should be 'x'");
+        let loopback = arena[inner_start].table.dstep(b'a');
+        let accel = arena[loopback].table.accel.as_ref().unwrap();
+        assert_eq!(&accel.exit_bytes[..accel.len as usize], b"\"x");
 
         // Verify the pattern still works correctly
         let mut bufs = NfaBuffers::with_capacity();
@@ -1295,22 +1286,22 @@ mod tests {
         );
     }
 
-    /// Test that Unicode-aware negated patterns do NOT get ASCII fast path acceleration.
-    /// Coverage: regexp::parser::tests::test_detect_ascii_negated_bytes_* tests the detection logic.
+    /// A class that leaves out a multi-byte character can't be skipped
+    /// through, since memchr only finds single bytes.
     #[test]
     #[cfg_attr(miri, ignore)] // Arena NFA construction for negated classes too slow under miri
-    fn test_negated_unicode_char_no_ascii_fast_path() {
-        // Pattern [^ü]+ - non-ASCII negated char, so NO acceleration
-        let pattern = "[^ü]+";
-        let root = parse_regexp(pattern).unwrap_or_else(|_| panic!("Failed to parse: {pattern}"));
-        let (arena, start, _field_matcher) = make_regexp_nfa_arena(root);
-
-        // Check that accel is NOT set (non-ASCII negated char)
-        let start_state = &arena[start];
-        assert!(
-            start_state.table.accel.is_none(),
-            "[^ü]+ should NOT have ASCII fast path acceleration"
-        );
+    fn test_negated_unicode_char_loop_has_no_accel() {
+        let root = parse_regexp("[^ü]+").unwrap();
+        let (arena, _start, _field_matcher) = make_regexp_nfa_arena(root);
+        let accelerated = (0..arena.len())
+            .filter(|&i| {
+                arena[crate::automaton::arena::StateId::from_index(i)]
+                    .table
+                    .accel
+                    .is_some()
+            })
+            .count();
+        assert_eq!(accelerated, 0);
     }
 
     // ============= Range Quantifier Edge Case Tests =============

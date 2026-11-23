@@ -1695,6 +1695,38 @@ fn test_wb_optional_group_rejected() {
 }
 
 #[test]
+fn test_negated_class_loop_skips_only_where_stepping_would() {
+    // A `[^x]+` loop may memchr ahead to its next exit byte, but only to where
+    // stepping one byte at a time would also be, whatever follows the loop.
+    let cases = [
+        ("[^x]+x", "ax", true),
+        ("a[^x]+x", "abx", true),
+        ("[^x]+ax", "bax", true),
+        ("[^x]*ax", "bax", true),
+        ("[^xy]+[a-c]x", "zzbx", true),
+        ("([^x]+x)+", "axbx", true),
+        ("[^x]+éx", "aéx", true),
+        ("[^x]+x", "x", false),
+        ("[^x]+ax", "bx", false),
+    ];
+    for mode in [
+        MatcherBuildMode::BuiltForComfort,
+        MatcherBuildMode::BuiltForSpeed,
+    ] {
+        for (re, value, want) in cases {
+            let mut q = Quamina::new();
+            q.set_matcher_build_mode(mode);
+            q.add_pattern("p", &format!(r#"{{"v": [{{"regexp": "{re}"}}]}}"#))
+                .unwrap();
+            let got = q
+                .matches_for_event(format!(r#"{{"v": "{value}"}}"#).as_bytes())
+                .unwrap();
+            assert_eq!(!got.is_empty(), want, "{mode:?}: {re} on {value}");
+        }
+    }
+}
+
+#[test]
 fn test_wb_beside_group() {
     // A group that matches exactly once is checked through its own edge
     // characters, one alternative at a time.

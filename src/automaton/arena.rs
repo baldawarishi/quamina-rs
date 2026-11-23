@@ -184,7 +184,9 @@ pub struct SmallTable {
     /// Epsilon transitions (taken regardless of input byte).
     /// SmallVec<[_; 2]> covers the common case of 0-2 epsilon transitions.
     pub epsilons: SmallVec<[StateId; 2]>,
-    /// Acceleration info for self-loop states (exit bytes for memchr skip)
+    /// Exit bytes traversal may memchr to from this self-looping state. While
+    /// the automaton is being built this may be [`AccelInfo::CANDIDATE`],
+    /// which computing the epsilon closures settles.
     pub accel: Option<AccelInfo>,
 }
 
@@ -961,7 +963,39 @@ impl StateArena {
 
         self.closure_data = closure_data;
         self.closures_computed = arena_len;
+        self.settle_accels(start_idx);
         Ok(arena_len - start_idx)
+    }
+
+    /// Keep the accelerator on each state from `start_idx` on only where
+    /// skipping is sound, with the exit bytes the finished automaton needs.
+    ///
+    /// The builder marks loop states with [`AccelInfo::CANDIDATE`], but
+    /// whether one can skip depends on what follows the loop: in `[^x]+ax`
+    /// the `a` must stop the skip too. Traversal skips from a state when it is
+    /// the only one live, so the step here is from that state's closure.
+    fn settle_accels(&mut self, start_idx: usize) {
+        for state_idx in start_idx..self.states.len() {
+            if self.states[state_idx].table.accel.is_none() {
+                continue;
+            }
+            let accel =
+                AccelInfo::for_self_loop(&vec![StateId::from_index(state_idx)], |live, byte| {
+                    let mut closure = Vec::new();
+                    for &id in live {
+                        self.extend_closure_or_self(id, &mut closure);
+                    }
+                    let mut next: Vec<StateId> = closure
+                        .iter()
+                        .map(|&id| self.dstep(id, byte))
+                        .filter(|id| !id.is_none())
+                        .collect();
+                    next.sort_unstable_by_key(|id| id.0);
+                    next.dedup();
+                    (!next.is_empty()).then_some(next)
+                });
+            self.states[state_idx].table.accel = accel;
+        }
     }
 
     /// Build frozen lookup structures for fast traversal.
@@ -1182,57 +1216,16 @@ impl StateArena {
         Some((dfa_arena, dfa_start))
     }
 
-    /// Detect self-loop DFA states and populate their `AccelInfo`.
-    ///
-    /// After NFA→DFA conversion, the original NFA acceleration info is lost.
-    /// This scans all states and detects "spinout" patterns: states that
-    /// self-loop on most ASCII bytes, with 1-3 distinct exit bytes (including
-    /// rejection bytes that lead to `StateId::NONE`). These states can use
-    /// memchr SIMD to skip ahead during traversal.
-    ///
-    /// `StateId::NONE` targets count as exit bytes: memchr skips to them, then
-    /// `dstep` returns NONE and `traverse_arena_dfa` exits early — correct behavior.
-    ///
-    /// Only ASCII bytes (0x00-0x7F) are checked. Non-ASCII bytes (multi-byte
-    /// UTF-8 lead/continuation bytes) are ignored because:
-    /// 1. Exit bytes for acceleratable patterns are always ASCII
-    /// 2. memchr for ASCII bytes never matches inside multi-byte UTF-8 sequences
-    /// 3. Complete multi-byte sequences always return to the self-loop state
+    /// Give each DFA state that loops on itself for all but 1-3 ASCII bytes an
+    /// accelerator, so traversal can memchr to the next exit byte. A byte that
+    /// leads nowhere counts as an exit: traversal skips to it and stops there.
     fn compute_dfa_accel(&mut self) {
-        let mut unpacked = [StateId::NONE; BYTE_CEILING];
-
         for state_idx in 0..self.states.len() {
-            let state_id = StateId::from_index(state_idx);
-            unpack_arena_table(&self.states[state_idx].table, &mut unpacked);
-
-            let mut has_self_loop = false;
-            let mut exit_count = 0u8;
-            let mut exit_bytes = [0u8; 3];
-
-            // We only walk the ASCII slice (0x00..0x80), so `byte` always
-            // fits in u8 — `try_from` here is just paranoia.
-            for (byte, &target) in unpacked[..0x80].iter().enumerate() {
-                if target == state_id {
-                    has_self_loop = true;
-                } else {
-                    // An exit byte is either a real transition or a
-                    // rejection (NONE). Either way, memchr can skip
-                    // straight to it: if it's NONE, traversal exits
-                    // early, which is the correct rejection behaviour.
-                    if exit_count < 3 {
-                        exit_bytes[exit_count as usize] =
-                            u8::try_from(byte).expect("ASCII range bounded above by 0x80");
-                    }
-                    exit_count += 1;
-                }
-            }
-
-            if has_self_loop && (1..=3).contains(&exit_count) {
-                self.states[state_idx].table.accel = Some(AccelInfo {
-                    exit_bytes,
-                    len: exit_count,
-                });
-            }
+            let accel = AccelInfo::for_self_loop(&StateId::from_index(state_idx), |&id, byte| {
+                let next = self.states[id.index()].table.dstep(byte);
+                (!next.is_none()).then_some(next)
+            });
+            self.states[state_idx].table.accel = accel;
         }
     }
 
@@ -1395,7 +1388,7 @@ impl LazyDfa {
             },
             field_transition_ptrs,
             cached: can_cache,
-            accel: None,
+            accel: self.nfa_accel_for(nfa_states),
         };
 
         self.states.push(state);
@@ -1463,40 +1456,22 @@ impl LazyDfa {
         next_idx
     }
 
-    fn try_compute_accel(&mut self, state_idx: StateId, scratch: &mut LazyDfaScratch) {
-        let nfa_states = &self.nfa_sets[state_idx.index()];
-        let mut common_accel: Option<AccelInfo> = None;
-
-        for &nfa_state in nfa_states {
-            if nfa_state.is_none() {
-                continue;
-            }
-            if let Some(ref accel) = self.nfa_arena[nfa_state].table.accel {
-                match &common_accel {
-                    None => common_accel = Some(accel.clone()),
-                    Some(existing)
-                        if existing.len == accel.len
-                            && existing.exit_bytes[..existing.len as usize]
-                                == accel.exit_bytes[..accel.len as usize] => {}
-                    Some(_) => return,
-                }
-            }
-        }
-
-        let accel = match common_accel {
-            Some(a) => a,
-            None => return,
-        };
-
-        // Verify: each exit byte must NOT self-loop in the lazy DFA
-        for &byte in &accel.exit_bytes[..accel.len as usize] {
-            let next = self.step(state_idx, byte, scratch);
-            if next == state_idx {
-                return;
-            }
-        }
-
-        self.states[state_idx.index()].accel = Some(accel);
+    /// The accelerator of an NFA state whose closure is exactly `nfa_states`.
+    /// Stepping from that state and from this set is then the same, so the
+    /// NFA's check that skipping is sound holds for the set as well.
+    fn nfa_accel_for(&self, nfa_states: &[StateId]) -> Option<AccelInfo> {
+        let mut set = nfa_states.to_vec();
+        set.sort_unstable_by_key(|id| id.0);
+        set.dedup();
+        set.iter().find_map(|&nfa_state| {
+            let accel = self.nfa_arena[nfa_state].table.accel.as_ref()?;
+            let mut closure = Vec::new();
+            self.nfa_arena
+                .extend_closure_or_self(nfa_state, &mut closure);
+            closure.sort_unstable_by_key(|id| id.0);
+            closure.dedup();
+            (closure == set).then(|| accel.clone())
+        })
     }
 
     /// Accumulate the cache's contribution to matcher-level resource statistics.
@@ -1590,14 +1565,6 @@ pub(crate) fn traverse_lazy_dfa(lazy_dfa: &mut LazyDfa, val: &[u8], transitions:
         let next = lazy_dfa.step(current, byte, &mut scratch);
         if next.is_dead() {
             return;
-        }
-
-        // On a self-loop, try to compute acceleration for future bytes. This is
-        // a pure speed-up: `try_compute_accel` only installs an accelerator it
-        // has re-checked, so attempting it more or less often never changes a
-        // match.
-        if next == current && lazy_dfa.states[current.index()].accel.is_none() {
-            lazy_dfa.try_compute_accel(current, &mut scratch);
         }
 
         current = next;
@@ -6722,9 +6689,8 @@ mod arena_stats_utility_tests {
 
     #[test]
     fn test_lazy_dfa_conflicting_nfa_accel_not_accelerated() {
-        // A lazy-DFA state that aggregates NFA states with conflicting exit
-        // bytes must not be accelerated: try_compute_accel bails when the
-        // member AccelInfos disagree.
+        // A lazy-DFA state spanning two NFA loops can't skip on either one's
+        // exit bytes: neither loop's closure is the whole state set.
         let mut arena = StateArena::new();
         let s0 = arena.alloc();
         let s1 = arena.alloc();

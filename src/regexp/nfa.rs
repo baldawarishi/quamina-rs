@@ -363,30 +363,11 @@ fn close_arena_plus_star_loop(
     // Set up loopback's epsilons: to exit AND back to start (CYCLE!)
     arena[loopback].table.epsilons = smallvec![exit_state, start];
 
-    // Compute acceleration for the loop.
-    // Only ASCII-only negated patterns can be accelerated.
-    // Unicode patterns have too many exit bytes (68+) for memchr to help.
-    let accel = qa.ascii_negated_bytes.as_ref().map(|bytes| {
-        // ASCII-only negated pattern: feed the negated bytes straight in
-        // as exit bytes. `detect_ascii_negated_bytes` already declines
-        // anything with more than 3 entries, so neither the `try_from`
-        // nor the indexed write can overflow.
-        let mut accel = crate::automaton::AccelInfo {
-            exit_bytes: [0; 3],
-            len: u8::try_from(bytes.len()).expect("ascii_negated_bytes is bounded to 3"),
-        };
-        for (i, &b) in bytes.iter().enumerate() {
-            accel.exit_bytes[i] = b;
-        }
-        accel
-    });
-
-    // Accel applies to the looping byte states (start + loopback), never to an
-    // epsilon-only entry split.
-    if let Some(accel) = accel {
-        arena[start].table.accel = Some(accel.clone());
-        arena[loopback].table.accel = Some(accel);
-    }
+    // Traversal may memchr through a loop from its loopback, the one state
+    // here that steps back to itself. Whether that is sound depends on what
+    // follows the loop, so this marks the loopback as a candidate and
+    // `StateArena::settle_accels` decides once the automaton is complete.
+    arena[loopback].table.accel = Some(crate::automaton::AccelInfo::CANDIDATE);
 
     // For *, offer the "match zero copies" bypass straight to the exit.
     if qa.is_star() {
