@@ -31,7 +31,7 @@ fn test_exact_match() {
     assert_eq!(matches, vec!["test"]);
 
     let no_matches = q.matches_for_event(br#"{"status": "inactive"}"#).unwrap();
-    assert!(no_matches.is_empty());
+    assert_eq!(no_matches, Vec::<&str>::new());
     println!("✓ Exact match");
 }
 
@@ -63,7 +63,7 @@ fn test_and_across_fields() {
 
     // Missing field = no match
     let no_match = q.matches_for_event(br#"{"priority": "high"}"#).unwrap();
-    assert!(no_match.is_empty());
+    assert_eq!(no_match, Vec::<&str>::new());
     println!("✓ AND across fields");
 }
 
@@ -126,7 +126,7 @@ fn test_anything_but() {
     assert!(matches.contains(&"active"));
 
     let no_match = q.matches_for_event(br#"{"status": "deleted"}"#).unwrap();
-    assert!(no_match.is_empty());
+    assert_eq!(no_match, Vec::<&str>::new());
     println!("✓ Anything-but operator");
 }
 
@@ -169,7 +169,7 @@ fn test_numeric() {
     assert!(m2.contains(&"mid"));
 
     let m3 = q.matches_for_event(br#"{"price": 1000}"#).unwrap();
-    assert!(m3.is_empty());
+    assert_eq!(m3, Vec::<&str>::new());
     println!("✓ Numeric comparison operator");
 }
 
@@ -183,7 +183,7 @@ fn test_regex() {
     assert!(m1.contains(&"p1"));
 
     let m2 = q.matches_for_event(br#"{"code": "invalid"}"#).unwrap();
-    assert!(m2.is_empty());
+    assert_eq!(m2, Vec::<&str>::new());
     println!("✓ Regex operator");
 }
 
@@ -201,6 +201,6 @@ fn test_delete_patterns() {
 
     // p1 no longer matches
     let m2 = q.matches_for_event(br#"{"x": "1"}"#).unwrap();
-    assert!(m2.is_empty());
+    assert_eq!(m2, Vec::<&str>::new());
     println!("✓ Delete patterns");
 }

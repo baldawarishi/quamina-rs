@@ -30,7 +30,7 @@ fn test_automaton_value_matcher_string() {
     assert!(pattern_ids.contains(&"p2".to_string()));
 
     let pattern_ids = matcher.match_value(b"foo");
-    assert!(pattern_ids.is_empty());
+    assert_eq!(pattern_ids, Vec::<String>::new());
 }
 
 #[test]
@@ -48,7 +48,7 @@ fn test_automaton_value_matcher_prefix() {
     assert!(pattern_ids.contains(&"p2".to_string()));
 
     let pattern_ids = matcher.match_value(b"dev-xyz");
-    assert!(pattern_ids.is_empty());
+    assert_eq!(pattern_ids, Vec::<String>::new());
 }
 
 #[test]
@@ -200,7 +200,7 @@ fn test_core_matcher_single_field_no_match() {
     let fields = vec![field("status", "inactive")];
 
     let pattern_ids = matcher.matches_for_fields(&fields);
-    assert!(pattern_ids.is_empty());
+    assert_eq!(pattern_ids, Vec::<String>::new());
 }
 
 #[test]
@@ -445,7 +445,7 @@ fn test_thread_safe_core_matcher_no_match() {
     let fields = vec![field("status", "inactive")];
 
     let pattern_ids = matcher.matches_for_fields(&fields);
-    assert!(pattern_ids.is_empty());
+    assert_eq!(pattern_ids, Vec::<String>::new());
 }
 
 #[test]
@@ -548,9 +548,9 @@ fn test_nfa_buffers_clear() {
 
     bufs.clear();
 
-    assert!(bufs.arena_bufs.current_states.is_empty());
-    assert!(bufs.arena_bufs.next_states.is_empty());
-    assert!(bufs.arena_bufs.transitions.is_empty());
+    assert_eq!(bufs.arena_bufs.current_states, []);
+    assert_eq!(bufs.arena_bufs.next_states, []);
+    assert_eq!(bufs.arena_bufs.transitions, []);
 }
 
 /// Verify that `NfaBuffers::clear` (called by `traverse_arena_nfa`) prevents

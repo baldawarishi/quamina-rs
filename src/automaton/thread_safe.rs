@@ -1739,7 +1739,7 @@ mod tests {
             },
         ];
         let pattern_ids = matcher.matches_for_fields_ref(&fields_no_match, &mut bufs);
-        assert!(pattern_ids.is_empty());
+        assert_eq!(pattern_ids, Vec::<String>::new());
     }
 
     // =========================================================================
@@ -1825,7 +1825,7 @@ mod tests {
             array_trail: vec![],
             is_number: false,
         }];
-        assert!(m.matches_for_fields(&single).is_empty());
+        assert_eq!(m.matches_for_fields(&single), Vec::<String>::new());
     }
 
     #[test]
@@ -1929,7 +1929,10 @@ mod tests {
             array_trail: &[],
             is_number: false,
         }];
-        assert!(m.matches_for_fields_ref(&single, &mut bufs).is_empty());
+        assert_eq!(
+            m.matches_for_fields_ref(&single, &mut bufs),
+            Vec::<String>::new()
+        );
     }
 
     #[test]
@@ -2038,7 +2041,10 @@ mod tests {
             array_trail: [].as_slice().into(),
             is_number: false,
         }];
-        assert!(m.matches_for_fields_direct(&single, &mut bufs).is_empty());
+        assert_eq!(
+            m.matches_for_fields_direct(&single, &mut bufs),
+            Vec::<String>::new()
+        );
     }
 
     #[test]
@@ -2219,7 +2225,7 @@ mod tests {
 
         assert_eq!(avm.match_value(b"hello"), vec!["p1".to_string()]);
         assert_eq!(avm.match_value(b"world"), vec!["p2".to_string()]);
-        assert!(avm.match_value(b"other").is_empty());
+        assert_eq!(avm.match_value(b"other"), Vec::<String>::new());
     }
 
     #[test]
@@ -2230,7 +2236,7 @@ mod tests {
 
         assert_eq!(avm.match_value(b"foobar"), vec!["p1".to_string()]);
         assert_eq!(avm.match_value(b"barbaz"), vec!["p2".to_string()]);
-        assert!(avm.match_value(b"baz").is_empty());
+        assert_eq!(avm.match_value(b"baz"), Vec::<String>::new());
     }
 
     #[test]
@@ -2245,7 +2251,7 @@ mod tests {
 
         assert_eq!(avm.match_value(b"hello"), vec!["p1".to_string()]);
         assert_eq!(avm.match_value(b"world"), vec!["p2".to_string()]);
-        assert!(avm.match_value(b"other").is_empty());
+        assert_eq!(avm.match_value(b"other"), Vec::<String>::new());
     }
 
     #[test]
@@ -2261,7 +2267,7 @@ mod tests {
         assert_eq!(avm.match_value(b"x"), vec![10]);
         assert_eq!(avm.match_value(b"y"), vec![20]);
         assert_eq!(avm.match_value(b"z"), vec![30]);
-        assert!(avm.match_value(b"w").is_empty());
+        assert_eq!(avm.match_value(b"w"), []);
     }
 
     // -- ensure_frozen + collect_fm_stats / collect_vm_stats dedup --

@@ -2417,7 +2417,7 @@ mod tests {
                 is_number: false,
             },
         ];
-        assert!(cm.matches_for_fields(&conflicting).is_empty());
+        assert_eq!(cm.matches_for_fields(&conflicting), Vec::<String>::new());
 
         // Same array, same pos → no conflict → match
         let compatible = vec![
@@ -2465,7 +2465,7 @@ mod tests {
             array_trail: vec![],
             is_number: false,
         }];
-        assert!(cm.matches_for_fields(&single).is_empty());
+        assert_eq!(cm.matches_for_fields(&single), Vec::<String>::new());
     }
 
     // -- matches_for_fields_ref (borrowed EventFieldRef) --
@@ -2498,7 +2498,10 @@ mod tests {
             array_trail: &[],
             is_number: false,
         }];
-        assert!(cm.matches_for_fields_ref(&single, &mut bufs).is_empty());
+        assert_eq!(
+            cm.matches_for_fields_ref(&single, &mut bufs),
+            Vec::<String>::new()
+        );
     }
 
     #[test]
@@ -2525,9 +2528,9 @@ mod tests {
                 is_number: false,
             },
         ];
-        assert!(
-            cm.matches_for_fields_ref(&conflicting, &mut bufs)
-                .is_empty()
+        assert_eq!(
+            cm.matches_for_fields_ref(&conflicting, &mut bufs),
+            Vec::<String>::new()
         );
 
         // Compatible → match
@@ -2572,7 +2575,10 @@ mod tests {
             array_trail: &[],
             is_number: false,
         }];
-        assert!(cm.matches_for_fields_ref(&with, &mut bufs).is_empty());
+        assert_eq!(
+            cm.matches_for_fields_ref(&with, &mut bufs),
+            Vec::<String>::new()
+        );
     }
 
     // -- matches_for_fields_direct (flatten_json::Field) --
@@ -2606,7 +2612,10 @@ mod tests {
             array_trail: [].as_slice().into(),
             is_number: false,
         }];
-        assert!(cm.matches_for_fields_direct(&single, &mut bufs).is_empty());
+        assert_eq!(
+            cm.matches_for_fields_direct(&single, &mut bufs),
+            Vec::<String>::new()
+        );
     }
 
     #[test]
@@ -2636,9 +2645,9 @@ mod tests {
                 is_number: false,
             },
         ];
-        assert!(
-            cm.matches_for_fields_direct(&conflicting, &mut bufs)
-                .is_empty()
+        assert_eq!(
+            cm.matches_for_fields_direct(&conflicting, &mut bufs),
+            Vec::<String>::new()
         );
 
         // Compatible → match
@@ -2922,7 +2931,10 @@ mod tests {
             array_trail: [].as_slice().into(),
             is_number: false,
         }];
-        assert!(cm.matches_for_fields_direct(&with, &mut bufs).is_empty());
+        assert_eq!(
+            cm.matches_for_fields_direct(&with, &mut bufs),
+            Vec::<String>::new()
+        );
     }
 
     // =========================================================================
@@ -2956,7 +2968,7 @@ mod tests {
             array_trail: vec![],
             is_number: false,
         }];
-        assert!(cm.matches_for_fields(&wrong).is_empty());
+        assert_eq!(cm.matches_for_fields(&wrong), Vec::<String>::new());
     }
 
     #[test]
@@ -2999,7 +3011,7 @@ mod tests {
             array_trail: vec![],
             is_number: false,
         }];
-        assert!(cm.matches_for_fields(&green).is_empty());
+        assert_eq!(cm.matches_for_fields(&green), Vec::<String>::new());
     }
 
     #[test]
@@ -3027,7 +3039,7 @@ mod tests {
             array_trail: vec![],
             is_number: true,
         }];
-        assert!(cm.matches_for_fields(&different).is_empty());
+        assert_eq!(cm.matches_for_fields(&different), Vec::<String>::new());
     }
 
     #[test]
@@ -3061,7 +3073,7 @@ mod tests {
             array_trail: vec![],
             is_number: false,
         }];
-        assert!(cm.matches_for_fields(&no_prefix).is_empty());
+        assert_eq!(cm.matches_for_fields(&no_prefix), Vec::<String>::new());
     }
 
     #[test]
@@ -3095,7 +3107,7 @@ mod tests {
             array_trail: vec![],
             is_number: false,
         }];
-        assert!(cm.matches_for_fields(&no_suffix).is_empty());
+        assert_eq!(cm.matches_for_fields(&no_suffix), Vec::<String>::new());
     }
 
     #[test]
@@ -3126,7 +3138,7 @@ mod tests {
             array_trail: vec![],
             is_number: false,
         }];
-        assert!(cm.matches_for_fields(&no_match).is_empty());
+        assert_eq!(cm.matches_for_fields(&no_match), Vec::<String>::new());
     }
 
     #[test]

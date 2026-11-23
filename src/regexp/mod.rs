@@ -2405,7 +2405,7 @@ mod tests {
         let base = vec![RunePair { lo: 'b', hi: 'c' }];
         let sub = vec![RunePair { lo: 'a', hi: 'd' }];
         let result = subtract_rune_range(base, sub);
-        assert!(result.is_empty());
+        assert_eq!(result, []);
     }
 
     #[test]
@@ -2649,7 +2649,7 @@ mod tests {
         let mut value = Vec::from(b"\"hello\"".as_slice());
         value.push(ARENA_VALUE_TERMINATOR);
         traverse_arena_nfa(&arena, start, &value, &mut bufs);
-        assert!(!bufs.transitions.is_empty());
+        assert_ne!(bufs.transitions, []);
 
         // Clear the cache
         clear_fa_shell_cache();

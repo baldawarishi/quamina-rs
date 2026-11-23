@@ -1282,7 +1282,7 @@ fn test_custom_flattener_no_match() {
         .unwrap();
 
     let pattern_ids = q.matches_for_event(b"ignored").unwrap();
-    assert!(pattern_ids.is_empty());
+    assert_eq!(pattern_ids, Vec::<String>::new());
 }
 
 #[test]
@@ -2036,7 +2036,7 @@ fn test_delete_multi_pattern_id_removes_all() {
 #[test]
 fn test_list_pattern_ids_basic() {
     let mut q: Quamina<String> = Quamina::new();
-    assert!(q.list_pattern_ids().is_empty());
+    assert_eq!(q.list_pattern_ids(), Vec::<&String>::new());
 
     q.add_pattern("p1".into(), r#"{"x": [1]}"#).unwrap();
     q.add_pattern("p2".into(), r#"{"y": [2]}"#).unwrap();
@@ -2116,7 +2116,7 @@ fn test_delete_already_deleted_pattern_is_noop() {
     // Deleting again should not panic or change state
     q.delete_patterns(&"p1".into()).unwrap();
     assert!(!q.contains_pattern(&"p1".into()));
-    assert!(q.list_pattern_ids().is_empty());
+    assert_eq!(q.list_pattern_ids(), Vec::<&String>::new());
 }
 
 // ============================================================================
@@ -2307,7 +2307,10 @@ fn check_deeply_nested_regexp_builds_and_matches(n: usize) {
     let mut q = Quamina::<&str>::new();
     q.add_pattern("deep", &pattern).unwrap();
     assert_eq!(q.matches_for_event(br#"{"x": "a"}"#).unwrap(), ["deep"]);
-    assert!(q.matches_for_event(br#"{"x": "aa"}"#).unwrap().is_empty());
+    assert_eq!(
+        q.matches_for_event(br#"{"x": "aa"}"#).unwrap(),
+        Vec::<&str>::new()
+    );
 }
 
 // --- Field Count Limit Tests ---
