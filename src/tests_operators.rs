@@ -640,6 +640,19 @@ fn test_numeric_scientific_notation() {
     assert_matches!(q, r#"{"value": 3.5e2}"#, vec!["p1"], "Scientific 3.5e2");
 }
 
+#[test]
+fn test_negative_zero_matches_zero() {
+    let q = q!("p1" => r#"{"x": [-0]}"#);
+    assert_matches!(q, r#"{"x": 0}"#, vec!["p1"]);
+
+    let q = q!("p1" => r#"{"x": [0]}"#);
+    assert_matches!(q, r#"{"x": -0}"#, vec!["p1"]);
+    assert_matches!(q, r#"{"x": -0.0}"#, vec!["p1"]);
+
+    let q = q!("p1" => r#"{"x": [{"numeric": ["=", 0]}]}"#);
+    assert_matches!(q, r#"{"x": -0}"#, vec!["p1"]);
+}
+
 // ============================================================================
 // Regex Tests
 // ============================================================================

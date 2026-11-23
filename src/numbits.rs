@@ -135,10 +135,11 @@ pub fn q_num_stack(f: f64) -> QNumberStack {
 /// The resulting u64 can be compared directly to preserve numeric ordering:
 /// if a < b as floats, then numbits_from_f64(a) < numbits_from_f64(b) as u64.
 ///
-/// Note: This implementation ignores NaN, -0, and infinities because JSON
-/// rules and Quamina's parsers prevent those values from occurring.
+/// JSON can spell zero as `-0`, but to Quamina zero is zero, so -0.0 maps to
+/// the same numbits as 0.0. NaN and infinities are ignored because JSON rules
+/// and Quamina's parsers prevent those values from occurring.
 pub(crate) const fn numbits_from_f64(f: f64) -> u64 {
-    let u = f.to_bits();
+    let u = if f == 0.0 { 0 } else { f.to_bits() };
     // Branchless transform: if the high bit is 0, XOR with the sign bit
     // (1 << 63); if it's 1, negate (XOR with !0). Raph Levien spotted that
     // a sign-extending right shift gives us the right mask for free —
@@ -409,13 +410,9 @@ mod tests {
 
     #[test]
     fn test_zero_handling() {
-        // Test that 0.0 and -0.0 both work (though JSON typically only has 0)
         let q_zero = q_num_from_f64(0.0);
-        let q_neg_zero = q_num_from_f64(-0.0);
-
-        // Both should produce valid Q-numbers
         assert!(!q_zero.is_empty());
-        assert!(!q_neg_zero.is_empty());
+        assert_eq!(q_num_from_f64(-0.0), q_zero);
     }
 
     // =========================================================================

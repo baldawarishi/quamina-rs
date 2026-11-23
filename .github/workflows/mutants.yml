@@ -2,7 +2,6 @@ name: mutation-testing
 
 on:
   pull_request:
-    branches: [main]
   workflow_dispatch:
 
 jobs:
@@ -12,7 +11,7 @@ jobs:
   incremental:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 21
     steps:
       - uses: actions/checkout@v7
         with:
