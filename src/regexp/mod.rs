@@ -111,6 +111,13 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_rejects_regexp_ending_inside_an_atom() {
+        for re in ["~p{L", "~p{klsak", "~p{", "[~p{L", "a~P{Lu"] {
+            assert!(parse_regexp(re).is_err(), "{re:?} should fail parsing");
+        }
+    }
+
+    #[test]
     fn test_parse_invalid_unclosed_bracket() {
         // Invalid pattern with unclosed bracket should fail
         let result = parse_regexp("[invalid");
@@ -2506,19 +2513,16 @@ mod tests {
 
     #[test]
     fn test_parse_char_class_subtraction_with_negated_outer() {
-        // [^a-z-[aeiou]] = negate(consonants) = everything except consonants
-        // Base [a-z] minus [aeiou] = consonants, then negated
+        // XSD reads [^a-z-[aeiou]] as [^a-z] minus [aeiou], so the negation
+        // covers only the base group: no letter from a-z is left, vowels included.
         let root = parse_regexp("[^a-z-[aeiou]]").unwrap();
         assert_eq!(root.len(), 1);
         assert_eq!(root[0].len(), 1);
         let runes = &root[0][0].runes;
-        // Should NOT contain consonants, but SHOULD contain vowels and non-letters
-        // Verify vowel 'a' is in the result (since consonants were inverted)
-        let has_a = runes.iter().any(|rp| rp.lo <= 'a' && 'a' <= rp.hi);
-        assert!(has_a, "negated consonants should include 'a'");
-        // Verify consonant 'b' is NOT in the result
-        let has_b = runes.iter().any(|rp| rp.lo <= 'b' && 'b' <= rp.hi);
-        assert!(!has_b, "negated consonants should not include 'b'");
+        let has = |c: char| runes.iter().any(|rp| rp.lo <= c && c <= rp.hi);
+        assert!(!has('a'), "the subtracted vowel 'a' must be excluded");
+        assert!(!has('b'), "the negated consonant 'b' must be excluded");
+        assert!(has('A') && has('0'), "everything outside a-z remains");
     }
 
     #[test]

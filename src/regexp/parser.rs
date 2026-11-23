@@ -1050,6 +1050,36 @@ fn expand_wb_atoms(
     }
 }
 
+/// Dissolve a group next to the boundary at `pos` into `branch`, one branch per
+/// alternative, when the group matches exactly once.
+///
+/// A boundary can only be checked against the character class of its
+/// neighbour, which a group does not have. Spliced in, the group's own edge
+/// atoms become the neighbours, so `.*~b(~w+)~b` expands like `.*~b~w+~b`.
+fn splice_group_beside(branch: &Branch, pos: usize) -> Option<Vec<Branch>> {
+    let at = [pos.checked_sub(1), Some(pos + 1)]
+        .into_iter()
+        .flatten()
+        .find(|&i| {
+            branch.get(i).is_some_and(|a| {
+                a.subtree.is_some()
+                    && a.lookaround.is_none()
+                    && a.quant_min == 1
+                    && a.quant_max == 1
+            })
+        })?;
+    let (before, rest) = branch.split_at(at);
+    let (group, after) = rest.split_first()?;
+    Some(
+        group
+            .subtree
+            .as_deref()?
+            .iter()
+            .map(|alternative| [before, alternative, after].concat())
+            .collect(),
+    )
+}
+
 /// Cap on the branches one pattern's word boundaries may expand into.
 ///
 /// Every boundary multiplies the branch count by the ways the atoms around it
@@ -1095,11 +1125,14 @@ pub fn expand_word_boundaries(tree: &Root) -> Result<Root, String> {
                     continue;
                 };
                 found_wb = true;
-                let is_boundary = alt[pos].is_word_boundary.unwrap();
-
-                let prefix = &alt[..pos];
-                let suffix = &alt[pos + 1..];
-                expand_wb_atoms(prefix, suffix, is_boundary, &mut new_alternatives);
+                if let Some(spliced) = splice_group_beside(alt, pos) {
+                    new_alternatives.extend(spliced);
+                } else {
+                    let is_boundary = alt[pos].is_word_boundary.unwrap();
+                    let prefix = &alt[..pos];
+                    let suffix = &alt[pos + 1..];
+                    expand_wb_atoms(prefix, suffix, is_boundary, &mut new_alternatives);
+                }
                 if new_alternatives.len() > MAX_WB_ALTERNATIVES {
                     return Err(format!(
                         "word boundary expansion exceeds {MAX_WB_ALTERNATIVES} alternatives"
@@ -1209,13 +1242,15 @@ fn read_branch(
     loop {
         let piece = match closed_group.take() {
             Some(mut group) => read_quantifier(parse, &mut group).map(|()| Piece::Atom(group)),
+            // Only a piece boundary may end the regexp; running out part way
+            // through a piece, as in `~p{L` or `[a`, is an error.
+            None if parse.is_empty() => return Ok(BranchEnd::Done),
             None => read_piece(parse),
         };
         match piece {
             Ok(Piece::Atom(qa)) => branch.push(qa),
             Ok(Piece::GroupOpen(lookaround)) => return Ok(BranchEnd::GroupOpen(lookaround)),
             Err(e) if e.message == "stuck" => return Ok(BranchEnd::Done),
-            Err(e) if e.message == "end of string" => return Ok(BranchEnd::Done),
             Err(e) => return Err(e),
         }
     }
@@ -1683,7 +1718,14 @@ fn read_char_class_expr_depth(
             // Character class subtraction: base-[subtract]
             // Recursively parse the subtracted class (which may itself contain subtraction)
             let (subtract_rr, _) = read_char_class_expr_depth(parse, depth + 1)?;
-            rr = subtract_rune_range(rr, subtract_rr);
+            rr = if is_negated {
+                // The negation binds tighter than the subtraction: `[^a-[b]]`
+                // is everything outside `a` minus `b`, which is everything
+                // outside `a` or `b`. The union is inverted below.
+                simplify_rune_range([rr, subtract_rr].concat())
+            } else {
+                subtract_rune_range(rr, subtract_rr)
+            };
         } else {
             // Not subtraction — it's a trailing literal '-'
             parse.backup1(next);

@@ -20,6 +20,9 @@ Style inspired by [ripgrep's CHANGELOG](https://github.com/BurntSushi/ripgrep/bl
 - A pattern field under an empty top-level member name, like `{"": {"x": [1]}}`, matches that path as in Go instead of the top-level `x`
 - Stop treating a regexp `{1,100}` as `+` and `{0,100}` as `*`, and let `{n,}` match more than 100 repetitions (ported from Go 797e711)
 - Reject events with a literal that runs on, like `trueish`, instead of reading it as `true` (ported from Go 74ba31b)
+- Read `[^a-[b]]` as XSD does: everything outside `a`, minus `b`
+- Reject a regexp that ends part way through an atom, like `~p{L` or `[~p{L`, instead of silently dropping the unfinished atom
+- Accept a word boundary beside a group that matches once, like `.*~b(~w+)~b`, instead of rejecting it as impossible
 
 ### Changed
 - A regexp character class spanning many multi-byte characters, like `[^a]` or `~S`, shares its UTF-8 continuation states, so it builds hundreds of times faster and stays well inside the arena byte budget

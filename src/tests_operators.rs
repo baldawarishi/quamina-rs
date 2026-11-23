@@ -1695,6 +1695,40 @@ fn test_wb_optional_group_rejected() {
 }
 
 #[test]
+fn test_wb_beside_group() {
+    // A group that matches exactly once is checked through its own edge
+    // characters, one alternative at a time.
+    let q = q!("test" => r#"{"v": [{"regexp": ".*~b(~w+)~b"}]}"#);
+    assert_has_match!(q, r#"{"v": "flop"}"#, "test");
+    assert_has_match!(q, r#"{"v": "a flop"}"#, "test");
+    assert_no_has_match!(q, r#"{"v": "flop!"}"#, "test");
+    assert_no_has_match!(q, r#"{"v": "///"}"#, "test");
+
+    let q = q!("test" => r#"{"v": [{"regexp": "(a|b )~bc"}]}"#);
+    assert_has_match!(q, r#"{"v": "b c"}"#, "test");
+    assert_no_has_match!(q, r#"{"v": "ac"}"#, "test");
+
+    let q = q!("test" => r#"{"v": [{"regexp": ".*~B(SUCCESS)~B.*"}]}"#);
+    assert_has_match!(q, r#"{"v": "AASUCCESSAA"}"#, "test");
+    assert_no_has_match!(q, r#"{"v": "A SUCCESS"}"#, "test");
+}
+
+#[test]
+fn test_wb_beside_wide_group_is_capped() {
+    // Each alternative of a group beside a boundary becomes its own branch,
+    // so a wide enough alternation is refused like any other over-long expansion.
+    let wide = (0..1100)
+        .map(|i| format!("a{i}"))
+        .collect::<Vec<_>>()
+        .join("|");
+    let mut q = Quamina::new();
+    let err = q
+        .add_pattern("test", &format!(r#"{{"v": [{{"regexp": "({wide})~b"}}]}}"#))
+        .unwrap_err();
+    assert!(err.to_string().contains("alternatives"), "{err}");
+}
+
+#[test]
 fn test_wb_optional_run_before_boundary() {
     // Each trailing optional can be present or absent independently, so the
     // boundary is satisfied by whichever atom ends up last: 'b', 'a' or 'x'.
