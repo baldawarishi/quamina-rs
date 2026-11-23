@@ -4957,3 +4957,42 @@ fn test_iregexp_vectors() {
         assert_eq!(accepted, extensions.contains(re), "{re:?} ({feature})");
     }
 }
+
+/// Check every `stride`-th of RE2's exhaustive regexps against RE2's
+/// whole-string match on each of its subjects. Quamina must accept every one.
+#[cfg(test)]
+fn assert_re2_fullmatch_agrees(stride: usize) {
+    use crate::test_helpers::{matches_for_x, regexp_pattern};
+
+    let mut problems = Vec::new();
+    for case in crate::regexp_test_data::re2_fullmatch()
+        .iter()
+        .step_by(stride)
+    {
+        let mut q = Quamina::<u8>::new();
+        if let Err(e) = q.add_pattern(0, &regexp_pattern(&case.regex)) {
+            problems.push(format!("{:?} rejected: {e}", case.regex));
+            continue;
+        }
+        for (subject, &want) in case.subjects.iter().zip(&case.full_match) {
+            if matches_for_x(&q, subject).is_empty() == want {
+                problems.push(format!("{:?} on {subject:?}: RE2 says {want}", case.regex));
+            }
+        }
+    }
+    assert!(problems.is_empty(), "{problems:#?}");
+}
+
+// MIRI SKIP RATIONALE: reads the RE2 results from testdata/.
+#[test]
+#[cfg_attr(miri, ignore)]
+fn test_re2_exhaustive_fullmatch_sample() {
+    assert_re2_fullmatch_agrees(8);
+}
+
+/// Every RE2 regexp; ignored by default because it is slow in a debug build.
+#[test]
+#[ignore]
+fn test_re2_exhaustive_fullmatch_stress() {
+    assert_re2_fullmatch_agrees(1);
+}
