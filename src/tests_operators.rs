@@ -1694,7 +1694,11 @@ fn test_wb_optional_group_rejected() {
     assert_add_err!(q, "test", r#"{"v": [{"regexp": "x(ab)?~b "}]}"#);
 }
 
+// MIRI SKIP RATIONALE: builds a Unicode negated class 18 times, about two
+// minutes under interpretation. Coverage: the accelerator check itself runs
+// under Miri in dfa_accel_tests::test_for_self_loop_*.
 #[test]
+#[cfg_attr(miri, ignore)]
 fn test_negated_class_loop_skips_only_where_stepping_would() {
     // A `[^x]+` loop may memchr ahead to its next exit byte, but only to where
     // stepping one byte at a time would also be, whatever follows the loop.
@@ -1745,7 +1749,10 @@ fn test_wb_beside_group() {
     assert_no_has_match!(q, r#"{"v": "A SUCCESS"}"#, "test");
 }
 
+// MIRI SKIP RATIONALE: parses 1,100 alternatives, over a minute under
+// interpretation, and touches no unsafe code the narrower ~b tests don't.
 #[test]
+#[cfg_attr(miri, ignore)]
 fn test_wb_beside_wide_group_is_capped() {
     // Each alternative of a group beside a boundary becomes its own branch,
     // so a wide enough alternation is refused like any other over-long expansion.
