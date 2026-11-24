@@ -979,23 +979,39 @@ impl StateArena {
             if self.states[state_idx].table.accel.is_none() {
                 continue;
             }
-            let accel =
-                AccelInfo::for_self_loop(&vec![StateId::from_index(state_idx)], |live, byte| {
-                    let mut closure = Vec::new();
-                    for &id in live {
-                        self.extend_closure_or_self(id, &mut closure);
-                    }
-                    let mut next: Vec<StateId> = closure
-                        .iter()
-                        .map(|&id| self.dstep(id, byte))
-                        .filter(|id| !id.is_none())
-                        .collect();
-                    next.sort_unstable_by_key(|id| id.0);
-                    next.dedup();
-                    (!next.is_empty()).then_some(next)
-                });
+            let accel = AccelInfo::for_self_loop(&vec![StateId::from_index(state_idx)], |live| {
+                self.transition_row(live)
+            });
             self.states[state_idx].table.accel = accel;
         }
+    }
+
+    /// The transitions out of the closure of `live`, as `(ceiling, targets)`
+    /// runs in the manner of a [`SmallTable`], each target set sorted.
+    fn transition_row(&self, live: &[StateId]) -> Vec<(u8, Option<Vec<StateId>>)> {
+        let mut closure = Vec::new();
+        for &id in live {
+            self.extend_closure_or_self(id, &mut closure);
+        }
+        let tables: Vec<&SmallTable> = closure.iter().map(|&id| &self[id].table).collect();
+        let mut ceilings: Vec<u8> = tables.iter().flat_map(|t| t.ceilings.clone()).collect();
+        ceilings.sort_unstable();
+        ceilings.dedup();
+        let mut start = 0;
+        ceilings
+            .into_iter()
+            .map(|ceiling| {
+                let mut to: Vec<StateId> = tables
+                    .iter()
+                    .map(|t| t.dstep(start))
+                    .filter(|id| !id.is_none())
+                    .collect();
+                to.sort_unstable_by_key(|id| id.0);
+                to.dedup();
+                start = ceiling;
+                (ceiling, (!to.is_empty()).then_some(to))
+            })
+            .collect()
     }
 
     /// Build frozen lookup structures for fast traversal.
@@ -1221,9 +1237,10 @@ impl StateArena {
     /// leads nowhere counts as an exit: traversal skips to it and stops there.
     fn compute_dfa_accel(&mut self) {
         for state_idx in 0..self.states.len() {
-            let accel = AccelInfo::for_self_loop(&StateId::from_index(state_idx), |&id, byte| {
-                let next = self.states[id.index()].table.dstep(byte);
-                (!next.is_none()).then_some(next)
+            let accel = AccelInfo::for_self_loop(&StateId::from_index(state_idx), |&id| {
+                let table = &self.states[id.index()].table;
+                let to = table.steps.iter().map(|&t| (!t.is_none()).then_some(t));
+                table.ceilings.iter().copied().zip(to).collect()
             });
             self.states[state_idx].table.accel = accel;
         }
@@ -10717,6 +10734,49 @@ mod lazy_dfa_tests {
 mod dfa_accel_tests {
     use super::dfa_test_helpers::build_regexp_nfa;
     use super::*;
+
+    /// `[^x]`'s loop as `(ceiling, target)` rows: state 0 is the loop, and
+    /// state `n` in 1..=3 still needs `n` continuation bytes.
+    fn not_x_loop_row(state: &u8) -> Vec<(u8, Option<u8>)> {
+        match state {
+            0 => vec![
+                (b'x', Some(0)),
+                (b'x' + 1, None),
+                (0x80, Some(0)),
+                (0xC2, None),
+                (0xE0, Some(1)),
+                (0xF0, Some(2)),
+                (0xF5, Some(3)),
+                (BYTE_CEILING_U8, None),
+            ],
+            n => vec![(0x80, None), (0xC0, Some(n - 1)), (BYTE_CEILING_U8, None)],
+        }
+    }
+
+    #[test]
+    fn test_for_self_loop_reads_each_continuation_once() {
+        // 51 lead bytes reach just three states with seven distinct sets of
+        // continuations left between them, so 8 rows are read, not hundreds.
+        let mut rows = 0;
+        let accel = AccelInfo::for_self_loop(&0, |s| {
+            rows += 1;
+            not_x_loop_row(s)
+        })
+        .unwrap();
+        assert_eq!(&accel.exit_bytes[..usize::from(accel.len)], b"x");
+        assert_eq!(rows, 8);
+    }
+
+    #[test]
+    fn test_for_self_loop_rejects_a_character_that_leaves_the_loop() {
+        // Make one continuation of the three-byte sequences die: the loop
+        // then can't be skipped through, as memchr can't find that character.
+        let accel = AccelInfo::for_self_loop(&0, |s| match s {
+            2 => vec![(0x80, None), (0xBF, Some(1)), (BYTE_CEILING_U8, None)],
+            _ => not_x_loop_row(s),
+        });
+        assert!(accel.is_none());
+    }
 
     // MIRI SKIP RATIONALE: a[^x]+x builds a large Unicode NFA; traversal with a 1000-byte
     // value takes too long under interpretation. Coverage: test_accel_traversal_miri_friendly

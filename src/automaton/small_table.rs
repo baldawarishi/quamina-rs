@@ -53,48 +53,78 @@ impl AccelInfo {
         len: 0,
     };
 
-    /// The accelerator for a state that `step` keeps returning to, if skipping
-    /// ahead from it is sound.
+    /// The accelerator for a state that its transitions keep returning to, if
+    /// skipping ahead from it is sound.
     ///
     /// Skipping to the next exit byte has to land exactly where stepping one
     /// byte at a time would. So every ASCII byte except at most three exits,
     /// and every whole multi-byte character, must lead straight back to
     /// `state`. A character that leads anywhere else can't be made an exit,
-    /// since memchr only finds single bytes. `step` returns `None` where the
-    /// match dies, which for an ASCII byte makes it an exit too.
-    pub(crate) fn for_self_loop<S: PartialEq>(
+    /// since memchr only finds single bytes.
+    ///
+    /// `row` gives a state's transitions as `(ceiling, target)` runs, each
+    /// covering the bytes from the previous ceiling up to this one and the
+    /// last ending at `BYTE_CEILING`, as in a `SmallTable`. A `None` target is
+    /// where the match dies, which for an ASCII byte makes it an exit too.
+    pub(crate) fn for_self_loop<S: Clone + PartialEq>(
         state: &S,
-        mut step: impl FnMut(&S, u8) -> Option<S>,
+        mut row: impl FnMut(&S) -> Vec<(u8, Option<S>)>,
     ) -> Option<Self> {
         let mut accel = Self::default();
-        for byte in 0..0x80 {
-            if step(state, byte).as_ref() != Some(state) {
-                *accel.exit_bytes.get_mut(usize::from(accel.len))? = byte;
-                accel.len += 1;
-            }
-        }
-        if accel.len == 0 {
-            return None;
-        }
-        for lead in 0xC2..=0xF4 {
-            let mut reached = vec![step(state, lead)?];
-            for &(lo, hi) in utf8_continuations(lead) {
-                let mut next = Vec::new();
-                for s in &reached {
-                    for byte in lo..=hi {
-                        let t = step(s, byte)?;
-                        if !next.contains(&t) {
-                            next.push(t);
-                        }
-                    }
+        // Many lead bytes reach the same state with the same continuations
+        // still to read, so each such pair is checked once.
+        let mut checked = Vec::new();
+        let mut start = 0;
+        for (ceiling, to) in row(state) {
+            if to.as_ref() != Some(state) {
+                for byte in start..ceiling.min(0x80) {
+                    *accel.exit_bytes.get_mut(usize::from(accel.len))? = byte;
+                    accel.len += 1;
                 }
-                reached = next;
             }
-            if reached.iter().any(|s| s != state) {
-                return None;
+            for lead in start.max(0xC2)..ceiling.min(0xF5) {
+                let next = to.clone()?;
+                if !Self::completes_to(
+                    state,
+                    next,
+                    utf8_continuations(lead),
+                    &mut row,
+                    &mut checked,
+                ) {
+                    return None;
+                }
             }
+            start = ceiling;
         }
-        Some(accel)
+        (accel.len > 0).then_some(accel)
+    }
+
+    /// Whether every run of `rest` continuation bytes from `from` lands on `state`.
+    fn completes_to<S: Clone + PartialEq>(
+        state: &S,
+        from: S,
+        rest: &'static [(u8, u8)],
+        row: &mut impl FnMut(&S) -> Vec<(u8, Option<S>)>,
+        checked: &mut Vec<(S, &'static [(u8, u8)])>,
+    ) -> bool {
+        let Some((&(lo, hi), tail)) = rest.split_first() else {
+            return from == *state;
+        };
+        if checked.iter().any(|(s, r)| *s == from && *r == rest) {
+            return true;
+        }
+        let mut start = 0;
+        for (ceiling, to) in row(&from) {
+            if start <= hi
+                && ceiling > lo
+                && !to.is_some_and(|t| Self::completes_to(state, t, tail, row, checked))
+            {
+                return false;
+            }
+            start = ceiling;
+        }
+        checked.push((from, rest));
+        true
     }
 
     /// Find the next exit byte in `remaining` using SIMD-accelerated memchr.
