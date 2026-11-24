@@ -4,14 +4,29 @@
 //! and Unicode blocks (~p{IsBasicLatin}, etc.). The category tables are generated, in
 //! `unicode_category_tables.rs`; the block ranges are listed here by hand.
 
-use crate::regexp::RunePair;
+use crate::regexp::{RunePair, invert_rune_range, simplify_rune_range};
+use crate::unicode_category_tables::CATEGORIES;
 
-/// Get character ranges for a Unicode general category.
-/// Returns None if the category is not recognized.
-pub fn get_category_ranges(initial: char, detail: Option<char>) -> Option<Vec<RunePair>> {
-    let name: String = std::iter::once(initial).chain(detail).collect();
-    let ranges = crate::unicode_category_tables::category_ranges(&name)?;
-    Some(ranges.iter().map(|&(lo, hi)| rp(lo, hi)).collect())
+/// The sorted, merged ranges of a general category named like `L` or `Lu`,
+/// or `None` if there is no such category.
+///
+/// Only the two-letter categories other than `Cn` are stored: a one-letter
+/// category is the union of its own, and `Cn` is every non-surrogate code
+/// point no other category holds.
+pub fn get_category_ranges(name: &str) -> Option<Vec<RunePair>> {
+    let pairs =
+        |&(_, table): &(_, &'static [(char, char)])| table.iter().map(|&(lo, hi)| rp(lo, hi));
+    let covers = |stored: &str| stored == name || (name.len() == 1 && stored.starts_with(name));
+    let mut ranges: Vec<RunePair> = CATEGORIES
+        .iter()
+        .filter(|(stored, _)| covers(stored))
+        .flat_map(pairs)
+        .collect();
+    if covers("Cn") {
+        let assigned = CATEGORIES.iter().flat_map(pairs).collect();
+        ranges.extend(invert_rune_range(assigned));
+    }
+    (!ranges.is_empty()).then(|| simplify_rune_range(ranges))
 }
 
 /// Get character ranges for a Unicode block.
@@ -137,11 +152,12 @@ mod tests {
     #[test]
     fn test_category_lookup() {
         // Test general categories
-        assert!(get_category_ranges('L', None).is_some());
-        assert!(get_category_ranges('L', Some('u')).is_some());
-        assert!(get_category_ranges('L', Some('l')).is_some());
-        assert!(get_category_ranges('N', Some('d')).is_some());
-        assert!(get_category_ranges('X', None).is_none());
+        for name in ["L", "Lu", "Ll", "Nd", "C", "Cn"] {
+            assert!(get_category_ranges(name).is_some(), "{name}");
+        }
+        for name in ["", "X", "Lx", "Cs", "Lu ", "LuX", "l"] {
+            assert!(get_category_ranges(name).is_none(), "{name:?}");
+        }
     }
 
     // MIRI SKIP RATIONALE: walks all 1.1M code points.
@@ -197,8 +213,7 @@ mod tests {
     }
 
     fn category(name: &str) -> Vec<RunePair> {
-        let mut chars = name.chars();
-        get_category_ranges(chars.next().unwrap(), chars.next()).unwrap()
+        get_category_ranges(name).unwrap()
     }
 
     #[test]

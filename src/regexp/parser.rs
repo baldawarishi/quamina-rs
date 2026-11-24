@@ -2086,68 +2086,12 @@ fn read_category(parse: &mut RegexpParse) -> Result<(RuneRange, Option<String>),
         });
     }
 
-    // Parse as general category
-    let mut chars = name.chars();
-    let initial = match chars.next() {
-        Some(c) => c,
-        None => {
-            return Err(Error {
-                message: "empty category name".into(),
-                offset: parse.last_index,
-            });
-        }
-    };
-
-    let valid_initials = ['L', 'M', 'N', 'P', 'Z', 'S', 'C'];
-    if !valid_initials.contains(&initial) {
-        return Err(Error {
-            message: format!("unknown category {initial}"),
+    match get_category_ranges(&name) {
+        Some(ranges) => Ok((ranges, Some(name))),
+        None => Err(Error {
+            message: format!("unknown category {ESCAPE}p{{{name}}}"),
             offset: parse.last_index,
-        });
-    }
-
-    let detail = chars.next();
-
-    // Validate detail letter based on initial
-    if let Some(d) = detail {
-        let valid_details = match initial {
-            'L' => "ultmo",
-            'M' => "nce",
-            'N' => "dlo",
-            'P' => "cdseifo",
-            'Z' => "slp",
-            'S' => "mcko",
-            'C' => "cfon",
-            _ => "",
-        };
-
-        if !valid_details.contains(d) {
-            return Err(Error {
-                message: format!("unknown category {ESCAPE}p{{{initial}{d}"),
-                offset: parse.last_index,
-            });
-        }
-
-        // Check for extra characters
-        if chars.next().is_some() {
-            return Err(Error {
-                message: format!("invalid category name ~p{{{name}}}"),
-                offset: parse.last_index,
-            });
-        }
-    }
-
-    // Build the cache key (e.g., "L", "Lu", "Nd")
-    let cache_key = detail.map_or_else(|| initial.to_string(), |d| format!("{initial}{d}"));
-
-    // Look up the category ranges
-    if let Some(ranges) = get_category_ranges(initial, detail) {
-        Ok((ranges, Some(cache_key)))
-    } else {
-        Err(Error {
-            message: format!("unknown category ~p{{{name}}}"),
-            offset: parse.last_index,
-        })
+        }),
     }
 }
 
