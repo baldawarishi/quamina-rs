@@ -1366,6 +1366,8 @@ impl LazyDfa {
             let mut closure = Vec::new();
             self.nfa_arena
                 .extend_closure_or_self(self.nfa_start, &mut closure);
+            closure.sort_unstable_by_key(|s| s.0);
+            closure.dedup();
             self.intern_state(&closure, true);
         }
     }
@@ -1476,18 +1478,16 @@ impl LazyDfa {
     /// The accelerator of an NFA state whose closure is exactly `nfa_states`.
     /// Stepping from that state and from this set is then the same, so the
     /// NFA's check that skipping is sound holds for the set as well.
+    /// Like every interned set, `nfa_states` is sorted and deduplicated.
     fn nfa_accel_for(&self, nfa_states: &[StateId]) -> Option<AccelInfo> {
-        let mut set = nfa_states.to_vec();
-        set.sort_unstable_by_key(|id| id.0);
-        set.dedup();
-        set.iter().find_map(|&nfa_state| {
+        nfa_states.iter().find_map(|&nfa_state| {
             let accel = self.nfa_arena[nfa_state].table.accel.as_ref()?;
             let mut closure = Vec::new();
             self.nfa_arena
                 .extend_closure_or_self(nfa_state, &mut closure);
             closure.sort_unstable_by_key(|id| id.0);
             closure.dedup();
-            (closure == set).then(|| accel.clone())
+            (closure == nfa_states).then(|| accel.clone())
         })
     }
 
