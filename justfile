@@ -173,3 +173,21 @@ mutants-local *args:
 [group('agent')]
 ai:
     cd {{justfile_directory()}} && claude --dangerously-skip-permissions
+
+# Regenerate the XSD regex catalog the regexp tests check against
+[group('data')]
+regexp-catalog:
+    curl -sfL https://raw.githubusercontent.com/qt4cg/xslt40-test/91328fbf0fed4a5d2813eb3661808ee53cb961ba/tests/misc/regex-syntax/_regex-syntax-test-set.xml \
+        | cargo run --example gen_regexp_catalog -- testdata/regexp-catalog.txt.gz
+
+# Regenerate RE2's exhaustive whole-string results from the local Go install
+[group('data')]
+re2-fullmatch:
+    bzcat "$(go env GOROOT)/src/regexp/testdata/re2-exhaustive.txt.bz2" \
+        | cargo run --release --example gen_re2_fullmatch -- testdata/re2-exhaustive-fullmatch.txt.gz
+
+# Regenerate the Unicode general category tables for a Unicode version, e.g. 17.0.0
+[group('data')]
+unicode-tables version:
+    curl -sfL https://www.unicode.org/Public/{{version}}/ucd/UnicodeData.txt \
+        | cargo run --example gen_unicode_categories -- {{version}} src/unicode_category_tables.rs

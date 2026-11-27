@@ -20,9 +20,10 @@ pub mod regexp;
 #[doc(hidden)]
 pub mod segments_tree;
 mod unicode_categories;
+mod unicode_category_tables;
 
 #[cfg(test)]
-mod regexp_samples;
+mod regexp_test_data;
 
 #[cfg(kani)]
 mod kani_proofs;

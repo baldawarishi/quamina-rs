@@ -20,8 +20,14 @@ Style inspired by [ripgrep's CHANGELOG](https://github.com/BurntSushi/ripgrep/bl
 - A pattern field under an empty top-level member name, like `{"": {"x": [1]}}`, matches that path as in Go instead of the top-level `x`
 - Stop treating a regexp `{1,100}` as `+` and `{0,100}` as `*`, and let `{n,}` match more than 100 repetitions (ported from Go 797e711)
 - Reject events with a literal that runs on, like `trueish`, instead of reading it as `true` (ported from Go 74ba31b)
+- Read `[^a-[b]]` as XSD does: everything outside `a`, minus `b`
+- Reject a regexp that ends part way through an atom, like `~p{L` or `[~p{L`, instead of silently dropping the unfinished atom
+- Accept a word boundary beside a group that matches once, like `.*~b(~w+)~b`, instead of rejecting it as impossible
+- A `[^x]+` loop no longer skips past characters the rest of the regexp needs, so `[^x]+x` matches `ax` and `[^x]+ax` matches `bax`
+- `~p{..}` and `~P{..}` cover every code point of their Unicode 17.0 general category; `~p{Lu}` missed letters such as `Ā`, and `~p{Cn}` matched nothing
 
 ### Changed
+- A regexp character class spanning many multi-byte characters, like `[^a]` or `~S`, shares its UTF-8 continuation states, so it builds hundreds of times faster and stays well inside the arena byte budget
 - Commit `Cargo.lock` so local builds, CI, and audits resolve the same dependency versions (#195)
 - `max_pattern_depth` defaults to 10000, Go's JSON nesting limit, up from 256
 - The arena byte budget applies while a regexp's automaton is built, not only once it is finished, so `((a{99}){99}){99}` is refused at about the budget instead of after building 150 MB; a long alternation whose build passes the budget is refused even if the finished automaton would fit

@@ -5,13 +5,13 @@
 # sweep run in CI.
 #
 # MAINTAINER NOTE: If you add new slow tests (>5s), add them to --skip below.
-# Current skips: stress (fuzz tests ~80s), citylots (large data ~10s), regexp_validity (~8s)
+# Current skips: stress (fuzz tests ~80s), citylots (large data ~10s)
 #
 
 set -e
 
 echo '+cargo test --lib (output suppressed unless failure)'
-TEST_OUTPUT=$(cargo test --lib -- --skip stress --skip citylots --skip regexp_validity --test-threads=1 2>&1) || {
+TEST_OUTPUT=$(cargo test --lib -- --skip stress --skip citylots --test-threads=1 2>&1) || {
     echo "$TEST_OUTPUT"
     exit 1
 }

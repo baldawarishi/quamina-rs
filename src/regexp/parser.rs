@@ -63,10 +63,6 @@ pub struct QuantifiedAtom {
     pub cache_key: Option<String>,
     /// Lookaround assertion type (if this atom is a lookaround group)
     pub lookaround: Option<LookaroundType>,
-    /// For ASCII-only negated patterns like `[^x]`, stores the negated bytes (1-3).
-    /// Used for memchr acceleration - since JSON input is valid UTF-8, we don't
-    /// need UTF-8 validation during matching, so these are the only exit bytes.
-    pub ascii_negated_bytes: Option<Vec<u8>>,
     /// Word boundary marker: Some(true) = `~b`, Some(false) = `~B`.
     pub is_word_boundary: Option<bool>,
 }
@@ -81,7 +77,6 @@ impl Default for QuantifiedAtom {
             subtree: None,
             cache_key: None,
             lookaround: None,
-            ascii_negated_bytes: None,
             is_word_boundary: None,
         }
     }
@@ -110,7 +105,6 @@ impl QuantifiedAtom {
             subtree: _,
             cache_key,
             lookaround,
-            ascii_negated_bytes,
             is_word_boundary,
         } = self;
         Self {
@@ -121,7 +115,6 @@ impl QuantifiedAtom {
             subtree: None,
             cache_key: cache_key.clone(),
             lookaround: *lookaround,
-            ascii_negated_bytes: ascii_negated_bytes.clone(),
             is_word_boundary: *is_word_boundary,
         }
     }
@@ -872,7 +865,6 @@ fn constrain_atom_at_boundary(
         quant_min: new_min,
         quant_max: new_max,
         cache_key: atom.cache_key.clone(),
-        ascii_negated_bytes: atom.ascii_negated_bytes.clone(),
         ..Default::default()
     };
 
@@ -1050,6 +1042,36 @@ fn expand_wb_atoms(
     }
 }
 
+/// Dissolve a group next to the boundary at `pos` into `branch`, one branch per
+/// alternative, when the group matches exactly once.
+///
+/// A boundary can only be checked against the character class of its
+/// neighbour, which a group does not have. Spliced in, the group's own edge
+/// atoms become the neighbours, so `.*~b(~w+)~b` expands like `.*~b~w+~b`.
+fn splice_group_beside(branch: &Branch, pos: usize) -> Option<Vec<Branch>> {
+    let at = [pos.checked_sub(1), Some(pos + 1)]
+        .into_iter()
+        .flatten()
+        .find(|&i| {
+            branch.get(i).is_some_and(|a| {
+                a.subtree.is_some()
+                    && a.lookaround.is_none()
+                    && a.quant_min == 1
+                    && a.quant_max == 1
+            })
+        })?;
+    let (before, rest) = branch.split_at(at);
+    let (group, after) = rest.split_first()?;
+    Some(
+        group
+            .subtree
+            .as_deref()?
+            .iter()
+            .map(|alternative| [before, alternative, after].concat())
+            .collect(),
+    )
+}
+
 /// Cap on the branches one pattern's word boundaries may expand into.
 ///
 /// Every boundary multiplies the branch count by the ways the atoms around it
@@ -1095,11 +1117,14 @@ pub fn expand_word_boundaries(tree: &Root) -> Result<Root, String> {
                     continue;
                 };
                 found_wb = true;
-                let is_boundary = alt[pos].is_word_boundary.unwrap();
-
-                let prefix = &alt[..pos];
-                let suffix = &alt[pos + 1..];
-                expand_wb_atoms(prefix, suffix, is_boundary, &mut new_alternatives);
+                if let Some(spliced) = splice_group_beside(alt, pos) {
+                    new_alternatives.extend(spliced);
+                } else {
+                    let is_boundary = alt[pos].is_word_boundary.unwrap();
+                    let prefix = &alt[..pos];
+                    let suffix = &alt[pos + 1..];
+                    expand_wb_atoms(prefix, suffix, is_boundary, &mut new_alternatives);
+                }
                 if new_alternatives.len() > MAX_WB_ALTERNATIVES {
                     return Err(format!(
                         "word boundary expansion exceeds {MAX_WB_ALTERNATIVES} alternatives"
@@ -1209,13 +1234,15 @@ fn read_branch(
     loop {
         let piece = match closed_group.take() {
             Some(mut group) => read_quantifier(parse, &mut group).map(|()| Piece::Atom(group)),
+            // Only a piece boundary may end the regexp; running out part way
+            // through a piece, as in `~p{L` or `[a`, is an error.
+            None if parse.is_empty() => return Ok(BranchEnd::Done),
             None => read_piece(parse),
         };
         match piece {
             Ok(Piece::Atom(qa)) => branch.push(qa),
             Ok(Piece::GroupOpen(lookaround)) => return Ok(BranchEnd::GroupOpen(lookaround)),
             Err(e) if e.message == "stuck" => return Ok(BranchEnd::Done),
-            Err(e) if e.message == "end of string" => return Ok(BranchEnd::Done),
             Err(e) => return Err(e),
         }
     }
@@ -1466,10 +1493,8 @@ fn read_atom(parse: &mut RegexpParse) -> Result<Piece, Error> {
         }
         '[' => {
             parse.record_feature(RegexpFeature::Class);
-            let (rr, ascii_negated_bytes) = read_char_class_expr(parse)?;
             Ok(QuantifiedAtom {
-                runes: rr,
-                ascii_negated_bytes,
+                runes: read_char_class_expr(parse)?,
                 ..Default::default()
             })
         }
@@ -1636,19 +1661,14 @@ fn read_property_escape(parse: &mut RegexpParse, marker: char) -> Result<Quantif
 }
 
 /// Read a character class expression [...]
-/// Returns `(RuneRange, Option<Vec<u8>>)` where the second element contains
-/// ASCII negated bytes for patterns like [^x] that can use memchr acceleration.
-fn read_char_class_expr(parse: &mut RegexpParse) -> Result<(RuneRange, Option<Vec<u8>>), Error> {
+fn read_char_class_expr(parse: &mut RegexpParse) -> Result<RuneRange, Error> {
     read_char_class_expr_depth(parse, 0)
 }
 
 /// Maximum nesting depth for character class subtraction (e.g., [a-[b-[c-[...]]]]).
 const MAX_CLASS_SUBTRACTION_DEPTH: usize = 8;
 
-fn read_char_class_expr_depth(
-    parse: &mut RegexpParse,
-    depth: usize,
-) -> Result<(RuneRange, Option<Vec<u8>>), Error> {
+fn read_char_class_expr_depth(parse: &mut RegexpParse, depth: usize) -> Result<RuneRange, Error> {
     if depth > MAX_CLASS_SUBTRACTION_DEPTH {
         return Err(Error {
             message: "character class subtraction nested too deeply".into(),
@@ -1682,8 +1702,15 @@ fn read_char_class_expr_depth(
         if next == '[' {
             // Character class subtraction: base-[subtract]
             // Recursively parse the subtracted class (which may itself contain subtraction)
-            let (subtract_rr, _) = read_char_class_expr_depth(parse, depth + 1)?;
-            rr = subtract_rune_range(rr, subtract_rr);
+            let subtract_rr = read_char_class_expr_depth(parse, depth + 1)?;
+            rr = if is_negated {
+                // The negation binds tighter than the subtraction: `[^a-[b]]`
+                // is everything outside `a` minus `b`, which is everything
+                // outside `a` or `b`. The union is inverted below.
+                simplify_rune_range([rr, subtract_rr].concat())
+            } else {
+                subtract_rune_range(rr, subtract_rr)
+            };
         } else {
             // Not subtraction — it's a trailing literal '-'
             parse.backup1(next);
@@ -1693,50 +1720,12 @@ fn read_char_class_expr_depth(
 
     parse.require(']')?;
 
-    // Detect ASCII-only negated patterns for memchr acceleration
-    // For patterns like [^x], [^/], [^"], we can accelerate by searching for exit bytes
-    let ascii_negated_bytes = if is_negated {
-        detect_ascii_negated_bytes(&rr)
-    } else {
-        None
-    };
-
     // Apply negation if needed
     if is_negated {
         rr = invert_rune_range(rr);
     }
 
-    Ok((rr, ascii_negated_bytes))
-}
-
-/// Detect if a rune range (BEFORE inversion) represents an ASCII-only character set
-/// with 1-3 characters. Used for memchr acceleration of negated patterns.
-///
-/// For patterns like `[^x]`, the pre-inversion runes are just `[{x, x}]`.
-/// We return Some(vec![b'x']) which can be used for memchr acceleration.
-fn detect_ascii_negated_bytes(rr: &RuneRange) -> Option<Vec<u8>> {
-    let mut bytes = Vec::new();
-
-    for pair in rr {
-        // Check if both lo and hi are ASCII
-        if pair.lo as u32 >= 128 || pair.hi as u32 >= 128 {
-            return None; // Non-ASCII character in negated set
-        }
-
-        // Expand the range and collect bytes
-        for c in (pair.lo as u8)..=(pair.hi as u8) {
-            bytes.push(c);
-            if bytes.len() > 3 {
-                return None; // Too many exit bytes for memchr acceleration
-            }
-        }
-    }
-
-    if bytes.is_empty() || bytes.len() > 3 {
-        return None;
-    }
-
-    Some(bytes)
+    Ok(rr)
 }
 
 /// Read CCE1 elements
@@ -2097,68 +2086,12 @@ fn read_category(parse: &mut RegexpParse) -> Result<(RuneRange, Option<String>),
         });
     }
 
-    // Parse as general category
-    let mut chars = name.chars();
-    let initial = match chars.next() {
-        Some(c) => c,
-        None => {
-            return Err(Error {
-                message: "empty category name".into(),
-                offset: parse.last_index,
-            });
-        }
-    };
-
-    let valid_initials = ['L', 'M', 'N', 'P', 'Z', 'S', 'C'];
-    if !valid_initials.contains(&initial) {
-        return Err(Error {
-            message: format!("unknown category {initial}"),
+    match get_category_ranges(&name) {
+        Some(ranges) => Ok((ranges, Some(name))),
+        None => Err(Error {
+            message: format!("unknown category {ESCAPE}p{{{name}}}"),
             offset: parse.last_index,
-        });
-    }
-
-    let detail = chars.next();
-
-    // Validate detail letter based on initial
-    if let Some(d) = detail {
-        let valid_details = match initial {
-            'L' => "ultmo",
-            'M' => "nce",
-            'N' => "dlo",
-            'P' => "cdseifo",
-            'Z' => "slp",
-            'S' => "mcko",
-            'C' => "cfon",
-            _ => "",
-        };
-
-        if !valid_details.contains(d) {
-            return Err(Error {
-                message: format!("unknown category {ESCAPE}p{{{initial}{d}"),
-                offset: parse.last_index,
-            });
-        }
-
-        // Check for extra characters
-        if chars.next().is_some() {
-            return Err(Error {
-                message: format!("invalid category name ~p{{{name}}}"),
-                offset: parse.last_index,
-            });
-        }
-    }
-
-    // Build the cache key (e.g., "L", "Lu", "Nd")
-    let cache_key = detail.map_or_else(|| initial.to_string(), |d| format!("{initial}{d}"));
-
-    // Look up the category ranges
-    if let Some(ranges) = get_category_ranges(initial, detail) {
-        Ok((ranges, Some(cache_key)))
-    } else {
-        Err(Error {
-            message: format!("unknown category ~p{{{name}}}"),
-            offset: parse.last_index,
-        })
+        }),
     }
 }
 
@@ -2409,114 +2342,6 @@ mod tests {
         assert!(!past_surrogate_end(SURROGATE_END_CP - 1));
         assert!(past_surrogate_end(SURROGATE_END_CP + 1));
         assert!(past_surrogate_end(0x10FFFF));
-    }
-
-    #[test]
-    fn test_detect_ascii_negated_bytes_single_char() {
-        // [^x] -> should detect 'x' as exit byte
-        let rr = vec![RunePair { lo: 'x', hi: 'x' }];
-        let result = detect_ascii_negated_bytes(&rr);
-        assert_eq!(result, Some(vec![b'x']));
-    }
-
-    #[test]
-    fn test_detect_ascii_negated_bytes_multiple_chars() {
-        // [^abc] -> should detect a, b, c as exit bytes
-        let rr = vec![
-            RunePair { lo: 'a', hi: 'a' },
-            RunePair { lo: 'b', hi: 'b' },
-            RunePair { lo: 'c', hi: 'c' },
-        ];
-        let result = detect_ascii_negated_bytes(&rr);
-        assert_eq!(result, Some(vec![b'a', b'b', b'c']));
-    }
-
-    #[test]
-    fn test_detect_ascii_negated_bytes_range() {
-        // [^a-c] -> should detect a, b, c as exit bytes
-        let rr = vec![RunePair { lo: 'a', hi: 'c' }];
-        let result = detect_ascii_negated_bytes(&rr);
-        assert_eq!(result, Some(vec![b'a', b'b', b'c']));
-    }
-
-    #[test]
-    fn test_detect_ascii_negated_bytes_too_many() {
-        // [^a-z] -> too many exit bytes (26), should return None
-        let rr = vec![RunePair { lo: 'a', hi: 'z' }];
-        let result = detect_ascii_negated_bytes(&rr);
-        assert_eq!(result, None);
-    }
-
-    #[test]
-    fn test_detect_ascii_negated_bytes_non_ascii() {
-        // [^ü] -> non-ASCII, should return None
-        let rr = vec![RunePair { lo: 'ü', hi: 'ü' }];
-        let result = detect_ascii_negated_bytes(&rr);
-        assert_eq!(result, None);
-    }
-
-    #[test]
-    fn test_detect_ascii_negated_bytes_mixed() {
-        // [^aü] -> contains non-ASCII, should return None
-        let rr = vec![RunePair { lo: 'a', hi: 'a' }, RunePair { lo: 'ü', hi: 'ü' }];
-        let result = detect_ascii_negated_bytes(&rr);
-        assert_eq!(result, None);
-    }
-
-    #[test]
-    fn test_parse_negated_char_class_stores_ascii_bytes() {
-        // Parse [^x]+ and verify ascii_negated_bytes is set
-        let tree = parse("[^x]+").unwrap();
-        assert_eq!(tree.len(), 1);
-        assert_eq!(tree[0].len(), 1);
-
-        let qa = &tree[0][0];
-        assert_eq!(qa.ascii_negated_bytes, Some(vec![b'x']));
-    }
-
-    #[test]
-    fn test_parse_non_negated_class_no_ascii_bytes() {
-        // Parse [abc]+ - not negated, so no ascii_negated_bytes
-        let tree = parse("[abc]+").unwrap();
-        assert_eq!(tree.len(), 1);
-        assert_eq!(tree[0].len(), 1);
-
-        let qa = &tree[0][0];
-        assert_eq!(qa.ascii_negated_bytes, None);
-    }
-
-    #[test]
-    fn test_parse_negated_unicode_class_no_ascii_bytes() {
-        // Parse [^ü]+ - negated but non-ASCII, so no ascii_negated_bytes
-        let tree = parse("[^ü]+").unwrap();
-        assert_eq!(tree.len(), 1);
-        assert_eq!(tree[0].len(), 1);
-
-        let qa = &tree[0][0];
-        assert_eq!(qa.ascii_negated_bytes, None);
-    }
-
-    #[test]
-    fn test_parse_negated_slash_class() {
-        // Parse [^/]+ - common pattern for path parsing
-        let tree = parse("[^/]+").unwrap();
-        assert_eq!(tree.len(), 1);
-        assert_eq!(tree[0].len(), 1);
-
-        let qa = &tree[0][0];
-        assert_eq!(qa.ascii_negated_bytes, Some(vec![b'/']));
-    }
-
-    #[test]
-    fn test_parse_negated_quote_class() {
-        // Parse [^"]+ - common pattern for quoted string parsing
-        // Note: in I-Regexp, " is a normal character, no escaping needed
-        let tree = parse("[^\"]+").unwrap();
-        assert_eq!(tree.len(), 1);
-        assert_eq!(tree[0].len(), 1);
-
-        let qa = &tree[0][0];
-        assert_eq!(qa.ascii_negated_bytes, Some(vec![b'"']));
     }
 
     // ========================================================================
@@ -2896,7 +2721,7 @@ mod tests {
 
     #[test]
     fn test_wb_negated_class_at_boundary() {
-        // [^x]+~b — negated class with ascii_negated_bytes at boundary
+        // [^x]+~b — a negated class at a boundary
         let tree = parse("[^x]+~b").unwrap();
         let expanded = expand_word_boundaries(&tree).unwrap();
         // [^x] intersected with word chars still has valid members
@@ -3105,21 +2930,6 @@ mod tests {
     }
 
     #[test]
-    fn test_detect_ascii_negated_bytes_boundary_and_empty() {
-        // A pair straddling the ASCII boundary (lo below 128, hi at/above 128)
-        // is not pure-ASCII, so no exit bytes are produced.
-        assert_eq!(
-            detect_ascii_negated_bytes(&vec![RunePair {
-                lo: '\u{7F}',
-                hi: '\u{80}',
-            }]),
-            None
-        );
-        // No ranges means nothing to negate.
-        assert_eq!(detect_ascii_negated_bytes(&Vec::new()), None);
-    }
-
-    #[test]
     fn test_wb_at_start_single_optional_suffix() {
         // `~b` at value start followed by a single optional atom (`a*`) is the
         // minimal absent case: the suffix has exactly one element.
@@ -3159,17 +2969,15 @@ mod tests {
     }
 
     #[test]
-    fn test_constrain_atom_base_keeps_cache_key_and_ascii_bytes() {
+    fn test_constrain_atom_base_keeps_cache_key() {
         // Constraining a quantified atom at a boundary splits off one occurrence
         // and keeps the remaining count as a `base` atom. That base must carry
-        // over the original atom's cache_key and ascii_negated_bytes rather than
-        // reset them to their defaults.
+        // over the original atom's cache_key rather than reset it.
         let atom = QuantifiedAtom {
             runes: vec![RunePair { lo: 'a', hi: 'z' }],
             quant_min: 2,
             quant_max: 3,
             cache_key: Some("wb_test".to_string()),
-            ascii_negated_bytes: Some(vec![b'q']),
             ..Default::default()
         };
         let constrained = constrain_atom_at_boundary(&atom, &word_char_runes(), true)
@@ -3178,7 +2986,6 @@ mod tests {
             panic!("a non-zero-min {{2,3}} quantifier must produce a Split");
         };
         assert_eq!(base.cache_key.as_deref(), Some("wb_test"));
-        assert_eq!(base.ascii_negated_bytes, Some(vec![b'q']));
     }
 
     #[test]

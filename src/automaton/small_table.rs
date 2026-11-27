@@ -44,6 +44,89 @@ pub struct AccelInfo {
 }
 
 impl AccelInfo {
+    /// Marks a state worth checking for an accelerator while its automaton is
+    /// being built; `StateArena::settle_accels` replaces it with a checked
+    /// accelerator or removes it before anything is traversed. Having no exit
+    /// bytes, it would never skip anyway.
+    pub(crate) const CANDIDATE: Self = Self {
+        exit_bytes: [0; 3],
+        len: 0,
+    };
+
+    /// The accelerator for a state that its transitions keep returning to, if
+    /// skipping ahead from it is sound.
+    ///
+    /// Skipping to the next exit byte has to land exactly where stepping one
+    /// byte at a time would. So every ASCII byte except at most three exits,
+    /// and every whole multi-byte character, must lead straight back to
+    /// `state`. A character that leads anywhere else can't be made an exit,
+    /// since memchr only finds single bytes.
+    ///
+    /// `row` gives a state's transitions as `(ceiling, target)` runs, each
+    /// covering the bytes from the previous ceiling up to this one and the
+    /// last ending at `BYTE_CEILING`, as in a `SmallTable`. A `None` target is
+    /// where the match dies, which for an ASCII byte makes it an exit too.
+    pub(crate) fn for_self_loop<S: Clone + PartialEq>(
+        state: &S,
+        mut row: impl FnMut(&S) -> Vec<(u8, Option<S>)>,
+    ) -> Option<Self> {
+        let mut accel = Self::default();
+        // Many lead bytes reach the same state with the same continuations
+        // still to read, so each such pair is checked once.
+        let mut checked = Vec::new();
+        let mut start = 0;
+        for (ceiling, to) in row(state) {
+            if to.as_ref() != Some(state) {
+                for byte in start..ceiling.min(0x80) {
+                    *accel.exit_bytes.get_mut(usize::from(accel.len))? = byte;
+                    accel.len += 1;
+                }
+            }
+            for lead in start.max(0xC2)..ceiling.min(0xF5) {
+                let next = to.clone()?;
+                if !Self::completes_to(
+                    state,
+                    next,
+                    utf8_continuations(lead),
+                    &mut row,
+                    &mut checked,
+                ) {
+                    return None;
+                }
+            }
+            start = ceiling;
+        }
+        (accel.len > 0).then_some(accel)
+    }
+
+    /// Whether every run of `rest` continuation bytes from `from` lands on `state`.
+    fn completes_to<S: Clone + PartialEq>(
+        state: &S,
+        from: S,
+        rest: &'static [(u8, u8)],
+        row: &mut impl FnMut(&S) -> Vec<(u8, Option<S>)>,
+        checked: &mut Vec<(S, &'static [(u8, u8)])>,
+    ) -> bool {
+        let Some((&(lo, hi), tail)) = rest.split_first() else {
+            return from == *state;
+        };
+        if checked.iter().any(|(s, r)| *s == from && *r == rest) {
+            return true;
+        }
+        let mut start = 0;
+        for (ceiling, to) in row(&from) {
+            if start <= hi
+                && ceiling > lo
+                && !to.is_some_and(|t| Self::completes_to(state, t, tail, row, checked))
+            {
+                return false;
+            }
+            start = ceiling;
+        }
+        checked.push((from, rest));
+        true
+    }
+
     /// Find the next exit byte in `remaining` using SIMD-accelerated memchr.
     ///
     /// Returns the strictly positive number of bytes the caller may skip
@@ -66,6 +149,23 @@ impl AccelInfo {
             _ => None,
         }?;
         NonZero::new(offset)
+    }
+}
+
+/// The continuation bytes allowed after a UTF-8 lead byte, one range per
+/// position, leaving out overlong forms, surrogates and code points past
+/// U+10FFFF.
+const fn utf8_continuations(lead: u8) -> &'static [(u8, u8)] {
+    const ANY: (u8, u8) = (0x80, 0xBF);
+    match lead {
+        0xC2..=0xDF => &[ANY],
+        0xE0 => &[(0xA0, 0xBF), ANY],
+        0xED => &[(0x80, 0x9F), ANY],
+        0xE1..=0xEF => &[ANY, ANY],
+        0xF0 => &[(0x90, 0xBF), ANY, ANY],
+        0xF4 => &[(0x80, 0x8F), ANY, ANY],
+        0xF1..=0xF3 => &[ANY, ANY, ANY],
+        _ => &[],
     }
 }
 

@@ -12,24 +12,25 @@ test_tool = "nextest"
 
 # Only mutate real source code, not generated tables or test fixtures
 exclude_globs = [
-  "src/case_folding.rs",       # auto-generated Unicode tables
-  "src/unicode_categories.rs", # auto-generated Unicode tables
-  "src/regexp_samples.rs",     # test fixture data
-  "src/test_helpers.rs",       # test utilities
-  "src/kani_proofs.rs",        # formal verification, not runtime code
+  "src/case_folding.rs",            # auto-generated Unicode tables
+  "src/unicode_categories.rs",      # Unicode block tables
+  "src/unicode_category_tables.rs", # auto-generated Unicode tables
+  "src/regexp_test_data.rs",        # test data loader
+  "src/test_helpers.rs",            # test utilities
+  "src/kani_proofs.rs",             # formal verification, not runtime code
 ]
 
 # Library unit tests only. Do NOT add `--all-targets`: it builds the Criterion
 # benches unoptimized, which overruns the per-mutant timeout and fails the
-# baseline. The two excluded tests are slow (concurrent-stress and regexp
-# fuzzing) and catch nothing the rest of the suite doesn't. `--max-fail` kills
-# the tests still running once one fails, so a mutant that fails some tests at
-# once and makes others crawl is caught rather than timed out.
+# baseline. The excluded test is slow (concurrent stress) and catches nothing
+# the rest of the suite doesn't. `--max-fail` kills the tests still running
+# once one fails, so a mutant that fails some tests at once and makes others
+# crawl is caught rather than timed out.
 additional_cargo_test_args = [
   "--lib",
   "--max-fail=1:immediate",
   "-E",
-  "not (test(test_concurrent_update_during_matching) | test(test_regexp_validity))",
+  "not test(test_concurrent_update_during_matching)",
 ]
 
 # Skip kani proof harnesses — formal verification, not production code.
